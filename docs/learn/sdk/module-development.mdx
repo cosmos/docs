@@ -1,0 +1,1304 @@
+---
+title: "Module Development"
+description: "Build custom modules for Cosmos SDK applications"
+---
+
+# Module Development
+
+Modules are the building blocks of Cosmos SDK applications. They define the state machine logic for specific application domains like token transfers, staking, or governance. This guide covers creating custom modules from scratch and integrating them into your blockchain application.
+
+## Module Architecture
+
+Understanding the module architecture is essential for effective development:
+
+<CardGroup cols={2}>
+  <Card title="Keeper" icon="database">
+    Manages state access and business logic. Acts as the gatekeeper for module state.
+  </Card>
+  <Card title="Messages" icon="envelope">
+    Define user-facing transactions that trigger state changes in the module.
+  </Card>
+  <Card title="Queries" icon="magnifying-glass">
+    Provide read-only access to module state for clients and other modules.
+  </Card>
+  <Card title="Types" icon="code">
+    Define protobuf schemas for state, messages, and queries.
+  </Card>
+</CardGroup>
+
+## Module Structure
+
+A typical module follows this directory structure:
+
+```
+x/blog/
+├── keeper/
+│   ├── keeper.go          # Keeper implementation
+│   ├── msg_server.go      # Message handler implementation
+│   ├── query.go           # Query handler implementation
+│   └── grpc_query.go      # gRPC query implementation
+├── types/
+│   ├── codec.go           # Amino/protobuf codec registration
+│   ├── errors.go          # Module-specific errors
+│   ├── events.go          # Event type definitions
+│   ├── expected_keepers.go # Interface definitions for other keepers
+│   ├── genesis.go         # Genesis state definition
+│   ├── keys.go            # Store keys and prefixes
+│   ├── msgs.go            # Message type definitions
+│   └── query.pb.go        # Generated query types
+├── client/
+│   └── cli/
+│       ├── query.go       # CLI query commands
+│       └── tx.go          # CLI transaction commands
+├── genesis.go             # Genesis logic
+├── handler.go             # Legacy message routing (deprecated)
+├── module.go              # Module definition and lifecycle
+└── simulation/            # Simulation testing
+```
+
+## Creating Your First Module
+
+Let's build a simple blog module that allows users to create and manage blog posts.
+
+### 1. Define Proto Schemas
+
+First, define the protobuf schemas for your module:
+
+<CodeGroup>
+  ```protobuf proto/blog/v1/blog.proto
+  syntax = "proto3";
+  package blog.v1;
+
+  option go_package = "github.com/your-org/your-chain/x/blog/types";
+
+  import "gogoproto/gogo.proto";
+  import "cosmos_proto/cosmos.proto";
+
+  // Post represents a blog post
+  message Post {
+    uint64 id = 1;
+    string title = 2;
+    string content = 3;
+    string author = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+    int64 created_at = 5;
+    int64 updated_at = 6;
+  }
+
+  // Params defines the parameters for the blog module
+  message Params {
+    uint64 max_post_length = 1;
+    uint64 max_title_length = 2;
+  }
+  ```
+
+  ```protobuf proto/blog/v1/tx.proto
+  syntax = "proto3";
+  package blog.v1;
+
+  option go_package = "github.com/your-org/your-chain/x/blog/types";
+
+  import "cosmos/msg/v1/msg.proto";
+  import "cosmos_proto/cosmos.proto";
+  import "gogoproto/gogo.proto";
+
+  // Msg defines the blog Msg service
+  service Msg {
+    option (cosmos.msg.v1.service) = true;
+    
+    // CreatePost creates a new blog post
+    rpc CreatePost(MsgCreatePost) returns (MsgCreatePostResponse);
+    
+    // UpdatePost updates an existing blog post
+    rpc UpdatePost(MsgUpdatePost) returns (MsgUpdatePostResponse);
+    
+    // DeletePost deletes a blog post
+    rpc DeletePost(MsgDeletePost) returns (MsgDeletePostResponse);
+  }
+
+  // MsgCreatePost defines the CreatePost message
+  message MsgCreatePost {
+    option (cosmos.msg.v1.signer) = "author";
+    
+    string author = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+    string title = 2;
+    string content = 3;
+  }
+
+  message MsgCreatePostResponse {
+    uint64 id = 1;
+  }
+
+  message MsgUpdatePost {
+    option (cosmos.msg.v1.signer) = "author";
+    
+    string author = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+    uint64 id = 2;
+    string title = 3;
+    string content = 4;
+  }
+
+  message MsgUpdatePostResponse {}
+
+  message MsgDeletePost {
+    option (cosmos.msg.v1.signer) = "author";
+    
+    string author = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+    uint64 id = 2;
+  }
+
+  message MsgDeletePostResponse {}
+  ```
+
+  ```protobuf proto/blog/v1/query.proto
+  syntax = "proto3";
+  package blog.v1;
+
+  option go_package = "github.com/your-org/your-chain/x/blog/types";
+
+  import "google/api/annotations.proto";
+  import "cosmos/base/query/v1beta1/pagination.proto";
+  import "blog/v1/blog.proto";
+  import "gogoproto/gogo.proto";
+
+  // Query defines the gRPC querier service
+  service Query {
+    // Posts queries all posts
+    rpc Posts(QueryPostsRequest) returns (QueryPostsResponse) {
+      option (google.api.http).get = "/blog/v1/posts";
+    }
+    
+    // Post queries a post by id
+    rpc Post(QueryPostRequest) returns (QueryPostResponse) {
+      option (google.api.http).get = "/blog/v1/posts/{id}";
+    }
+    
+    // Params queries the parameters of the blog module
+    rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+      option (google.api.http).get = "/blog/v1/params";
+    }
+  }
+
+  message QueryPostsRequest {
+    cosmos.base.query.v1beta1.PageRequest pagination = 1;
+  }
+
+  message QueryPostsResponse {
+    repeated Post posts = 1 [(gogoproto.nullable) = false];
+    cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  }
+
+  message QueryPostRequest {
+    uint64 id = 1;
+  }
+
+  message QueryPostResponse {
+    Post post = 1 [(gogoproto.nullable) = false];
+  }
+
+  message QueryParamsRequest {}
+
+  message QueryParamsResponse {
+    Params params = 1 [(gogoproto.nullable) = false];
+  }
+  ```
+</CodeGroup>
+
+### 2. Generate Go Code
+
+Generate Go code from protobuf definitions:
+
+```bash
+# Add to your Makefile
+proto-gen:
+	@echo "Generating protobuf files..."
+	@buf generate --template proto/buf.gen.gogo.yaml proto
+
+# Run generation
+make proto-gen
+```
+
+### 3. Define Types and Keys
+
+<CodeGroup>
+  ```go x/blog/types/keys.go
+  package types
+
+  const (
+  	// ModuleName defines the module name
+  	ModuleName = "blog"
+
+  	// StoreKey defines the primary module store key
+  	StoreKey = ModuleName
+
+  	// RouterKey defines the module's message routing key
+  	RouterKey = ModuleName
+
+  	// MemStoreKey defines the in-memory store key
+  	MemStoreKey = "mem_blog"
+  )
+
+  var (
+  	// PostKey defines the key for storing posts
+  	PostKey = []byte{0x01}
+  	
+  	// PostCountKey defines the key for storing the post count
+  	PostCountKey = []byte{0x02}
+  	
+  	// ParamsKey defines the key for storing module parameters
+  	ParamsKey = []byte{0x03}
+  )
+
+  // GetPostStoreKey returns the store key for a specific post
+  func GetPostStoreKey(id uint64) []byte {
+  	return append(PostKey, sdk.Uint64ToBigEndian(id)...)
+  }
+  ```
+
+  ```go x/blog/types/errors.go
+  package types
+
+  import (
+  	sdkerrors "cosmossdk.io/errors"
+  )
+
+  // x/blog module sentinel errors
+  var (
+  	ErrPostNotFound     = sdkerrors.Register(ModuleName, 1100, "post not found")
+  	ErrUnauthorized     = sdkerrors.Register(ModuleName, 1101, "unauthorized")
+  	ErrInvalidTitle     = sdkerrors.Register(ModuleName, 1102, "invalid title")
+  	ErrInvalidContent   = sdkerrors.Register(ModuleName, 1103, "invalid content")
+  	ErrTitleTooLong     = sdkerrors.Register(ModuleName, 1104, "title too long")
+  	ErrContentTooLong   = sdkerrors.Register(ModuleName, 1105, "content too long")
+  )
+  ```
+
+  ```go x/blog/types/events.go
+  package types
+
+  // blog module event types
+  const (
+  	EventTypeCreatePost = "create_post"
+  	EventTypeUpdatePost = "update_post"
+  	EventTypeDeletePost = "delete_post"
+
+  	AttributeKeyPostID  = "post_id"
+  	AttributeKeyAuthor  = "author"
+  	AttributeKeyTitle   = "title"
+  )
+  ```
+</CodeGroup>
+
+### 4. Implement the Keeper
+
+The keeper manages state access and business logic:
+
+<CodeGroup>
+  ```go x/blog/keeper/keeper.go
+  package keeper
+
+  import (
+  	"context"
+  	"fmt"
+
+  	"cosmossdk.io/collections"
+  	"cosmossdk.io/core/store"
+  	"cosmossdk.io/log"
+  	"github.com/cosmos/cosmos-sdk/codec"
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+
+  	"github.com/your-org/your-chain/x/blog/types"
+  )
+
+  type Keeper struct {
+  	cdc      codec.BinaryCodec
+  	storeService store.KVStoreService
+  	logger   log.Logger
+
+  	// State management
+  	Schema collections.Schema
+  	Posts  collections.Map[uint64, types.Post]
+  	PostSeq collections.Sequence
+  	Params collections.Item[types.Params]
+
+  	// The authority capable of executing governance proposals
+  	authority string
+  }
+
+  func NewKeeper(
+  	cdc codec.BinaryCodec,
+  	storeService store.KVStoreService,
+  	logger log.Logger,
+  	authority string,
+  ) Keeper {
+  	sb := collections.NewSchemaBuilder(storeService)
+
+  	k := Keeper{
+  		cdc:          cdc,
+  		storeService: storeService,
+  		authority:    authority,
+  		logger:       logger,
+  		Posts:        collections.NewMap(sb, types.PostKey, "posts", collections.Uint64Key, codec.CollValue[types.Post](cdc)),
+  		PostSeq:      collections.NewSequence(sb, types.PostCountKey, "post_seq"),
+  		Params:       collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+  	}
+
+  	schema, err := sb.Build()
+  	if err != nil {
+  		panic(err)
+  	}
+  	k.Schema = schema
+
+  	return k
+  }
+
+  // GetAuthority returns the module's authority
+  func (k Keeper) GetAuthority() string {
+  	return k.authority
+  }
+
+  // Logger returns a module-specific logger
+  func (k Keeper) Logger() log.Logger {
+  	return k.logger.With("module", "x/"+types.ModuleName)
+  }
+  ```
+
+  ```go x/blog/keeper/post.go
+  package keeper
+
+  import (
+  	"context"
+  	
+  	"cosmossdk.io/collections"
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+  	
+  	"github.com/your-org/your-chain/x/blog/types"
+  )
+
+  // CreatePost creates a new blog post
+  func (k Keeper) CreatePost(ctx context.Context, author, title, content string) (uint64, error) {
+  	// Validate parameters
+  	params, err := k.Params.Get(ctx)
+  	if err != nil {
+  		return 0, err
+  	}
+
+  	if uint64(len(title)) > params.MaxTitleLength {
+  		return 0, types.ErrTitleTooLong
+  	}
+
+  	if uint64(len(content)) > params.MaxPostLength {
+  		return 0, types.ErrContentTooLong
+  	}
+
+  	// Get next post ID
+  	id, err := k.PostSeq.Next(ctx)
+  	if err != nil {
+  		return 0, err
+  	}
+
+  	// Create post
+  	sdkCtx := sdk.UnwrapSDKContext(ctx)
+  	post := types.Post{
+  		Id:        id,
+  		Title:     title,
+  		Content:   content,
+  		Author:    author,
+  		CreatedAt: sdkCtx.BlockTime().Unix(),
+  		UpdatedAt: sdkCtx.BlockTime().Unix(),
+  	}
+
+  	// Store post
+  	err = k.Posts.Set(ctx, id, post)
+  	if err != nil {
+  		return 0, err
+  	}
+
+  	// Emit event
+  	sdkCtx.EventManager().EmitEvent(
+  		sdk.NewEvent(
+  			types.EventTypeCreatePost,
+  			sdk.NewAttribute(types.AttributeKeyPostID, fmt.Sprintf("%d", id)),
+  			sdk.NewAttribute(types.AttributeKeyAuthor, author),
+  			sdk.NewAttribute(types.AttributeKeyTitle, title),
+  		),
+  	)
+
+  	return id, nil
+  }
+
+  // GetPost retrieves a post by ID
+  func (k Keeper) GetPost(ctx context.Context, id uint64) (types.Post, error) {
+  	return k.Posts.Get(ctx, id)
+  }
+
+  // UpdatePost updates an existing post
+  func (k Keeper) UpdatePost(ctx context.Context, id uint64, author, title, content string) error {
+  	// Check if post exists and verify author
+  	post, err := k.Posts.Get(ctx, id)
+  	if err != nil {
+  		if collections.IsNotFound(err) {
+  			return types.ErrPostNotFound
+  		}
+  		return err
+  	}
+
+  	if post.Author != author {
+  		return types.ErrUnauthorized
+  	}
+
+  	// Validate new content
+  	params, err := k.Params.Get(ctx)
+  	if err != nil {
+  		return err
+  	}
+
+  	if uint64(len(title)) > params.MaxTitleLength {
+  		return types.ErrTitleTooLong
+  	}
+
+  	if uint64(len(content)) > params.MaxPostLength {
+  		return types.ErrContentTooLong
+  	}
+
+  	// Update post
+  	sdkCtx := sdk.UnwrapSDKContext(ctx)
+  	post.Title = title
+  	post.Content = content
+  	post.UpdatedAt = sdkCtx.BlockTime().Unix()
+
+  	err = k.Posts.Set(ctx, id, post)
+  	if err != nil {
+  		return err
+  	}
+
+  	// Emit event
+  	sdkCtx.EventManager().EmitEvent(
+  		sdk.NewEvent(
+  			types.EventTypeUpdatePost,
+  			sdk.NewAttribute(types.AttributeKeyPostID, fmt.Sprintf("%d", id)),
+  			sdk.NewAttribute(types.AttributeKeyAuthor, author),
+  		),
+  	)
+
+  	return nil
+  }
+
+  // DeletePost deletes a post
+  func (k Keeper) DeletePost(ctx context.Context, id uint64, author string) error {
+  	// Check if post exists and verify author
+  	post, err := k.Posts.Get(ctx, id)
+  	if err != nil {
+  		if collections.IsNotFound(err) {
+  			return types.ErrPostNotFound
+  		}
+  		return err
+  	}
+
+  	if post.Author != author {
+  		return types.ErrUnauthorized
+  	}
+
+  	// Delete post
+  	err = k.Posts.Remove(ctx, id)
+  	if err != nil {
+  		return err
+  	}
+
+  	// Emit event
+  	sdkCtx := sdk.UnwrapSDKContext(ctx)
+  	sdkCtx.EventManager().EmitEvent(
+  		sdk.NewEvent(
+  			types.EventTypeDeletePost,
+  			sdk.NewAttribute(types.AttributeKeyPostID, fmt.Sprintf("%d", id)),
+  			sdk.NewAttribute(types.AttributeKeyAuthor, author),
+  		),
+  	)
+
+  	return nil
+  }
+
+  // GetAllPosts returns all posts with pagination
+  func (k Keeper) GetAllPosts(ctx context.Context) ([]types.Post, error) {
+  	var posts []types.Post
+  	err := k.Posts.Walk(ctx, nil, func(key uint64, post types.Post) (bool, error) {
+  		posts = append(posts, post)
+  		return false, nil
+  	})
+  	return posts, err
+  }
+  ```
+</CodeGroup>
+
+### 5. Implement Message Server
+
+Handle user transactions:
+
+<CodeGroup>
+  ```go x/blog/keeper/msg_server.go
+  package keeper
+
+  import (
+  	"context"
+
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+  	"github.com/your-org/your-chain/x/blog/types"
+  )
+
+  type msgServer struct {
+  	Keeper
+  }
+
+  // NewMsgServerImpl returns an implementation of the MsgServer interface
+  func NewMsgServerImpl(keeper Keeper) types.MsgServer {
+  	return &msgServer{Keeper: keeper}
+  }
+
+  var _ types.MsgServer = msgServer{}
+
+  func (k msgServer) CreatePost(goCtx context.Context, msg *types.MsgCreatePost) (*types.MsgCreatePostResponse, error) {
+  	ctx := sdk.UnwrapSDKContext(goCtx)
+
+  	// Validate message
+  	if err := msg.ValidateBasic(); err != nil {
+  		return nil, err
+  	}
+
+  	// Create post
+  	id, err := k.Keeper.CreatePost(ctx, msg.Author, msg.Title, msg.Content)
+  	if err != nil {
+  		return nil, err
+  	}
+
+  	return &types.MsgCreatePostResponse{
+  		Id: id,
+  	}, nil
+  }
+
+  func (k msgServer) UpdatePost(goCtx context.Context, msg *types.MsgUpdatePost) (*types.MsgUpdatePostResponse, error) {
+  	ctx := sdk.UnwrapSDKContext(goCtx)
+
+  	// Validate message
+  	if err := msg.ValidateBasic(); err != nil {
+  		return nil, err
+  	}
+
+  	// Update post
+  	err := k.Keeper.UpdatePost(ctx, msg.Id, msg.Author, msg.Title, msg.Content)
+  	if err != nil {
+  		return nil, err
+  	}
+
+  	return &types.MsgUpdatePostResponse{}, nil
+  }
+
+  func (k msgServer) DeletePost(goCtx context.Context, msg *types.MsgDeletePost) (*types.MsgDeletePostResponse, error) {
+  	ctx := sdk.UnwrapSDKContext(goCtx)
+
+  	// Validate message
+  	if err := msg.ValidateBasic(); err != nil {
+  		return nil, err
+  	}
+
+  	// Delete post
+  	err := k.Keeper.DeletePost(ctx, msg.Id, msg.Author)
+  	if err != nil {
+  		return nil, err
+  	}
+
+  	return &types.MsgDeletePostResponse{}, nil
+  }
+  ```
+
+  ```go x/blog/types/msgs.go
+  package types
+
+  import (
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+  	sdkerrors "cosmossdk.io/errors"
+  )
+
+  var (
+  	_ sdk.Msg = &MsgCreatePost{}
+  	_ sdk.Msg = &MsgUpdatePost{}
+  	_ sdk.Msg = &MsgDeletePost{}
+  )
+
+  // ValidateBasic does a sanity check on the provided data
+  func (msg *MsgCreatePost) ValidateBasic() error {
+  	_, err := sdk.AccAddressFromBech32(msg.Author)
+  	if err != nil {
+  		return sdkerrors.Wrapf(sdkerrors.ErrInvalidAddress, "invalid author address (%s)", err)
+  	}
+
+  	if len(msg.Title) == 0 {
+  		return sdkerrors.Wrap(ErrInvalidTitle, "title cannot be empty")
+  	}
+
+  	if len(msg.Content) == 0 {
+  		return sdkerrors.Wrap(ErrInvalidContent, "content cannot be empty")
+  	}
+
+  	return nil
+  }
+
+  func (msg *MsgUpdatePost) ValidateBasic() error {
+  	_, err := sdk.AccAddressFromBech32(msg.Author)
+  	if err != nil {
+  		return sdkerrors.Wrapf(sdkerrors.ErrInvalidAddress, "invalid author address (%s)", err)
+  	}
+
+  	if msg.Id == 0 {
+  		return sdkerrors.Wrap(ErrPostNotFound, "post ID cannot be zero")
+  	}
+
+  	if len(msg.Title) == 0 {
+  		return sdkerrors.Wrap(ErrInvalidTitle, "title cannot be empty")
+  	}
+
+  	if len(msg.Content) == 0 {
+  		return sdkerrors.Wrap(ErrInvalidContent, "content cannot be empty")
+  	}
+
+  	return nil
+  }
+
+  func (msg *MsgDeletePost) ValidateBasic() error {
+  	_, err := sdk.AccAddressFromBech32(msg.Author)
+  	if err != nil {
+  		return sdkerrors.Wrapf(sdkerrors.ErrInvalidAddress, "invalid author address (%s)", err)
+  	}
+
+  	if msg.Id == 0 {
+  		return sdkerrors.Wrap(ErrPostNotFound, "post ID cannot be zero")
+  	}
+
+  	return nil
+  }
+  ```
+</CodeGroup>
+
+### 6. Implement Query Server
+
+Handle read-only queries:
+
+```go
+// x/blog/keeper/grpc_query.go
+package keeper
+
+import (
+	"context"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"cosmossdk.io/collections"
+	"github.com/cosmos/cosmos-sdk/types/query"
+	"github.com/your-org/your-chain/x/blog/types"
+)
+
+type queryServer struct {
+	Keeper
+}
+
+// NewQueryServerImpl returns an implementation of the QueryServer interface
+func NewQueryServerImpl(keeper Keeper) types.QueryServer {
+	return &queryServer{Keeper: keeper}
+}
+
+var _ types.QueryServer = queryServer{}
+
+func (k queryServer) Posts(goCtx context.Context, req *types.QueryPostsRequest) (*types.QueryPostsResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	
+	var posts []types.Post
+	pageRes, err := query.CollectionPaginate(
+		ctx,
+		k.Keeper.Posts,
+		req.Pagination,
+		func(_ uint64, post types.Post) (types.Post, error) {
+			return post, nil
+		},
+	)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &types.QueryPostsResponse{
+		Posts:      posts,
+		Pagination: pageRes,
+	}, nil
+}
+
+func (k queryServer) Post(goCtx context.Context, req *types.QueryPostRequest) (*types.QueryPostResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	post, err := k.Keeper.GetPost(ctx, req.Id)
+	if err != nil {
+		if collections.IsNotFound(err) {
+			return nil, status.Errorf(codes.NotFound, "post with id %d not found", req.Id)
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &types.QueryPostResponse{
+		Post: post,
+	}, nil
+}
+
+func (k queryServer) Params(goCtx context.Context, req *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	params, err := k.Keeper.Params.Get(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &types.QueryParamsResponse{
+		Params: params,
+	}, nil
+}
+```
+
+### 7. Module Definition
+
+Define the module interface and lifecycle:
+
+```go
+// x/blog/module.go
+package blog
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/spf13/cobra"
+
+	"cosmossdk.io/core/appmodule"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+
+	"github.com/your-org/your-chain/x/blog/client/cli"
+	"github.com/your-org/your-chain/x/blog/keeper"
+	"github.com/your-org/your-chain/x/blog/simulation"
+	"github.com/your-org/your-chain/x/blog/types"
+)
+
+var (
+	_ module.AppModuleBasic      = AppModule{}
+	_ module.AppModuleSimulation = AppModule{}
+	_ appmodule.AppModule        = AppModule{}
+	_ appmodule.HasGenesis       = AppModule{}
+	_ appmodule.HasServices      = AppModule{}
+)
+
+// AppModuleBasic defines the basic application module used by the blog module.
+type AppModuleBasic struct {
+	cdc codec.Codec
+}
+
+func NewAppModuleBasic(cdc codec.Codec) AppModuleBasic {
+	return AppModuleBasic{cdc: cdc}
+}
+
+// Name returns the blog module's name.
+func (AppModuleBasic) Name() string {
+	return types.ModuleName
+}
+
+// RegisterLegacyAminoCodec registers the blog module's types on the LegacyAmino codec.
+func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+	types.RegisterLegacyAminoCodec(cdc)
+}
+
+// RegisterInterfaces registers the module's interface types
+func (a AppModuleBasic) RegisterInterfaces(reg codectypes.InterfaceRegistry) {
+	types.RegisterInterfaces(reg)
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the blog
+// module.
+func (AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
+	return cdc.MustMarshalJSON(types.DefaultGenesis())
+}
+
+// ValidateGenesis performs genesis state validation for the blog module.
+func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, config client.TxEncodingConfig, bz json.RawMessage) error {
+	var genState types.GenesisState
+	if err := cdc.UnmarshalJSON(bz, &genState); err != nil {
+		return fmt.Errorf("failed to unmarshal %s genesis state: %w", types.ModuleName, err)
+	}
+	return genState.Validate()
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the blog module.
+func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux) {
+	types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx))
+}
+
+// GetTxCmd returns the root tx command for the blog module.
+func (AppModuleBasic) GetTxCmd() *cobra.Command {
+	return cli.GetTxCmd()
+}
+
+// GetQueryCmd returns no root query command for the blog module.
+func (AppModuleBasic) GetQueryCmd() *cobra.Command {
+	return cli.GetQueryCmd(types.StoreKey)
+}
+
+// AppModule implements an application module for the blog module.
+type AppModule struct {
+	AppModuleBasic
+
+	keeper        keeper.Keeper
+	accountKeeper types.AccountKeeper
+	bankKeeper    types.BankKeeper
+}
+
+func NewAppModule(
+	cdc codec.Codec,
+	keeper keeper.Keeper,
+	accountKeeper types.AccountKeeper,
+	bankKeeper types.BankKeeper,
+) AppModule {
+	return AppModule{
+		AppModuleBasic: NewAppModuleBasic(cdc),
+		keeper:         keeper,
+		accountKeeper:  accountKeeper,
+		bankKeeper:     bankKeeper,
+	}
+}
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule) IsOnePerModuleType() {}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule) IsAppModule() {}
+
+// RegisterServices registers a gRPC query service to respond to the
+// module-specific gRPC queries.
+func (am AppModule) RegisterServices(cfg module.Configurator) {
+	types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+	types.RegisterQueryServer(cfg.QueryServer(), keeper.NewQueryServerImpl(am.keeper))
+}
+
+// RegisterInvariants registers the blog module invariants.
+func (am AppModule) RegisterInvariants(_ sdk.InvariantRegistry) {}
+
+// InitGenesis performs genesis initialization for the blog module. It returns
+// no validator updates.
+func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, gs json.RawMessage) []abci.ValidatorUpdate {
+	var genState types.GenesisState
+	cdc.MustUnmarshalJSON(gs, &genState)
+
+	InitGenesis(ctx, am.keeper, genState)
+
+	return []abci.ValidatorUpdate{}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the blog
+// module.
+func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.RawMessage {
+	genState := ExportGenesis(ctx, am.keeper)
+	return cdc.MustMarshalJSON(genState)
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule) ConsensusVersion() uint64 { return 1 }
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the blog module.
+func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
+	simulation.RandomizedGenState(simState)
+}
+
+// RegisterStoreDecoder registers a decoder for blog module's types
+func (am AppModule) RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+	sdr[types.StoreKey] = simulation.NewDecodeStore(am.cdc)
+}
+
+// WeightedOperations returns the all the blog module operations with their respective weights.
+func (am AppModule) WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+	return simulation.WeightedOperations(
+		simState.AppParams, simState.Cdc, am.keeper,
+		am.accountKeeper, am.bankKeeper,
+	)
+}
+```
+
+## Testing Your Module
+
+Create comprehensive tests for your module:
+
+<CodeGroup>
+  ```go x/blog/keeper/keeper_test.go
+  package keeper_test
+
+  import (
+  	"testing"
+  	"time"
+
+  	"github.com/stretchr/testify/suite"
+
+  	"cosmossdk.io/log"
+  	"cosmossdk.io/store"
+  	"cosmossdk.io/store/metrics"
+  	storetypes "cosmossdk.io/store/types"
+  	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+  	dbm "github.com/cosmos/cosmos-db"
+  	"github.com/cosmos/cosmos-sdk/codec"
+  	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+  	"github.com/cosmos/cosmos-sdk/runtime"
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+  	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+
+  	"github.com/your-org/your-chain/x/blog/keeper"
+  	"github.com/your-org/your-chain/x/blog/types"
+  )
+
+  type KeeperTestSuite struct {
+  	suite.Suite
+
+  	ctx    sdk.Context
+  	keeper keeper.Keeper
+  	cdc    codec.Codec
+  }
+
+  func (suite *KeeperTestSuite) SetupTest() {
+  	key := storetypes.NewKVStoreKey(types.StoreKey)
+  	storeService := runtime.NewKVStoreService(key)
+  	testCtx := testutil.DefaultContextWithDB(suite.T(), key, storetypes.NewTransientStoreKey("transient_test"))
+  	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: time.Now()})
+  	encCfg := moduletestutil.MakeTestEncodingConfig()
+
+  	suite.ctx = ctx
+  	suite.cdc = encCfg.Codec
+  	suite.keeper = keeper.NewKeeper(
+  		encCfg.Codec,
+  		storeService,
+  		log.NewNopLogger(),
+  		"cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn", // authority
+  	)
+
+  	// Initialize default params
+  	defaultParams := types.DefaultParams()
+  	err := suite.keeper.Params.Set(ctx, defaultParams)
+  	suite.Require().NoError(err)
+  }
+
+  func (suite *KeeperTestSuite) TestCreatePost() {
+  	ctx := suite.ctx
+  	author := "cosmos1abc123"
+  	title := "Test Post"
+  	content := "This is a test post content"
+
+  	// Create post
+  	id, err := suite.keeper.CreatePost(ctx, author, title, content)
+  	suite.Require().NoError(err)
+  	suite.Require().Equal(uint64(1), id)
+
+  	// Verify post was stored
+  	post, err := suite.keeper.GetPost(ctx, id)
+  	suite.Require().NoError(err)
+  	suite.Require().Equal(title, post.Title)
+  	suite.Require().Equal(content, post.Content)
+  	suite.Require().Equal(author, post.Author)
+  }
+
+  func (suite *KeeperTestSuite) TestUpdatePost() {
+  	ctx := suite.ctx
+  	author := "cosmos1abc123"
+  	originalTitle := "Original Title"
+  	originalContent := "Original content"
+  	newTitle := "Updated Title"
+  	newContent := "Updated content"
+
+  	// Create original post
+  	id, err := suite.keeper.CreatePost(ctx, author, originalTitle, originalContent)
+  	suite.Require().NoError(err)
+
+  	// Update post
+  	err = suite.keeper.UpdatePost(ctx, id, author, newTitle, newContent)
+  	suite.Require().NoError(err)
+
+  	// Verify update
+  	post, err := suite.keeper.GetPost(ctx, id)
+  	suite.Require().NoError(err)
+  	suite.Require().Equal(newTitle, post.Title)
+  	suite.Require().Equal(newContent, post.Content)
+  }
+
+  func (suite *KeeperTestSuite) TestDeletePost() {
+  	ctx := suite.ctx
+  	author := "cosmos1abc123"
+  	title := "Test Post"
+  	content := "This is a test post content"
+
+  	// Create post
+  	id, err := suite.keeper.CreatePost(ctx, author, title, content)
+  	suite.Require().NoError(err)
+
+  	// Delete post
+  	err = suite.keeper.DeletePost(ctx, id, author)
+  	suite.Require().NoError(err)
+
+  	// Verify post is deleted
+  	_, err = suite.keeper.GetPost(ctx, id)
+  	suite.Require().Error(err)
+  }
+
+  func (suite *KeeperTestSuite) TestUnauthorizedOperations() {
+  	ctx := suite.ctx
+  	author := "cosmos1abc123"
+  	otherUser := "cosmos1def456"
+  	title := "Test Post"
+  	content := "This is a test post content"
+
+  	// Create post
+  	id, err := suite.keeper.CreatePost(ctx, author, title, content)
+  	suite.Require().NoError(err)
+
+  	// Try to update as different user
+  	err = suite.keeper.UpdatePost(ctx, id, otherUser, "New Title", "New Content")
+  	suite.Require().Error(err)
+  	suite.Require().Equal(types.ErrUnauthorized, err)
+
+  	// Try to delete as different user
+  	err = suite.keeper.DeletePost(ctx, id, otherUser)
+  	suite.Require().Error(err)
+  	suite.Require().Equal(types.ErrUnauthorized, err)
+  }
+
+  func TestKeeperTestSuite(t *testing.T) {
+  	suite.Run(t, new(KeeperTestSuite))
+  }
+  ```
+
+  ```go x/blog/types/msgs_test.go
+  package types
+
+  import (
+  	"testing"
+
+  	"github.com/stretchr/testify/require"
+  	sdk "github.com/cosmos/cosmos-sdk/types"
+  )
+
+  func TestMsgCreatePost_ValidateBasic(t *testing.T) {
+  	tests := []struct {
+  		name    string
+  		msg     MsgCreatePost
+  		wantErr bool
+  	}{
+  		{
+  			name: "valid message",
+  			msg: MsgCreatePost{
+  				Author:  "cosmos1abc123def456ghi789",
+  				Title:   "Test Title",
+  				Content: "Test content",
+  			},
+  			wantErr: false,
+  		},
+  		{
+  			name: "invalid address",
+  			msg: MsgCreatePost{
+  				Author:  "invalid-address",
+  				Title:   "Test Title",
+  				Content: "Test content",
+  			},
+  			wantErr: true,
+  		},
+  		{
+  			name: "empty title",
+  			msg: MsgCreatePost{
+  				Author:  "cosmos1abc123def456ghi789",
+  				Title:   "",
+  				Content: "Test content",
+  			},
+  			wantErr: true,
+  		},
+  		{
+  			name: "empty content",
+  			msg: MsgCreatePost{
+  				Author:  "cosmos1abc123def456ghi789",
+  				Title:   "Test Title",
+  				Content: "",
+  			},
+  			wantErr: true,
+  		},
+  	}
+
+  	for _, tt := range tests {
+  		t.Run(tt.name, func(t *testing.T) {
+  			err := tt.msg.ValidateBasic()
+  			if tt.wantErr {
+  				require.Error(t, err)
+  			} else {
+  				require.NoError(t, err)
+  			}
+  		})
+  	}
+  }
+  ```
+</CodeGroup>
+
+## Integration with Your Application
+
+Add your module to your blockchain application:
+
+<CodeGroup>
+  ```go app/app.go
+  import (
+  	// ... other imports
+  	blogkeeper "github.com/your-org/your-chain/x/blog/keeper"
+  	blogmodule "github.com/your-org/your-chain/x/blog"
+  	blogtypes "github.com/your-org/your-chain/x/blog/types"
+  )
+
+  type App struct {
+  	*baseapp.BaseApp
+  	
+  	// ... other keepers
+  	BlogKeeper blogkeeper.Keeper
+  	
+  	// ... module manager
+  	ModuleManager      *module.Manager
+  	BasicModuleManager module.BasicManager
+  }
+
+  func NewApp(...) *App {
+  	// ... setup code
+  	
+  	keys := storetypes.NewKVStoreKeys(
+  		// ... other store keys
+  		blogtypes.StoreKey,
+  	)
+  	
+  	// ... keeper initialization
+  	
+  	app.BlogKeeper = blogkeeper.NewKeeper(
+  		appCodec,
+  		runtime.NewKVStoreService(keys[blogtypes.StoreKey]),
+  		logger,
+  		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+  	)
+  	
+  	// ... module manager setup
+  	
+  	app.ModuleManager = module.NewManager(
+  		// ... other modules
+  		blogmodule.NewAppModule(appCodec, app.BlogKeeper, app.AccountKeeper, app.BankKeeper),
+  	)
+  	
+  	// Set module order
+  	app.ModuleManager.SetOrderBeginBlockers(
+  		// ... other modules
+  		blogtypes.ModuleName,
+  	)
+  	
+  	app.ModuleManager.SetOrderEndBlockers(
+  		// ... other modules
+  		blogtypes.ModuleName,
+  	)
+  	
+  	genesisModuleOrder := []string{
+  		// ... other modules
+  		blogtypes.ModuleName,
+  	}
+  	app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
+  	app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
+  	
+  	// ... rest of setup
+  	return app
+  }
+  ```
+
+  ```go app/app_config.go
+  // If using app wiring (app v2)
+  import (
+  	blogmodulev1 "github.com/your-org/your-chain/api/blog/module/v1"
+  )
+
+  var AppConfig = depinject.Configs(
+  	appconfig.Compose(&appv1alpha1.Config{
+  		Modules: []*appv1alpha1.ModuleConfig{
+  			// ... other modules
+  			{
+  				Name: "blog",
+  				Config: appconfig.WrapAny(&blogmodulev1.Module{}),
+  			},
+  		},
+  	}),
+  	depinject.Supply(
+  		// ... other dependencies
+  	),
+  )
+  ```
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="State Management">
+    - Use collections for type-safe state access
+    - Implement proper key prefixes to avoid conflicts
+    - Use appropriate data structures (maps, sequences, items)
+    - Handle not found errors gracefully
+  </Accordion>
+  
+  <Accordion title="Validation">
+    - Validate all inputs in ValidateBasic methods
+    - Implement parameter validation in keeper methods
+    - Use appropriate error types for different failure modes
+    - Check authorization before state changes
+  </Accordion>
+  
+  <Accordion title="Events">
+    - Emit events for all significant state changes
+    - Include relevant attributes for indexing
+    - Use consistent event naming conventions
+    - Don't include sensitive information in events
+  </Accordion>
+  
+  <Accordion title="Testing">
+    - Write unit tests for all keeper methods
+    - Test edge cases and error conditions
+    - Use table-driven tests for multiple scenarios
+    - Mock dependencies for isolated testing
+  </Accordion>
+</AccordionGroup>
+
+## Advanced Topics
+
+<CardGroup cols={2}>
+  <Card title="Module Dependencies" href="/sdk/advanced/module-dependencies" icon="link">
+    Manage dependencies between modules
+  </Card>
+  <Card title="Upgrades" href="/sdk/advanced/upgrades" icon="arrow-up">
+    Handle module state migrations
+  </Card>
+  <Card title="Simulation" href="/sdk/advanced/simulation" icon="flask">
+    Test modules with randomized operations
+  </Card>
+  <Card title="Invariants" href="/sdk/advanced/invariants" icon="shield-check">
+    Implement state consistency checks
+  </Card>
+</CardGroup>

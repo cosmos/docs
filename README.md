@@ -10,6 +10,7 @@ This repository is the central documentation hub for the Cosmos Stack product.
    ```bash
    npx mint dev
    ```
+
 3. Open your browser to [http://localhost:3000](http://localhost:3000).
 
 ## Contributing
@@ -19,12 +20,14 @@ This repository is the central documentation hub for the Cosmos Stack product.
    ```bash
    git checkout -b feature/your-change
    ```
+
 2. Update files under `docs/`.
 3. Run:
 
    ```bash
    mint broken-links
    ```
+
 4. Commit and push:
 
    ```bash
@@ -32,6 +35,7 @@ This repository is the central documentation hub for the Cosmos Stack product.
    git commit -m "Describe your change"
    git push origin feature/your-change
    ```
+
 5. Open a pull request against `main`.
 
 ### Helpful Commands
@@ -42,7 +46,7 @@ This repository is the central documentation hub for the Cosmos Stack product.
   mint broken-links
   ```
 
-* **Rename file and update refs** \[*avoid broken links*]
+* **Rename file and update refs** \[*helps avoid broken links*]
 
   ```bash
   mint rename <oldName> <newName>
@@ -53,5 +57,22 @@ This repository is the central documentation hub for the Cosmos Stack product.
   ```bash
   mint openapi-check <file-or-url>
   ```
-  
-  ---
+
+This documentation is built using [Mintlify](https://mintlify.com/docs). Contributions can be made by [making a PR](https://github.com/cosmos/docs/compare) on the [Github repo](https://github.com/cosmos/docs).
+
+## Getting Started
+
+1. **Install dependencies:**
+
+   ```bash
+   npm install
+   ```
+
+2. **Run locally:**
+
+   ```bash
+   npx mint dev
+   ```
+
+3. **Open:**
+   Visit [http://localhost:3000](http://localhost:3000)

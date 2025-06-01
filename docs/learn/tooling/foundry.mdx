@@ -1,0 +1,685 @@
+---
+title: "Smart Contract Development with Foundry"
+description: "Build, test, and deploy Solidity contracts on Cosmos EVM using Foundry"
+---
+
+# Smart Contract Development with Foundry
+
+Foundry is a fast, portable toolkit for Ethereum application development written in Rust. It provides a powerful suite of tools for compiling, testing, and deploying smart contracts with excellent performance and developer experience.
+
+## Why Foundry?
+
+<CardGroup cols={2}>
+  <Card title="Performance" icon="gauge-high">
+    Written in Rust for maximum speed. Tests run significantly faster than JavaScript alternatives.
+  </Card>
+  <Card title="Native Solidity Testing" icon="vial">
+    Write tests in Solidity alongside your contracts. No context switching between languages.
+  </Card>
+  <Card title="Advanced Features" icon="wrench">
+    Built-in fuzzing, gas profiling, and debugging tools for comprehensive development.
+  </Card>
+  <Card title="Git Integration" icon="code-branch">
+    Dependencies managed as Git submodules. Version control for your entire dependency tree.
+  </Card>
+</CardGroup>
+
+## Installation
+
+Install Foundry using the official installer:
+
+<CodeGroup>
+  ```bash macOS/Linux
+  curl -L https://foundry.paradigm.xyz | bash
+  foundryup
+  ```
+
+  ```bash Windows (WSL)
+  curl -L https://foundry.paradigm.xyz | bash
+  foundryup
+  ```
+
+  ```bash Manual Build
+  # Clone and build from source
+  git clone https://github.com/foundry-rs/foundry
+  cd foundry
+  cargo build --release
+  ```
+</CodeGroup>
+
+Verify installation:
+
+```bash
+forge --version
+cast --version
+anvil --version
+```
+
+## Project Setup
+
+### Initialize New Project
+
+Create a new Foundry project with the standard directory structure:
+
+```bash
+forge init my-cosmos-dapp
+cd my-cosmos-dapp
+```
+
+This creates:
+
+```
+my-cosmos-dapp/
+├── foundry.toml          # Foundry configuration
+├── src/                  # Smart contracts
+│   └── Counter.sol
+├── test/                 # Test files
+│   └── Counter.t.sol
+├── script/               # Deployment scripts
+├── lib/                  # Dependencies
+└── README.md
+```
+
+### Configuration
+
+Configure Foundry for Cosmos EVM in `foundry.toml`:
+
+```toml
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.23"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+
+# Cosmos EVM network configurations
+[rpc_endpoints]
+cosmos_testnet = "https://evm-rpc-testnet.cosmos.network"
+cosmos_mainnet = "https://evm-rpc.cosmos.network"
+local = "http://localhost:8545"
+
+[etherscan]
+cosmos_testnet = { key = "${ETHERSCAN_API_KEY}", url = "https://explorer-testnet.cosmos.network/api" }
+cosmos_mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://explorer.cosmos.network/api" }
+```
+
+## Smart Contract Development
+
+### Basic Contract Structure
+
+Start with a simple contract to understand the development flow:
+
+<CodeGroup>
+  ```solidity src/CosmosToken.sol
+  // SPDX-License-Identifier: MIT
+  pragma solidity ^0.8.23;
+
+  import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+  import "@openzeppelin/contracts/access/Ownable.sol";
+
+  contract CosmosToken is ERC20, Ownable {
+      uint256 public constant MAX_SUPPLY = 1_000_000 * 10**18;
+      
+      constructor(
+          string memory name,
+          string memory symbol,
+          address initialOwner
+      ) ERC20(name, symbol) Ownable(initialOwner) {
+          _mint(initialOwner, 100_000 * 10**18); // Initial mint
+      }
+      
+      function mint(address to, uint256 amount) external onlyOwner {
+          require(totalSupply() + amount <= MAX_SUPPLY, "Exceeds max supply");
+          _mint(to, amount);
+      }
+      
+      function burn(uint256 amount) external {
+          _burn(msg.sender, amount);
+      }
+  }
+  ```
+
+  ```solidity src/CosmosStaking.sol
+  // Interface with Cosmos staking through precompiles
+  pragma solidity ^0.8.23;
+
+  interface IStaking {
+      function delegate(address validator, uint256 amount) external returns (bool);
+      function undelegate(address validator, uint256 amount) external returns (bool);
+      function getDelegation(address delegator, address validator) external view returns (uint256);
+  }
+
+  contract CosmosStaking {
+      IStaking constant STAKING = IStaking(0x0000000000000000000000000000000000000800);
+      
+      mapping(address => uint256) public userStakes;
+      
+      event Staked(address indexed user, address indexed validator, uint256 amount);
+      event Unstaked(address indexed user, address indexed validator, uint256 amount);
+      
+      function stakeTokens(address validator) external payable {
+          require(msg.value > 0, "Must stake positive amount");
+          
+          bool success = STAKING.delegate(validator, msg.value);
+          require(success, "Staking failed");
+          
+          userStakes[msg.sender] += msg.value;
+          emit Staked(msg.sender, validator, msg.value);
+      }
+      
+      function unstakeTokens(address validator, uint256 amount) external {
+          require(userStakes[msg.sender] >= amount, "Insufficient stake");
+          
+          bool success = STAKING.undelegate(validator, amount);
+          require(success, "Unstaking failed");
+          
+          userStakes[msg.sender] -= amount;
+          emit Unstaked(msg.sender, validator, amount);
+      }
+  }
+  ```
+</CodeGroup>
+
+### Installing Dependencies
+
+Add OpenZeppelin contracts for secure, audited implementations:
+
+```bash
+forge install OpenZeppelin/openzeppelin-contracts
+```
+
+Update `remappings.txt`:
+
+```
+@openzeppelin/=lib/openzeppelin-contracts/
+```
+
+## Testing
+
+### Writing Tests
+
+Foundry enables writing tests in Solidity, providing a familiar environment:
+
+<CodeGroup>
+  ```solidity test/CosmosToken.t.sol
+  // SPDX-License-Identifier: MIT
+  pragma solidity ^0.8.23;
+
+  import "forge-std/Test.sol";
+  import "../src/CosmosToken.sol";
+
+  contract CosmosTokenTest is Test {
+      CosmosToken public token;
+      address public owner;
+      address public user1;
+      address public user2;
+
+      function setUp() public {
+          owner = address(this);
+          user1 = address(0x1);
+          user2 = address(0x2);
+          
+          token = new CosmosToken("Cosmos Token", "COSMOS", owner);
+      }
+
+      function testInitialMint() public {
+          assertEq(token.totalSupply(), 100_000 * 10**18);
+          assertEq(token.balanceOf(owner), 100_000 * 10**18);
+      }
+
+      function testMint() public {
+          uint256 mintAmount = 10_000 * 10**18;
+          token.mint(user1, mintAmount);
+          
+          assertEq(token.balanceOf(user1), mintAmount);
+          assertEq(token.totalSupply(), 110_000 * 10**18);
+      }
+
+      function testMintExceedsMaxSupply() public {
+          uint256 excessiveAmount = 1_000_000 * 10**18; // Would exceed max supply
+          
+          vm.expectRevert("Exceeds max supply");
+          token.mint(user1, excessiveAmount);
+      }
+
+      function testBurn() public {
+          uint256 burnAmount = 1_000 * 10**18;
+          token.burn(burnAmount);
+          
+          assertEq(token.balanceOf(owner), 99_000 * 10**18);
+          assertEq(token.totalSupply(), 99_000 * 10**18);
+      }
+
+      function testTransfer() public {
+          uint256 transferAmount = 5_000 * 10**18;
+          token.transfer(user1, transferAmount);
+          
+          assertEq(token.balanceOf(owner), 95_000 * 10**18);
+          assertEq(token.balanceOf(user1), transferAmount);
+      }
+
+      function testUnauthorizedMint() public {
+          vm.prank(user1);
+          vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+          token.mint(user2, 1000 * 10**18);
+      }
+  }
+  ```
+
+  ```solidity test/Fuzz.t.sol
+  // Fuzzing tests for edge cases
+  pragma solidity ^0.8.23;
+
+  import "forge-std/Test.sol";
+  import "../src/CosmosToken.sol";
+
+  contract FuzzTest is Test {
+      CosmosToken public token;
+      address public owner;
+
+      function setUp() public {
+          owner = address(this);
+          token = new CosmosToken("Cosmos Token", "COSMOS", owner);
+      }
+
+      function testFuzzMint(address to, uint256 amount) public {
+          vm.assume(to != address(0));
+          vm.assume(amount <= 900_000 * 10**18); // Within max supply limits
+          
+          uint256 initialSupply = token.totalSupply();
+          token.mint(to, amount);
+          
+          assertEq(token.balanceOf(to), amount);
+          assertEq(token.totalSupply(), initialSupply + amount);
+      }
+
+      function testFuzzTransfer(address to, uint256 amount) public {
+          vm.assume(to != address(0) && to != owner);
+          vm.assume(amount <= token.balanceOf(owner));
+          
+          uint256 initialOwnerBalance = token.balanceOf(owner);
+          token.transfer(to, amount);
+          
+          assertEq(token.balanceOf(owner), initialOwnerBalance - amount);
+          assertEq(token.balanceOf(to), amount);
+      }
+  }
+  ```
+</CodeGroup>
+
+### Running Tests
+
+Execute tests with various options:
+
+```bash
+# Run all tests
+forge test
+
+# Run specific test
+forge test --match-test testMint
+
+# Run tests with gas reporting
+forge test --gas-report
+
+# Run with maximum verbosity
+forge test -vvvv
+
+# Run fuzzing with custom runs
+forge test --fuzz-runs 10000
+```
+
+### Advanced Testing Features
+
+<Tabs>
+  <Tab title="Fuzzing">
+    Foundry automatically generates random inputs for your test functions:
+    
+    ```solidity
+    function testFuzzDeposit(uint256 amount) public {
+        vm.assume(amount > 0 && amount <= 1e18);
+        // Test with random amounts
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Cheatcodes">
+    Use vm cheatcodes for advanced test scenarios:
+    
+    ```solidity
+    function testTimeTravel() public {
+        vm.warp(block.timestamp + 365 days);
+        // Test after time passage
+    }
+    
+    function testPrank() public {
+        vm.prank(address(0x123));
+        // Execute next call as different address
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Forking">
+    Test against live network state:
+    
+    ```bash
+    forge test --fork-url https://evm-rpc.cosmos.network
+    ```
+  </Tab>
+</Tabs>
+
+## Deployment
+
+### Deployment Scripts
+
+Create reusable deployment scripts:
+
+<CodeGroup>
+  ```solidity script/DeployToken.s.sol
+  // SPDX-License-Identifier: MIT
+  pragma solidity ^0.8.23;
+
+  import "forge-std/Script.sol";
+  import "../src/CosmosToken.sol";
+
+  contract DeployToken is Script {
+      function run() external {
+          uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+          vm.startBroadcast(deployerPrivateKey);
+
+          CosmosToken token = new CosmosToken(
+              "Cosmos Token",
+              "COSMOS",
+              vm.addr(deployerPrivateKey) // Deployer as initial owner
+          );
+
+          console.log("Token deployed at:", address(token));
+          console.log("Initial supply:", token.totalSupply());
+
+          vm.stopBroadcast();
+      }
+  }
+  ```
+
+  ```bash deploy.sh
+  #!/bin/bash
+
+  # Deploy to Cosmos testnet
+  forge script script/DeployToken.s.sol:DeployToken \
+    --rpc-url $COSMOS_TESTNET_RPC \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    --verify
+
+  # Deploy to Cosmos mainnet (use with caution)
+  # forge script script/DeployToken.s.sol:DeployToken \
+  #   --rpc-url $COSMOS_MAINNET_RPC \
+  #   --private-key $PRIVATE_KEY \
+  #   --broadcast \
+  #   --verify
+  ```
+</CodeGroup>
+
+### Environment Variables
+
+Set up your environment for secure deployment:
+
+```bash
+# .env file (never commit this)
+PRIVATE_KEY=0x...
+COSMOS_TESTNET_RPC=https://evm-rpc-testnet.cosmos.network
+COSMOS_MAINNET_RPC=https://evm-rpc.cosmos.network
+ETHERSCAN_API_KEY=your_api_key
+```
+
+### Deploy Commands
+
+<CodeGroup>
+  ```bash Testnet Deployment
+  # Load environment variables
+  source .env
+
+  # Deploy to testnet
+  forge script script/DeployToken.s.sol:DeployToken \
+    --rpc-url $COSMOS_TESTNET_RPC \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    --verify \
+    --etherscan-api-key $ETHERSCAN_API_KEY
+  ```
+
+  ```bash Direct Create
+  # Quick deployment for testing
+  forge create \
+    --rpc-url https://evm-rpc-testnet.cosmos.network \
+    --private-key $PRIVATE_KEY \
+    src/CosmosToken.sol:CosmosToken \
+    --constructor-args "Test Token" "TEST" "0x..."
+  ```
+</CodeGroup>
+
+## Contract Interaction
+
+### Using Cast
+
+Interact with deployed contracts using Foundry's cast tool:
+
+<CodeGroup>
+  ```bash Reading Data
+  # Get token name
+  cast call $TOKEN_ADDRESS "name()" --rpc-url $RPC_URL
+
+  # Get balance of address
+  cast call $TOKEN_ADDRESS "balanceOf(address)" $USER_ADDRESS --rpc-url $RPC_URL
+
+  # Get total supply
+  cast call $TOKEN_ADDRESS "totalSupply()" --rpc-url $RPC_URL
+  ```
+
+  ```bash Sending Transactions
+  # Mint tokens (owner only)
+  cast send $TOKEN_ADDRESS \
+    "mint(address,uint256)" \
+    $RECIPIENT_ADDRESS \
+    1000000000000000000 \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+  # Transfer tokens
+  cast send $TOKEN_ADDRESS \
+    "transfer(address,uint256)" \
+    $RECIPIENT_ADDRESS \
+    500000000000000000 \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+  ```
+</CodeGroup>
+
+## Advanced Features
+
+### Gas Optimization
+
+Profile and optimize gas usage:
+
+```bash
+# Generate gas report
+forge test --gas-report
+
+# Snapshot gas usage for regression testing
+forge snapshot
+
+# Compare snapshots
+forge snapshot --diff .gas-snapshot
+```
+
+### Debugging
+
+Debug failed transactions:
+
+```bash
+# Debug a specific transaction
+forge debug --transaction $TX_HASH --rpc-url $RPC_URL
+
+# Run debugger during testing
+forge test --debug testFunction -vvvv
+```
+
+### Custom Cheatcodes
+
+Create custom testing utilities:
+
+```solidity
+// test/utils/TestUtils.sol
+pragma solidity ^0.8.23;
+
+import "forge-std/Test.sol";
+
+contract TestUtils is Test {
+    function dealTokens(address token, address to, uint256 amount) internal {
+        // Mock token balance for testing
+        vm.store(
+            token,
+            keccak256(abi.encode(to, 0)), // Assuming standard mapping slot
+            bytes32(amount)
+        );
+    }
+    
+    function skipTime(uint256 duration) internal {
+        vm.warp(block.timestamp + duration);
+    }
+}
+```
+
+## Integration with Cosmos Features
+
+### Precompiled Contracts
+
+Access Cosmos SDK functionality:
+
+```solidity
+// Interacting with Cosmos staking
+interface IStaking {
+    function delegate(address validator, uint256 amount) external returns (bool);
+    function getDelegationRewards(address delegator, address validator) external view returns (uint256);
+}
+
+contract CosmosIntegration {
+    IStaking constant STAKING = IStaking(0x0000000000000000000000000000000000000800);
+    
+    function stakeOnCosmos(address validator) external payable {
+        require(STAKING.delegate(validator, msg.value), "Staking failed");
+    }
+}
+```
+
+### Testing Precompiles
+
+Mock precompiled contracts for testing:
+
+```solidity
+contract MockStaking {
+    mapping(address => mapping(address => uint256)) public delegations;
+    
+    function delegate(address validator, uint256 amount) external returns (bool) {
+        delegations[msg.sender][validator] += amount;
+        return true;
+    }
+}
+
+contract StakingTest is Test {
+    function setUp() public {
+        // Deploy mock and override precompile address
+        MockStaking mock = new MockStaking();
+        vm.etch(address(0x0000000000000000000000000000000000000800), address(mock).code);
+    }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Project Structure">
+    Organize your project for maintainability:
+    
+    - Keep contracts in `src/` with logical subdirectories
+    - Mirror test structure to match source files
+    - Use descriptive names for test functions
+    - Separate unit tests from integration tests
+  </Accordion>
+  
+  <Accordion title="Testing Strategy">
+    Comprehensive testing approach:
+    
+    - Test happy paths and edge cases
+    - Use fuzzing for property-based testing
+    - Mock external dependencies
+    - Test with realistic gas limits
+  </Accordion>
+  
+  <Accordion title="Security Considerations">
+    Security-first development:
+    
+    - Use latest OpenZeppelin contracts
+    - Run static analysis tools
+    - Test with maximum coverage
+    - Consider formal verification for critical code
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+Common issues and solutions:
+
+<AccordionGroup>
+  <Accordion title="Compilation Errors">
+    **Issue**: Solidity version mismatches
+    
+    **Solution**: Ensure consistent Solidity versions in `foundry.toml` and contract pragmas
+    
+    ```toml
+    [profile.default]
+    solc_version = "0.8.23"
+    ```
+  </Accordion>
+  
+  <Accordion title="Test Failures">
+    **Issue**: Tests fail due to gas estimation
+    
+    **Solution**: Increase gas limits or use `--gas-limit` flag
+    
+    ```bash
+    forge test --gas-limit 30000000
+    ```
+  </Accordion>
+  
+  <Accordion title="Deployment Issues">
+    **Issue**: Transaction reverts during deployment
+    
+    **Solution**: Check constructor parameters and sufficient gas
+    
+    ```bash
+    # Simulate deployment first
+    forge script script/Deploy.s.sol --rpc-url $RPC_URL
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Continue your development journey:
+
+<CardGroup cols={2}>
+  <Card title="Frontend Integration" href="/evm/frontend/ethers-js" icon="code">
+    Connect your contracts to web applications
+  </Card>
+  <Card title="Advanced Patterns" href="/evm/advanced/security-considerations" icon="shield">
+    Learn security best practices and patterns
+  </Card>
+  <Card title="Mainnet Deployment" href="/evm/deployment/mainnet" icon="rocket">
+    Deploy to production with confidence
+  </Card>
+  <Card title="Contract Verification" href="/evm/deployment/verification" icon="check">
+    Verify contracts on block explorers
+  </Card>
+</CardGroup>
