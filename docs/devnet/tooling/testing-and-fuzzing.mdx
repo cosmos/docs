@@ -1,27 +1,49 @@
 ---
-title: "Smart Contract Testing & Fuzzing"
-description: "Key frameworks, libraries, and practices for writing robust, secure smart contracts on Cosmos EVM."
+title: "Popular Libraries for Development, Testing & Fuzzing"
+description: "Key frameworks, libraries, and practices for frontend development, wallet integration, smart contracts, testing and more."
+mode: "wide"
 ---
 
+
+## Common Libraries & Tooling
+
+These libraries are used across the stack to write tests, simulate transactions, connect wallets, and interface with the blockchain in both scripting and frontend contexts.
+
+| Library       | Purpose                                                                                  | Key Features                                                                                          |
+|---------------|------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| **Ethers.js** | Contract interaction, transaction signing, provider management in JS/TS environments     | Provides `Contract`, `Provider`, `Wallet`, and `Interface` abstractions. Deep Hardhat integration. ABI coder, calldata utilities, and ENS support. |
+| **Viem**      | Modular TypeScript-first library for RPC, contract access, encoding, and data formatting | Tree-shakeable. Supports batching, client-side caching, EIP-1559 fees, multicalls, typed reads/writes. Used by Wagmi. |
+| **Wagmi**     | React hooks for wallet connection, chain state, and contract calls in frontend apps      | Built on Viem. Includes `useAccount`, `useConnect`, `useContractRead`, and event subscriptions. Enables seamless integration with wallet modals. |
+| **Web3.js**   | Legacy Ethereum contract and RPC library                                                  | One of the earliest libraries. Now largely unmaintained. Lacks EIP-1559 support and modern modularity. |
+
+> Ethers and Viem serve similar purposes, but Viem is optimized for frontend apps. Wagmi builds on Viem. Web3.js is no longer recommended for new projects.
+
+---
+
+:::info
 Smart-contract quality hinges on **unit tests, property-based fuzzing, code-coverage checks, and static analysis**.  
 The tools below cover each layer.
+:::
 
-## 1 — Core Testing Frameworks
+
+## Testing Frameworks
 
 ### Foundry — Solidity-Native
 
 - Tests written directly in Solidity.  
 - Very fast runner (`forge test`) and rich cheatcodes for state manipulation.  
-- Built-in, configurable fuzzing.
+- Built-in, configurable fuzzing (`forge test --fuzz-runs=N`).  
+- Includes tools like `forge script`, `forge coverage`, and `forge snapshot`.
 
 ### Hardhat — JavaScript / TypeScript
 
-- Mocha + Chai test environment.  
-- Extensive plug-in ecosystem; integrates with the broader JS tool-chain.
+- Mocha + Chai test runner for JS/TS-based tests.  
+- Flexible task system (`hardhat.config.js`), plugin support, and network forking.  
+- Integrates with Ethers.js and Solidity tooling for deployments, gas tracking, and test orchestration.
 
-## 2 — Fuzz (Property-Based) Testing
+## Fuzz (Property-Based) Testing
 
-Random inputs are generated until a property fails.
+Fuzz testing generates random inputs to find edge cases that violate expected properties.
 
 ```solidity
 // test/MyContract.t.sol  (Foundry)
@@ -30,18 +52,28 @@ function test_myFunction_fuzz(uint256 amount) public {
     myContract.myFunction(amount);
     assertEq(myContract.someState(), expectedValue);
 }
-````
+```
 
-* **Foundry**: fuzzing enabled by default (`forge test`).
-* **Echidna**: standalone fuzzer for advanced campaigns (`echidna-test .`).
+| Tool        | Notes                                                               |
+| ----------- | ------------------------------------------------------------------- |
+| **Foundry** | Built-in fuzzing; enabled by default when running `forge test`.     |
+| **Echidna** | External, property-based fuzzer. Supports invariants and campaigns. |
 
-## 3 — Supplementary Tools
+Use fuzzing to test against invariants such as:
 
-| Tool                          | Purpose                                   | Typical Command                           |
-| ----------------------------- | ----------------------------------------- | ----------------------------------------- |
-| **OpenZeppelin Test Helpers** | Time travel, revert checks (Hardhat)      | see example ↓                             |
-| **solidity-coverage**         | Identify untested code paths              | `npx hardhat coverage` · `forge coverage` |
-| **Slither**                   | Static-analysis / vulnerability detectors | `slither .`                               |
+* balance never exceeds total supply
+* no overflow or underflow under bounded inputs
+* access control is consistently enforced
+
+## Supplementary Tools
+
+Tools that enhance test coverage, assert correctness, or catch common vulnerabilities.
+
+| Tool                          | Purpose                                 | Typical Command                           |
+| ----------------------------- | --------------------------------------- | ----------------------------------------- |
+| **OpenZeppelin Test Helpers** | Time travel, event assertions, reverts  | JS/TS only. Works with Hardhat + Mocha.   |
+| **solidity-coverage**         | Reports untested branches in Solidity   | `npx hardhat coverage` · `forge coverage` |
+| **Slither**                   | Static analysis for known vuln patterns | `slither .`                               |
 
 ### Example — OpenZeppelin Test Helpers
 
@@ -56,11 +88,3 @@ await expectRevert(contract.someFunction(), "Ownable: caller is not the owner");
 ```
 
 ---
-
-**Next steps**
-
-1. Pick **one** primary framework (Foundry *or* Hardhat).
-2. Add fuzz tests for critical invariants.
-3. Run coverage and Slither in CI to catch gaps and vulnerabilities early.
-
-```
