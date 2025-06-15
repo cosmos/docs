@@ -1,0 +1,266 @@
+---
+title: 'Getting Started'
+description: 'Connect with the chain / Set up your node'
+--------------------------------------------------------
+
+# Connect with the chain
+
+Most development work can be done without the overhead of running a full node.
+Below is a brief overview of querying data and broadcasting transactions using public endpoints and lightweight tooling.
+
+## 1. Web Wallets
+
+> **Recommended for real-world, E2E testing**
+
+1. Install [Keplr](https://www.keplr.app/), [Metamask](https://metamask.io/) or [Rabby](https://rabby.io/) (Chrome/Mobile).
+2. Add a custom network:
+    - Chain ID: `4321`
+    - RPC URL: `https://devnet-1-rpc.ib.skip.build`
+    - Chain Name: `Skip Devnet`
+    - Currency Symbol: `ATOM`
+    - Currency Decimals: `6`
+3. Use the UI to send tokens, view balances, and interact with dApps.
+
+## 2. CLI Queries via Public RPC
+
+> **Great for one-off tasks or testing that do not require a full node**
+
+### Download or build the chain binary
+
+```bash lines expandable
+# Adjust version as needed
+VERSION=v9.0.0
+curl -LO "https://github.com/cosmos/gaia/releases/download/${VERSION}/gaiad_${VERSION}_linux_amd64.tar.gz"
+tar -xzf gaiad_${VERSION}_linux_amd64.tar.gz
+test -f gaiad && chmod +x gaiad
+sudo mv gaiad /usr/local/bin/
+```
+
+### Query examples
+
+```bash lines expandable
+# Query account balance
+gaiad q bank balances cosmos1... --node https://devnet-1-rpc.ib.skip.build:443
+
+# List staking validators
+gaiad q staking validators --node https://devnet-1-rpc.ib.skip.build:443
+```
+
+### Broadcast a transaction
+
+```bash lines expandable
+# Create and sign a simple send
+gaiad tx bank send cosmos1... cosmos1... 1000uatom \
+  --node https://devnet-1-rpc.ib.skip.build:443 \
+  --chain-id 4321 \
+  --gas auto --fees 500uatom \
+  --yes
+```
+
+### Generate Transaction Messages
+
+You can use the `--generate-only` flag to create transaction messages without broadcasting them. This can be useful for finding the correct syntax and creating reusable transaction templates:
+
+| Field (0x02)          | Value         |
+| --------------------- | ------------- |
+| **chainId**           | `0x01`        |
+| **nonce**             | `0x`          |
+| **maxPrioFeePerGas**  | `0x01`        |
+| **maxFeePerGas**      | `0x01`        |
+| **gasLimit**          | `0x5208`      |
+| **to / value / data** | same as above |
+| **accessList**        | `[]`          |
+| **yParity (v)**       | `0x0`         |
+| **r**, **s**          | `0x0`, `0x0`  |
+
+`evmd tx evm raw 0x02e20180010182520894de0b295669a9fd93d5f28d9ec85e40f4cb697bae8080c0808080 --generate-only | jq`
+
+```json title="Generated Transaction" lines expandable
+{
+  "body": {
+    "messages": [
+      {
+        "@type": "/cosmos.evm.vm.v1.MsgEthereumTx",
+        "data": {
+          "@type": "/cosmos.evm.vm.v1.DynamicFeeTx",
+          "chain_id": "1",
+          "nonce": "0",
+          "gas_tip_cap": "1",
+          "gas_fee_cap": "1",
+          "gas": "21000",
+          "to": "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+          "value": "0",
+          "data": null,
+          "accesses": [],
+          "v": null,
+          "r": null,
+          "s": null
+        },
+        "size": 0,
+        "hash": "0x10c35e9f591e43bac6a9d01164a62e141d16ca715653ac818761c79e3eecafbc",
+        "from": ""
+      }
+    ],
+    "memo": "",
+    "timeout_height": "0",
+    "unordered": false,
+    "timeout_timestamp": null,
+    "extension_options": [
+      {
+        "@type": "/cosmos.evm.vm.v1.ExtensionOptionsEthereumTx"
+      }
+    ],
+    "non_critical_extension_options": []
+  },
+  "auth_info": {
+    "signer_infos": [],
+    "fee": {
+      "amount": [
+        {
+          "denom": "atest",
+          "amount": "21000"
+        }
+      ],
+      "gas_limit": "21000",
+      "payer": "",
+      "granter": ""
+    },
+    "tip": null
+  },
+  "signatures": []
+}
+```
+
+## 3. REST (LCD) Endpoints
+
+> **Use for HTTP-based integrations**
+
+Cosmos SDK chains expose a REST API at port `1317` by default. For the devnet:
+
+`https://devnet-1-lcd.ib.skip.build`
+
+Basic endpoints:
+
+* `GET /cosmos/bank/v1beta1/balances/{address}`
+* `POST /cosmos/tx/v1beta1/txs` (broadcast)
+
+Refer to the [OpenAPI spec](https://api.cosmos.network/) for details.
+
+## 4. EVM RPC Endpoints
+
+> **For Ethereum-compatible tooling**
+
+Connect your Ethereum tools to the EVM module:
+
+```
+RPC:       https://devnet-1-evmrpc.ib.skip.build
+WebSocket: wss://devnet-1-evmws.ib.skip.build
+Chain ID:  4321 (0x10e1)
+```
+
+Use with MetaMask, Hardhat, Foundry, or any Ethereum-compatible client.
+
+# Run a full node
+
+For validators, developers, or users who need full control and don't want to rely on public endpoints, you can run your own synced node.
+
+---
+
+## Join the Devnet
+
+Running a full node gives you complete control, better performance, and eliminates dependency on public infrastructure.
+
+### Prerequisites
+
+- Minimum hardware requirements:
+  - 4+ CPU cores
+  - 8GB+ RAM
+  - 500GB+ SSD storage
+  - Reliable internet connection
+
+### Quick Setup
+
+1. **Install dependencies** (Ubuntu/Debian):
+```bash lines expandable
+sudo apt update && sudo apt install -y \
+  build-essential git curl wget jq lz4 liblz4-tool \
+  protobuf-compiler pkg-config unzip
+```
+
+2. **Install Go 1.22+**:
+```bash lines expandable
+GO_VERSION=1.22.4
+curl -LO "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+sudo rm -rf /usr/local/go
+tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz"
+echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+3. **Build the binary**:
+```bash lines expandable
+git clone https://github.com/cosmos/evm.git
+cd evm
+make install  # installs 'evmd'
+```
+
+4. **Initialize your node**:
+`evmd init "your-node-name" --chain-id 4321`
+
+5. **Get the genesis file**:
+`curl -s https://devnet-1-rpc.ib.skip.build/genesis | jq .result.genesis > ~/.evmd/config/genesis.json`
+
+6. **Configure peers** (add to `~/.evmd/config/config.toml`):
+```toml lines expandable
+persistent_peers = "peer1@ip1:26656,peer2@ip2:26656"
+seeds = "seed1@ip1:26656,seed2@ip2:26656"
+```
+
+7. **Start syncing**:
+`evmd start`
+
+### State Sync (Faster Alternative)
+
+Instead of syncing from genesis, use state sync for faster setup:
+
+```bash title="config.toml" lines expandable
+# Configure state sync in config.toml
+[statesync]
+enable = true
+rpc_servers = "https://devnet-1-rpc.ib.skip.build:443,https://devnet-1-rpc.ib.skip.build:443"
+trust_height = 1000000
+trust_hash = "TRUST_HASH_HERE"
+```
+
+### Endpoints After Setup
+
+Once your node is running, it will expose:
+
+```
+Cosmos RPC:     http://localhost:26657
+Cosmos gRPC:    http://localhost:9090
+Cosmos REST:    http://localhost:1317
+EVM RPC:        http://localhost:8545
+EVM WebSocket:  ws://localhost:8546
+```
+
+### Monitoring
+
+Monitor your node's sync status:
+
+```bash lines expandable
+# Check if syncing
+evmd status | jq .SyncInfo.catching_up
+
+# View latest block
+evmd status | jq .SyncInfo.latest_block_height
+```
+
+### Next Steps
+
+- **Validator Setup**: If you want to become a validator, see the [validator guide](/docs/devnet/validators)
+- **Configuration**: Tune your node for performance and security
+- **Monitoring**: Set up alerting and metrics collection
+- **Backup**: Implement backup strategies for your validator key
+
+Your node will now be fully synced with the devnet and can be used for any purpose - from development to validation to serving your own applications.

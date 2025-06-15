@@ -1,10 +1,8 @@
 ---
 title: "Bech32"
 description: "Address format conversion between Ethereum hex addresses and Cosmos bech32 addresses"
-icon: "arrows-rotate"
+icon: "binary"
 ---
-
-# Bech32 Precompile
 
 **Address**: `0x0000000000000000000000000000000000000400`
 
@@ -12,88 +10,139 @@ icon: "arrows-rotate"
 
 The Bech32 precompile provides address format conversion functionality between Ethereum hex addresses and Cosmos bech32 addresses.
 
-## Functions
+## Overview
 
-### hexToBech32
+The Bech32 precompile exposes simple conversion helpers so Solidity contracts can:
+1. Convert an Ethereum `address` to a Bech32 string with a desired `prefix` (e.g. `cosmos`).
+2. Convert any Bech32 address string back into an EVM `address`.
+
+It is a thin wrapper around the Cosmos address‐conversion library and lives at **`0x0000000000000000000000000000000000000400`**.
+
+## Primary Methods
+
+### `hexToBech32`
 
 **Signature**: `hexToBech32(address addr, string memory prefix) → string memory`
 
 **Description**: Converts an Ethereum hex address to Cosmos bech32 format using the specified prefix.
 
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// Connect to the network
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+
+// Precompile address and ABI
+const precompileAddress = "0x0000000000000000000000000000000000000400";
+const precompileAbi = [
+  "function hexToBech32(address addr, string memory prefix) view returns (string memory)"
+];
+
+// Create a contract instance
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const ethAddress = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"; // Placeholder
+const prefix = "cosmos";
+
+async function convertToBech32() {
+  try {
+    const bech32Address = await contract.hexToBech32(ethAddress, prefix);
+    console.log("Bech32 Address:", bech32Address);
+  } catch (error) {
+    console.error("Error converting to Bech32:", error);
+  }
+}
+
+convertToBech32();
+```
+```bash cURL expandable lines
+# Replace <RPC_URL> with your actual RPC endpoint.
+# The address and prefix are placeholders.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000400",
+            "data": "0x43f92512000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa9604500000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000006636f736d6f730000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
 **Parameters**:
 - `addr` (address): The Ethereum hex address to convert
-- `prefix` (string): The bech32 prefix to use (e.g., "cosmos", "evmos", "osmo")
+- `prefix` (string): The bech32 prefix to use (e.g., "cosmos")
 
 **Returns**: String containing the bech32 formatted address
 
-### bech32ToHex
+### `bech32ToHex`
 
 **Signature**: `bech32ToHex(string memory bech32Address) → address`
 
 **Description**: Converts a Cosmos bech32 address to Ethereum hex format.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// Connect to the network
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+
+// Precompile address and ABI
+const precompileAddress = "0x0000000000000000000000000000000000000400";
+const precompileAbi = [
+  "function bech32ToHex(string memory bech32Address) view returns (address)"
+];
+
+// Create a contract instance
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Input
+const bech32Address = "cosmos1qql8ag4cluz6r4dz22pdenrmwliufqss8c9j0e"; // Placeholder
+
+async function convertToHex() {
+  try {
+    const hexAddress = await contract.bech32ToHex(bech32Address);
+    console.log("Hex Address:", hexAddress);
+  } catch (error) {
+    console.error("Error converting to Hex:", error);
+  }
+}
+
+convertToHex();
+```
+```bash cURL expandable lines
+# Replace <RPC_URL> with your actual RPC endpoint.
+# The address is a placeholder.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000400",
+            "data": "0x644263350000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002a636f736d6f733171716c38616734636c757a367234647a32327064656e726d776c6975667173733863396a306500000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
 
 **Parameters**:
 - `bech32Address` (string): The bech32 formatted address to convert
 
 **Returns**: Ethereum address in hex format
 
-<details>
-<summary>ABI</summary>
+## Full Interface & ABI
 
-```json
-[
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "bech32Address",
-        "type": "string"
-      }
-    ],
-    "name": "bech32ToHex",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "addr",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "addr",
-        "type": "address"
-      },
-      {
-        "internalType": "string",
-        "name": "prefix",
-        "type": "string"
-      }
-    ],
-    "name": "hexToBech32",
-    "outputs": [
-      {
-        "internalType": "string",
-        "name": "bech32Address",
-        "type": "string"
-      }
-    ],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-]
-```
-
-</details>
-
-<details>
-<summary>Solidity Interface</summary>
-
-```solidity
+```solidity title="Bech32 Solidity Interface" lines
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity >=0.8.17;
 
@@ -103,28 +152,45 @@ address constant Bech32_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000
 /// @dev The Bech32I contract's instance.
 Bech32I constant BECH32_CONTRACT = Bech32I(Bech32_PRECOMPILE_ADDRESS);
 
-/// @author Evmos Team
-/// @title Bech32 Precompiled Contract
-/// @dev The interface through which solidity contracts can convert addresses from
-/// hex to bech32 and vice versa.
-/// @custom:address 0x0000000000000000000000000000000000000400
 interface Bech32I {
-    /// @dev Defines a method for converting a hex formatted address to bech32.
-    /// @param addr The hex address to be converted.
-    /// @param prefix The human readable prefix (HRP) of the bech32 address.
-    /// @return bech32Address The address in bech32 format.
-    function hexToBech32(
-        address addr,
-        string memory prefix
-    ) external returns (string memory bech32Address);
-
-    /// @dev Defines a method for converting a bech32 formatted address to hex.
-    /// @param bech32Address The bech32 address to be converted.
-    /// @return addr The address in hex format.
-    function bech32ToHex(
-        string memory bech32Address
-    ) external returns (address addr);
+    function hexToBech32(address addr,string memory prefix) external returns (string memory bech32Address);
+    function bech32ToHex(string memory bech32Address) external returns (address addr);
 }
 ```
 
-</details>
+```json title="Bech32 ABI" lines expandable
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "Bech32I",
+  "sourceName": "solidity/precompiles/bech32/Bech32I.sol",
+  "abi": [
+    {
+      "inputs": [
+        { "internalType": "string", "name": "bech32Address", "type": "string" }
+      ],
+      "name": "bech32ToHex",
+      "outputs": [
+        { "internalType": "address", "name": "addr", "type": "address" }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "addr", "type": "address" },
+        { "internalType": "string", "name": "prefix", "type": "string" }
+      ],
+      "name": "hexToBech32",
+      "outputs": [
+        { "internalType": "string", "name": "bech32Address", "type": "string" }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
+```

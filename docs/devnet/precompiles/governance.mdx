@@ -1,420 +1,431 @@
 ---
-title: "Gov"
+title: "Governance"
 description: "On-chain governance participation through proposal submission, voting, and governance query operations"
-icon: "note" 
+icon: "scale"
 ---
 
-# Governance Precompile
+## Overview
 
-**Address**: `0x0000000000000000000000000000000000000805`
+The Governance precompile provides comprehensive access to the Cosmos SDK's `x/gov` module, enabling smart contracts to participate in on-chain governance. It allows for submitting and canceling proposals, depositing funds, and casting votes. Additionally, it offers extensive query capabilities to retrieve information about proposals, votes, deposits, and overall governance parameters.
 
+**Precompile Address**: `0x0000000000000000000000000000000000000805`
 **Related Module**: [x/gov](https://docs.cosmos.network/main/modules/gov)
 
-The Governance precompile provides comprehensive access to Cosmos SDK governance functionality, enabling smart contracts to participate in on-chain governance through proposal submission, voting, and governance state queries.
+## Transaction Methods
 
-## Functions
+### `submitProposal`
+Submits a new governance proposal.
 
-### submitProposal
+### `vote`
+Casts a single vote on an active proposal.
 
-**Signature**: `submitProposal(address, bytes, Coin[]) → uint64`
+### `voteWeighted`
+Casts a weighted vote, splitting voting power across multiple options.
 
-**Description**: Submits a new governance proposal to the network with the specified parameters and optional initial deposit.
+### `deposit`
+Adds funds to a proposal's deposit during the deposit period.
 
-**Parameters**:
-- `proposer` (address): Address submitting the proposal (must be msg.sender)
-- `jsonProposal` (bytes): JSON-encoded proposal data defining the actions to execute
-- `deposit` (Coin[]): Array of coins to deposit with the proposal
+### `cancelProposal`
+Cancels a proposal that is still in its deposit period.
 
-**Returns**: Unique proposal ID assigned to the new proposal
+## Query Methods
 
-### vote
+### `getProposal`
+Retrieves detailed information about a specific proposal.
 
-**Signature**: `vote(address, uint64, VoteOption, string) → bool`
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
 
-**Description**: Casts a single vote on an active proposal with the voter's entire voting power.
+// ABI for the precompile, including the complex return struct
+const precompileAbi = [
+  "function getProposal(uint64 proposalId) view returns (tuple(uint64 id, address proposer, string metadata, uint64 submit_time, uint64 voting_start_time, uint64 voting_end_time, uint8 status, tuple(string yes_count, string abstain_count, string no_count, string no_with_veto_count) final_tally_result, tuple(string denom, uint256 amount)[] total_deposit, string[] messages) proposal)"
+];
 
-**Parameters**:
-- `voter` (address): Address casting the vote (must be msg.sender)
-- `proposalId` (uint64): ID of the proposal to vote on
-- `option` (VoteOption): Vote choice (Yes, No, Abstain, or NoWithVeto)
-- `metadata` (string): Optional metadata explaining the vote rationale
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
 
-**Returns**: Boolean indicating successful vote submission
+// Input: The ID of the proposal to query
+const proposalId = 1;
 
-### voteWeighted
-
-**Signature**: `voteWeighted(address, uint64, WeightedVoteOption[], string) → bool`
-
-**Description**: Casts a weighted vote that splits voting power across multiple options with specified weights.
-
-**Parameters**:
-- `voter` (address): Address casting the vote (must be msg.sender)
-- `proposalId` (uint64): ID of the proposal to vote on
-- `options` (WeightedVoteOption[]): Array of vote options with their respective weights
-- `metadata` (string): Optional metadata explaining the weighted vote strategy
-
-**Returns**: Boolean indicating successful vote submission
-
-### deposit
-
-**Signature**: `deposit(address, uint64, Coin[]) → bool`
-
-**Description**: Adds additional funds to a proposal's deposit during the deposit period.
-
-**Parameters**:
-- `depositor` (address): Address making the deposit (must be msg.sender)
-- `proposalId` (uint64): ID of the proposal to deposit to
-- `amount` (Coin[]): Array of coins to deposit
-
-**Returns**: Boolean indicating successful deposit
-
-### cancelProposal
-
-**Signature**: `cancelProposal(address, uint64) → bool`
-
-**Description**: Cancels a proposal that is still in the deposit period.
-
-**Parameters**:
-- `proposer` (address): Address that submitted the proposal (must be msg.sender)
-- `proposalId` (uint64): ID of the proposal to cancel
-
-**Returns**: Boolean indicating successful cancellation
-
-### getProposal
-
-**Signature**: `getProposal(uint64) → ProposalData`
-
-**Description**: Retrieves comprehensive information about a specific proposal including status, voting results, and metadata.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal to query
-
-**Returns**: Complete ProposalData struct with all proposal information
-
-### getProposals
-
-**Signature**: `getProposals(uint32, address, address, PageRequest) → (ProposalData[], PageResponse)`
-
-**Description**: Retrieves a filtered and paginated list of proposals based on status and participant filters.
-
-**Parameters**:
-- `proposalStatus` (uint32): Filter by proposal status (or 0 for all)
-- `voter` (address): Filter proposals where this address has voted (or zero address for all)
-- `depositor` (address): Filter proposals where this address has deposited (or zero address for all)
-- `pagination` (PageRequest): Pagination parameters for result limiting
-
-**Returns**: Array of matching proposals and pagination information
-
-### getTallyResult
-
-**Signature**: `getTallyResult(uint64) → TallyResultData`
-
-**Description**: Retrieves the current or final vote tally for a proposal showing vote distribution across all options.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal to get tally for
-
-**Returns**: TallyResultData struct with vote counts for each option
-
-### getVote
-
-**Signature**: `getVote(uint64, address) → WeightedVote`
-
-**Description**: Retrieves the vote cast by a specific address on a proposal.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal
-- `voter` (address): Address of the voter to query
-
-**Returns**: WeightedVote struct with the voter's choices and metadata
-
-### getVotes
-
-**Signature**: `getVotes(uint64, PageRequest) → (WeightedVote[], PageResponse)`
-
-**Description**: Retrieves all votes cast on a specific proposal with pagination support.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal
-- `pagination` (PageRequest): Pagination parameters
-
-**Returns**: Array of WeightedVote structs and pagination information
-
-### getDeposit
-
-**Signature**: `getDeposit(uint64, address) → DepositData`
-
-**Description**: Retrieves deposit information for a specific depositor on a proposal.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal
-- `depositor` (address): Address of the depositor
-
-**Returns**: DepositData struct with deposit information
-
-### getDeposits
-
-**Signature**: `getDeposits(uint64, PageRequest) → (DepositData[], PageResponse)`
-
-**Description**: Retrieves all deposits made on a specific proposal with pagination support.
-
-**Parameters**:
-- `proposalId` (uint64): ID of the proposal
-- `pagination` (PageRequest): Pagination parameters
-
-**Returns**: Array of DepositData structs and pagination information
-
-### getParams
-
-**Signature**: `getParams() → Params`
-
-**Description**: Retrieves current governance parameters including deposit requirements, voting periods, and threshold values.
-
-**Returns**: Params struct containing governance configuration
-
-### getConstitution
-
-**Signature**: `getConstitution() → string`
-
-**Description**: Retrieves the current governance constitution document.
-
-**Returns**: String containing the constitution text
-
-## Events
-
-- `SubmitProposal(address indexed proposer, uint64 proposalId)`
-- `CancelProposal(address indexed proposer, uint64 proposalId)`
-- `Deposit(address indexed depositor, uint64 proposalId, Coin[] amount)`
-- `Vote(address indexed voter, uint64 proposalId, uint8 option)`
-- `VoteWeighted(address indexed voter, uint64 proposalId, WeightedVoteOption[] options)`
-
-## Data Structures
-
-### VoteOption
-Enumeration of valid vote options:
-- `Unspecified` (0): No-op vote option
-- `Yes` (1): Support the proposal
-- `Abstain` (2): Abstain from voting but participate in quorum
-- `No` (3): Oppose the proposal
-- `NoWithWeto` (4): Strong opposition with veto power
-
-### WeightedVoteOption
-- `option` (VoteOption): Vote choice
-- `weight` (string): Vote weight allocation
-
-### WeightedVote
-- `proposalId` (uint64): Proposal ID
-- `voter` (address): Voter address
-- `options` (WeightedVoteOption[]): Vote options with weights
-- `metadata` (string): Vote metadata
-
-### DepositData
-- `proposalId` (uint64): Proposal ID
-- `depositor` (address): Depositor address
-- `amount` (Coin[]): Deposit amount
-
-### TallyResultData
-- `yes` (string): Yes votes count
-- `abstain` (string): Abstain votes count
-- `no` (string): No votes count
-- `noWithVeto` (string): No with veto votes count
-
-### ProposalData
-- `id` (uint64): Proposal ID
-- `messages` (string[]): Proposal messages
-- `status` (uint32): Current proposal status
-- `finalTallyResult` (TallyResultData): Final vote tally
-- `submitTime` (uint64): Submission timestamp
-- `depositEndTime` (uint64): Deposit period end time
-- `totalDeposit` (Coin[]): Total deposited amount
-- `votingStartTime` (uint64): Voting period start time
-- `votingEndTime` (uint64): Voting period end time
-- `metadata` (string): Proposal metadata
-- `title` (string): Proposal title
-- `summary` (string): Proposal summary
-- `proposer` (address): Proposer address
-
-### Params
-- `votingPeriod` (int64): Duration of voting period
-- `minDeposit` (Coin[]): Minimum deposit required
-- `maxDepositPeriod` (int64): Maximum deposit period duration
-- `quorum` (string): Minimum participation rate required
-- `threshold` (string): Minimum yes vote percentage for passage
-- `vetoThreshold` (string): Minimum veto percentage to fail proposal
-- `minInitialDepositRatio` (string): Minimum initial deposit ratio
-- `proposalCancelRatio` (string): Proposal cancel ratio
-- `proposalCancelDest` (string): Proposal cancel destination
-- `expeditedVotingPeriod` (int64): Expedited voting period duration
-- `expeditedThreshold` (string): Expedited proposal threshold
-- `expeditedMinDeposit` (Coin[]): Minimum deposit for expedited proposals
-- `burnVoteQuorum` (bool): Whether to burn deposits if quorum not met
-- `burnProposalDepositPrevote` (bool): Whether to burn deposits for prevote failures
-- `burnVoteVeto` (bool): Whether to burn deposits for vetoed proposals
-- `minDepositRatio` (string): Minimum deposit ratio
-
-<details>
-<summary>ABI</summary>
-
-```json
-[
-  {
-    "inputs": [
-      {"internalType": "address", "name": "proposer", "type": "address"},
-      {"internalType": "bytes", "name": "jsonProposal", "type": "bytes"},
-      {
-        "components": [
-          {"internalType": "string", "name": "denom", "type": "string"},
-          {"internalType": "uint256", "name": "amount", "type": "uint256"}
-        ],
-        "internalType": "struct Coin[]",
-        "name": "deposit",
-        "type": "tuple[]"
-      }
-    ],
-    "name": "submitProposal",
-    "outputs": [{"internalType": "uint64", "name": "proposalId", "type": "uint64"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "address", "name": "voter", "type": "address"},
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"},
-      {"internalType": "enum VoteOption", "name": "option", "type": "uint8"},
-      {"internalType": "string", "name": "metadata", "type": "string"}
-    ],
-    "name": "vote",
-    "outputs": [{"internalType": "bool", "name": "success", "type": "bool"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "address", "name": "voter", "type": "address"},
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"},
-      {
-        "components": [
-          {"internalType": "enum VoteOption", "name": "option", "type": "uint8"},
-          {"internalType": "string", "name": "weight", "type": "string"}
-        ],
-        "internalType": "struct WeightedVoteOption[]",
-        "name": "options",
-        "type": "tuple[]"
-      },
-      {"internalType": "string", "name": "metadata", "type": "string"}
-    ],
-    "name": "voteWeighted",
-    "outputs": [{"internalType": "bool", "name": "success", "type": "bool"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "address", "name": "depositor", "type": "address"},
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"},
-      {
-        "components": [
-          {"internalType": "string", "name": "denom", "type": "string"},
-          {"internalType": "uint256", "name": "amount", "type": "uint256"}
-        ],
-        "internalType": "struct Coin[]",
-        "name": "amount",
-        "type": "tuple[]"
-      }
-    ],
-    "name": "deposit",
-    "outputs": [{"internalType": "bool", "name": "success", "type": "bool"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "address", "name": "proposer", "type": "address"},
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"}
-    ],
-    "name": "cancelProposal",
-    "outputs": [{"internalType": "bool", "name": "success", "type": "bool"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"}
-    ],
-    "name": "getProposal",
-    "outputs": [
-      {
-        "components": [
-          {"internalType": "uint64", "name": "id", "type": "uint64"},
-          {"internalType": "string[]", "name": "messages", "type": "string[]"},
-          {"internalType": "uint32", "name": "status", "type": "uint32"},
-          {
-            "components": [
-              {"internalType": "string", "name": "yes", "type": "string"},
-              {"internalType": "string", "name": "abstain", "type": "string"},
-              {"internalType": "string", "name": "no", "type": "string"},
-              {"internalType": "string", "name": "noWithVeto", "type": "string"}
-            ],
-            "internalType": "struct TallyResultData",
-            "name": "finalTallyResult",
-            "type": "tuple"
-          },
-          {"internalType": "uint64", "name": "submitTime", "type": "uint64"},
-          {"internalType": "uint64", "name": "depositEndTime", "type": "uint64"},
-          {
-            "components": [
-              {"internalType": "string", "name": "denom", "type": "string"},
-              {"internalType": "uint256", "name": "amount", "type": "uint256"}
-            ],
-            "internalType": "struct Coin[]",
-            "name": "totalDeposit",
-            "type": "tuple[]"
-          },
-          {"internalType": "uint64", "name": "votingStartTime", "type": "uint64"},
-          {"internalType": "uint64", "name": "votingEndTime", "type": "uint64"},
-          {"internalType": "string", "name": "metadata", "type": "string"},
-          {"internalType": "string", "name": "title", "type": "string"},
-          {"internalType": "string", "name": "summary", "type": "string"},
-          {"internalType": "address", "name": "proposer", "type": "address"}
-        ],
-        "internalType": "struct ProposalData",
-        "name": "proposal",
-        "type": "tuple"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "uint64", "name": "proposalId", "type": "uint64"}
-    ],
-    "name": "getTallyResult",
-    "outputs": [
-      {
-        "components": [
-          {"internalType": "string", "name": "yes", "type": "string"},
-          {"internalType": "string", "name": "abstain", "type": "string"},
-          {"internalType": "string", "name": "no", "type": "string"},
-          {"internalType": "string", "name": "noWithVeto", "type": "string"}
-        ],
-        "internalType": "struct TallyResultData",
-        "name": "tallyResult",
-        "type": "tuple"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
+async function getProposalDetails() {
+  try {
+    const proposal = await contract.getProposal(proposalId);
+    console.log(`Proposal ${proposalId} Details:`, JSON.stringify(proposal, null, 2));
+  } catch (error) {
+    console.error(`Error fetching proposal ${proposalId}:`, error);
   }
-]
+}
+
+getProposalDetails();
+
 ```
 
-</details>
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> with your actual data.
+# This example queries for proposal with ID 1.
+# Data is ABI-encoded: function selector + padded proposal ID
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0xc73dce9c0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
 
-<details>
-<summary>Solidity Interface</summary>
 
-```solidity
+### `getProposals`
+Retrieves a filtered and paginated list of proposals.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI for the precompile, including the complex return struct
+const precompileAbi = [
+  "function getProposals(tuple(uint64 offset, bytes key, uint64 limit, bool count_total, bool reverse) pagination, uint8 proposal_status, address voter, address depositor) view returns (tuple(uint64 id, address proposer, string metadata, uint64 submit_time, uint64 voting_start_time, uint64 voting_end_time, uint8 status, tuple(string yes_count, string abstain_count, string no_count, string no_with_veto_count) final_tally_result, tuple(string denom, uint256 amount)[] total_deposit, string[] messages)[] proposals, tuple(bytes next_key, uint64 total) page_response)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs for filtering and pagination
+const pagination = {
+  offset: 0,
+  key: "0x", // Start from the beginning
+  limit: 10,
+  count_total: true,
+  reverse: false,
+};
+const proposalStatus = 0; // 0 for Unspecified, 1 for Deposit, 2 for Voting, etc.
+const voterAddress = ethers.ZeroAddress; // Filter by voter, or ZeroAddress for none
+const depositorAddress = ethers.ZeroAddress; // Filter by depositor, or ZeroAddress for none
+
+async function getProposalsList() {
+  try {
+    const result = await contract.getProposals(pagination, proposalStatus, voterAddress, depositorAddress);
+    // The result object contains 'proposals' and 'page_response'
+    console.log("Proposals:", JSON.stringify(result.proposals, null, 2));
+    console.log("Pagination Response:", result.page_response);
+  } catch (error) {
+    console.error("Error fetching proposals:", error);
+  }
+}
+
+getProposalsList();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+# This example queries for the first 10 proposals with any status.
+# Data is ABI-encoded: function selector + complex input struct.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x458af53700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `getTallyResult`
+Retrieves the current or final vote tally for a proposal.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI for the precompile
+const precompileAbi = [
+  "function getTallyResult(uint64 proposalId) view returns (tuple(string yes_count, string abstain_count, string no_count, string no_with_veto_count) tally)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Input: The ID of the proposal to get the tally for
+const proposalId = 1;
+
+async function getTally() {
+  try {
+    const tally = await contract.getTallyResult(proposalId);
+    console.log(`Tally for Proposal ${proposalId}:`, {
+      yes: tally.yes_count,
+      abstain: tally.abstain_count,
+      no: tally.no_count,
+      noWithVeto: tally.no_with_veto_count,
+    });
+  } catch (error) {
+    console.error(`Error fetching tally for proposal ${proposalId}:`, error);
+  }
+}
+
+getTally();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> with your actual data.
+# This example queries the tally for proposal with ID 1.
+# Data is ABI-encoded: function selector + padded proposal ID
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x25a8c82a0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `getVote`
+Retrieves the vote cast by a specific address on a proposal.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI for the precompile
+const precompileAbi = [
+  "function getVote(uint64 proposalId, address voter) view returns (tuple(uint64 proposal_id, address voter, tuple(uint8 option, string weight)[] options, string metadata) vote)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const proposalId = 1;
+const voterAddress = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"; // Placeholder
+
+async function getVoteDetails() {
+  try {
+    const vote = await contract.getVote(proposalId, voterAddress);
+    console.log("Vote Details:", JSON.stringify(vote, null, 2));
+  } catch (error) {
+    console.error("Error fetching vote:", error);
+  }
+}
+
+getVoteDetails();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and the placeholder address with your actual data.
+# This example queries the vote of a specific address on proposal with ID 1.
+# Data is ABI-encoded: function selector + padded proposal ID + padded voter address
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x54f6530f0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `getVotes`
+Retrieves all votes cast on a proposal, with pagination.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI for the precompile
+const precompileAbi = [
+  "function getVotes(uint64 proposalId, tuple(uint64 offset, bytes key, uint64 limit, bool count_total, bool reverse) pagination) view returns (tuple(uint64 proposal_id, address voter, tuple(uint8 option, string weight)[] options, string metadata)[] votes, tuple(bytes next_key, uint64 total) page_response)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const proposalId = 1;
+const pagination = {
+  offset: 0,
+  key: "0x",
+  limit: 10,
+  count_total: true,
+  reverse: false,
+};
+
+async function getVotesList() {
+  try {
+    const result = await contract.getVotes(proposalId, pagination);
+    console.log(`Votes for proposal ${proposalId}:`, JSON.stringify(result.votes, null, 2));
+    console.log("Pagination Response:", result.page_response);
+  } catch (error) {
+    console.error("Error fetching votes:", error);
+  }
+}
+
+getVotesList();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+# This example queries for the first 10 votes on proposal with ID 1.
+# Data is ABI-encoded: function selector + padded proposal ID + pagination struct.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x6f74a8f300000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `getDeposit`
+Retrieves deposit information for a specific depositor on a proposal.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI for the precompile
+const precompileAbi = [
+  "function getDeposit(uint64 proposalId, address depositor) view returns (tuple(address depositor, tuple(string denom, uint256 amount)[] amount) deposit)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000805";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const proposalId = 1;
+const depositorAddress = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"; // Placeholder
+
+async function getDepositDetails() {
+  try {
+    const deposit = await contract.getDeposit(proposalId, depositorAddress);
+    console.log("Deposit Details:", JSON.stringify(deposit, null, 2));
+  } catch (error) {
+    console.error("Error fetching deposit:", error);
+  }
+}
+
+getDepositDetails();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and the placeholder address with your actual data.
+# This example queries the deposit of a specific address on proposal with ID 1.
+# Data is ABI-encoded: function selector + padded proposal ID + padded depositor address
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x582138a30000000000000000000000000000000000000000000000000000000000000001000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `getDeposits`
+Retrieves all deposits made on a proposal, with pagination.
+
+<RequestExample>
+```bash Request
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+# This example queries for the first 10 deposits on proposal with ID 1.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x3677fd550000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</RequestExample>
+
+### `getParams`
+Retrieves current governance parameters.
+
+<RequestExample>
+```bash Request
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x4035236b"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</RequestExample>
+
+### `getConstitution`
+Retrieves the current governance constitution.
+
+<RequestExample>
+```bash Request
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000805",
+            "data": "0x04b12c7f"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</RequestExample>
+
+## Full Solidity Interface & ABI
+
+```solidity title="Governance Solidity Interface" lines expandable
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity >=0.8.17;
 
@@ -694,4 +705,37 @@ interface IGov {
 }
 ```
 
-</details>
+```json title="Governance ABI" lines expandable
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "IGov",
+  "sourceName": "solidity/precompiles/gov/IGov.sol",
+  "abi": [
+    { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "proposer", "type": "address" }, { "indexed": true, "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "name": "CancelProposal", "type": "event" },
+    { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "depositor", "type": "address" }, { "indexed": true, "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "indexed": false, "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "name": "Deposit", "type": "event" },
+    { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "proposer", "type": "address" }, { "indexed": true, "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "name": "SubmitProposal", "type": "event" },
+    { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "voter", "type": "address" }, { "indexed": true, "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "indexed": false, "internalType": "uint8", "name": "option", "type": "uint8" } ], "name": "Vote", "type": "event" },
+    { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "voter", "type": "address" }, { "indexed": true, "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "indexed": false, "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" } ], "name": "VoteWeighted", "type": "event" },
+    { "inputs": [ { "internalType": "address", "name": "proposer", "type": "address" }, { "internalType": "bytes", "name": "jsonProposal", "type": "bytes" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "deposit", "type": "tuple[]" } ], "name": "submitProposal", "outputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "name": "vote", "outputs": [ { "internalType": "bool", "name": "success", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "name": "voteWeighted", "outputs": [ { "internalType": "bool", "name": "success", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "proposer", "type": "address" }, { "internalType": "bytes", "name": "jsonProposal", "type": "bytes" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "deposit", "type": "tuple[]" } ], "name": "submitProposal", "outputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getVotes", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "voter", "type": "address" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "internalType": "struct WeightedVote[]", "name": "votes", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" } ], "name": "getDeposit", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "internalType": "struct DepositData", "name": "deposit", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getDeposits", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "internalType": "struct DepositData[]", "name": "deposits", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getConstitution", "outputs": [ { "internalType": "string", "name": "constitution", "type": "string" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint32", "name": "proposalStatus", "type": "uint32" }, { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getProposals", "outputs": [ { "components": [ { "internalType": "uint64", "name": "id", "type": "uint64" }, { "internalType": "string[]", "name": "messages", "type": "string[]" }, { "internalType": "uint32", "name": "status", "type": "uint32" }, { "components": [ { "internalType": "string", "name": "yes", "type": "string" }, { "internalType": "string", "name": "abstain", "type": "string" }, { "internalType": "string", "name": "no", "type": "string" }, { "internalType": "string", "name": "noWithVeto", "type": "string" } ], "internalType": "struct TallyResultData", "name": "finalTallyResult", "type": "tuple" }, { "internalType": "uint64", "name": "submitTime", "type": "uint64" }, { "internalType": "uint64", "name": "depositEndTime", "type": "uint64" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "totalDeposit", "type": "tuple[]" }, { "internalType": "uint64", "name": "votingStartTime", "type": "uint64" }, { "internalType": "uint64", "name": "votingEndTime", "type": "uint64" }, { "internalType": "string", "name": "metadata", "type": "string" }, { "internalType": "string", "name": "title", "type": "string" }, { "internalType": "string", "name": "summary", "type": "string" }, { "internalType": "address", "name": "proposer", "type": "address" } ], "internalType": "struct ProposalData[]", "name": "proposals", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "name": "getTallyResult", "outputs": [ { "components": [ { "internalType": "string", "name": "yes", "type": "string" }, { "internalType": "string", "name": "abstain", "type": "string" }, { "internalType": "string", "name": "no", "type": "string" }, { "internalType": "string", "name": "noWithVeto", "type": "string" } ], "internalType": "struct TallyResultData", "name": "tallyResult", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "voter", "type": "address" } ], "name": "getVote", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "voter", "type": "address" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "internalType": "struct WeightedVote", "name": "vote", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getVotes", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "voter", "type": "address" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "internalType": "struct WeightedVote[]", "name": "votes", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "proposer", "type": "address" }, { "internalType": "bytes", "name": "jsonProposal", "type": "bytes" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "deposit", "type": "tuple[]" } ], "name": "submitProposal", "outputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "name": "vote", "outputs": [ { "internalType": "bool", "name": "success", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "enum VoteOption", "name": "option", "type": "uint8" }, { "internalType": "string", "name": "weight", "type": "string" } ], "internalType": "struct WeightedVoteOption[]", "name": "options", "type": "tuple[]" }, { "internalType": "string", "name": "metadata", "type": "string" } ], "name": "voteWeighted", "outputs": [ { "internalType": "bool", "name": "success", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" } ], "name": "getDeposit", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "internalType": "struct DepositData", "name": "deposit", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getDeposits", "outputs": [ { "components": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "internalType": "struct DepositData[]", "name": "deposits", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getParams", "outputs": [ { "components": [ { "internalType": "int64", "name": "votingPeriod", "type": "int64" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "minDeposit", "type": "tuple[]" }, { "internalType": "int64", "name": "maxDepositPeriod", "type": "int64" }, { "internalType": "string", "name": "quorum", "type": "string" }, { "internalType": "string", "name": "threshold", "type": "string" }, { "internalType": "string", "name": "vetoThreshold", "type": "string" }, { "internalType": "string", "name": "minInitialDepositRatio", "type": "string" }, { "internalType": "string", "name": "proposalCancelRatio", "type": "string" }, { "internalType": "string", "name": "proposalCancelDest", "type": "string" }, { "internalType": "int64", "name": "expeditedVotingPeriod", "type": "int64" }, { "internalType": "string", "name": "expeditedThreshold", "type": "string" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "expeditedMinDeposit", "type": "tuple[]" }, { "internalType": "bool", "name": "burnVoteQuorum", "type": "bool" }, { "internalType": "bool", "name": "burnProposalDepositPrevote", "type": "bool" }, { "internalType": "bool", "name": "burnVoteVeto", "type": "bool" }, { "internalType": "string", "name": "minDepositRatio", "type": "string" } ], "internalType": "struct Params", "name": "params", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint64", "name": "proposalId", "type": "uint64" } ], "name": "getProposal", "outputs": [ { "components": [ { "internalType": "uint64", "name": "id", "type": "uint64" }, { "internalType": "string[]", "name": "messages", "type": "string[]" }, { "internalType": "uint32", "name": "status", "type": "uint32" }, { "components": [ { "internalType": "string", "name": "yes", "type": "string" }, { "internalType": "string", "name": "abstain", "type": "string" }, { "internalType": "string", "name": "no", "type": "string" }, { "internalType": "string", "name": "noWithVeto", "type": "string" } ], "internalType": "struct TallyResultData", "name": "finalTallyResult", "type": "tuple" }, { "internalType": "uint64", "name": "submitTime", "type": "uint64" }, { "internalType": "uint64", "name": "depositEndTime", "type": "uint64" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "totalDeposit", "type": "tuple[]" }, { "internalType": "uint64", "name": "votingStartTime", "type": "uint64" }, { "internalType": "uint64", "name": "votingEndTime", "type": "uint64" }, { "internalType": "string", "name": "metadata", "type": "string" }, { "internalType": "string", "name": "title", "type": "string" }, { "internalType": "string", "name": "summary", "type": "string" }, { "internalType": "address", "name": "proposer", "type": "address" } ], "internalType": "struct ProposalData", "name": "proposal", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "uint32", "name": "proposalStatus", "type": "uint32" }, { "internalType": "address", "name": "voter", "type": "address" }, { "internalType": "address", "name": "depositor", "type": "address" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pagination", "type": "tuple" } ], "name": "getProposals", "outputs": [ { "components": [ { "internalType": "uint64", "name": "id", "type": "uint64" }, { "internalType": "string[]", "name": "messages", "type": "string[]" }, { "internalType": "uint32", "name": "status", "type": "uint32" }, { "components": [ { "internalType": "string", "name": "yes", "type": "string" }, { "internalType": "string", "name": "abstain", "type": "string" }, { "internalType": "string", "name": "no", "type": "string" }, { "internalType": "string", "name": "noWithVeto", "type": "string" } ], "internalType": "struct TallyResultData", "name": "finalTallyResult", "type": "tuple" }, { "internalType": "uint64", "name": "submitTime", "type": "uint64" }, { "internalType": "uint64", "name": "depositEndTime", "type": "uint64" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "totalDeposit", "type": "tuple[]" }, { "internalType": "uint64", "name": "votingStartTime", "type": "uint64" }, { "internalType": "uint64", "name": "votingEndTime", "type": "uint64" }, { "internalType": "string", "name": "metadata", "type": "string" }, { "internalType": "string", "name": "title", "type": "string" }, { "internalType": "string", "name": "summary", "type": "string" }, { "internalType": "address", "name": "proposer", "type": "address" } ], "internalType": "struct ProposalData[]", "name": "proposals", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" }
+  ]
+}
+```

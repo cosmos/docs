@@ -1,0 +1,163 @@
+---
+title: "Quick Reference"
+description: "General information, network parameters and other resources to get started"
+mode: 'wide'
+---
+
+import { Footnote } from '/snippets/footnote.mdx';
+
+## Default Network Connection Info
+
+| Endpoint / Detail | Example (local node) | Purpose |
+|-------------------|----------------------|---------|
+| **EVM JSON-RPC** | `https://devnet-1-evmrpc.ib.skip.build` | Ethereum-compatible tools (MetaMask, Hardhat, ethers.js) |
+| **EVM RPC WS**   | `wss://devnet-1-evmws.ib.skip.build`   | Streaming real-time, selective data for applications |
+| **Cosmos RPC** | `https://devnet-1-rpc.ib.skip.build` | Tendermint-level interactions (blocks, consensus state) |
+| **Cosmos REST API** | `https://devnet-1-lcd.ib.skip.build` | Query Cosmos SDK modules (bank, staking, etc.) |
+| **gRPC** | `devnet-1-grpc.ib.skip.build:443` | High-performance Protobuf endpoint for back-ends |
+| **Cosmos Chain ID** | `4321` | Identifier when signing Cosmos transactions |
+| **EVM Chain ID** | `4321` | Numeric network identifier for EVM tools |
+| **EVM Version** | `Istanbul` | EVM hard fork compatibility version |
+| **Native Token** | `ATOM` | Staking / gas token |
+| **Denom Exponent** | `6` | Native token has 6 decimal places (`uatom`) |
+
+## Pre-deployed Contracts
+
+For common contracts like (`multicall3`, `create2` and more), see the [Pre-deployed Contracts](./launched-contracts) page.
+
+## Precompiled Contracts
+
+Precompiles for *SDK modules*\* and other important functions are detailed in the [Precompiles](./precompiles/overview) section.
+
+<Footnote>
+\**Most modules supported; others may be added in a future release.*
+</Footnote>
+
+## Connecting to the Network
+
+### Using Remote Endpoints
+
+The `evmd` CLI tool and other clients require a connection to the network in order to interact with the chain.
+
+**Method 1 — configure `evmd`**
+
+Edit `~/.evmd/config/client.toml`:
+
+```toml title="~/.evmd/config/client.toml"
+# ~/.evmd/config/client.toml
+node = "https://devnet-1-rpc.ib.skip.build"
+```
+
+All subsequent `evmd` commands use the remote node:
+
+```sh lines
+evmd q bank balances $(evmd keys show <wallet_name> --address)
+```
+
+**Method 2 — API**
+
+Applications typically interact with the network programmatically using the EVM JSON-RPC, in addition to the standard Cosmos GRPC/REST API. Below are some basic examples of various common usecases:
+
+For a complete list of available endpoints and methods, see the [API Reference](./api-reference) documentation.
+
+#### EVM JSON-RPC
+
+```js lines expandable
+import { ethers } from "ethers";
+
+const provider = new ethers.JsonRpcProvider("https://devnet-1-evmrpc.ib.skip.build");
+const balance = await provider.getBalance("0x...");
+```
+
+#### Cosmos REST API
+
+```sh lines
+curl https://devnet-1-lcd.ib.skip.build/cosmos/staking/v1beta1/params
+```
+
+#### EVM JSON-RPC — **Python (web3.py)**
+
+```python lines expandable
+from web3 import Web3
+
+provider = Web3(Web3.HTTPProvider("https://devnet-1-evmrpc.ib.skip.build"))
+
+address = "0xYourAddress"
+balance_wei = provider.eth.get_balance(address)
+balance_eth = Web3.from_wei(balance_wei, "ether")
+
+print(f"Balance: {balance_eth} DEV")
+```
+
+#### Cosmos REST API — **Python (requests)**
+
+```python lines expandable
+import requests
+
+resp = requests.get(
+    "https://devnet-1-lcd.ib.skip.build/cosmos/staking/v1beta1/params",
+    timeout=10,
+)
+print(resp.json())
+```
+
+```go lines expandable
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "math/big"
+
+    "github.com/ethereum/go-ethereum/common"
+    "github.com/ethereum/go-ethereum/ethclient"
+)
+
+func main() {
+    client, err := ethclient.Dial("https://devnet-1-evmrpc.ib.skip.build")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    address := common.HexToAddress("0xYourAddress")
+    balance, err := client.BalanceAt(context.Background(), address, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    ethValue := new(big.Float).Quo(
+        new(big.Float).SetInt(balance),
+        big.NewFloat(1e18),
+    )
+
+    fmt.Printf("Balance: %s DEV\n", ethValue)
+}
+```
+
+```go lines expandable
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+)
+
+func main() {
+    resp, err := http.Get("https://devnet-1-lcd.ib.skip.build/cosmos/bank/v1beta1/balances/cosmos1youraddresshere")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer resp.Body.Close()
+
+    var result map[string]interface{}
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        log.Fatal(err)
+    }
+
+    pretty, _ := json.MarshalIndent(result, "", "  ")
+    fmt.Println(string(pretty))
+}
+```
