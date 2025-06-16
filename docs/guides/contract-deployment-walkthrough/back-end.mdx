@@ -1,0 +1,98 @@
+---
+title: 'Back-End'
+---
+
+## Overview
+
+The back-end is a lightweight **Node.js/Express** server that exposes a REST API and performs on-chain actions on behalf of the user.  All the heavy-lifting (multi-token transfer, wrapping ATOM → WATOM, etc.) is handled by smart-contracts; the server is primarily a **transaction orchestrator** and **rate-limiter**.
+
+Key source files in the repo:
+
+| File | Purpose |
+| ---- | ------- |
+| `config.js` | Centralised network & token list configuration |
+| `faucet.js` | Express server entry-point (starts API + serves static UI) |
+| `scripts/approve-tokens.js` | One-off script that sets ERC-20 allowances for the AtomicMultiSend contract |
+| `script/DeployAtomicMultiSend.s.sol` | Foundry script that deploys the custom contract |
+
+## Network Connection
+
+`config.js` defines the RPC / gRPC / REST endpoints for the **Gaia EVM Devnet**:
+
+```js title="config.js"
+blockchain: {
+  endpoints: {
+    rpc_endpoint:   "https://devnet-1-rpc.evmos.org",
+    grpc_endpoint:  "https://devnet-1-grpc.evmos.org",
+    rest_endpoint:  "https://devnet-1-lcd.evmos.org",
+    evm_endpoint:   "https://devnet-1-evmrpc.ib.skip.build"
+  },
+  ids: {
+    chainId: 262144,
+    cosmosChainId: 'cosmos_262144-1'
+  }
+}
+```
+> You only need the **evm_endpoint** for contract calls, but the extra endpoints let you pull balances via CosmJS if you wish.
+
+## Token List & Target Balances
+
+Each token entry contains:
+```js
+{
+  denom: "wbtc",
+  amount: "100000000000",   // 1000 WBTC (8 dec.)
+  erc20_contract: "0x…",
+  decimals: 8,
+  target_balance: "100000000000"
+}
+```
+On every request the server:
+1. Reads the caller's current balances for every configured token
+2. Computes the delta needed to reach `target_balance`
+3. Calls **AtomicMultiSend** with *all* deltas so the transfer succeeds or reverts as a single TX.
+
+## Rate Limiting
+
+Implemented via simple SQLite tables:
+* **address_requests** – 1 row per recipient address per 24 h
+* **ip_requests** – 1 row per IP per 24 h
+
+Both are checked before sending a TX and updated afterwards.
+
+## Contract Deployment
+
+Use Foundry to compile and deploy the `AtomicMultiSend` contract:
+
+```bash
+forge script script/DeployAtomicMultiSend.s.sol \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --skip-simulation
+```
+The script prints the deployed address which you must copy to `config.js`.
+
+## Contract Interaction (Token Send)
+
+```mermaid
+graph TD
+  A[Express /send/:addr] --> B[Compute deltas]
+  B --> C[Call AtomicMultiSend.transfer()]
+  C --> D[Wait for receipt]
+  D --> E[Return JSON status]
+```
+
+The helper that builds the calldata is in `lib/multisend.js` and uses **ethers.js 6**.
+
+## Testing
+
+Run the end-to-end test suite:
+```bash
+yarn test            # runs test-faucet.js
+yarn test:integration
+```
+The tests deploy a local instance of the contract (Anvil) so they are deterministic.
+
+## Next Step
+
+Move on to **Front-End** → to see how the web UI wraps these endpoints and provides a wallet connector + WATOM wrapper component.

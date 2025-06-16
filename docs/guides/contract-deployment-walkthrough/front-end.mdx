@@ -1,0 +1,72 @@
+---
+title: 'Front-End'
+---
+
+## Which Platform To Use?
+
+## Common Libraries & Best Practices
+
+## UX & Security Considerations
+
+## Theme & Design
+
+## Overview
+
+The faucet comes with a minimal **Vue 3** single-page application that lives inside the same repository.  It demonstrates how to:
+
+* Detect the user's wallet (MetaMask / Keplr)
+* Switch the wallet to the Gaia EVM Devnet chain
+* Wrap & unwrap native ATOM into ERC-20 WATOM
+* Request a multi-token airdrop with a single click
+
+You can replace Vue with React or Svelte—the on-chain calls are plain **ethers.js 6**.
+
+## Wallet Connector
+
+`views/Home.vue` mounts a reusable `WalletButton` component that:
+1. Checks for `window.ethereum` (MetaMask) or `window.keplr` (Cosmos wallets)
+2. Suggests the Devnet chain if it's missing (using `wallet_addEthereumChain`)
+3. Stores the selected address in Vuex so every component can access it
+
+> **Tip for your own dApps**: separate the *"ensure we're on the right network"* logic into a composable (e.g. `useEvmNetwork.ts`) so you can re-use it across pages.
+
+## Calling the Back-End
+
+```ts
+await fetch(`/send/${address}`)
+  .then(r => r.json())
+  .then(({ txHash }) => console.log('airdrop tx', txHash));
+```
+The API is hard-coded to the same origin so you can deploy both front- & back-end on a single Vercel / Netlify site.
+
+## WATOM Wrap / Unwrap
+
+```ts
+const werc20 = new ethers.Contract(
+  '0x0000000000000000000000000000000000000802',
+  ['function deposit() payable',
+   'function withdraw(uint256)'],
+  signer);
+
+// Wrap 1 ATOM
+await werc20.deposit({ value: ethers.parseEther('1') });
+
+// Unwrap everything
+const bal = await werc20.balanceOf(address);
+await werc20.withdraw(bal);
+```
+The UI shows both balances side-by-side so the user can verify the 1:1 ratio.
+
+## Styling & UX
+
+The demo uses **Bootstrap 5** + a custom Cosmos colour palette.  Feel free to swap it out; none of the logic depends on the CSS framework.
+
+* Disable the **Send** button while a request is in-flight.
+* Show the tx-hash with a link to the Devnet block-explorer.
+* Use `localStorage` to remember the preferred wallet.
+
+## Next Steps
+
+1. Add a **Progressive Web App** manifest so users can install the faucet.
+2. Package the wallet connector as an NPM module and share it across projects.
+3. Replace Bootstrap with Tailwind for smaller bundle size.
