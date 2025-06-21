@@ -427,6 +427,70 @@ curl -X POST --data '{
 ```
 </CodeGroup>
 
+### validatorSlashes
+Queries slashing events for a validator within a specific height range.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function validatorSlashes(string memory validatorAddress, uint64 startingHeight, uint64 endingHeight, tuple(bytes key, uint64 offset, uint64 limit, bool countTotal, bool reverse) pageRequest) view returns (tuple(uint64 validatorPeriod, tuple(uint256 amount, uint8 precision) fraction)[] slashes, tuple(bytes nextKey, uint64 total) pageResponse)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000801";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const validatorAddress = "artvaloper1..."; // Placeholder
+const startingHeight = 1000; // Starting block height
+const endingHeight = 2000; // Ending block height
+const pageRequest = {
+  key: "0x",
+  offset: 0,
+  limit: 10,
+  countTotal: true,
+  reverse: false
+};
+
+async function getValidatorSlashes() {
+  try {
+    const [slashes, pageResponse] = await contract.validatorSlashes(
+      validatorAddress,
+      startingHeight,
+      endingHeight,
+      pageRequest
+    );
+    console.log("Validator Slashes:", JSON.stringify(slashes, null, 2));
+    console.log("Page Response:", JSON.stringify(pageResponse, null, 2));
+  } catch (error) {
+    console.error("Error fetching validator slashes:", error);
+  }
+}
+
+getValidatorSlashes();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and parameters with your actual data.
+# Data is ABI-encoded: function selector + encoded validator address + heights + page request
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000801",
+            "data": "0xa83ec8c30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000007d000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000002b61727476616c6f70657231713233347273673574367568766a6b6c376c38396d6e3070717273747576000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
 ## Full Solidity Interface & ABI
 
 ```solidity title="Distribution Solidity Interface" lines expandable
@@ -481,6 +545,7 @@ interface DistributionI {
     function validatorDistributionInfo(string memory validatorAddress) external view returns (ValidatorDistributionInfo calldata distributionInfo);
     function validatorOutstandingRewards(string memory validatorAddress) external view returns (DecCoin[] calldata rewards);
     function validatorCommission(string memory validatorAddress) external view returns (DecCoin[] calldata commission);
+    function validatorSlashes(string memory validatorAddress, uint64 startingHeight, uint64 endingHeight, PageRequest calldata pageRequest) external view returns (ValidatorSlashEvent[] calldata slashes, PageResponse calldata pageResponse);
     function delegationRewards(address delegatorAddress, string memory validatorAddress) external view returns (DecCoin[] calldata rewards);
     function delegationTotalRewards(address delegatorAddress) external view returns (DelegationDelegatorReward[] calldata rewards, DecCoin[] calldata total);
     function delegatorValidators(address delegatorAddress) external view returns (string[] calldata validators);
@@ -513,6 +578,7 @@ interface DistributionI {
     { "inputs": [ { "internalType": "string", "name": "validatorAddress", "type": "string" } ], "name": "validatorCommission", "outputs": [ { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" }, { "internalType": "uint8", "name": "precision", "type": "uint8" } ], "internalType": "struct DecCoin[]", "name": "commission", "type": "tuple[]" } ], "stateMutability": "view", "type": "function" },
     { "inputs": [ { "internalType": "string", "name": "validatorAddress", "type": "string" } ], "name": "validatorDistributionInfo", "outputs": [ { "components": [ { "internalType": "string", "name": "operatorAddress", "type": "string" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" }, { "internalType": "uint8", "name": "precision", "type": "uint8" } ], "internalType": "struct DecCoin[]", "name": "selfBondRewards", "type": "tuple[]" }, { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" }, { "internalType": "uint8", "name": "precision", "type": "uint8" } ], "internalType": "struct DecCoin[]", "name": "commission", "type": "tuple[]" } ], "internalType": "struct ValidatorDistributionInfo", "name": "distributionInfo", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
     { "inputs": [ { "internalType": "string", "name": "validatorAddress", "type": "string" } ], "name": "validatorOutstandingRewards", "outputs": [ { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" }, { "internalType": "uint8", "name": "precision", "type": "uint8" } ], "internalType": "struct DecCoin[]", "name": "rewards", "type": "tuple[]" } ], "stateMutability": "view", "type": "function" },
+    { "inputs": [ { "internalType": "string", "name": "validatorAddress", "type": "string" }, { "internalType": "uint64", "name": "startingHeight", "type": "uint64" }, { "internalType": "uint64", "name": "endingHeight", "type": "uint64" }, { "components": [ { "internalType": "bytes", "name": "key", "type": "bytes" }, { "internalType": "uint64", "name": "offset", "type": "uint64" }, { "internalType": "uint64", "name": "limit", "type": "uint64" }, { "internalType": "bool", "name": "countTotal", "type": "bool" }, { "internalType": "bool", "name": "reverse", "type": "bool" } ], "internalType": "struct PageRequest", "name": "pageRequest", "type": "tuple" } ], "name": "validatorSlashes", "outputs": [ { "components": [ { "internalType": "uint64", "name": "validatorPeriod", "type": "uint64" }, { "components": [ { "internalType": "uint256", "name": "amount", "type": "uint256" }, { "internalType": "uint8", "name": "precision", "type": "uint8" } ], "internalType": "struct Dec", "name": "fraction", "type": "tuple" } ], "internalType": "struct ValidatorSlashEvent[]", "name": "slashes", "type": "tuple[]" }, { "components": [ { "internalType": "bytes", "name": "nextKey", "type": "bytes" }, { "internalType": "uint64", "name": "total", "type": "uint64" } ], "internalType": "struct PageResponse", "name": "pageResponse", "type": "tuple" } ], "stateMutability": "view", "type": "function" },
     { "inputs": [ { "internalType": "address", "name": "delegatorAddress", "type": "address" }, { "internalType": "string", "name": "validatorAddress", "type": "string" } ], "name": "withdrawDelegatorRewards", "outputs": [ { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "stateMutability": "nonpayable", "type": "function" },
     { "inputs": [ { "internalType": "string", "name": "validatorAddress", "type": "string" } ], "name": "withdrawValidatorCommission", "outputs": [ { "components": [ { "internalType": "string", "name": "denom", "type": "string" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "internalType": "struct Coin[]", "name": "amount", "type": "tuple[]" } ], "stateMutability": "nonpayable", "type": "function" }
   ]
