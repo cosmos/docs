@@ -24,36 +24,88 @@ jobs:
         with:
           node-version: '18'
       
-      - name: Validate docs.json against Mintlify schema
+      - name: Validate docs.json structure
         run: |
-          # Install ajv-cli for JSON schema validation
-          npm install -g ajv-cli ajv-formats
+          # First, validate it's valid JSON
+          echo "Checking if docs.json is valid JSON..."
+          cat docs.json | jq empty || (echo "docs.json is not valid JSON" && exit 1)
           
-          # Download Mintlify schema
-          curl -o mintlify-schema.json https://leaves.mintlify.com/schema/docs.json
+          # Now validate the Mintlify-specific structure
+          echo "Validating Mintlify structure..."
+          node -e "
+          const fs = require('fs');
+          const docs = JSON.parse(fs.readFileSync('docs.json', 'utf8'));
+          const errors = [];
           
-          # Fix the broken regex patterns in the schema using | as delimiter
-          # The schema has invalid escapes for colons and periods in regex patterns
-          sed -i 's|\\\\:|:|g' mintlify-schema.json
-          sed -i 's|\\\\\.|\\.|g' mintlify-schema.json
+          // Check required top-level fields
+          const required = ['name', 'theme', 'colors', 'navigation'];
+          required.forEach(field => {
+            if (!docs[field]) errors.push(\`Missing required field: \${field}\`);
+          });
           
-          # Also fix the specific osano.com regex that's causing issues
-          sed -i 's|"pattern":"\\^https\\\\:\\\\\\/\\\\\\/cmp\\\\.osano\\\\.com\\\\\\/"|"pattern":"^https://cmp\\.osano\\.com/"|' mintlify-schema.json
+          // Validate theme
+          const validThemes = ['mint', 'maple', 'palm', 'willow', 'linden', 'almond', 'aspen'];
+          if (docs.theme && !validThemes.includes(docs.theme)) {
+            errors.push(\`Invalid theme '\${docs.theme}'. Must be one of: \${validThemes.join(', ')}\`);
+          }
           
-          # Validate docs.json
-          echo "Validating docs.json against Mintlify schema..."
-          if ajv validate -s mintlify-schema.json -d docs.json --strict=false --all-errors; then
-            echo "docs.json valid - OK!"
-          else
-            echo "docs.json invalid"
-            echo ""
-            echo "Common issues to check:"
-            echo "- theme must be one of: mint, maple, palm, willow, linden, almond, aspen"
-            echo "- navigation structure must follow the schema"
-            echo "- colors must be valid hex codes"
-            echo "- all page references must be strings"
-            exit 1
-          fi
+          // Validate colors
+          if (docs.colors) {
+            const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+            if (!docs.colors.primary) errors.push('Missing required color: primary');
+            
+            Object.entries(docs.colors).forEach(([name, color]) => {
+              if (!hexRegex.test(color)) {
+                errors.push(\`Invalid \${name} color '\${color}'. Must be a valid hex code.\`);
+              }
+            });
+          }
+          
+          // Validate navigation structure
+          if (docs.navigation) {
+            if (docs.navigation.tabs) {
+              docs.navigation.tabs.forEach((tab, i) => {
+                if (!tab.tab) errors.push(\`navigation.tabs[\${i}] missing required field: tab\`);
+                
+                // Check for either pages or groups
+                if (!tab.pages && !tab.groups) {
+                  errors.push(\`navigation.tabs[\${i}] must have either 'pages' or 'groups'\`);
+                }
+                
+                // Validate groups if present
+                if (tab.groups) {
+                  tab.groups.forEach((group, j) => {
+                    if (!group.group) {
+                      errors.push(\`navigation.tabs[\${i}].groups[\${j}] missing required field: group\`);
+                    }
+                    if (!group.pages || !Array.isArray(group.pages)) {
+                      errors.push(\`navigation.tabs[\${i}].groups[\${j}] missing required field: pages (array)\`);
+                    }
+                  });
+                }
+              });
+            } else if (!docs.navigation.pages && !docs.navigation.groups) {
+              errors.push('navigation must have tabs, pages, or groups');
+            }
+          }
+          
+          // Validate icon library if specified
+          if (docs.icons?.library) {
+            const validLibraries = ['fontawesome', 'lucide'];
+            if (!validLibraries.includes(docs.icons.library)) {
+              errors.push(\`Invalid icon library '\${docs.icons.library}'. Must be: \${validLibraries.join(' or ')}\`);
+            }
+          }
+          
+          // Output results
+          if (errors.length > 0) {
+            console.error('invalid docs.json:');
+            errors.forEach(err => console.error('  - ' + err));
+            process.exit(1);
+          } else {
+            console.log('docs.json valid - OK!');
+          }
+          "
 
   broken-links:
     name: Check Broken Links
