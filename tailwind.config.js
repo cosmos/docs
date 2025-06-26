@@ -7,7 +7,6 @@ module.exports = {
   ],
   theme: {
     extend: {
-      // Minimal extensions - let Mintlify handle the main theming
       fontFamily: {
         mono: ['JetBrains Mono', 'Fira Code', 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', 'Consolas', 'Courier New', 'monospace']
       }

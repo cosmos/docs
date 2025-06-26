@@ -1,0 +1,192 @@
+---
+title: "Single Token Representation"
+description: "How Cosmos EVM unifies native and ERC20 tokens without traditional wrapping"
+---
+
+## Overview
+
+Single Token Representation is a fundamental architectural principle in Cosmos EVM that eliminates the complexity and risks associated with traditional token wrapping. Instead of creating separate wrapped tokens with isolated balances, Cosmos EVM provides multiple interfaces to the same underlying token stored in the battle-tested Cosmos SDK bank module.
+
+**Core Principle**: A single token can be accessed through multiple interfaces—native Cosmos operations, ERC20 contracts, and bank queries—all referencing the same balance.
+
+## The Problem with Traditional Wrapping
+
+Wrapping tokens is a tedious process requiring additional user actions that are unavoidable for certain applications:
+
+### Ethereum's WETH Model
+```solidity
+contract WETH {
+    mapping(address => uint256) private _balances; // Separate state
+
+    function deposit() external payable {
+        _balances[msg.sender] += msg.value; // Lock ETH, mint WETH
+    }
+
+    function withdraw(uint256 amount) external {
+        _balances[msg.sender] -= amount; // Burn WETH, unlock ETH
+        payable(msg.sender).transfer(amount);
+    }
+}
+```
+
+**Issues with this approach:**
+- **Liquidity fragmentation** - ETH and WETH have separate, incompatible pools
+- **Smart contract risk** - Users can be misled to interact with unsafe or malicious contracts
+- **Complexity** - Users must manually wrap/unwrap, understand the concept to some degree
+- **Gas overhead** - Every wrap/unwrap operation requires additional transactions
+
+## The Solution: Single Token Representation
+
+Cosmos EVM takes a radically different approach by providing multiple interfaces to the same underlying token:
+
+```mermaid
+graph TB
+    Bank[Cosmos SDK Bank Module<br/>Single Source of Truth]
+
+    Bank --> Native[Native Operations<br/>cosmos tx bank send]
+    Bank --> ERC20[ERC20 Interface<br/>contract.transfer()]
+    Bank --> Query[Balance Queries<br/>All methods return same value]
+
+    Native --> Bank
+    ERC20 --> Bank
+    Query --> Bank
+
+    style Bank fill:#e1f5fe
+    style Native fill:#f3e5f5
+    style ERC20 fill:#f3e5f5
+    style Query fill:#f3e5f5
+```
+
+### How It Works
+
+1. **Single Balance**: All token amounts are stored in the Cosmos SDK bank module
+2. **Multiple Interfaces**: Different precompiles provide ERC20, native, and query interfaces
+3. **Automatic Synchronization**: All interfaces access the same underlying balance
+4. **No Conversion**: No wrapping/unwrapping operations needed
+
+## Real-World Example
+
+```javascript
+// User has 100 ATOM in their account
+const userAddress = "0x742d35cc6644c068532fddb11B4C36A58D6D3eAb";
+
+// Query via bank precompile
+const bankBalance = await bankContract.balances(userAddress);
+console.log(bankBalance); // [{contractAddress: "0x...", amount: "100000000"}]
+
+// Query via WERC20 ERC20 interface
+const watomBalance = await watomContract.balanceOf(userAddress);
+console.log(watomBalance); // "100000000" (same value)
+
+// Transfer 30 tokens via ERC20 interface
+await watomContract.transfer(recipient, "30000000");
+
+// Check balances again - both show the same updated amount
+const newBankBalance = await bankContract.balances(userAddress);
+console.log(newBankBalance); // [{contractAddress: "0x...", amount: "70000000"}]
+
+const newWatomBalance = await watomContract.balanceOf(userAddress);
+console.log(newWatomBalance); // "70000000" (identical)
+
+// User can also transfer via native Cosmos operations
+// cosmos tx bank send cosmos1... cosmos1... 20uatom
+// All interfaces will show the updated balance automatically
+```
+
+## Benefits
+
+### 1. **Unified Liquidity**
+- No fragmentation between "native" and "wrapped" versions
+- DeFi protocols can use either interface for the same liquidity
+- Users never need to choose between token versions
+
+### 2. **Eliminates Smart Contract Risk**
+- No wrapping contract that could be exploited or upgraded maliciously
+- Relies on Cosmos SDK bank module (battle-tested across hundreds of chains)
+- No admin keys or privileged functions for token operations
+
+### 3. **Simplified User Experience**
+- Users don't need to understand wrapping concepts
+- No manual wrap/unwrap transactions required
+- Seamless interaction between Cosmos and EVM ecosystems
+
+### 4. **Performance & Cost Efficiency**
+- No gas costs for wrapping/unwrapping operations
+- Direct access to optimized bank module operations
+- Reduced transaction complexity
+
+### 5. **Developer Benefits**
+- Write contracts using familiar ERC20 interfaces
+- No need to handle wrapping logic in smart contracts
+- Automatic compatibility with existing EVM tooling
+
+## Implementation Examples
+
+### DeFi Protocol Integration
+
+```solidity
+contract LiquidityPool {
+    IERC20 public token; // Could be WATOM, WUSDC, etc.
+
+    function addLiquidity(uint256 amount) external {
+        // Transfer from user's bank balance to contract's bank balance
+        token.transferFrom(msg.sender, address(this), amount);
+
+        // No wrapping needed - it's all the same underlying token
+        // Contract can also interact with native Cosmos operations if needed
+    }
+}
+```
+
+### Cross-Ecosystem Operations
+
+```javascript
+// Same user, same token, multiple interfaces
+async function demonstrateUnification() {
+    // Start with native Cosmos operation
+    await execCmd("cosmos tx bank send cosmos1abc... cosmos1def... 100uatom");
+
+    // Continue with ERC20 operations in same transaction flow
+    await watomContract.approve(dexContract.address, "50000000");
+    await dexContract.swap(watomContract.address, "50000000");
+
+    // Finish with another native operation
+    await execCmd("cosmos tx staking delegate cosmosvaloper1... 25uatom");
+
+    // All operations worked on the same underlying token balance
+}
+```
+
+## Comparison Matrix
+
+| Aspect | Traditional Wrapping | Single Token Representation |
+|--------|---------------------|----------------------------|
+| **Liquidity** | Fragmented (ETH + WETH) | Unified (ATOM = WATOM) |
+| **Smart Contract Risk** | High (wrapping contract bugs) | Minimal (bank module only) |
+| **User Complexity** | High (manual wrap/unwrap) | Low (automatic) |
+| **Gas Overhead** | High (wrap + operation + unwrap) | Low (operation only) |
+| **State Management** | Complex (dual accounting) | Simple (single source) |
+| **Developer Experience** | Must handle wrapping logic | Standard ERC20 interface |
+| **Interoperability** | Manual bridges required | Native cross-ecosystem |
+
+## Related Technologies
+
+### WERC20 Precompile
+The WERC20 precompile is the primary implementation of single token representation for native tokens. For detailed technical information about interfaces, methods, and implementation details, see the [WERC20 documentation](/docs/evm/precompiles/werc20).
+
+### ERC20 Module
+The underlying x/erc20 module manages token pair registrations and provides the infrastructure for single token representation. Learn more in the [ERC20 module documentation](/docs/evm/precompiles/erc20).
+
+### Bank Precompile
+The bank precompile provides direct access to native token balances and operations. See [Bank precompile documentation](/docs/evm/precompiles/bank) for query interfaces and methods.
+
+## Future Implications
+
+Single token representation opens up new possibilities for blockchain interoperability:
+
+- **Cross-chain DeFi** without liquidity fragmentation
+- **Simplified user onboarding** to multi-chain applications
+- **Native interoperability** without complex bridge protocols
+- **Unified developer experience** across different blockchain paradigms
+
+This architectural innovation positions Cosmos EVM as a leader in solving fundamental blockchain usability and liquidity challenges.
