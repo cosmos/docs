@@ -1,0 +1,117 @@
+---
+title: "Differences from Standard EVMs"
+description: "Critical differences between Cosmos EVM and Ethereum mainnet/L2s that affect smart contract behavior and infrastructure operation"
+mode: "wide"
+---
+
+<Warning>
+  **The EVM module is still in active development:** Some of what is detailed here may change or be removed entirely as development continues.
+</Warning>
+
+## Core Differences
+
+| Aspect | Cosmos EVM | Standard EVM | Impact |
+|--------|------------|--------------|---------|
+| **Transaction Ordering** | Arrival time to proposer | Gas price and nonce | Deterministic vs competitive ordering |
+| **Transactions per Block** | One per EOA per block | Multiple per account | Simplified transaction flow |
+| **Mempool** | No app-side mempool | Traditional mempool | Limited MEV opportunities |
+| **Consensus** | Tendermint BFT | Proof of Work/Stake | 1-2 second vs 12+ second blocks |
+| **Finality** | Immediate (single block) | Probabilistic (12+ confirmations) | No waiting period vs 12-15 minute finality |
+| **Chain Reorganizations** | Not possible | Possible | Event handling simplified |
+| **Address Formats** | Dual (0x... and cosmos1...) | Ethereum only (0x...) | Cross-format compatibility |
+| **Gas Token** | Native chain token | ETH/derivatives | Chain-specific economics |
+| **Base Fee** | Returns 0 | Dynamic based on demand | Different fee calculation |
+| **Block Time** | 1-2 seconds | 12-15 seconds (varies by L2) | Faster transaction confirmation |
+| **Cross-chain** | Native IBC | Bridge protocols | Built-in interoperability |
+
+## Gas Price Behavior
+
+<CodeGroup>
+```solidity Cosmos EVM - BASEFEE Returns 0
+// This will return 0 on Cosmos EVM
+uint256 baseFee = block.basefee;
+
+// Use this pattern instead for fee estimation
+uint256 gasPrice = tx.gasprice;
+```
+
+```solidity Standard EVM - BASEFEE Available
+// This returns actual base fee
+uint256 baseFee = block.basefee;
+
+// Can be used for dynamic fee calculations
+uint256 maxFee = baseFee * 2 + priorityFee;
+```
+</CodeGroup>
+
+## Precompiled Contracts
+
+### Cosmos EVM Precompiles
+
+Cosmos EVM provides access to native Cosmos SDK modules through precompiled contracts:
+
+| Module | Address | Purpose |
+|--------|---------|---------|
+| Staking | `0x800` | Delegate, undelegate, redelegate tokens |
+| Distribution | `0x801` | Claim rewards, manage withdrawals |
+| IBC Transfer | `0x802` | Cross-chain token transfers |
+| Governance | `0x803` | Submit/vote on proposals |
+
+For detailed usage examples and implementation guides, see [Precompiled Contracts](/docs/documentation/smart-contracts/precompiles).
+
+### Standard EVM Precompiles
+
+Standard cryptographic functions available on both implementations:
+
+| Address | Function | Available on Cosmos EVM |
+|---------|----------|-------------------------|
+| `0x01` | `ecrecover` | Yes |
+| `0x02` | `sha256` | Yes |
+| `0x03` | `ripemd160` | Yes |
+| `0x04` | `identity` | Yes |
+| `0x05` | `modexp` | Yes |
+| `0x06` | `ecadd` | Yes |
+| `0x07` | `ecmul` | Yes |
+| `0x08` | `ecpairing` | Yes |
+| `0x09` | `blake2f` | Yes |
+
+## JSON-RPC Method Support
+
+Cosmos EVM implements most standard Ethereum JSON-RPC methods with some limitations due to consensus differences:
+
+| Method Category | Examples | Notes |
+|----------------|----------|-------|
+| **✅ Core Methods** | `eth_getBalance`, `eth_call`, `eth_sendTransaction`, `eth_getTransactionReceipt` | Full compatibility |
+| **✅ Gas Methods** | `eth_gasPrice`, `eth_estimateGas`, `eth_feeHistory`, `eth_maxPriorityFeePerGas` | EIP-1559 supported |
+| **✅ Block Methods** | `eth_blockNumber`, `eth_getBlockByHash`, `eth_getBlockByNumber` | Immediate finality |
+| **⚠️ Mining Methods** | `eth_mining` (always false), `eth_hashrate` (always 0) | PoS consensus - no mining |
+| **⚠️ Uncle Methods** | `eth_getUncleCount*` (always 0), `eth_getUncleBy*` (always null) | Single proposer model |
+| **✅ Debug Methods** | `debug_traceTransaction`, `debug_traceBlockByNumber` | Available but not public |
+| **❌ Admin Methods** | `admin_*` methods | Not implemented |
+
+For a complete list of all JSON-RPC methods with implementation status, see the [Ethereum JSON-RPC Methods](/docs/api-reference/ethereum-json-rpc/methods) reference.
+
+### Cosmos-Specific JSON-RPC Extensions
+
+Cosmos EVM includes several methods not found in standard Ethereum implementations:
+
+| Method | Purpose |
+|--------|---------|
+| `eth_getTransactionLogs` | Retrieve logs for a specific transaction |
+| `eth_getPendingTransactions` | Get all pending transactions |
+| `eth_fillTransaction` | Auto-fill transaction fields (nonce, gas) |
+| `debug_freeOSMemory` | Force garbage collection |
+| `debug_setGCPercent` | Configure garbage collector |
+| `debug_getRaw*` methods | Access raw RLP-encoded blockchain data |
+| `debug_printBlock` | Human-readable block format |
+
+These extensions provide additional debugging and convenience features specific to Cosmos EVM.
+
+## Address Format Examples
+
+Cosmos EVM supports dual address formats with deterministic conversion:
+
+```
+Ethereum: 0x742d35cc6644c068532fddb11B4C36A58D6D3eAb
+Cosmos:   cosmos1wskntvnryr5qxpe4tv5k64rhc6kx6ma4dxjmav
+```

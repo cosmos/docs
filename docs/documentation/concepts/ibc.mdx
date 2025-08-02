@@ -1,0 +1,87 @@
+---
+title: "Core Protocol Spec"
+description: "Core components, data structures, and packet flow of the Inter-Blockchain Communication Protocol."
+---
+
+### Core Data Structures
+
+The `Packet` is the primary container for cross-chain communication. Each packet wraps one or more application-specific **`Payload`** objects.
+
+<CodeGroup>
+
+```typescript packet.ts
+// The main data container sent between chains
+interface Packet {
+  sourceClientId: bytes;    // Client ID for destination chain (stored on source)
+  destClientId: bytes;      // Client ID for source chain (stored on destination)
+  sequence: uint64;         // Monotonically increasing nonce for ordering
+  timeoutTimestamp: uint64; // UNIX timestamp (seconds) when the packet expires
+  data: Payload[];          // List of application payloads
+}
+
+// Application-specific data and routing information
+interface Payload {
+  sourcePort: bytes;  // Identifies sending application module
+  destPort: bytes;    // Identifies receiving application module
+  version: string;    // App-specific version for interpretation
+  encoding: string;   // MIME-type for decoding value
+  value: bytes;       // Opaque application data
+}
+```
+
+</CodeGroup>
+
+## Key On-Chain Components
+
+<Accordion title="Client (ICS-02) – Light Client">
+An on-chain light client that verifies the state of a counter-party chain using cryptographic proofs against a trusted consensus state.
+
+ICS-02 defines the required behavior for these light clients and specifies how the host chain must handle their management, including creation, updates, and routing verification calls to the correct client instance.
+</Accordion>
+
+<Accordion title="Provable Store (ICS-24)">
+A Merkle-proof-capable key-value store required on the host chain. Standardized paths enable verification by counter-party chains.
+
+| Value             | Path Format                                  |
+| :---------------- | :------------------------------------------- |
+| Packet Commitment | `{sourceClientId}0x1{bigEndianUint64Sequence}` |
+| Packet Receipt    | `{destClientId}0x2{bigEndianUint64Sequence}`   |
+| Acknowledgement   | `{destClientId}0x3{bigEndianUint64Sequence}`   |
+
+</Accordion>
+
+<Accordion title="Port Allocation (ICS-05)">
+Applications must bind to unique **`portId`** values during initialization. The port is referenced in every `Payload` to route incoming packets.
+</Accordion>
+
+## Application Interface (ICS-26)
+
+An IBC-enabled application **must** implement these callbacks to manage the packet lifecycle.
+
+  * **`OnRecvPacket(...)`** – Executed on the **destination chain** to process incoming data. It must return an **Acknowledgement**, which can contain application-specific success data or an error.
+  * **`OnAcknowledgePacket(...)`** – Executed on the **source chain** once an acknowledgement is verified. The `acknowledgement` data is passed to this callback, allowing the sending application to finalize or compensate the originating action.
+  * **`OnTimeoutPacket(...)`** – Executed on the **source chain** if a timeout occurs, allowing for a clean rollback or refund.
+
+<Warning>For packets with multiple payloads, execution is **atomic**. If the `OnRecvPacket` callback fails for even one payload, the entire packet operation is considered a failure. Any state changes from other successful callbacks in the same packet **must be reverted**.</Warning>
+
+## Packet Lifecycle
+
+<Accordion title="1. SendPacket (Source Chain)">
+The IBC module receives `Payload` data from a sending application, wraps it in a `Packet`, assigns a `sequence`, and commits the packet hash to the state at the `Packet Commitment` path.
+</Accordion>
+
+<Accordion title="2. RecvPacket (Destination Chain)">
+The IBC module receives an **attestation** containing the `Packet` and a proof of its commitment. It verifies the proof against the light client state and, on success, stores a `Receipt` at the `Packet Receipt` path before invoking the destination application's `OnRecvPacket` callback.
+</Accordion>
+
+<Accordion title="3. WriteAcknowledgement (Destination Chain)">
+The `OnRecvPacket` callback returns an `Acknowledgement`. The IBC module commits this data to the state at the `Acknowledgement` path, making it available to be proven via a subsequent attestation. For applications with long-running logic, this can be an asynchronous call to a separate `WriteAcknowledgement` function.
+</Accordion>
+
+<Accordion title="4. AcknowledgePacket (Source Chain)">
+The IBC module receives an **attestation** for the `Acknowledgement` and its proof. After verification, it deletes the original packet commitment and calls the `OnAcknowledgePacket` callback on the sending application, passing the `acknowledgement` data.
+</Accordion>
+
+<Accordion title="5. TimeoutPacket (Source Chain)">
+If the `timeoutTimestamp` is reached before a receipt is written on the destination chain, the IBC module processes an **attestation** proving the receipt's non-existence. It then deletes the original packet commitment and triggers the `OnTimeoutPacket` callback.
+</Accordion>

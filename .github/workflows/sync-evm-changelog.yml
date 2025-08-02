@@ -59,65 +59,20 @@ jobs:
             let categories = {};
             let allVersions = [];
 
+            // For init mode, just parse UNRELEASED as the initial version
             if (initMode) {
-              // Parse all versions for initialization
-              let currentVersion = null;
-              let currentVersionContent = {};
-              let inVersionSection = false;
-
-              for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-
-                // Look for version headers (## [version] - date or ## version - date or ## version)
-                const versionMatch = line.match(/^##\s*(?:\[([^\]]+)\](?:\s*-\s*(.+))?|([^-\s]+)(?:\s*-\s*(.+))?)/);
-
-                if (versionMatch && line !== '## UNRELEASED') {
-                  // Save previous version if exists
-                  if (currentVersion && Object.keys(currentVersionContent).length > 0) {
-                    allVersions.push({
-                      version: currentVersion,
-                      date: currentVersionDate || 'Unknown',
-                      categories: currentVersionContent
-                    });
-                  }
-
-                  currentVersion = versionMatch[1] || versionMatch[3];
-                  var currentVersionDate = versionMatch[2] || versionMatch[4];
-                  currentVersionContent = {};
-                  currentCategory = null;
-                  inVersionSection = true;
-                  continue;
-                }
-
-                // Skip UNRELEASED section for init mode
-                if (line === '## UNRELEASED') {
-                  inVersionSection = false;
-                  continue;
-                }
-
-                // Look for category headers (### CATEGORY)
-                if (inVersionSection && line.startsWith('### ')) {
-                  currentCategory = line.replace('### ', '').trim();
-                  currentVersionContent[currentCategory] = [];
-                  continue;
-                }
-
-                // Collect content under each category
-                if (inVersionSection && currentCategory && line && !line.startsWith('#')) {
-                  currentVersionContent[currentCategory].push(line);
-                }
+              const result = parseChangelog(content, releaseTag, false);
+              if (result.hasContent) {
+                return {
+                  allVersions: [{
+                    version: releaseTag,
+                    date: new Date().toISOString().split('T')[0],
+                    categories: result.categories
+                  }],
+                  hasContent: true
+                };
               }
-
-              // Don't forget the last version
-              if (currentVersion && Object.keys(currentVersionContent).length > 0) {
-                allVersions.push({
-                  version: currentVersion,
-                  date: currentVersionDate || 'Unknown',
-                  categories: currentVersionContent
-                });
-              }
-
-              return { allVersions, hasContent: allVersions.length > 0 };
+              return { allVersions: [], hasContent: false };
             }
 
             // Original single version parsing for regular updates
@@ -321,7 +276,7 @@ jobs:
           EOF
 
           # Check if this is initialization mode (changelog file doesn't exist)
-          CHANGELOG_FILE="docs/evm/changelog.mdx"
+          CHANGELOG_FILE="docs/changelog/release-notes.mdx"
           if [ ! -f "$CHANGELOG_FILE" ]; then
             echo "Initializing changelog with all previous versions..."
             node parse_changelog.js "${{ steps.fetch-changelog.outputs.release_tag }}" init
@@ -332,7 +287,7 @@ jobs:
 
       - name: Update changelog file
         run: |
-          CHANGELOG_FILE="docs/evm/changelog.mdx"
+          CHANGELOG_FILE="docs/changelog/release-notes.mdx"
           UPDATE_CONTENT=$(cat /tmp/update_component.mdx)
 
           # Check if the changelog file exists
@@ -343,11 +298,11 @@ jobs:
 
             # Create the file with proper YAML front matter using printf
             printf '%s\n' '---' > "$CHANGELOG_FILE"
-            printf '%s\n' 'title: "EVM Changelog"' >> "$CHANGELOG_FILE"
-            printf '%s\n' 'description: "Track changes and updates to the Cosmos EVM"' >> "$CHANGELOG_FILE"
+            printf '%s\n' 'title: "Changelog"' >> "$CHANGELOG_FILE"
+            printf '%s\n' 'description: "Follows the \`CHANGELOG.md\` for \`cosmos/evm\`"' >> "$CHANGELOG_FILE"
             printf '%s\n' '---' >> "$CHANGELOG_FILE"
             printf '\n' >> "$CHANGELOG_FILE"
-            printf '%s\n' '# EVM Changelog' >> "$CHANGELOG_FILE"
+            printf '%s\n' '# Changelog' >> "$CHANGELOG_FILE"
             printf '\n' >> "$CHANGELOG_FILE"
             printf '%s\n' 'This page tracks all releases and changes to the Cosmos EVM module.' >> "$CHANGELOG_FILE"
             printf '\n' >> "$CHANGELOG_FILE"
@@ -359,22 +314,43 @@ jobs:
             # Find the insertion point (after the front matter and title)
             # Insert the new update at the top of the changelog entries
             awk -v update="$UPDATE_CONTENT" '
-            BEGIN { found_title = 0; inserted = 0 }
-            /^# / && found_title == 0 {
-              print $0
-              print ""
-              print update
-              inserted = 1
-              found_title = 1
+            BEGIN { found_header = 0; found_intro = 0; inserted = 0 }
+            
+            # Skip frontmatter
+            /^---$/ && NR == 1 { in_frontmatter = 1; print; next }
+            /^---$/ && in_frontmatter { in_frontmatter = 0; print; next }
+            in_frontmatter { print; next }
+            
+            # Find the main title
+            /^# / && !found_header {
+              print
+              found_header = 1
               next
             }
-            /^<Update/ && inserted == 0 {
-              print update
-              inserted = 1
+            
+            # After title, look for intro text or existing Update
+            found_header && !inserted {
+              if (/^This page tracks/ || /^$/) {
+                print
+                if (/^This page tracks/) found_intro = 1
+                if (found_intro && /^$/) {
+                  print update
+                  inserted = 1
+                }
+              } else if (/^<Update/) {
+                print update
+                print
+                inserted = 1
+              } else {
+                print
+              }
+              next
             }
+            
             { print }
+            
             END {
-              if (inserted == 0) {
+              if (!inserted) {
                 print ""
                 print update
               }
@@ -388,7 +364,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          git add docs/evm/changelog.mdx
+          git add docs/changelog/release-notes.mdx
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
