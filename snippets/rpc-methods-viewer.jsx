@@ -1478,134 +1478,6 @@ class Program
           ]
         }
       ]
-    },
-    miner: {
-      name: 'Miner',
-      icon: SmartContractIcon,
-      methods: [
-        {
-          name: 'miner_getHashrate',
-          description: 'Get hashrate in H/s',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get hashrate',
-              params: [],
-              response: {
-                result: 0
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_setExtra',
-          description: 'Set extra data for block proposals',
-          implemented: false,
-          private: true,
-          params: [
-            { name: 'data', type: 'string', description: 'Extra data (max 32 bytes)', example: 'data' }
-          ],
-          examples: [
-            {
-              name: 'Set extra data',
-              params: ['data'],
-              response: {
-                result: false
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_setGasPrice',
-          description: 'Set minimum gas price for transaction acceptance',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'gasPrice', type: 'quantity', description: 'Minimum gas price in hex', example: '0x0' }
-          ],
-          examples: [
-            {
-              name: 'Set zero gas price',
-              params: ['0x0'],
-              response: {
-                result: true
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_start',
-          description: 'Start CPU mining',
-          implemented: false,
-          private: true,
-          params: [
-            { name: 'threads', type: 'quantity', description: 'Number of threads', example: '0x1' }
-          ],
-          examples: [
-            {
-              name: 'Start mining',
-              params: ['0x1'],
-              response: {
-                result: false
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_stop',
-          description: 'Stop mining operation',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'Stop mining',
-              params: [],
-              response: {
-                result: null
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_setGasLimit',
-          description: 'Set gas limit target for mining',
-          implemented: false,
-          private: true,
-          params: [
-            { name: 'gasLimit', type: 'quantity', description: 'Gas limit in hex', example: '0x10000' }
-          ],
-          examples: [
-            {
-              name: 'Set gas limit',
-              params: ['0x10000'],
-              response: {
-                result: false
-              }
-            }
-          ]
-        },
-        {
-          name: 'miner_setEtherbase',
-          description: 'Set validator rewards recipient',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'address', type: 'address', description: 'Etherbase address', example: '0x3b7252d007059ffc82d16d022da3cbf9992d2f70' }
-          ],
-          examples: [
-            {
-              name: 'Set etherbase',
-              params: ['0x3b7252d007059ffc82d16d022da3cbf9992d2f70'],
-              response: {
-                result: true
-              }
-            }
-          ]
-        }
-      ]
     }
   };
 
@@ -1727,9 +1599,9 @@ class Program
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
+    <div className="min-h-screen bg-white dark:bg-black">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-white dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-10 bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-6">
             <h1 className="text-4xl font-bold text-black dark:text-white">
@@ -1766,8 +1638,8 @@ class Program
                   Enter an RPC endpoint to enable interactive testing
                 </span>
                 <div className={`px-3 py-2 rounded-lg transition-all duration-200 border-2 ${
-                  isValidEndpoint 
-                    ? 'border-[#05fcf8]' 
+                  isValidEndpoint
+                    ? 'border-[#05fcf8]'
                     : isInvalidEndpoint
                     ? 'border-amber-500'
                     : 'border-gray-300 dark:border-gray-700'
@@ -1777,7 +1649,7 @@ class Program
                     <input
                       type="text"
                       placeholder="http://localhost:8545"
-                      className="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-gray-400 bg-white dark:bg-gray-950 text-black dark:text-white placeholder-gray-500"
+                      className="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-gray-400 bg-white dark:bg-black text-black dark:text-white placeholder-gray-500"
                       value={rpcEndpoint}
                       onChange={(e) => {
                         setRpcEndpoint(e.target.value);
@@ -2045,7 +1917,7 @@ class Program
                                     Example Response
                                   </h6>
                                 </div>
-                                <pre className="p-4 bg-gray-50 dark:bg-gray-950 text-xs overflow-x-auto">
+                                <pre className="p-4 bg-gray-50 dark:bg-black text-xs overflow-x-auto">
                                   <code className={example.response.error ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
 {JSON.stringify({
   jsonrpc: '2.0',

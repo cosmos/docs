@@ -1,15 +1,26 @@
 ---
-title: "Differences from Standard EVMs"
-description: "Critical differences between Cosmos EVM and Ethereum mainnet/L2s that affect smart contract behavior and infrastructure operation"
+title: "Differences from Ethereum Mainnet"
+description: "Comprehensive guide to all differences between Cosmos EVM and Ethereum mainnet that affect developers, infrastructure operators, and users"
 mode: "wide"
-keywords: ['differences', 'ethereum', 'evm', 'cosmos', 'tendermint', 'consensus', 'finality', 'json-rpc', 'compatibility', 'precompiles', 'ibc', 'mev', 'gas', 'basefee', 'uncle blocks', 'reorganization', 'stub methods', 'implementation']
+keywords: ['differences', 'ethereum', 'evm', 'cosmos', 'tendermint', 'consensus', 'finality', 'json-rpc', 'compatibility', 'precompiles', 'ibc', 'mev', 'gas', 'basefee', 'uncle blocks', 'reorganization', 'stub methods', 'implementation', 'bft', 'validator', 'staking']
 ---
 
 import { footnote } from '/snippets/footnote.mdx'
 
 <Warning>
-  **The EVM module is still in active development:** Some of what is detailed here may change or be removed entirely as development continues.
+  **The EVM module is still in active development:** Some of what is detailed here may change or be removed entirely as development continues. This document represents the current state of the implementation.
 </Warning>
+
+## Quick Summary
+
+**Most Important Differences for Developers:**
+1. **Instant finality** - No block reorganizations, transactions are final after one block
+2. **1-2 second blocks** - Much faster than Ethereum's 12-15 seconds
+3. **Configurable base fee** - Can be dynamic (EIP-1559) or disabled, distributed to validators instead of burned
+4. **Native IBC** - Built-in cross-chain communication without bridges
+5. **Cosmos precompiles** - Direct access to staking, governance, and other Cosmos SDK modules
+6. **No pending state** - Transactions are either in mempool or committed
+7. **EIP compatibility** - Most Core EIPs supported with some consensus-related exceptions ([see full matrix](/docs/documentation/eip-compatibility))
 
 ## Core Differences
 
@@ -18,12 +29,13 @@ import { footnote } from '/snippets/footnote.mdx'
 | **Transaction Ordering** | Arrival time to proposer\*\* | Gas price and nonce | Deterministic vs competitive ordering |
 | **Transactions per Block** | One per EOA per block\*\* | Multiple per account | Simplified transaction flow |
 | **Mempool** | No app-side mempool\*\* | Traditional mempool | Limited MEV opportunities |
+| **Block Rewards** | Native token inflation to validators | Block rewards + tips | Different economic model |
 | **Consensus** | Tendermint BFT | Proof of Work/Stake | 1-2 second vs 12+ second blocks |
 | **Finality** | Immediate (single block) | Probabilistic (12+ confirmations) | No waiting period vs 12-15 minute finality |
 | **Chain Reorganizations** | Not possible | Possible | Event handling simplified |
 | **Address Formats** | Dual (0x... and cosmos1...) | Ethereum only (0x...) | Cross-format compatibility |
 | **Gas Token** | Native chain token | ETH/derivatives | Chain-specific economics |
-| **Base Fee** | Returns 0 | Dynamic based on demand | Different fee calculation |
+| **Base Fee** | Configurable (can be 0 or dynamic) | Dynamic based on demand | Chain-specific configuration |
 | **Block Time** | 1-2 seconds | 12-15 seconds (varies by L2) | Faster transaction confirmation |
 | **Cross-chain** | Native IBC | Bridge protocols | Built-in interoperability |
 
@@ -32,22 +44,32 @@ import { footnote } from '/snippets/footnote.mdx'
 ## Gas Price Behavior
 
 <CodeGroup>
-```solidity Cosmos EVM - BASEFEE Returns 0
-// This will return 0 on Cosmos EVM
+```solidity Cosmos EVM - BASEFEE Configurable
+// May return 0 if NoBaseFee is true, or dynamic value if EIP-1559 is enabled
 uint256 baseFee = block.basefee;
 
-// Use this pattern instead for fee estimation
+// BaseFee is distributed to validators (not burned)
+// Lower-bounded by global min-gas-price
 uint256 gasPrice = tx.gasprice;
 ```
 
-```solidity Standard EVM - BASEFEE Available
-// This returns actual base fee
+```solidity Standard EVM - BASEFEE Burned
+// Returns dynamic base fee
 uint256 baseFee = block.basefee;
 
-// Can be used for dynamic fee calculations
+// Base fee is burned, not distributed
 uint256 maxFee = baseFee * 2 + priorityFee;
 ```
 </CodeGroup>
+
+<Info>
+Cosmos EVM supports EIP-1559 with dynamic base fees, but with key differences:
+- Base fee is **distributed to validators** instead of burned (preserving token economics)
+- Can be disabled via `NoBaseFee` parameter (returns 0 for `block.basefee`)
+- Lower-bounded by global `min-gas-price` configuration
+- Calculated based on previous block's gas usage when enabled
+- Unlike Ethereum where base fee is burned, Cosmos EVM maintains token supply
+</Info>
 
 ## Precompiled Contracts
 
@@ -57,10 +79,16 @@ Cosmos EVM provides access to native Cosmos SDK modules through precompiled cont
 
 | Module | Address | Purpose |
 |--------|---------|---------|
-| Staking | `0x800` | Delegate, undelegate, redelegate tokens |
-| Distribution | `0x801` | Claim rewards, manage withdrawals |
-| IBC Transfer | `0x802` | Cross-chain token transfers |
-| Governance | `0x803` | Submit/vote on proposals |
+| Staking | `0x0000000000000000000000000000000000000800` | Delegate, undelegate, redelegate tokens |
+| Distribution | `0x0000000000000000000000000000000000000801` | Claim rewards, manage withdrawals |
+| IBC Transfer | `0x0000000000000000000000000000000000000802` | Cross-chain token transfers |
+| Governance | `0x0000000000000000000000000000000000000805` | Submit/vote on proposals |
+| Bank | `0x0000000000000000000000000000000000000804` | ERC20-style access to native tokens |
+| Slashing | `0x0000000000000000000000000000000000000806` | Validator slashing and jail management |
+| Bech32 | `0x0000000000000000000000000000000000000400` | Address format conversion |
+| P256 | `0x0000000000000000000000000000000000000100` | P-256 elliptic curve operations |
+| ERC20 | Dynamic per token | Standard ERC20 for native Cosmos tokens |
+| WERC20 | Dynamic per token | Wrapped native token functionality |
 
 For detailed usage examples and implementation guides, see [Precompiled Contracts](/docs/documentation/smart-contracts/precompiles).
 
@@ -89,11 +117,12 @@ Cosmos EVM implements most standard Ethereum JSON-RPC methods with some limitati
 | **✅ Core Methods** | `eth_getBalance`, `eth_call`, `eth_sendTransaction`, `eth_getTransactionReceipt` | Full compatibility |
 | **⚠️ Gas Methods** | `eth_gasPrice`, `eth_estimateGas`, `eth_maxPriorityFeePerGas` | EIP-1559 partial - `eth_feeHistory` not implemented |
 | **✅ Block Methods** | `eth_blockNumber`, `eth_getBlockByHash`, `eth_getBlockByNumber` | Immediate finality |
-| **❌ Mining Methods** | All `miner_*` methods | Not implemented - Tendermint consensus |
+| **✅ Mining Stub Methods** | `eth_coinbase`, `eth_mining` (always false), `eth_hashrate` (always 0) | Returns static values for compatibility |
 | **✅ Uncle Methods** | `eth_getUncleCount*` (always 0), `eth_getUncleBy*` (always null) | Returns expected values for no uncles |
 | **⚠️ Debug Methods** | `debug_traceTransaction`, `debug_traceBlockByNumber` | Limited functionality, some issues |
 | **❌ Admin Methods** | `admin_*` methods | Not implemented |
 | **⚠️ Filter Methods** | `eth_newFilter`, `eth_newBlockFilter` | Filters created but `eth_getFilterChanges` fails |
+| **⚠️ Personal Methods** | `personal_sign`, `personal_newAccount`, `personal_importRawKey` | Partial implementation |
 
 For a complete list of all JSON-RPC methods with implementation status, see the [Ethereum JSON-RPC Methods](/docs/api-reference/ethereum-json-rpc/methods) reference.
 
@@ -127,7 +156,8 @@ These standard Ethereum methods are not available:
 | `eth_pendingTransactions` | Transaction Pool | Pending transaction queries not implemented |
 | `personal_sendTransaction` | Personal | Personal transaction sending not implemented |
 | `personal_ecRecover` | Personal | Signature recovery not implemented |
-| All `miner_*` methods | Mining | No mining with Tendermint consensus |
+| `personal_lockAccount` | Personal | Always returns false (not supported) |
+| `personal_unlockAccount` | Personal | Always returns false (not supported) |
 | All `admin_*` methods | Administration | Node administration not exposed |
 | `eth_subscribe` syncing | WebSocket | Only newHeads, logs, and newPendingTransactions events supported |
 
@@ -139,3 +169,82 @@ Cosmos EVM supports dual address formats with deterministic conversion:
 Ethereum: 0x742d35cc6644c068532fddb11B4C36A58D6D3eAb
 Cosmos:   cosmos1wskntvnryr5qxpe4tv5k64rhc6kx6ma4dxjmav
 ```
+
+Both formats represent the same account and can be used interchangeably. Use the Bech32 precompile at `0x0000000000000000000000000000000000000400` for conversion.
+
+## EIP Compatibility
+
+Cosmos EVM implements most Ethereum Improvement Proposals (EIPs) through the Geth EVM, with modifications for Cosmos consensus compatibility.
+
+<Info>
+  For a comprehensive searchable table of all 339+ Core EIPs with implementation status, see the **[EIP Compatibility Matrix](/docs/documentation/eip-compatibility)**.
+</Info>
+
+### Implementation Strategy
+
+1. **Core EVM Features**: Most opcodes and execution features are inherited directly from Geth EVM
+2. **Consensus-Related**: Features related to PoW/PoS consensus are not applicable due to Tendermint BFT
+3. **Economic Model**: EIP-1559 implemented with modifications (fees to validators instead of burning)
+4. **Future Support**: Critical EIPs like EIP-7702 are actively being developed
+
+### Key EIP Implementation Differences
+
+#### EIP-1559 (Dynamic Base Fee)
+- ✅ Supported
+- Base fee is **distributed to validators** instead of burned
+- Can be disabled via `NoBaseFee` parameter
+- Lower-bounded by global `min-gas-price`
+- Maintains token supply unlike Ethereum
+
+#### EIP-155 (Replay Protection)
+- ⚠️ Different implementation
+- Currently enforced at chain level rather than per-transaction
+- Plans to align with Geth implementation for better compatibility
+- See [GitHub Issue #401](https://github.com/cosmos/evm/issues/401)
+
+#### EIP-7702 (Set Code for EOAs)
+- 🚧 Coming in v0.5.0
+- Will enable account abstraction capabilities
+- Critical for wallet innovation and user experience improvements
+
+#### EIP-2681 (Nonce Limit)
+- ⚠️ Partial support
+- Needs stricter overflow checking at AnteHandler
+- See [GitHub Issue #400](https://github.com/cosmos/evm/issues/400)
+
+### Consensus-Related EIPs (Not Applicable)
+
+The following categories of EIPs are not applicable due to Cosmos using Tendermint BFT consensus:
+- **Difficulty adjustments**: EIP-100, 649, 1234, 2384, 3554, 4345, 5133
+- **Proof-of-Work to Proof-of-Stake transition**: EIP-3675
+- **Beacon chain operations**: EIP-4788, 4895, 7002, etc.
+- **Validator deposits and withdrawals**: EIP-6110, 7044, 7045, 7251, 7514
+
+## Additional Key Differences
+
+### Transaction Execution
+- **No pending state**: Transactions are either in mempool or committed, no intermediate "pending" state as in Ethereum
+- **FIFO ordering**: Transactions processed in order of arrival (with app-side mempool changes coming)
+- **Single transaction per block per EOA**: Currently limited to one transaction per account per block (changing with app-side mempool)
+- **No transaction replacement**: Cannot replace pending transactions with higher gas price (no RBF)
+- **Deterministic execution**: Same transaction order for all validators due to BFT consensus
+
+### State and Storage
+- **No state rent**: No storage rent or state expiry mechanisms
+- **Pruning**: Historical state can be pruned based on node configuration
+- **Archive nodes**: Full historical state requires archive node configuration
+
+### Network Architecture
+- **Validator set**: Fixed validator set with stake-based voting power
+- **No light clients**: Full or archive nodes only, no light client protocol
+- **P2P differences**: Uses Tendermint P2P networking instead of devp2p
+
+### Developer Considerations
+- **Gas refunds**: At least 50% of unused gas is refunded (configurable)
+- **Revert reasons**: Full revert reason strings always available
+- **Event reliability**: Events are immediately final, no need to wait for confirmations
+- **Block timestamps**: More reliable due to BFT consensus requirements
+- **Account abstraction**: EIP-7702 support coming in v0.5.0 for EOA code delegation
+- **Opcode differences**: DIFFICULTY/PREVRANDAO returns 0, COINBASE returns empty address
+- **Chain ID**: Enforced at chain level rather than per-transaction (EIP-155)
+- **Storage costs**: No state rent mechanisms, pruning configurable per node
