@@ -4,7 +4,7 @@
 
 ## Contributing
 
-Fork the repository
+Fork the repository 
 
 - Click “Fork” in the GitHub UI to create your own copy.
 
