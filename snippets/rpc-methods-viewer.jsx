@@ -1,4 +1,28 @@
-import { CurlIcon, TypeScriptIcon, GoIcon, RustIcon, PythonIcon, CSharpIcon, APIIcon, NetworkIcon, EthereumIcon, SmartContractIcon } from '/snippets/icons.mdx';
+import { useState, useMemo } from 'react';
+import { 
+  Terminal, 
+  FileCode2, 
+  Play, 
+  Zap, 
+  Code, 
+  Hash, 
+  Globe, 
+  Network, 
+  Coins, 
+  FileKey, 
+  Bug, 
+  Database,
+  Check,
+  X
+} from 'lucide-react';
+
+// Language icons
+const CurlIcon = () => <Terminal size={16} />;
+const TypeScriptIcon = () => <FileCode2 size={16} />;
+const GoIcon = () => <Play size={16} />;
+const RustIcon = () => <Zap size={16} />;
+const PythonIcon = () => <Code size={16} />;
+const CSharpIcon = () => <Hash size={16} />;
 
 export default function RPCMethodsViewer() {
   const [selectedNamespace, setSelectedNamespace] = useState('all');
@@ -200,7 +224,7 @@ class Program
   const namespaces = {
     web3: {
       name: 'Web3',
-      icon: APIIcon,
+      icon: Globe,
       methods: [
         {
           name: 'web3_clientVersion',
@@ -243,7 +267,7 @@ class Program
     },
     net: {
       name: 'Net',
-      icon: NetworkIcon,
+      icon: Network,
       methods: [
         {
           name: 'net_version',
@@ -293,7 +317,7 @@ class Program
     },
     eth: {
       name: 'Eth',
-      icon: EthereumIcon,
+      icon: Coins,
       methods: [
         {
           name: 'eth_blockNumber',
@@ -328,638 +352,12 @@ class Program
               response: { result: '0x0' }
             }
           ]
-        },
-        {
-          name: 'eth_getTransactionByHash',
-          description: 'Get transaction details by hash',
-          implemented: true,
-          params: [
-            { name: 'hash', type: 'hash', description: 'Transaction hash', example: '0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b' }
-          ],
-          examples: [
-            {
-              name: 'Existing transaction',
-              params: ['0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b'],
-              response: {
-                result: {
-                  blockHash: '0x1d59ff54b1eb26b013ce3cb5fc9dab3705b415a67127a003c3e61eb445bb8df2',
-                  blockNumber: '0x5daf3b',
-                  from: '0xa7d9ddbe1f17865597fbd27ec712455208b6b76d',
-                  gas: '0xc350',
-                  gasPrice: '0x4a817c800',
-                  hash: '0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b',
-                  input: '0x68656c6c6f21',
-                  nonce: '0x15',
-                  to: '0xf02c1c8e6114b1dbe8937a39260b5b0a374432bb',
-                  transactionIndex: '0x41',
-                  value: '0xf3dbb76162000',
-                  v: '0x25',
-                  r: '0x1b5e176d927f8e9ab405058b2d2457392da3e20f328b16ddabcebc33eaac5fea',
-                  s: '0x4ba69724e8f69de52f0125ad8b3c5c2cef33019bac3249e2c0a2192766d1721c'
-                }
-              }
-            },
-            {
-              name: 'Transaction not found',
-              params: ['0x0000000000000000000000000000000000000000000000000000000000000000'],
-              response: { result: null }
-            }
-          ]
-        },
-        {
-          name: 'eth_sendRawTransaction',
-          description: 'Submit a signed transaction',
-          implemented: true,
-          params: [
-            { name: 'data', type: 'bytes', description: 'Signed transaction data', example: '0xf86c0185046110...' }
-          ],
-          examples: [
-            {
-              name: 'Valid transaction',
-              params: ['0xf86c01850465...'],
-              response: { result: '0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331' }
-            },
-            {
-              name: 'Invalid transaction',
-              params: ['0xinvalid'],
-              response: {
-                error: {
-                  code: -32602,
-                  message: 'Invalid params'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_call',
-          description: 'Execute a call without creating a transaction',
-          implemented: true,
-          params: [
-            {
-              name: 'transaction',
-              type: 'object',
-              description: 'Transaction call object',
-              fields: [
-                { name: 'from', type: 'address', description: 'Address to call from (optional)' },
-                { name: 'to', type: 'address', description: 'Contract address' },
-                { name: 'gas', type: 'quantity', description: 'Gas limit (optional)' },
-                { name: 'gasPrice', type: 'quantity', description: 'Gas price (optional)' },
-                { name: 'value', type: 'quantity', description: 'Value to send (optional)' },
-                { name: 'data', type: 'bytes', description: 'Call data' }
-              ]
-            },
-            { name: 'block', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Call balanceOf',
-              params: [
-                {
-                  to: '0x08d68b6d693a685126f823bc7787e4078b3d35e3',
-                  data: '0x70a08231000000000000000000000000b60e8dd61c5d32be8058bb8eb970870f07233155'
-                },
-                'latest'
-              ],
-              response: { result: '0x00000000000000000000000000000000000000000000000000000000000186a0' }
-            }
-          ]
-        },
-        {
-          name: 'eth_getLogs',
-          description: 'Get logs matching filter criteria',
-          implemented: true,
-          params: [
-            {
-              name: 'filter',
-              type: 'object',
-              description: 'Filter object',
-              fields: [
-                { name: 'fromBlock', type: 'string', description: 'Starting block' },
-                { name: 'toBlock', type: 'string', description: 'Ending block' },
-                { name: 'address', type: 'address', description: 'Contract address(es)' },
-                { name: 'topics', type: 'array', description: 'Topic filters' }
-              ]
-            }
-          ],
-          examples: [
-            {
-              name: 'Get Transfer events',
-              params: [{
-                fromBlock: '0x1',
-                toBlock: 'latest',
-                address: '0xb59f67a8bff5d8cd03f6ac17265c550ed8f33907',
-                topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef']
-              }],
-              response: {
-                result: [{
-                  address: '0xb59f67a8bff5d8cd03f6ac17265c550ed8f33907',
-                  topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
-                  data: '0x00000000000000000000000000000000000000000000000000000000000186a0',
-                  blockNumber: '0x1b4',
-                  transactionHash: '0x67....',
-                  transactionIndex: '0x0',
-                  blockHash: '0x78....',
-                  logIndex: '0x0',
-                  removed: false
-                }]
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_coinbase',
-          description: 'Get the mining rewards recipient address',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get coinbase',
-              params: [],
-              response: {
-                result: '0x7cB61D4117AE31a12E393a1Cfa3BaC666481D02E'
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_mining',
-          description: 'Check if client is actively mining',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Check mining status',
-              params: [],
-              response: {
-                result: false
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_hashrate',
-          description: 'Get current hashrate',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get hashrate',
-              params: [],
-              response: {
-                result: '0x0'
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_chainId',
-          description: 'Get chain ID for replay-protected transactions',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get chain ID',
-              params: [],
-              response: {
-                result: '0x40000'
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_protocolVersion',
-          description: 'Returns the current ethereum protocol version',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get protocol version',
-              params: [],
-              response: { result: '0x41' }
-            }
-          ]
-        },
-        {
-          name: 'eth_syncing',
-          description: 'Returns sync status or false',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Not syncing',
-              params: [],
-              response: { result: false }
-            },
-            {
-              name: 'Currently syncing',
-              params: [],
-              response: {
-                result: {
-                  startingBlock: '0x384',
-                  currentBlock: '0x386',
-                  highestBlock: '0x454'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_gasPrice',
-          description: 'Returns current gas price',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get gas price',
-              params: [],
-              response: { result: '0x4a817c800' }
-            }
-          ]
-        },
-        {
-          name: 'eth_accounts',
-          description: 'Returns list of addresses owned by client',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get accounts',
-              params: [],
-              response: { result: ['0x407d73d8a49eeb85d32cf465507dd71d507100c1'] }
-            }
-          ]
-        },
-        {
-          name: 'eth_getStorageAt',
-          description: 'Returns value from a storage position at an address',
-          implemented: true,
-          params: [
-            { name: 'address', type: 'address', description: 'Storage address', example: '0x295a70b2de5e3953354a6a8344e616ed314d7251' },
-            { name: 'position', type: 'quantity', description: 'Integer position in storage', example: '0x0' },
-            { name: 'block', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Get storage value',
-              params: ['0x295a70b2de5e3953354a6a8344e616ed314d7251', '0x0', 'latest'],
-              response: { result: '0x00000000000000000000000000000000000000000000000000000000000004d2' }
-            }
-          ]
-        },
-        {
-          name: 'eth_getTransactionCount',
-          description: 'Returns the number of transactions sent from an address',
-          implemented: true,
-          params: [
-            { name: 'address', type: 'address', description: 'The address', example: '0x407d73d8a49eeb85d32cf465507dd71d507100c1' },
-            { name: 'block', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Get transaction count',
-              params: ['0x407d73d8a49eeb85d32cf465507dd71d507100c1', 'latest'],
-              response: { result: '0x1' }
-            }
-          ]
-        },
-        {
-          name: 'eth_getCode',
-          description: 'Returns code at a given address',
-          implemented: true,
-          params: [
-            { name: 'address', type: 'address', description: 'The address', example: '0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b' },
-            { name: 'block', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Get contract code',
-              params: ['0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b', 'latest'],
-              response: { result: '0x600160008035811a818181146012578301005b601b6001356025565b8060005260206000f25b600060078202905091905056' }
-            }
-          ]
-        },
-        {
-          name: 'eth_estimateGas',
-          description: 'Estimates gas needed for a transaction',
-          implemented: true,
-          params: [
-            {
-              name: 'transaction',
-              type: 'object',
-              description: 'Transaction call object',
-              fields: [
-                { name: 'from', type: 'address', description: 'Address to call from (optional)' },
-                { name: 'to', type: 'address', description: 'Contract address' },
-                { name: 'gas', type: 'quantity', description: 'Gas limit (optional)' },
-                { name: 'gasPrice', type: 'quantity', description: 'Gas price (optional)' },
-                { name: 'value', type: 'quantity', description: 'Value to send (optional)' },
-                { name: 'data', type: 'bytes', description: 'Call data' }
-              ]
-            }
-          ],
-          examples: [
-            {
-              name: 'Estimate gas',
-              params: [{
-                from: '0xb60e8dd61c5d32be8058bb8eb970870f07233155',
-                to: '0xd46e8dd67c5d32be8058bb8eb970870f07244567',
-                value: '0x9184e72a'
-              }],
-              response: { result: '0x5208' }
-            }
-          ]
-        },
-        {
-          name: 'eth_getBlockByNumber',
-          description: 'Returns block information by number',
-          implemented: true,
-          params: [
-            { name: 'blockNumber', type: 'string', description: 'Block number or tag', example: '0x1b4' },
-            { name: 'fullTransactions', type: 'boolean', description: 'Return full transaction objects', example: true }
-          ],
-          examples: [
-            {
-              name: 'Get block by number',
-              params: ['0x1b4', true],
-              response: {
-                result: {
-                  number: '0x1b4',
-                  hash: '0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331',
-                  parentHash: '0x9646252be9520f6e71339a8df9c55e4d7619deeb018d2a3f2d21fc165dde5eb5',
-                  transactions: []
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getBlockByHash',
-          description: 'Returns block information by hash',
-          implemented: true,
-          params: [
-            { name: 'blockHash', type: 'hash', description: 'Block hash', example: '0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331' },
-            { name: 'fullTransactions', type: 'boolean', description: 'Return full transaction objects', example: true }
-          ],
-          examples: [
-            {
-              name: 'Get block by hash',
-              params: ['0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331', true],
-              response: {
-                result: {
-                  number: '0x1b4',
-                  hash: '0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331',
-                  parentHash: '0x9646252be9520f6e71339a8df9c55e4d7619deeb018d2a3f2d21fc165dde5eb5',
-                  transactions: []
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getTransactionReceipt',
-          description: 'Returns the receipt of a transaction',
-          implemented: true,
-          params: [
-            { name: 'hash', type: 'hash', description: 'Transaction hash', example: '0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238' }
-          ],
-          examples: [
-            {
-              name: 'Get transaction receipt',
-              params: ['0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238'],
-              response: {
-                result: {
-                  transactionHash: '0xb903239f8543d04b5dc1ba6579132b143087c68db1b2168786408fcbce568238',
-                  transactionIndex: '0x1',
-                  blockNumber: '0xb',
-                  blockHash: '0xc6ef2fc5426d6ad6fd9e2a26abeab0aa2411b7ab17f30a99d3cb96aed1d1055b',
-                  cumulativeGasUsed: '0x33bc',
-                  gasUsed: '0x4dc',
-                  contractAddress: null,
-                  logs: [],
-                  status: '0x1'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_newFilter',
-          description: 'Creates a filter for logs',
-          implemented: true,
-          params: [
-            {
-              name: 'filter',
-              type: 'object',
-              description: 'Filter options',
-              fields: [
-                { name: 'fromBlock', type: 'string', description: 'Starting block' },
-                { name: 'toBlock', type: 'string', description: 'Ending block' },
-                { name: 'address', type: 'address', description: 'Contract address(es)' },
-                { name: 'topics', type: 'array', description: 'Topic filters' }
-              ]
-            }
-          ],
-          examples: [
-            {
-              name: 'Create filter',
-              params: [{
-                fromBlock: '0x1',
-                toBlock: 'latest',
-                address: '0x8888f1f195afa192cfee860698584c030f4c9db1',
-                topics: ['0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b']
-              }],
-              response: { result: '0x1' }
-            }
-          ]
-        },
-        {
-          name: 'eth_newBlockFilter',
-          description: 'Creates a filter for new blocks',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Create block filter',
-              params: [],
-              response: { result: '0x1' }
-            }
-          ]
-        },
-        {
-          name: 'eth_newPendingTransactionFilter',
-          description: 'Creates a filter for pending transactions',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Create pending transaction filter',
-              params: [],
-              response: { result: '0x1' }
-            }
-          ]
-        },
-        {
-          name: 'eth_uninstallFilter',
-          description: 'Uninstalls a filter',
-          implemented: true,
-          params: [
-            { name: 'filterId', type: 'quantity', description: 'Filter ID', example: '0xb' }
-          ],
-          examples: [
-            {
-              name: 'Uninstall filter',
-              params: ['0xb'],
-              response: { result: true }
-            }
-          ]
-        },
-        {
-          name: 'eth_getFilterChanges',
-          description: 'Polling method for a filter',
-          implemented: true,
-          params: [
-            { name: 'filterId', type: 'quantity', description: 'Filter ID', example: '0x16' }
-          ],
-          examples: [
-            {
-              name: 'Get filter changes',
-              params: ['0x16'],
-              response: {
-                error: {
-                  code: -32000,
-                  message: 'Filter not found'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getFilterLogs',
-          description: 'Returns all logs matching filter',
-          implemented: true,
-          params: [
-            { name: 'filterId', type: 'quantity', description: 'Filter ID', example: '0x16' }
-          ],
-          examples: [
-            {
-              name: 'Get filter logs',
-              params: ['0x16'],
-              response: {
-                error: {
-                  code: -32000,
-                  message: 'Filter not found'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_maxPriorityFeePerGas',
-          description: 'Returns the current max priority fee per gas',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get max priority fee',
-              params: [],
-              response: { result: '0x3b9aca00' }
-            }
-          ]
-        },
-        {
-          name: 'eth_feeHistory',
-          description: 'Returns fee history',
-          implemented: true,
-          params: [
-            { name: 'blockCount', type: 'quantity', description: 'Number of blocks', example: '0x5' },
-            { name: 'newestBlock', type: 'string', description: 'Newest block', example: 'latest' },
-            { name: 'rewardPercentiles', type: 'array', description: 'Percentiles', example: [20, 30] }
-          ],
-          examples: [
-            {
-              name: 'Get fee history',
-              params: ['0x5', 'latest', [20, 30]],
-              response: {
-                error: {
-                  code: -32601,
-                  message: 'Method not found'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getProof',
-          description: 'Returns the merkle proof for a given account',
-          implemented: true,
-          issue: 'Requires block height > 2',
-          params: [
-            { name: 'address', type: 'address', description: 'Account address', example: '0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842' },
-            { name: 'storageKeys', type: 'array', description: 'Storage keys', example: ['0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421'] },
-            { name: 'block', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Get account proof',
-              params: [
-                '0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842',
-                ['0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421'],
-                'latest'
-              ],
-              response: {
-                result: {
-                  address: '0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842',
-                  accountProof: [],
-                  balance: '0x0',
-                  codeHash: '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470',
-                  nonce: '0x0',
-                  storageHash: '0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421',
-                  storageProof: []
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getUncleCountByBlockHash',
-          description: 'Get uncle count by block hash',
-          implemented: true,
-          params: [
-            { name: 'blockHash', type: 'hash', description: 'Block hash', example: '0x1b9911f57c13e5160d567ea6cf5b545413f96b95e43ec6e02787043351fb2cc4' }
-          ],
-          examples: [
-            {
-              name: 'Get uncle count',
-              params: ['0x1b9911f57c13e5160d567ea6cf5b545413f96b95e43ec6e02787043351fb2cc4'],
-              response: {
-                result: '0x0'
-              }
-            }
-          ]
-        },
-        {
-          name: 'eth_getUncleCountByBlockNumber',
-          description: 'Get uncle count by block number',
-          implemented: true,
-          params: [
-            { name: 'blockNumber', type: 'string', description: 'Block number or tag', example: 'latest' }
-          ],
-          examples: [
-            {
-              name: 'Get uncle count',
-              params: ['latest'],
-              response: {
-                result: '0x0'
-              }
-            }
-          ]
         }
       ]
     },
     personal: {
       name: 'Personal',
-      icon: SmartContractIcon,
+      icon: FileKey,
       methods: [
         {
           name: 'personal_importRawKey',
@@ -979,211 +377,12 @@ class Program
               }
             }
           ]
-        },
-        {
-          name: 'personal_listAccounts',
-          description: 'List addresses for accounts managed by node',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'List accounts',
-              params: [],
-              response: {
-                result: ['0x3b7252d007059ffc82d16d022da3cbf9992d2f70', '0xddd64b4712f7c8f1ace3c145c950339eddaf221d', '0x0f54f47bf9b8e317b214ccd6a7c3e38b893cd7f0']
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_lockAccount',
-          description: 'Remove private key from memory',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'address', type: 'address', description: 'Account to lock', example: '0x0f54f47bf9b8e317b214ccd6a7c3e38b893cd7f0' }
-          ],
-          examples: [
-            {
-              name: 'Lock account',
-              params: ['0x0f54f47bf9b8e317b214ccd6a7c3e38b893cd7f0'],
-              response: {
-                result: true
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_newAccount',
-          description: 'Generate new private key and store in key store',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'passphrase', type: 'string', description: 'Passphrase for encryption', example: 'This is the passphrase' }
-          ],
-          examples: [
-            {
-              name: 'Create account',
-              params: ['This is the passphrase'],
-              response: {
-                result: '0xf0e4086ad1c6aab5d42161d5baaae2f9ad0571c0'
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_unlockAccount',
-          description: 'Decrypt account key in memory',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'address', type: 'address', description: 'Account address', example: '0x0f54f47bf9b8e317b214ccd6a7c3e38b893cd7f0' },
-            { name: 'passphrase', type: 'string', description: 'Account passphrase', example: 'secret passphrase' },
-            { name: 'duration', type: 'number', description: 'Unlock duration in seconds', example: 30 }
-          ],
-          examples: [
-            {
-              name: 'Unlock for 30 seconds',
-              params: ['0x0f54f47bf9b8e317b214ccd6a7c3e38b893cd7f0', 'secret passphrase', 30],
-              response: {
-                result: true
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_sendTransaction',
-          description: 'Validate passphrase and submit transaction',
-          implemented: true,
-          private: true,
-          params: [
-            {
-              name: 'transaction',
-              type: 'object',
-              description: 'Transaction object',
-              fields: [
-                { name: 'from', type: 'address', description: 'Sender address' },
-                { name: 'to', type: 'address', description: 'Recipient address' },
-                { name: 'value', type: 'quantity', description: 'Value to send' }
-              ]
-            },
-            { name: 'passphrase', type: 'string', description: 'Account passphrase', example: 'passphrase' }
-          ],
-          examples: [
-            {
-              name: 'Send transaction',
-              params: [
-                {
-                  from: '0x3b7252d007059ffc82d16d022da3cbf9992d2f70',
-                  to: '0xddd64b4712f7c8f1ace3c145c950339eddaf221d',
-                  value: '0x16345785d8a0000'
-                },
-                'passphrase'
-              ],
-              response: {
-                result: '0xd2a31ec1b89615c8d1f4d08fe4e4182efa4a9c0d5758ace6676f485ea60e154c'
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_sign',
-          description: 'Sign message with account',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'message', type: 'bytes', description: 'Message to sign', example: '0xdeadbeef' },
-            { name: 'account', type: 'address', description: 'Account address', example: '0x3b7252d007059ffc82d16d022da3cbf9992d2f70' },
-            { name: 'password', type: 'string', description: 'Account password', example: 'password' }
-          ],
-          examples: [
-            {
-              name: 'Sign message',
-              params: ['0xdeadbeef', '0x3b7252d007059ffc82d16d022da3cbf9992d2f70', 'password'],
-              response: {
-                result: '0xf9ff74c86aefeb5f6019d77280bbb44fb695b4d45cfe97e6eed7acd62905f4a85034d5c68ed25a2e7a8eeb9baf1b8401e4f865d92ec48c1763bf649e354d900b1c'
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_ecRecover',
-          description: 'Recover address from signature',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'message', type: 'bytes', description: 'Original message', example: '0xdeadbeef' },
-            { name: 'signature', type: 'string', description: 'Signature from personal_sign', example: '0xf9ff74c86aefeb5f6019d77280bbb44fb695b4d45cfe97e6eed7acd62905f4a85034d5c68ed25a2e7a8eeb9baf1b8401e4f865d92ec48c1763bf649e354d900b1c' }
-          ],
-          examples: [
-            {
-              name: 'Recover address',
-              params: ['0xdeadbeef', '0xf9ff74c86aefeb5f6019d77280bbb44fb695b4d45cfe97e6eed7acd62905f4a85034d5c68ed25a2e7a8eeb9baf1b8401e4f865d92ec48c1763bf649e354d900b1c'],
-              response: {
-                result: '0x3b7252d007059ffc82d16d022da3cbf9992d2f70'
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_initializeWallet',
-          description: 'Initialize new wallet at URL',
-          implemented: false,
-          private: true,
-          params: [
-            { name: 'url', type: 'string', description: 'Wallet URL', example: 'keystore://path/to/wallet' }
-          ],
-          examples: [
-            {
-              name: 'Initialize wallet',
-              params: ['keystore://path/to/wallet'],
-              response: {
-                result: '0xNewPrivateKey'
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_unpair',
-          description: 'Delete wallet pairing',
-          implemented: false,
-          private: true,
-          params: [
-            { name: 'url', type: 'string', description: 'Wallet URL', example: 'keystore://path/to/wallet' },
-            { name: 'pin', type: 'string', description: 'Pairing password', example: '1234' }
-          ],
-          examples: [
-            {
-              name: 'Unpair wallet',
-              params: ['keystore://path/to/wallet', '1234'],
-              response: {
-                result: true
-              }
-            }
-          ]
-        },
-        {
-          name: 'personal_listWallets',
-          description: 'List wallets managed by node',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'List wallets',
-              params: [],
-              response: {
-                result: null
-              }
-            }
-          ]
         }
       ]
     },
     debug: {
       name: 'Debug',
-      icon: SmartContractIcon,
+      icon: Bug,
       methods: [
         {
           name: 'debug_traceTransaction',
@@ -1215,205 +414,6 @@ class Program
                   structLogs: []
                 }
               }
-            },
-            {
-              name: 'Call tracer',
-              params: ['0x4ed38df88f88...', { tracer: 'callTracer' }],
-              response: {
-                result: {
-                  type: 'CALL',
-                  from: '0x...',
-                  to: '0x...',
-                  value: '0x0',
-                  gas: '0x5208',
-                  gasUsed: '0x5208',
-                  input: '0x',
-                  output: '0x'
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_traceBlockByNumber',
-          description: 'Replay block by number',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'blockNumber', type: 'string', description: 'Block number', example: '0xe' },
-            { name: 'config', type: 'object', description: 'Trace config (optional)' }
-          ],
-          examples: [
-            {
-              name: 'Trace block',
-              params: ['0xe', {}],
-              response: {
-                result: [{
-                  result: {
-                    failed: false,
-                    gas: 21000,
-                    returnValue: '0x',
-                    structLogs: []
-                  }
-                }]
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_traceBlockByHash',
-          description: 'Replay block by hash',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'blockHash', type: 'hash', description: 'Block hash', example: '0x1b9911f57c13e5160d567ea6cf5b545413f96b95e43ec6e02787043351fb2cc4' },
-            { name: 'config', type: 'object', description: 'Trace config (optional)' }
-          ],
-          examples: [
-            {
-              name: 'Trace block',
-              params: ['0x1b9911f57c13e5160d567ea6cf5b545413f96b95e43ec6e02787043351fb2cc4', {}],
-              response: {
-                result: [{
-                  result: {
-                    failed: false,
-                    gas: 21000,
-                    returnValue: '0x',
-                    structLogs: []
-                  }
-                }]
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_freeOSMemory',
-          description: 'Force garbage collection',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'Free memory',
-              params: [],
-              response: {
-                result: null
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_setGCPercent',
-          description: 'Set garbage collection target percentage',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'percent', type: 'number', description: 'GC percentage', example: 100 }
-          ],
-          examples: [
-            {
-              name: 'Set GC to 100%',
-              params: [100],
-              response: {
-                result: 100
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_memStats',
-          description: 'Get runtime memory statistics',
-          implemented: true,
-          private: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get memory stats',
-              params: [],
-              response: {
-                result: {
-                  Alloc: 83328680,
-                  TotalAlloc: 451796592,
-                  Sys: 166452520,
-                  HeapAlloc: 83328680,
-                  HeapSys: 153452544,
-                  HeapInuse: 101883904,
-                  HeapObjects: 299114,
-                  NumGC: 18
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_setBlockProfileRate',
-          description: 'Set goroutine block profile rate',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'rate', type: 'number', description: 'Profile rate', example: 1 }
-          ],
-          examples: [
-            {
-              name: 'Enable profiling',
-              params: [1],
-              response: {
-                result: null
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_writeBlockProfile',
-          description: 'Write goroutine blocking profile',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'file', type: 'string', description: 'Output file path', example: 'block.prof' }
-          ],
-          examples: [
-            {
-              name: 'Write profile',
-              params: ['block.prof'],
-              response: {
-                result: null
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_writeMemProfile',
-          description: 'Write allocation profile',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'file', type: 'string', description: 'Output file path', example: 'mem.prof' }
-          ],
-          examples: [
-            {
-              name: 'Write profile',
-              params: ['mem.prof'],
-              response: {
-                result: null
-              }
-            }
-          ]
-        },
-        {
-          name: 'debug_writeMutexProfile',
-          description: 'Write mutex contention profile',
-          implemented: true,
-          private: true,
-          params: [
-            { name: 'file', type: 'string', description: 'Output file path', example: 'mutex.prof' }
-          ],
-          examples: [
-            {
-              name: 'Write profile',
-              params: ['mutex.prof'],
-              response: {
-                result: null
-              }
             }
           ]
         }
@@ -1421,7 +421,7 @@ class Program
     },
     txpool: {
       name: 'TxPool',
-      icon: NetworkIcon,
+      icon: Database,
       methods: [
         {
           name: 'txpool_content',
@@ -1436,42 +436,6 @@ class Program
                 result: {
                   pending: {},
                   queued: {}
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'txpool_inspect',
-          description: 'Get summary of pending and queued transactions',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Inspect pool',
-              params: [],
-              response: {
-                result: {
-                  pending: {},
-                  queued: {}
-                }
-              }
-            }
-          ]
-        },
-        {
-          name: 'txpool_status',
-          description: 'Get number of pending and queued transactions',
-          implemented: true,
-          params: [],
-          examples: [
-            {
-              name: 'Get pool status',
-              params: [],
-              response: {
-                result: {
-                  pending: '0x0',
-                  queued: '0x0'
                 }
               }
             }
@@ -1591,65 +555,91 @@ class Program
     return (
       <button
         onClick={handleCopy}
-        className="px-2 py-0.5 text-xs bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded transition-colors font-mono"
+        className="px-3 py-1.5 text-xs bg-white hover:bg-gray-50 text-black border border-gray-200 rounded-md transition-colors duration-200 font-mono"
+        style={{ fontFamily: 'The Future Mono, monospace' }}
       >
-        {copied ? '✓ Copied' : 'Copy'}
+        {copied ? 'Copied' : 'Copy'}
       </button>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black">
+    <div className="min-h-screen text-black" style={{ 
+      backgroundColor: '#F1F1F1',
+      fontFamily: 'The Future, sans-serif'
+    }}>
+      <style>
+        {`
+          @font-face {
+            font-family: 'The Future Mono';
+            src: url('https://fonts.cosmoslabs.io/fonts/the-future-mono-regular.woff2') format('woff2');
+            font-weight: 400;
+          }
+          @font-face {
+            font-family: 'The Future';
+            src: url('https://fonts.cosmoslabs.io/fonts/the-future-regular.woff2') format('woff2');
+            font-weight: 400;
+          }
+        `}
+      </style>
+
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="py-6">
-            <h1 className="text-4xl font-bold text-black dark:text-white">
+      <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
+          <div className="py-8">
+            <h1 className="text-5xl font-bold text-black mb-4" style={{ fontFamily: 'The Future Mono, monospace' }}>
               Ethereum JSON-RPC Methods
             </h1>
-            <p className="mt-2 text-gray-600 dark:text-gray-400">
+            <p className="text-lg" style={{ color: '#cccccc' }}>
               Complete reference for Cosmos EVM implementation
             </p>
             {isValidEndpoint && (
-              <p className="mt-2 text-sm text-[#05fcf8]">
-                ✓ Interactive mode active - Click "Execute" on any method example to test against {rpcEndpoint}
-              </p>
+              <div className="mt-4 p-4 rounded-lg" style={{ backgroundColor: '#0E0E0E', color: '#cccccc' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <span className="text-sm">Interactive mode active - Click "Execute" on any method example to test against {rpcEndpoint}</span>
+                </div>
+              </div>
             )}
           </div>
 
           {/* Search and Filters */}
-          <div className="pb-4 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4">
+          <div className="pb-6 space-y-6">
+            <div className="flex flex-col lg:flex-row gap-6">
               <div className="flex-1">
                 <input
                   type="text"
                   placeholder="Search methods..."
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-black dark:focus:ring-white bg-white dark:bg-gray-900 text-black dark:text-white placeholder-gray-500"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-transparent bg-white text-black placeholder-gray-500 transition-all duration-200"
+                  style={{ fontFamily: 'The Future, sans-serif' }}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
             </div>
 
-            {/* Interactive RPC Section - Right-aligned, compact */}
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600 dark:text-gray-400">
+            {/* Interactive RPC Section */}
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex items-center gap-4">
+                <span className="text-sm" style={{ color: '#cccccc' }}>
                   Enter an RPC endpoint to enable interactive testing
                 </span>
-                <div className={`px-3 py-2 rounded-lg transition-all duration-200 border-2 ${
+                <div className={`p-4 rounded-lg transition-all duration-300 border-2 ${
                   isValidEndpoint
-                    ? 'border-[#05fcf8]'
+                    ? 'border-green-500 bg-green-50'
                     : isInvalidEndpoint
-                    ? 'border-amber-500'
-                    : 'border-gray-300 dark:border-gray-700'
-                } bg-white dark:bg-gray-900`}>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">RPC Endpoint:</label>
+                    ? 'border-red-500 bg-red-50'
+                    : 'border-gray-300 bg-white'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <label className="text-sm font-medium text-black whitespace-nowrap" style={{ fontFamily: 'The Future Mono, monospace' }}>
+                      RPC Endpoint:
+                    </label>
                     <input
                       type="text"
                       placeholder="http://localhost:8545"
-                      className="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-700 rounded focus:outline-none focus:border-gray-400 bg-white dark:bg-black text-black dark:text-white placeholder-gray-500"
+                      className="w-80 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent bg-white text-black placeholder-gray-500 transition-all duration-200"
+                      style={{ fontFamily: 'The Future Mono, monospace' }}
                       value={rpcEndpoint}
                       onChange={(e) => {
                         setRpcEndpoint(e.target.value);
@@ -1684,15 +674,15 @@ class Program
                       }}
                     />
                     {isValidEndpoint && (
-                      <span className="text-[#05fcf8] text-lg">✓</span>
+                      <span className="text-green-500 text-lg font-bold">✓</span>
                     )}
                     {isInvalidEndpoint && (
-                      <span className="text-red-500 text-lg">✗</span>
+                      <span className="text-red-500 text-lg font-bold">✗</span>
                     )}
                   </div>
                 </div>
               </div>
-              <p className="text-[10px] text-gray-500 dark:text-gray-500 text-right max-w-md">
+              <p className="text-xs max-w-md text-right" style={{ color: '#cccccc' }}>
                 Note: Some endpoints may require CORS configuration or have other restrictions that prevent browser-based requests
               </p>
             </div>
@@ -1701,31 +691,33 @@ class Program
       </div>
 
       {/* Namespace Tabs */}
-      <div className="sticky top-[165px] z-10 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-2 overflow-x-auto py-3">
+      <div className="sticky top-[200px] z-10 border-b border-gray-200" style={{ backgroundColor: '#0E0E0E' }}>
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
+          <div className="flex space-x-2 overflow-x-auto py-4">
             <button
               onClick={() => setSelectedNamespace('all')}
-              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap text-sm ${
+              className={`flex items-center space-x-3 px-4 py-2 rounded-lg transition-all whitespace-nowrap text-sm font-medium ${
                 selectedNamespace === 'all'
-                  ? 'bg-black dark:bg-white text-white dark:text-black shadow-[0_0_0_1px_rgba(0,0,0,0.3)]'
-                  : 'bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_0_0_1px_rgba(156,163,175,0.3)] dark:shadow-[0_0_0_1px_rgba(75,85,99,0.5)]'
+                  ? 'bg-white text-black'
+                  : 'text-white hover:bg-gray-800'
               }`}
+              style={{ fontFamily: 'The Future Mono, monospace' }}
             >
-              <span className="font-medium">All</span>
+              <span>All</span>
             </button>
             {Object.entries(namespaces).map(([key, namespace]) => (
               <button
                 key={key}
                 onClick={() => setSelectedNamespace(key)}
-                className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap text-sm ${
+                className={`flex items-center space-x-3 px-4 py-2 rounded-lg transition-all whitespace-nowrap text-sm font-medium ${
                   selectedNamespace === key
-                    ? 'bg-black dark:bg-white text-white dark:text-black'
-                    : 'bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                    ? 'bg-white text-black'
+                    : 'text-white hover:bg-gray-800'
                 }`}
+                style={{ fontFamily: 'The Future Mono, monospace' }}
               >
-                <span className="text-base">{namespace.icon}</span>
-                <span className="font-medium">{namespace.name}</span>
+                <namespace.icon size={18} />
+                <span>{namespace.name}</span>
               </button>
             ))}
           </div>
@@ -1733,11 +725,11 @@ class Program
       </div>
 
       {/* Methods List */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-4">
+      <div className="max-w-7xl mx-auto px-6 lg:px-8 py-8">
+        <div className="space-y-6">
           {filteredMethods.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500 dark:text-gray-400">
+            <div className="text-center py-16">
+              <p className="text-lg" style={{ color: '#cccccc' }}>
                 No methods found matching your criteria
               </p>
             </div>
@@ -1745,34 +737,40 @@ class Program
             filteredMethods.map((method) => (
               <div
                 key={method.name}
-                className="bg-white dark:bg-gray-900 rounded-lg shadow-[0_0_0_1px_rgba(156,163,175,0.3)] dark:shadow-[0_0_0_1px_rgba(75,85,99,0.5)] overflow-hidden"
+                className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200"
               >
                 <button
                   onClick={() => toggleMethod(method.name)}
-                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  className="w-full px-6 py-5 flex items-center justify-between hover:bg-gray-50 transition-colors duration-200 text-left"
                 >
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center space-x-2">
-                      <code className="text-sm font-mono text-black dark:text-white">
+                  <div className="flex items-center space-x-4 flex-1">
+                    <div className="flex items-center space-x-3">
+                      <code className="text-base font-medium text-black px-3 py-1 rounded-md" style={{ 
+                        fontFamily: 'The Future Mono, monospace',
+                        backgroundColor: '#F1F1F1'
+                      }}>
                         {method.name}
                       </code>
                       {(searchTerm || selectedNamespace === 'all') && method.namespace && (
-                        <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 rounded">
+                        <span className="px-2 py-1 text-xs font-medium rounded-md" style={{ 
+                          backgroundColor: '#cccccc',
+                          color: '#000000'
+                        }}>
                           {namespaces[method.namespace].name}
                         </span>
                       )}
                       {method.private && (
-                        <span className="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 rounded">
+                        <span className="px-2 py-1 text-xs font-medium bg-amber-100 text-amber-800 rounded-md">
                           Private
                         </span>
                       )}
                       {!method.implemented && (
-                        <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded">
-                          Not implemented in the Cosmos/EVM base module
+                        <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-md">
+                          Not implemented
                         </span>
                       )}
                     </div>
-                    <p className="text-gray-600 dark:text-gray-400 text-left">
+                    <p className="text-gray-600 text-left flex-1" style={{ fontFamily: 'The Future, sans-serif' }}>
                       {method.description}
                     </p>
                   </div>
@@ -1789,48 +787,51 @@ class Program
                 </button>
 
                 {expandedMethods[method.name] && (
-                  <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800">
+                  <div className="px-6 py-5 border-t border-gray-200" style={{ backgroundColor: '#F1F1F1' }}>
                     {method.issue && (
-                      <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
-                        <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                          ⚠️ {method.issue}
+                      <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                        <p className="text-sm text-amber-800" style={{ fontFamily: 'The Future, sans-serif' }}>
+                          Warning: {method.issue}
                         </p>
                       </div>
                     )}
 
                     {method.params && method.params.length > 0 && (
-                      <div className="mb-6">
-                        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                      <div className="mb-8">
+                        <h4 className="text-sm font-semibold text-black mb-4" style={{ fontFamily: 'The Future Mono, monospace' }}>
                           Parameters
                         </h4>
-                        <div className="space-y-3">
+                        <div className="space-y-4">
                           {method.params.map((param, i) => (
-                            <div key={i} className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
+                            <div key={i} className="bg-white p-4 rounded-lg border border-gray-200">
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <code className="text-sm font-mono text-black dark:text-white">
+                                  <code className="text-sm font-medium text-black" style={{ fontFamily: 'The Future Mono, monospace' }}>
                                     {param.name}
                                   </code>
-                                  <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                                  <span className="ml-2 text-xs px-2 py-1 rounded-md" style={{ 
+                                    backgroundColor: '#cccccc',
+                                    color: '#000000'
+                                  }}>
                                     {param.type}
                                   </span>
                                 </div>
                                 {param.example && (
-                                  <code className="text-xs text-gray-600 dark:text-gray-400 font-mono">
+                                  <code className="text-xs text-gray-600" style={{ fontFamily: 'The Future Mono, monospace' }}>
                                     Example: {param.example}
                                   </code>
                                 )}
                               </div>
-                              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                              <p className="mt-2 text-sm text-gray-600" style={{ fontFamily: 'The Future, sans-serif' }}>
                                 {param.description}
                               </p>
                               {param.fields && (
-                                <div className="mt-2 ml-4 space-y-1">
+                                <div className="mt-3 ml-4 space-y-2">
                                   {param.fields.map((field, j) => (
                                     <div key={j} className="text-xs">
-                                      <code className="text-black dark:text-white">{field.name}</code>
+                                      <code className="text-black" style={{ fontFamily: 'The Future Mono, monospace' }}>{field.name}</code>
                                       <span className="text-gray-500"> ({field.type})</span>
-                                      <span className="text-gray-600 dark:text-gray-400"> - {field.description}</span>
+                                      <span className="text-gray-600"> - {field.description}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -1842,18 +843,19 @@ class Program
                     )}
 
                     {method.examples && method.examples.length > 0 && (
-                      <div className="space-y-6">
+                      <div className="space-y-8">
                         {method.examples.map((example, exampleIndex) => (
-                          <div key={exampleIndex} className="shadow-[0_0_0_1px_rgba(156,163,175,0.3)] dark:shadow-[0_0_0_1px_rgba(75,85,99,0.5)] rounded-lg overflow-hidden">
-                            <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 flex items-center justify-between">
-                              <h5 className="text-sm font-medium text-gray-900 dark:text-white">
+                          <div key={exampleIndex} className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                            <div className="px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#0E0E0E' }}>
+                              <h5 className="text-sm font-medium text-white" style={{ fontFamily: 'The Future Mono, monospace' }}>
                                 Example: {example.name}
                               </h5>
                               {rpcEndpoint && rpcEndpoint.match(/^https?:\/\//) && (
                                 <button
                                   onClick={() => executeRpcRequest(method.name, example.params)}
                                   disabled={isLoading[method.name]}
-                                  className="px-3 py-0.5 text-xs bg-[#05fcf8] hover:bg-[#04e8e5] text-black font-medium rounded transition-colors disabled:opacity-50"
+                                  className="px-4 py-2 text-sm bg-white hover:bg-gray-100 text-black font-medium rounded-md transition-colors duration-200 disabled:opacity-50"
+                                  style={{ fontFamily: 'The Future Mono, monospace' }}
                                 >
                                   {isLoading[method.name] ? 'Loading...' : 'Execute'}
                                 </button>
@@ -1861,20 +863,21 @@ class Program
                             </div>
 
                             {/* Language Tabs */}
-                            <div className="border-b border-gray-200 dark:border-gray-700">
+                            <div className="border-b border-gray-200">
                               <div className="flex overflow-x-auto">
                                 {languages.map(lang => (
                                   <button
                                     key={lang.id}
                                     onClick={() => setMethodLanguage(`${method.name}-${exampleIndex}`, lang.id)}
-                                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                                    className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                                       getSelectedLanguage(`${method.name}-${exampleIndex}`) === lang.id
-                                        ? 'border-black dark:border-white text-black dark:text-white'
-                                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                                        ? 'border-black text-black bg-gray-50'
+                                        : 'border-transparent text-gray-600 hover:text-black hover:bg-gray-50'
                                     }`}
+                                    style={{ fontFamily: 'The Future Mono, monospace' }}
                                   >
-                                    <span className="mr-1.5 inline-block">
-                                      <lang.icon size={16} />
+                                    <span className="mr-2 inline-block">
+                                      <lang.icon />
                                     </span>
                                     {lang.name}
                                   </button>
@@ -1884,10 +887,14 @@ class Program
 
                             {/* Code Example */}
                             <div className="relative">
-                              <div className="absolute top-2 right-2">
+                              <div className="absolute top-4 right-4 z-10">
                                 <CopyButton text={generateCodeExamples(method.name, example.params)[getSelectedLanguage(`${method.name}-${exampleIndex}`)]} />
                               </div>
-                              <pre className="p-4 bg-gray-900 dark:bg-black text-gray-100 overflow-x-auto text-xs">
+                              <pre className="p-6 text-sm overflow-x-auto" style={{ 
+                                backgroundColor: '#0E0E0E',
+                                color: '#cccccc',
+                                fontFamily: 'The Future Mono, monospace'
+                              }}>
                                 <code>
                                   {generateCodeExamples(method.name, example.params)[getSelectedLanguage(`${method.name}-${exampleIndex}`)]}
                                 </code>
@@ -1896,29 +903,33 @@ class Program
 
                             {/* Response */}
                             {rpcEndpoint && rpcEndpoint.match(/^https?:\/\//) && requestResults[method.name] ? (
-                              // Show live response when interactive mode is on and we have results
-                              <div className="border-t border-gray-200 dark:border-gray-700">
-                                <div className="px-4 py-2 bg-[#05fcf8]/10 dark:bg-[#05fcf8]/10">
-                                  <h6 className="text-xs font-medium text-gray-900 dark:text-[#05fcf8]">
+                              <div className="border-t border-gray-200">
+                                <div className="px-6 py-3 bg-green-50 border-b border-green-200">
+                                  <h6 className="text-xs font-medium text-green-800" style={{ fontFamily: 'The Future Mono, monospace' }}>
                                     Live RPC Response from {rpcEndpoint}
                                   </h6>
                                 </div>
-                                <pre className="p-4 bg-gray-900 dark:bg-black text-xs overflow-x-auto">
+                                <pre className="p-6 text-sm overflow-x-auto" style={{ 
+                                  backgroundColor: '#0E0E0E',
+                                  fontFamily: 'The Future Mono, monospace'
+                                }}>
                                   <code className={requestResults[method.name].error ? 'text-red-400' : 'text-green-400'}>
 {JSON.stringify(requestResults[method.name], null, 2)}
                                   </code>
                                 </pre>
                               </div>
                             ) : (
-                              // Show example response when not interactive or no results yet
-                              <div className="border-t border-gray-200 dark:border-gray-700">
-                                <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800">
-                                  <h6 className="text-xs font-medium text-gray-900 dark:text-white">
+                              <div className="border-t border-gray-200">
+                                <div className="px-6 py-3" style={{ backgroundColor: '#cccccc' }}>
+                                  <h6 className="text-xs font-medium text-black" style={{ fontFamily: 'The Future Mono, monospace' }}>
                                     Example Response
                                   </h6>
                                 </div>
-                                <pre className="p-4 bg-gray-50 dark:bg-black text-xs overflow-x-auto">
-                                  <code className={example.response.error ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                                <pre className="p-6 text-sm overflow-x-auto" style={{ 
+                                  backgroundColor: '#F1F1F1',
+                                  fontFamily: 'The Future Mono, monospace'
+                                }}>
+                                  <code className={example.response.error ? 'text-red-600' : 'text-green-600'}>
 {JSON.stringify({
   jsonrpc: '2.0',
   id: 1,
@@ -1939,7 +950,6 @@ class Program
           )}
         </div>
       </div>
-
     </div>
   );
 }
