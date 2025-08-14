@@ -1730,7 +1730,7 @@ class Program
       methods: [
         {
           name: 'txpool_content',
-          description: 'Get exact details of all pending and queued transactions',
+          description: 'Returns all pending and queued transactions grouped by account address and nonce',
           implemented: true,
           params: [],
           examples: [
@@ -1739,8 +1739,29 @@ class Program
               params: [],
               response: {
                 result: {
-                  pending: {},
-                  queued: {}
+                  pending: {
+                    "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb": {
+                      "100": {
+                        blockHash: null,
+                        blockNumber: null,
+                        from: "0x742d35cc6634c0532925a3b844bc9e7595f0beb",
+                        gas: "0x5208",
+                        gasPrice: "0x3b9aca00",
+                        hash: "0x...",
+                        input: "0x",
+                        nonce: "0x64",
+                        to: "0x...",
+                        transactionIndex: null,
+                        value: "0xde0b6b3a7640000"
+                      },
+                      "101": { /* transaction object */ }
+                    }
+                  },
+                  queued: {
+                    "0x5678...": {
+                      "103": { /* transaction with nonce gap */ }
+                    }
+                  }
                 }
               }
             }
@@ -1748,7 +1769,7 @@ class Program
         },
         {
           name: 'txpool_inspect',
-          description: 'Get summary of pending and queued transactions',
+          description: 'Returns a human-readable summary of all transactions without full transaction data',
           implemented: true,
           params: [],
           examples: [
@@ -1757,7 +1778,50 @@ class Program
               params: [],
               response: {
                 result: {
-                  pending: {},
+                  pending: {
+                    "0x1234...": {
+                      "100": "0x5678...: 1000 wei + 21000 gas × 20 gwei",
+                      "101": "contract creation: 0 wei + 100000 gas × 20 gwei"
+                    }
+                  },
+                  queued: {
+                    "0x5678...": {
+                      "103": "0x9abc...: 2000 wei + 21000 gas × 25 gwei"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          name: 'txpool_contentFrom',
+          description: 'Returns pending and queued transactions from a specific address',
+          implemented: true,
+          params: [
+            { name: 'address', type: 'address', description: 'The address to get transactions from', example: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0' }
+          ],
+          examples: [
+            {
+              name: 'Get transactions from address',
+              params: ['0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0'],
+              response: {
+                result: {
+                  pending: {
+                    "0": { 
+                      blockHash: null,
+                      blockNumber: null,
+                      from: "0x742d35cc6634c0532925a3b844bc9e7595f0beb",
+                      gas: "0x5208",
+                      gasPrice: "0x3b9aca00",
+                      hash: "0x...",
+                      input: "0x",
+                      nonce: "0x0",
+                      to: "0x...",
+                      transactionIndex: null,
+                      value: "0xde0b6b3a7640000"
+                    }
+                  },
                   queued: {}
                 }
               }
@@ -1766,7 +1830,7 @@ class Program
         },
         {
           name: 'txpool_status',
-          description: 'Get number of pending and queued transactions',
+          description: 'Returns the number of pending and queued transactions in the mempool',
           implemented: true,
           params: [],
           examples: [
