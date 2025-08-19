@@ -3,10 +3,11 @@ title: "EVM Mempool Integration"
 description: "Step-by-step guide to integrate the experimental EVM mempool in your Cosmos SDK chain"
 ---
 
-<Warning>
-This mempool implementation is **experimental** and under active development. It is intended for testing and evaluation purposes. Use in production environments is **not recommended** without thorough testing and risk assessment.
-Please [report issues](https://github.com/cosmos/evm/issues/new) and submit feedback to help improve stability.
-</Warning>
+# EVM Mempool Integration
+
+<Callout type="warning">
+This mempool implementation is **experimental** and under active development. It is intended for testing and evaluation purposes. Use in production environments is **not recommended** without thorough testing and risk assessment. Please [report issues](https://github.com/cosmos/evm/issues/new) and submit feedback to help improve stability.
+</Callout>
 
 ## Overview
 
@@ -30,7 +31,7 @@ Update your `app/app.go` to include the EVM mempool:
 type App struct {
     *baseapp.BaseApp
     // ... other keepers
-    
+
     // Cosmos EVM keepers
     FeeMarketKeeper   feemarketkeeper.Keeper
     EVMKeeper         *evmkeeper.Keeper
@@ -55,12 +56,12 @@ if evmtypes.GetChainConfig() != nil {
     }
 
     evmMempool := evmmempool.NewExperimentalEVMMempool(
-        app.CreateQueryContext, 
-        logger, 
-        app.EVMKeeper, 
-        app.FeeMarketKeeper, 
-        app.txConfig, 
-        app.clientCtx, 
+        app.CreateQueryContext,
+        logger,
+        app.EVMKeeper,
+        app.FeeMarketKeeper,
+        app.txConfig,
+        app.clientCtx,
         mempoolConfig,
     )
     app.EVMMempool = evmMempool
@@ -69,10 +70,10 @@ if evmtypes.GetChainConfig() != nil {
     if err := evmmempool.SetGlobalEVMMempool(evmMempool); err != nil {
         panic(err)
     }
-    
+
     // Replace BaseApp mempool
     app.SetMempool(evmMempool)
-    
+
     // Set custom CheckTx handler for nonce gap support
     checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
     app.SetCheckTxHandler(checkTxHandler)
@@ -107,16 +108,16 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 type EVMMempoolConfig struct {
     // Required: AnteHandler for transaction validation
     AnteHandler   sdk.AnteHandler
-    
+
     // Required: Block gas limit for transaction selection
     BlockGasLimit uint64
-    
+
     // Optional: Custom TxPool (defaults to LegacyPool)
     TxPool        *txpool.TxPool
-    
-    // Optional: Custom Cosmos pool (defaults to PriorityNonceMempool)  
+
+    // Optional: Custom Cosmos pool (defaults to PriorityNonceMempool)
     CosmosPool    sdkmempool.ExtMempool
-    
+
     // Optional: Custom broadcast function for promoted transactions
     BroadCastTxFn func(txs []*ethtypes.Transaction) error
 }
@@ -135,7 +136,7 @@ priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
             if !ok {
                 return math.ZeroInt()
             }
-            
+
             // Get fee in bond denomination
             bondDenom := "uatom" // or your chain's bond denom
             fee := feeTx.GetFee()
@@ -143,7 +144,7 @@ priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
             if !found {
                 return math.ZeroInt()
             }
-            
+
             // Calculate gas price: fee_amount / gas_limit
             gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
             return gasPrice
@@ -184,7 +185,7 @@ The main coordinator implementing Cosmos SDK's `ExtMempool` interface (`mempool/
 
 **Key Methods**:
 - `Insert(ctx, tx)`: Routes transactions to appropriate pools
-- `Select(ctx, filter)`: Returns unified iterator over all transactions  
+- `Select(ctx, filter)`: Returns unified iterator over all transactions
 - `Remove(tx)`: Handles transaction removal with EVM-specific logic
 - `InsertInvalidNonce(txBytes)`: Queues nonce-gapped EVM transactions locally
 
@@ -245,7 +246,7 @@ During block building, both transaction types compete fairly based on their effe
 func SelectTransactions() Iterator {
     evmTxs := GetPendingEVMTransactions()      // From local TxPool
     cosmosTxs := GetPendingCosmosTransactions() // From Cosmos mempool
-    
+
     return NewUnifiedIterator(evmTxs, cosmosTxs) // Fee-based priority
 }
 ```
@@ -308,7 +309,7 @@ Use the [txpool RPC methods](/docs/api-reference/ethereum-json-rpc/methods#txpoo
 - `txpool_inspect`: Get human-readable transaction summaries
 - `txpool_contentFrom`: View transactions from specific addresses
 
-## Common Issues and Solutions
+## Troubleshooting
 
 ### Transactions Not Being Queued
 

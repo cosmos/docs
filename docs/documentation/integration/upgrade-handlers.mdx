@@ -3,7 +3,7 @@ title: "Upgrade Handlers"
 description: "Understanding and implementing on-chain upgrade handlers for coordinated chain upgrades"
 ---
 
-import { Callout, Steps, Tabs, TabItem, CodeBlock } from '@/components'
+# Upgrade Handlers
 
 ## Overview
 
@@ -27,7 +27,8 @@ Upgrade handlers are required when:
 
 Upgrade handlers are registered in your app's `RegisterUpgradeHandlers()` method:
 
-```go app/upgrades.go
+```go
+// app/upgrades.go
 package app
 
 import (
@@ -48,7 +49,7 @@ func (app *App) RegisterUpgradeHandlers() {
             // Run module migrations
             migrations, err := app.ModuleManager.RunMigrations(ctx, app.configurator, fromVM)
             if err != nil {
-                return nil, err
+                return vm, err
             }
 
             // Add custom migration logic here
@@ -74,8 +75,8 @@ migrations, err := app.ModuleManager.RunMigrations(ctx, app.configurator, fromVM
 
 For better maintainability, organize upgrades in separate packages:
 
-<Tabs defaultValue="structure">
-<TabItem value="structure" label="Directory Structure">
+### Directory Structure
+
 ```
 app/
 ├── upgrades/
@@ -90,9 +91,11 @@ app/
 │   └── types.go            # Shared types
 └── upgrades.go             # RegisterUpgradeHandlers
 ```
-</TabItem>
-<TabItem value="constants" label="constants.go">
-```go app/upgrades/v1_0_0/constants.go
+
+### constants.go
+
+```go
+// app/upgrades/v1_0_0/constants.go
 package v1_0_0
 
 import (
@@ -111,9 +114,11 @@ var Upgrade = upgrades.Upgrade{
     },
 }
 ```
-</TabItem>
-<TabItem value="handler" label="handler.go">
-```go app/upgrades/v1_0_0/handler.go
+
+### handler.go
+
+```go
+// app/upgrades/v1_0_0/handler.go
 package v1_0_0
 
 import (
@@ -149,10 +154,8 @@ func CreateUpgradeHandler(
     }
 }
 ```
-</TabItem>
-</Tabs>
 
-## Common Migration Patterns
+## Migration Patterns
 
 ### Parameter Migrations
 
@@ -332,8 +335,7 @@ func TestUpgradeHandler(t *testing.T) {
 
 ## Upgrade Process
 
-<Steps>
-### Create Upgrade Proposal
+### 1. Create Upgrade Proposal
 
 Submit a governance proposal with the upgrade details:
 
@@ -346,7 +348,7 @@ mantrachaind tx gov submit-proposal software-upgrade v1.0.0 \
     --deposit 10000000stake
 ```
 
-### Vote on Proposal
+### 2. Vote on Proposal
 
 Validators and delegators vote on the upgrade:
 
@@ -354,7 +356,7 @@ Validators and delegators vote on the upgrade:
 mantrachaind tx gov vote 1 yes --from validator
 ```
 
-### Prepare Binary
+### 3. Prepare Binary
 
 Build and distribute the new binary with the upgrade handler:
 
@@ -369,7 +371,7 @@ make build
 # Use Cosmovisor for automated upgrades
 ```
 
-### Monitor Upgrade
+### 4. Monitor Upgrade
 
 Watch logs during the upgrade height:
 
@@ -380,21 +382,20 @@ tail -f ~/.mantrachaind/logs/upgrade.log
 # Verify upgrade success
 mantrachaind query upgrade applied v1.0.0
 ```
-</Steps>
 
 ## Cosmos EVM Specific Migrations
 
-For Cosmos EVM chains, common migrations include:
+For Cosmos EVM chains, specific migrations include:
 
-- **[ERC20 Precompiles Migration](./erc20-precompiles-migration)**: Critical for v0.3.x to v0.4.0
+- **[ERC20 Precompiles Migration](./erc20-precompiles-migration)**: Required for v0.3.x to v0.4.0
 - **Fee Market Parameters**: Updating EIP-1559 parameters
 - **Custom Precompiles**: Registering new precompiled contracts
 - **EVM State**: Migrating account balances or contract storage
 
 ## Troubleshooting
 
-<Tabs defaultValue="consensus">
-<TabItem value="consensus" label="Consensus Failure">
+### Consensus Failure
+
 **Symptom:** Chain halts with consensus failure at upgrade height
 
 **Causes:**
@@ -406,8 +407,9 @@ For Cosmos EVM chains, common migrations include:
 - Ensure all validators have the same binary
 - Verify upgrade handler is registered
 - Review migration logic for non-determinism
-</TabItem>
-<TabItem value="panic" label="Upgrade Panic">
+
+### Upgrade Panic
+
 **Symptom:** Node panics during upgrade
 
 **Causes:**
@@ -419,8 +421,9 @@ For Cosmos EVM chains, common migrations include:
 - Add comprehensive error handling
 - Validate state before migration
 - Use safe type conversions
-</TabItem>
-<TabItem value="state" label="State Corruption">
+
+### State Corruption
+
 **Symptom:** Invalid state after upgrade
 
 **Causes:**
@@ -432,8 +435,6 @@ For Cosmos EVM chains, common migrations include:
 - Make migrations atomic
 - Thoroughly test transformations
 - Ensure old data is properly cleaned up
-</TabItem>
-</Tabs>
 
 ## References
 
