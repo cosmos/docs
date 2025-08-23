@@ -26,6 +26,154 @@ Transactions can fail for various reasons. For example, the provided gas or fees
 
 Nowadays, transactions can not only perform state transitions on the chain in which are submitted, but also can execute transactions on another blockchains. Interchain transactions are possible through the [Inter-Blockchain Communication protocol (IBC)](https://ibcprotocol.org/). Find a more detailed explanation on the section below.
 
+## Transaction Flow Architecture
+
+To better understand how transactions are processed, let's examine the architectural differences between pure Cosmos-SDK chains and Cosmos-EVM implementation:
+
+<Tabs>
+  <Tab title="Pure Cosmos-SDK Flow">
+    In a standard Cosmos-SDK chain, transactions follow a simpler path without EVM components:
+
+    ```mermaid
+    flowchart TB
+        User[User]
+
+        subgraph Frontend
+            Client[Client/CLI]
+        end
+
+        subgraph Node[Cosmos Node]
+            ABCI[ABCI Interface]
+            CheckTx[CheckTx]
+            AnteHandler[AnteHandler]
+            MsgRouter[Message Router]
+            Modules[SDK Modules]
+            DeliverTx[DeliverTx]
+        end
+
+        subgraph Consensus
+            CometBFT[CometBFT]
+            Mempool[Mempool]
+        end
+
+        subgraph State
+            StateDB[State Database]
+        end
+
+        %% Transaction submission flow
+        User -->|1. Submit Tx| Client
+        Client -->|2. Broadcast| ABCI
+        ABCI -->|3. CheckTx| CheckTx
+        CheckTx -->|4. Validate| AnteHandler
+        AnteHandler -->|5. Basic checks| AnteHandler
+        AnteHandler -->|6. Add to mempool| Mempool
+
+        %% Block proposal and execution
+        CometBFT -->|7. Propose Block| Mempool
+        Mempool -->|8. Select Txs| DeliverTx
+        DeliverTx -->|9. Route Messages| MsgRouter
+        MsgRouter -->|10. Execute| Modules
+        Modules -->|11. State Changes| StateDB
+
+        %% Response flow
+        StateDB -.->|12. Events/Results| DeliverTx
+        DeliverTx -.->|13. Tx Receipt| ABCI
+        ABCI -.->|14. Response| Client
+        Client -.->|15. Result| User
+    ```
+
+    **Key Components:**
+    - **ABCI Interface**: Connects the application to CometBFT consensus
+    - **AnteHandler**: Performs basic validation (signatures, fees, sequence)
+    - **Message Router**: Routes messages to appropriate SDK modules
+    - **SDK Modules**: Handle specific message types (bank, staking, gov, etc.)
+  </Tab>
+
+  <Tab title="Cosmos-EVM Flow">
+    Cosmos-EVM adds EVM processing capabilities while maintaining Cosmos-SDK compatibility:
+
+    ```mermaid
+    flowchart TB
+        User[User]
+
+        subgraph Frontend
+            JSONRPC[JSON-RPC]
+        end
+
+        subgraph Consensus
+            CometServer[Comet Server]
+            CheckTx[CheckTx]
+            AnteHandler[AnteHandler]
+        end
+
+        subgraph EVM_Processing[EVM Processing]
+            Decision{Address == Precompile}
+            PrecompileCode[precompile Code]
+            GoEthereum[go-ethereum]
+            XVM[x/vm]
+        end
+
+        subgraph Validation
+            EVMAnteHandler1[EVM AnteHandler]
+            EVMAnteHandler2[EVM AnteHandler]
+        end
+
+        Mempool[Mempool]
+
+        %% Main flow
+        User -->|1. User Submits Tx| JSONRPC
+        JSONRPC -->|2. BroadcastTx| CometServer
+        CometServer -->|3. CheckTx| CheckTx
+        CheckTx -->|4. CheckTx via AnteHandler| AnteHandler
+        AnteHandler -->|5.&8. Send through EVM AnteHandler| EVMAnteHandler2
+        EVMAnteHandler2 -->|7. During PrepareProposal, Recheck| EVMAnteHandler2
+        EVMAnteHandler2 -->|6. Send to mempool| Mempool
+
+        %% Decision branch
+        JSONRPC -->|11. Check Callee| Decision
+        Decision -->|12b. No| GoEthereum
+        Decision -->|12a. Yes| PrecompileCode
+
+        %% Processing
+        GoEthereum -->|10. Process through go-ethereum| XVM
+        PrecompileCode -->|12a1. Return Precompile Response| GoEthereum
+        XVM -->|9. Route via MsgRouter| EVMAnteHandler1
+
+        %% Responses
+        GoEthereum -.->|13. Tx Response| JSONRPC
+        JSONRPC -.->|14. Tx Response| CometServer
+        CometServer -.->|15. Tx Response| User
+    ```
+
+    **Additional Components for EVM:**
+    - **JSON-RPC**: Ethereum-compatible RPC interface
+    - **go-ethereum**: Processes EVM transactions
+    - **Precompile Contracts**: Native contracts with special addresses
+    - **EVM AnteHandler**: Handles EVM-specific validation and gas calculation
+    - **x/vm Module**: Routes between Cosmos and EVM execution
+  </Tab>
+</Tabs>
+
+### Key Architectural Differences
+
+<CardGroup cols={2}>
+  <Card title="Pure Cosmos-SDK" icon="cube">
+    - Single transaction type (Cosmos Tx)
+    - Direct module routing via MsgRouter
+    - Standard AnteHandler validation
+    - Native SDK module execution
+    - ABCI interface for consensus
+  </Card>
+
+  <Card title="Cosmos-EVM" icon="ethereum">
+    - Dual transaction types (Cosmos + Ethereum)
+    - EVM processing layer for Ethereum txs
+    - Extended validation with EVM AnteHandler
+    - Precompile contract support
+    - JSON-RPC for Ethereum compatibility
+  </Card>
+</CardGroup>
+
 ## Transaction Types
 
 Cosmos EVM supports two transaction types:
@@ -173,4 +321,3 @@ A receipt contains the following information:
 * `type`: integer of the transaction type, 0x00 for legacy transactions, 0x01 for access list types, 0x02 for dynamic fees. It also returns either.
 * `root` : transaction stateroot (pre Byzantium)
 * `status`: either 1 (success) or 0 (failure)
-

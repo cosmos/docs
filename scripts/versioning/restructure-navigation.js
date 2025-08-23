@@ -8,8 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const docsJsonPath = path.join(__dirname, '..', 'docs.json');
-const versionsJsonPath = path.join(__dirname, '..', 'versions.json');
+const docsJsonPath = path.join(__dirname, '..', '..', 'docs.json');
+const versionsJsonPath = path.join(__dirname, '..', '..', 'versions.json');
 
 // Read current configurations
 const docsJson = JSON.parse(fs.readFileSync(docsJsonPath, 'utf8'));

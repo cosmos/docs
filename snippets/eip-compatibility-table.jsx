@@ -1,4 +1,4 @@
-export default function EIPCompatibilityTable() {
+export default function EIPCompatibilityTable({ sheetTab } = {}) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [eipData, setEipData] = useState([]);
@@ -10,12 +10,15 @@ export default function EIPCompatibilityTable() {
 
   useEffect(() => {
     loadGoogleSheetData();
-  }, []);
+  }, [sheetTab]);
 
   const loadGoogleSheetData = async () => {
     try {
       // Using Google Visualization API which supports CORS
-      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+      // If sheetTab is provided, fetch from that specific tab; otherwise use default
+      const url = sheetTab 
+        ? `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${sheetTab}&tqx=out:json`
+        : `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=eip_compatibility_data&tqx=out:json`;
 
       const response = await fetch(url);
       const text = await response.text();
@@ -168,7 +171,11 @@ export default function EIPCompatibilityTable() {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading EIP data from Google Sheets...</div>;
+    return (
+      <div className="text-center py-8">
+        Loading EIP data from Google Sheets{sheetTab ? ` (${sheetTab} snapshot)` : ''}...
+      </div>
+    );
   }
 
   if (error) {
@@ -199,6 +206,7 @@ export default function EIPCompatibilityTable() {
 
           <div className="text-sm text-gray-600 dark:text-gray-400">
             Showing {filteredData.length} of {eipData.length} EIPs
+            {sheetTab && <span className="ml-2 text-blue-600 dark:text-blue-400">Version {sheetTab} snapshot</span>}
             {error && <span className="ml-2 text-yellow-600">Warning: Using cached data</span>}
           </div>
         </div>

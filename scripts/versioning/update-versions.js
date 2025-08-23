@@ -11,7 +11,7 @@ if (!action || !version) {
   process.exit(1);
 }
 
-const versionsPath = path.join(__dirname, '..', 'versions.json');
+const versionsPath = path.join(__dirname, '..', '..', 'versions.json');
 const versions = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
 
 switch (action) {
