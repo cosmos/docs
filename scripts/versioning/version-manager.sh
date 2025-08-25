@@ -193,29 +193,53 @@ print_info "Starting version freeze for $CURRENT_VERSION..."
 print_info "Creating version directory..."
 cp -r docs/ "$CURRENT_VERSION/"
 
-# 7. Handle EIP reference data snapshot and inline JSX generation
+# 7. Handle EIP reference data snapshot using Google Sheets API
 print_info "Processing EIP reference data..."
 
-# First, snapshot the EIP data from Google Sheets
-if node scripts/versioning/snapshot-eip-data.js "$CURRENT_VERSION"; then
-    print_success "EIP data snapshot saved to $CURRENT_VERSION/eip-data-snapshot.json"
+# Check if Google Sheets API dependencies are installed
+if [ ! -d "scripts/versioning/node_modules/googleapis" ]; then
+    print_warning "Google Sheets API dependencies not installed"
+    print_info "Installing dependencies..."
+    (cd scripts/versioning && npm install) || {
+        print_warning "Failed to install dependencies"
+        print_info "Continuing without Google Sheets snapshot"
+    }
+fi
 
-    # Generate the simplified MDX file with embedded component and data
-    print_info "Generating static MDX with embedded EIP data..."
-    if node scripts/versioning/generate-simple-eip-mdx.js "$CURRENT_VERSION"; then
-        print_success "EIP reference page converted to static with embedded data"
-        
-        # Clean up the JSON snapshot since it's now embedded in the MDX
-        print_info "Cleaning up temporary snapshot file..."
-        rm -f "$CURRENT_VERSION/eip-data-snapshot.json"
-        print_success "Removed temporary JSON snapshot"
+# Create a new sheet tab in Google Sheets for this version
+if node scripts/versioning/snapshot-eip-sheet.js "$CURRENT_VERSION"; then
+    print_success "Created Google Sheets tab for $CURRENT_VERSION"
+    
+    # Update the EIP compatibility table component with the new GID mapping
+    print_info "Updating EIP component with new GID mapping..."
+    if node scripts/versioning/update-eip-component-gids.js "$CURRENT_VERSION"; then
+        print_success "Updated EIP component with GID for $CURRENT_VERSION"
     else
-        print_warning "Failed to generate static MDX file"
-        print_info "The frozen version will keep the dynamic component"
+        print_warning "Failed to update EIP component GID mapping"
+    fi
+    
+    # Generate the MDX file that imports the component with sheet tab prop
+    print_info "Generating MDX with sheet tab reference..."
+    if node scripts/versioning/generate-eip-mdx-simple.js "$CURRENT_VERSION"; then
+        print_success "EIP reference page updated to use versioned sheet tab"
+        # Clean up the sheet reference file
+        rm -f "$CURRENT_VERSION/eip-sheet-reference.json"
+        print_success "Cleaned up temporary reference file"
+    else
+        print_warning "Failed to generate sheet-specific MDX file"
+        print_info "Falling back to JSON snapshot approach..."
+        # Fallback to JSON snapshot approach
+        if node scripts/versioning/snapshot-eip-data.js "$CURRENT_VERSION"; then
+            print_success "EIP data snapshot saved to $CURRENT_VERSION/eip-data-snapshot.json"
+            if node scripts/versioning/generate-simple-eip-mdx.js "$CURRENT_VERSION"; then
+                print_success "EIP reference page converted to static with embedded JSON data"
+                rm -f "$CURRENT_VERSION/eip-data-snapshot.json"
+            fi
+        fi
     fi
 else
-    print_warning "Failed to snapshot EIP data from Google Sheets"
-    print_info "The frozen version will keep the dynamic component"
+    print_warning "Failed to create Google Sheets snapshot"
+    print_info "The frozen version will keep the dynamic component pointing to main sheet"
 fi
 
 # 8. Update all internal links in the versioned files (but NOT snippet imports)
@@ -251,7 +275,8 @@ cat > "$CURRENT_VERSION/.version-metadata.json" << EOF
   "frozenDate": "$(date '+%Y-%m-%d')",
   "frozenTimestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
   "nextVersion": "$NEW_VERSION",
-  "eipSnapshotEmbedded": $([ -f "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx" ] && grep -q "const data =" "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx" && echo "true" || echo "false")
+  "eipSnapshotType": "google-sheets-tab",
+  "eipSheetTab": "$CURRENT_VERSION"
 }
 EOF
 
@@ -266,7 +291,9 @@ echo ""
 echo "  ${GREEN}✓${NC} Version $CURRENT_VERSION has been frozen (immutable)"
 echo "  ${GREEN}✓${NC} Development continues on version $NEW_VERSION"
 echo "  ${GREEN}✓${NC} Navigation and registry updated"
-if [ -f "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx" ] && grep -q "const data =" "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx"; then
+if [ -f "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx" ] && grep -q "sheetTab=\"$CURRENT_VERSION\"" "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx"; then
+    echo "  ${GREEN}✓${NC} EIP reference using Google Sheets tab: $CURRENT_VERSION"
+elif [ -f "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx" ] && grep -q "const data =" "$CURRENT_VERSION/documentation/evm-compatibility/eip-reference.mdx"; then
     echo "  ${GREEN}✓${NC} EIP reference data embedded in frozen MDX"
 fi
 if [ -f docs/changelog/release-notes.mdx ] && grep -q "\"$CURRENT_VERSION\"" docs/changelog/release-notes.mdx 2>/dev/null; then
@@ -296,7 +323,7 @@ echo ""
 echo "  ${YELLOW}⚠${NC}  The $CURRENT_VERSION/ directory is now frozen"
 echo "  ${YELLOW}⚠${NC}  Avoid editing files in $CURRENT_VERSION/ to maintain historical accuracy"
 echo "  ${YELLOW}⚠${NC}  All new development should happen in docs/"
-echo "  ${YELLOW}⚠${NC}  The EIP reference in $CURRENT_VERSION has embedded static data"
+echo "  ${YELLOW}⚠${NC}  The EIP reference in $CURRENT_VERSION uses a versioned Google Sheets tab"
 echo ""
 echo "  When ready for the next release (e.g., v0.6.0):"
 echo "  Run: ${BLUE}./scripts/versioning/version-manager.sh${NC}"

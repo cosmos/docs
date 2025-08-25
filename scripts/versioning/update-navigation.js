@@ -10,7 +10,7 @@ if (!VERSION) {
   process.exit(1);
 }
 
-const docsJsonPath = path.join(__dirname, '..', 'docs.json');
+const docsJsonPath = path.join(__dirname, '..', '..', 'docs.json');
 const docsJson = JSON.parse(fs.readFileSync(docsJsonPath, 'utf8'));
 
 // Function to recursively update paths in navigation
@@ -53,28 +53,39 @@ if (VERSION === 'main') {
   process.exit(0);
 }
 
-// Check if version already exists
-const existingVersionIndex = docsJson.navigation.versions.findIndex(v => v.version === VERSION);
+// Get the base navigation structure
+// Priority: 1) root tabs, 2) main version, 3) any existing version
+let baseNavigation;
 
-// Get current navigation structure (from tabs or current structure)
-let currentNavigation;
 if (docsJson.navigation.tabs) {
-  currentNavigation = { tabs: docsJson.navigation.tabs };
-} else if (docsJson.navigation.versions && docsJson.navigation.versions.length > 0) {
-  // Copy from the most recent version
-  const latestVersion = docsJson.navigation.versions[0];
-  currentNavigation = { ...latestVersion };
-  delete currentNavigation.version;
+  // Use root-level tabs (these should have docs/ paths)
+  baseNavigation = { tabs: docsJson.navigation.tabs };
+  console.log('  Using root-level navigation structure');
 } else {
-  console.error(' No navigation structure found');
-  process.exit(1);
+  // Look for main version first
+  const mainVersion = docsJson.navigation.versions.find(v => v.version === 'main');
+  if (mainVersion) {
+    baseNavigation = { tabs: mainVersion.tabs };
+    console.log('  Using main version navigation structure');
+  } else if (docsJson.navigation.versions && docsJson.navigation.versions.length > 0) {
+    // Fallback to any existing version
+    const latestVersion = docsJson.navigation.versions[0];
+    baseNavigation = { tabs: latestVersion.tabs };
+    console.log(`  Using ${latestVersion.version} navigation structure as base`);
+  } else {
+    console.error(' No navigation structure found');
+    process.exit(1);
+  }
 }
 
-// Create versioned navigation by updating all paths
+// Create versioned navigation for the frozen version
 const versionedNavigation = {
   version: VERSION,
-  ...updatePaths(currentNavigation, 'docs/', `${VERSION}/`)
+  ...updatePaths(baseNavigation, 'docs/', `${VERSION}/`)
 };
+
+// Check if version already exists
+const existingVersionIndex = docsJson.navigation.versions.findIndex(v => v.version === VERSION);
 
 // Add or update the version in the navigation
 if (existingVersionIndex >= 0) {
@@ -86,11 +97,52 @@ if (existingVersionIndex >= 0) {
   console.log(` Added navigation for version ${VERSION}`);
 }
 
-// Ensure 'main' version exists with current docs
+// Ensure 'main' version exists and always points to docs/
 const mainVersionIndex = docsJson.navigation.versions.findIndex(v => v.version === 'main');
+
+// Create main navigation - always pointing to docs/
+// We need to normalize the baseNavigation to ensure it uses docs/ paths
+let mainNavigationContent = JSON.parse(JSON.stringify(baseNavigation)); // Deep copy
+
+// Update any version-specific paths back to docs/
+// This handles cases where baseNavigation might have come from a versioned source
+const versionPatterns = [
+  /^v\d+\.\d+\.x\//,  // Matches v0.4.x/, v0.5.x/, etc.
+  /^v\d+\.\d+\.\d+\// // Matches v0.4.0/, v0.5.0/, etc.
+];
+
+function normalizeToDocsPath(str) {
+  if (typeof str !== 'string') return str;
+  for (const pattern of versionPatterns) {
+    if (pattern.test(str)) {
+      return str.replace(pattern, 'docs/');
+    }
+  }
+  return str;
+}
+
+function normalizePaths(obj) {
+  if (typeof obj === 'string') {
+    return normalizeToDocsPath(obj);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(normalizePaths);
+  }
+  if (typeof obj === 'object' && obj !== null) {
+    const normalized = {};
+    for (const key in obj) {
+      normalized[key] = normalizePaths(obj[key]);
+    }
+    return normalized;
+  }
+  return obj;
+}
+
+mainNavigationContent = normalizePaths(mainNavigationContent);
+
 const mainNavigation = {
   version: 'main',
-  ...currentNavigation
+  ...mainNavigationContent
 };
 
 if (mainVersionIndex >= 0) {
