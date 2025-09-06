@@ -174,6 +174,180 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 }
 ```
 
+## Advanced Pool Parameter Customization
+
+### Modifying Hard-Coded Pool Limits
+
+Several pool parameters are compiled into the source code and require modification for custom configurations:
+
+#### TxPool Configuration Parameters
+
+**File**: `mempool/txpool/legacypool/legacypool.go`
+
+**Default Configuration (lines ~45-55):**
+```go
+var DefaultConfig = Config{
+    Locals:    []common.Address{},
+    NoLocals:  false,
+    Journal:   "",
+    Rejournal: time.Hour,
+
+    PriceLimit: 1,            // 1 gwei minimum gas price
+    PriceBump:  10,           // 10% minimum price bump
+
+    AccountSlots: 16,         // 16 pending transactions per account
+    GlobalSlots:  4096,       // 4096 total pending transactions
+    AccountQueue: 64,         // 64 queued transactions per account  
+    GlobalQueue:  1024,       // 1024 total queued transactions
+
+    Lifetime: 3 * time.Hour,  // 3 hour maximum queue time
+}
+```
+
+**Custom Configuration Example:**
+```go
+// Create custom configuration in your app initialization
+customConfig := legacypool.Config{
+    Locals:    []common.Address{},
+    NoLocals:  false,
+    Journal:   "",
+    Rejournal: time.Hour,
+
+    PriceLimit: 5,            // 5 gwei minimum (higher than default)
+    PriceBump:  15,           // 15% price bump (more aggressive)
+
+    AccountSlots: 32,         // 32 pending per account (double default)
+    GlobalSlots:  8192,       // 8192 total pending (double default)
+    AccountQueue: 128,        // 128 queued per account (double default)
+    GlobalQueue:  2048,       // 2048 total queued (double default)
+
+    Lifetime: 6 * time.Hour,  // 6 hour queue time (double default)
+}
+
+// Use in mempool initialization
+customTxPool := legacypool.New(customConfig, blockChain, opts...)
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000,
+    TxPool:        customTxPool,
+}
+```
+
+#### High-Throughput Configuration
+
+For chains handling high transaction volumes:
+
+```go
+// File modification needed in mempool/txpool/legacypool/legacypool.go
+highThroughputConfig := legacypool.Config{
+    PriceLimit: 0,            // Accept zero gas price transactions
+    PriceBump:  5,            // Lower bump requirement for faster replacement
+
+    AccountSlots: 64,         // 4x more pending per account
+    GlobalSlots:  16384,      // 4x more total pending
+    AccountQueue: 256,        // 4x more queued per account
+    GlobalQueue:  4096,       // 4x more total queued
+
+    Lifetime: 12 * time.Hour, // Longer queue retention
+}
+```
+
+#### Memory-Constrained Configuration
+
+For resource-limited environments:
+
+```go
+// Conservative memory usage configuration
+conservativeConfig := legacypool.Config{
+    PriceLimit: 10,           // Higher minimum to reduce spam
+
+    AccountSlots: 8,          // Half the default pending slots
+    GlobalSlots:  2048,       // Half the default total pending
+    AccountQueue: 32,         // Half the default queued slots
+    GlobalQueue:  512,        // Half the default total queued
+
+    Lifetime: time.Hour,      // Shorter retention time
+}
+```
+
+### Custom TxPool Implementation
+
+For complete control over pool behavior, implement a custom TxPool:
+
+**File**: Create `mempool/custom_pool.go`
+
+```go
+package mempool
+
+import (
+    "github.com/ethereum/go-ethereum/common"
+    "github.com/ethereum/go-ethereum/core/types"
+    legacypool "github.com/ethereum/go-ethereum/core/txpool/legacypool"
+)
+
+type CustomTxPool struct {
+    *legacypool.LegacyPool
+    customConfig Config
+}
+
+type Config struct {
+    // Your custom configuration parameters
+    MaxTxsPerAccount     int
+    MaxGlobalTxs         int
+    MinGasPriceGwei      int64
+    ReplacementThreshold int
+}
+
+func NewCustomPool(config Config, blockchain *core.BlockChain) *CustomTxPool {
+    legacyConfig := legacypool.Config{
+        PriceLimit:   config.MinGasPriceGwei,
+        PriceBump:    config.ReplacementThreshold,
+        AccountSlots: uint64(config.MaxTxsPerAccount),
+        GlobalSlots:  uint64(config.MaxGlobalTxs),
+        // ... other parameters
+    }
+    
+    pool := legacypool.New(legacyConfig, blockchain)
+    return &CustomTxPool{
+        LegacyPool:   pool,
+        customConfig: config,
+    }
+}
+
+// Add custom methods for advanced pool management
+func (p *CustomTxPool) SetDynamicPricing(enabled bool) {
+    // Implement dynamic gas pricing logic
+}
+
+func (p *CustomTxPool) GetPoolStatistics() PoolStats {
+    // Return detailed pool statistics
+    return PoolStats{
+        PendingCount: p.Stats().Pending,
+        QueuedCount:  p.Stats().Queued,
+        // ... additional metrics
+    }
+}
+```
+
+**Integration in app.go:**
+```go
+// In your NewApp constructor
+customPoolConfig := mempool.Config{
+    MaxTxsPerAccount:     50,
+    MaxGlobalTxs:        10000,
+    MinGasPriceGwei:     2,
+    ReplacementThreshold: 12,
+}
+
+customPool := mempool.NewCustomPool(customPoolConfig, blockChain)
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 200_000_000,
+    TxPool:        customPool,
+}
+```
+
 ## Architecture Components
 
 The EVM mempool consists of several key components:

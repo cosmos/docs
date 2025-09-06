@@ -2,6 +2,7 @@
 title: "Mempool"
 description: "Design and Rationale"
 icon: "layers"
+tags: ["mempool"]
 ---
 
 <Warning>
@@ -13,51 +14,31 @@ Please [report issues](https://github.com/cosmos/evm/issues/new) and submit feed
 
 The EVM mempool is responsible for managing both EVM and Cosmos transactions in a unified pool, enabling Ethereum-compatible transaction flows including out-of-order transactions and nonce gap handling. It serves as a replacement for the default CometBFT FIFO mempool to support Ethereum tooling expectations while maintaining Cosmos SDK compatibility.
 
-## Usage Examples
+## Purpose and Design
 
-The EVM mempool enables seamless interaction with Ethereum tooling and deployment scripts that send multiple transactions in quick succession.
+The EVM mempool serves as a bridge between Ethereum's transaction management model and Cosmos SDK's consensus layer, enabling Ethereum-compatible transaction flows while maintaining the security and finality guarantees of CometBFT consensus.
 
-### Complex Contract Deployments
+### Design Goals
 
-DeFi protocols like Uniswap deploy multiple interdependent contracts in rapid succession. With the EVM mempool, these deployment scripts work without modification:
+**Ethereum Compatibility**: Enable Ethereum tooling to work without modification by supporting:
+- Out-of-order transaction submission
+- Nonce gap handling and automatic promotion
+- Transaction replacement with higher fees
+- Standard txpool RPC methods
 
-```javascript
-// Deploy Uniswap V3 contracts - sends many transactions at once
-const factory = await UniswapV3Factory.deploy();
-const router = await SwapRouter.deploy(factory.address, WETH);
-const quoter = await Quoter.deploy(factory.address, WETH);
-const multicall = await UniswapInterfaceMulticall.deploy();
+**Cosmos Integration**: Maintain compatibility with Cosmos SDK patterns:
+- Unified mempool for both EVM and Cosmos transactions  
+- Fee-based transaction prioritization
+- Integration with existing ante handlers
+- Preservation of consensus finality
 
-// All transactions queue properly even if they arrive out of order
-// The mempool handles nonce gaps automatically
-```
+### Use Cases
 
-### Batch Transaction Submission
+**Complex Contract Deployments**: DeFi protocols like Uniswap deploy multiple interdependent contracts rapidly. The mempool handles these deployment scripts without modification by queuing transactions with nonce gaps until they can be executed in order.
 
-```javascript
-// Ethereum tooling sends multiple transactions
-await wallet.sendTransaction({nonce: 100, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 101, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 103, ...}); // OK: Queued locally (gap)
-await wallet.sendTransaction({nonce: 102, ...}); // OK: Fills gap, both execute
-```
+**Batch Transaction Workflows**: Development tools and scripts often submit multiple transactions simultaneously, expecting the network to handle ordering and dependencies automatically.
 
-### Transaction Replacement
-
-```javascript
-// Speed up transaction with same nonce, higher fee
-const tx1 = await wallet.sendTransaction({
-  nonce: 100,
-  gasPrice: parseUnits("20", "gwei")
-});
-
-// Replace with higher fee
-const tx2 = await wallet.sendTransaction({
-  nonce: 100, // Same nonce
-  gasPrice: parseUnits("30", "gwei") // Higher fee
-});
-// tx1 is replaced by tx2
-```
+**Transaction Replacement**: Users can speed up pending transactions by submitting replacement transactions with the same nonce but higher fees, following standard Ethereum patterns.
 
 ## Transaction Flow
 
@@ -548,3 +529,7 @@ The mempool maintains transaction state through the unified `ExperimentalEVMMemp
 ## Testing
 
 The mempool behavior can be verified using the test scripts provided in the [cosmos/evm](https://github.com/cosmos/evm) repository. The [`tests/systemtests/Counter/script/SimpleSends.s.sol`](https://github.com/cosmos/evm/blob/v0.4.1/tests/systemtests/Counter/script/SimpleSends.s.sol) script demonstrates typical Ethereum tooling behavior - it sends 10 sequential transactions in a batch, which naturally arrive out of order and create nonce gaps.
+
+## Integration
+
+For step-by-step instructions on integrating the EVM mempool into your chain, see the [EVM Mempool Integration](/docs/next/documentation/integration/mempool-integration) guide.

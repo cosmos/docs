@@ -123,33 +123,114 @@ evmd start > ~/.evmd/node.log 2>&1 &
 
 ## Advanced Configuration Examples
 
-### Multi-Node Setup
-
-For testing with multiple validators:
-
-```bash
-# Node 1
-evmd init node1 --chain-id local-1 --home ~/.evmd-node1
-evmd config set client chain-id local-1 --home ~/.evmd-node1
-
-# Node 2
-evmd init node2 --chain-id local-1 --home ~/.evmd-node2
-evmd config set client chain-id local-1 --home ~/.evmd-node2
-
-# Configure persistent peers between nodes
-# Edit ~/.evmd-node1/config/config.toml and ~/.evmd-node2/config/config.toml
-```
 
 ### Custom Chain ID and Denom
 
+<Note>
+**v0.5.0 Dynamic Configuration**: Chain parameters can now be configured at runtime without modifying source code. Use CLI flags or configuration files for flexible setup.
+</Note>
+
+**Using CLI Flags (Recommended):**
 ```bash
-# Using custom chain ID and denomination
-evmd init mychain --chain-id custom-evm-1
+# Initialize with custom parameters via CLI flags
+evmd init mychain \
+  --chain-id custom-evm-1 \
+  --evm-chain-id 1234 \
+  --denom ucustom
+
+# Set client configuration
 evmd config set client chain-id custom-evm-1
 
 # Add genesis account with custom denom
-evmd genesis add-genesis-account validator 1000000000000000000000000acustom --keyring-backend test
-evmd genesis gentx validator 100000000000000000000acustom --keyring-backend test
+evmd genesis add-genesis-account validator 1000000000000000000000000ucustom --keyring-backend test
+evmd genesis gentx validator 100000000000000000000ucustom --keyring-backend test
+```
+
+**Using Configuration File:**
+```toml
+# Create config/chain.toml
+[chain]
+id = "custom-evm-1"
+evm-chain-id = 1234
+denom = "ucustom"
+extended-denom = "custom"
+display-denom = "CUSTOM"
+decimals = 18
+coin-type = 60
+```
+
+```bash
+# Initialize with config file
+evmd init mychain --config /path/to/config
+
+# Or start with configuration override
+evmd start --config /path/to/config
+```
+
+**Environment Variables:**
+```bash
+# Set via environment
+export EVMD_CHAIN_ID="custom-evm-1"
+export EVMD_EVM_CHAIN_ID="1234"
+export EVMD_DENOM="ucustom"
+
+# Initialize using environment variables
+evmd init mychain
+```
+
+### Advanced Mempool Configuration
+
+For high-performance local development and testing environments:
+
+```toml
+# In app.toml - Advanced EVM Mempool Settings
+[evm]
+# EVM execution tracer for debugging complex transactions
+tracer = "json"  # Options: "", "json", "struct", "access_list", "markdown"
+
+# Maximum gas for transactions in CheckTx mode (DoS protection)
+max-tx-gas-wanted = 40000000  # Set based on your block gas limit
+
+# Enable SHA3 preimage recording for debugging tools
+cache-preimage = true
+
+# EIP-155 replay protection chain ID (must match your network)
+evm-chain-id = 1337
+
+```
+
+```toml
+# In app.toml - JSON-RPC Advanced Configuration
+[json-rpc]
+enable = true
+enable-indexer = true
+
+# API namespaces (enable debug/personal for development)
+api = "eth,net,web3,txpool,debug,personal"
+
+# Resource limits for development environments
+gas-cap = 100000000           # Higher than default for complex testing
+txfee-cap = 10               # 10 ETH maximum transaction fee
+filter-cap = 500             # More concurrent filters for heavy testing
+feehistory-cap = 200         # Extended fee history for analytics
+logs-cap = 20000            # Higher log return limits
+block-range-cap = 20000     # Extended block range for getLogs
+
+# Connection and performance settings
+batch-request-limit = 2000           # Higher batch limits for testing tools
+batch-response-max-size = 50000000   # 50MB response limit
+max-open-connections = 200           # More concurrent connections
+http-timeout = "60s"                # Extended timeout for complex calls
+http-idle-timeout = "300s"          # 5-minute idle timeout
+
+# Development-specific security settings
+allow-unprotected-txs = true        # Allow non-EIP155 txs (dev only)
+allow-insecure-unlock = true        # Enable personal namespace unlocking
+enable-profiling = true             # Enable pprof endpoints for debugging
+
+# Advanced gas and fee configuration
+evm-timeout = "30s"                 # Extended timeout for eth_call
+fix-revert-gas-refund-height = 0    # Disable gas refund fix for testing
 ```
 
 ### Development Mode Settings
@@ -157,19 +238,73 @@ evmd genesis gentx validator 100000000000000000000acustom --keyring-backend test
 For rapid development and testing:
 
 ```toml
-# In config.toml
+# In config.toml - Fast consensus for local development
 [consensus]
-timeout_propose = "1s"
-timeout_prevote = "1s"
-timeout_precommit = "1s"
-timeout_commit = "1s"
+timeout_propose = "500ms"    # Faster block proposal
+timeout_prevote = "500ms"    # Faster prevote phase
+timeout_precommit = "500ms"  # Faster precommit phase
+timeout_commit = "1s"        # Quick block commit
 
-# In app.toml
-[json-rpc]
-enable = true
-enable-indexer = true
-api = "eth,net,web3,txpool,debug,personal"
-gas-cap = 50000000
+# Reduce peer connection requirements for local testing
+[p2p]
+max_num_inbound_peers = 10
+max_num_outbound_peers = 10
+persistent_peers_max_dial_period = "10s"
+
+# Mempool settings for development
+[mempool]
+size = 10000                 # Larger mempool for bulk testing
+cache_size = 20000          # Larger cache for transaction management
+```
+
+### Block Gas Limit Configuration
+
+Configure block gas limits for different testing scenarios:
+
+```bash
+# Initialize with specific block gas limit in genesis
+evmd init mynode --chain-id local-1
+
+# Edit genesis.json after initialization
+jq '.consensus_params.block.max_gas = "200000000"' ~/.evmd/config/genesis.json > temp.json
+mv temp.json ~/.evmd/config/genesis.json
+
+# Verify genesis configuration
+evmd validate-genesis ~/.evmd/config/genesis.json
+```
+
+**Common Block Gas Configurations:**
+- **Light Testing**: `50000000` (50M gas) - Basic contract deployment
+- **Standard Development**: `100000000` (100M gas) - Default configuration
+- **Heavy Load Testing**: `200000000` (200M gas) - Complex DeFi protocols
+- **Stress Testing**: `500000000` (500M gas) - Maximum throughput testing
+
+
+### Genesis Configuration Workarounds
+
+Handle common genesis configuration issues:
+
+```bash
+# Fix common genesis parameter conflicts
+evmd init mynode --chain-id local-1
+
+# Manually configure genesis parameters that aren't exposed via CLI
+cd ~/.evmd/config
+
+# Set custom EVM parameters in genesis
+jq '.app_state.vm.params.evm_denom = "atest"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.app_state.vm.params.history_serve_window = "16384"' genesis.json > temp.json && mv temp.json genesis.json
+
+# Configure fee market parameters
+jq '.app_state.feemarket.params.base_fee = "1000000000"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.app_state.feemarket.params.elasticity_multiplier = 2' genesis.json > temp.json && mv temp.json genesis.json
+
+# Set custom block parameters
+jq '.consensus_params.block.max_gas = "200000000"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.consensus_params.block.max_bytes = "22020096"' genesis.json > temp.json && mv temp.json genesis.json
+
+# Validate all genesis modifications
+evmd validate-genesis genesis.json
 ```
 
 ## Appendix
