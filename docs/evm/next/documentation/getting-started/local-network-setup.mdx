@@ -1,0 +1,386 @@
+---
+title: "Local Network Setup"
+---
+
+## Quick Setup
+
+For the majority of cases, setup is as simple as running [`./local_node.sh`](https://github.com/cosmos/evm/blob/main/local_node.sh) from the [cosmos/evm repository](https://github.com/cosmos/evm).
+The remainder of this page gets is for those who require specific testing or development environments, and requires a deeper understanding of the setup process.
+
+<Note>
+Currently there are some key network initialization steps that differ from standard Cosmos-SDK chains. See the [Appendix](#appendix) section below for specifics.
+</Note>
+
+## Manual Network Setup
+
+### Initialize Node Configuration
+
+```bash
+# Initialize the node with your custom moniker
+evmd init <your-node-name> --chain-id <your-chain-id>
+
+# REQUIRED: Set chain ID in client config BEFORE running gentx commands
+# This is a temporary workarond that prevents runtime panics in genesis transaction creation
+evmd config set client chain-id <your-chain-id>
+evmd config set client keyring-backend test
+```
+
+**Example:**
+```bash
+evmd init mynode --chain-id local-1
+evmd config set client chain-id local-1
+evmd config set client keyring-backend test
+```
+
+### Create Validator Account
+
+```bash
+# Add validator account
+evmd keys add validator --keyring-backend test
+
+# Optional: Add additional accounts for testing
+evmd keys add user1 --keyring-backend test
+evmd keys add user2 --keyring-backend test
+```
+
+### Configure Genesis
+
+```bash
+# Add initial balances to genesis
+evmd genesis add-genesis-account validator 10000000000000000000000000atest --keyring-backend test
+
+# Add balances for additional accounts (optional)
+evmd genesis add-genesis-account user1 1000000000000000000000000atest --keyring-backend test
+evmd genesis add-genesis-account user2 1000000000000000000000000atest --keyring-backend test
+
+# Create validator genesis transaction
+evmd genesis gentx validator 1000000000000000000000atest --keyring-backend test
+
+# Collect all genesis transactions
+evmd genesis collect-gentxs
+```
+
+### Customize Configuration Files
+
+At this point, you can modify the configuration files to suit your needs:
+
+#### Genesis Configuration (`~/.evmd/config/genesis.json`)
+- Module parameters (EVM, fee market, etc.)
+- Initial token distributions
+- Governance parameters
+- Consensus parameters
+
+#### Node Configuration (`~/.evmd/config/config.toml`)
+- P2P settings
+- Consensus timeouts
+- Mempool configuration
+- RPC settings
+
+#### Application Configuration (`~/.evmd/config/app.toml`)
+- API server settings
+- gRPC configuration
+- State sync parameters
+- Pruning settings
+- **EVM and JSON-RPC settings** (see [Node Configuration Guide](/docs/evm/next/documentation/getting-started/node-configuration))
+
+### Enable JSON-RPC (Required for Ethereum Compatibility)
+
+<Warning>
+**Manual Configuration Required**: JSON-RPC is disabled by default and must be manually enabled in `~/.evmd/config/app.toml`. There is no CLI command to configure these settings.
+</Warning>
+
+Edit `~/.evmd/config/app.toml`:
+
+```toml JSON-RPC Configuration expandable
+# EVM Configuration (required for app-side mempool)
+[evm]
+# Minimum priority fee for mempool (in wei)
+min-tip = 0
+
+# EIP-155 chain ID (separate from Cosmos chain ID)  
+evm-chain-id = 262144
+
+# Maximum gas for eth transactions in check tx mode
+max-tx-gas-wanted = 0
+
+[json-rpc]
+# Enable the JSON-RPC server (disabled by default)
+enable = true
+
+# Enable transaction indexer for eth_getLogs support
+enable-indexer = true
+
+# Enable common namespaces (including txpool for app-side mempool)
+api = "eth,net,web3,txpool,debug"
+
+# Gas and performance caps
+gas-cap = 25000000                    # Gas cap for eth_call/estimateGas
+filter-cap = 200                      # Maximum concurrent filters
+logs-cap = 10000                      # Max results from eth_getLogs
+block-range-cap = 10000               # Max block range for eth_getLogs
+```
+
+### Start Your Custom Network
+
+```bash
+# Start the node
+evmd start
+
+# Optional: Start with specific log level
+evmd start --log_level debug
+
+# Optional: Start in background
+evmd start > ~/.evmd/node.log 2>&1 &
+```
+
+<Tip>
+**Test Your Setup**: Once your local node is running, try out the interactive [JSON-RPC API Reference](/docs/evm/next/api-reference/ethereum-json-rpc) to explore all available methods.
+(*note: some methods are disabled by default -- see the RPC [methods](/docs/evm/next/api-reference/ethereum-json-rpc) page and the [node configuration](/docs/evm/next/documentation/getting-started/node-configuration) for complete details.)
+</Tip>
+
+## Advanced Configuration Examples
+
+
+### Custom Chain ID and Denom
+
+Chain parameters can be configured via CLI flags at runtime or through configuration files.
+
+**Using CLI Flags:**
+```bash Custom Chain Initialization expandable
+# Initialize with custom parameters via CLI flags
+evmd init mychain \
+  --chain-id custom-evm-1 \
+  --evm-chain-id 1234 \
+  --denom ucustom
+
+# Set client configuration
+evmd config set client chain-id custom-evm-1
+
+# Add genesis account with custom denom
+evmd genesis add-genesis-account validator 1000000000000000000000000ucustom --keyring-backend test
+evmd genesis gentx validator 100000000000000000000ucustom --keyring-backend test
+```
+
+**Using Configuration File:**
+```toml Chain Configuration File expandable
+# Create config/chain.toml
+[chain]
+id = "custom-evm-1"
+evm-chain-id = 1234
+denom = "ucustom"
+extended-denom = "custom"
+display-denom = "CUSTOM"
+decimals = 18
+coin-type = 60
+```
+
+```bash Configuration File Usage expandable
+# Initialize with config file
+evmd init mychain --config /path/to/config
+
+# Or start with configuration override
+evmd start --config /path/to/config
+```
+
+**Environment Variables:**
+```bash
+# Set via environment
+export EVMD_CHAIN_ID="custom-evm-1"
+export EVMD_EVM_CHAIN_ID="1234"
+export EVMD_DENOM="ucustom"
+
+# Initialize using environment variables
+evmd init mychain
+```
+
+### Advanced Mempool Configuration
+
+For high-performance local development and testing environments:
+
+```toml Advanced EVM Mempool Settings expandable
+# In app.toml - Advanced EVM Mempool Settings
+[evm]
+# EVM execution tracer for debugging complex transactions
+tracer = "json"  # Options: "", "json", "struct", "access_list", "markdown"
+
+# Maximum gas for transactions in CheckTx mode (DoS protection)
+max-tx-gas-wanted = 40000000  # Set based on your block gas limit
+
+# Enable SHA3 preimage recording for debugging tools
+cache-preimage = true
+
+# EIP-155 replay protection chain ID (must match your network)
+evm-chain-id = 1337
+
+```
+
+```toml Advanced JSON-RPC Configuration expandable
+# In app.toml - JSON-RPC Advanced Configuration
+[json-rpc]
+enable = true
+enable-indexer = true
+
+# API namespaces (enable debug/personal for development)
+api = "eth,net,web3,txpool,debug,personal"
+
+# Resource limits for development environments
+gas-cap = 100000000           # Higher than default for complex testing
+txfee-cap = 10               # 10 ETH maximum transaction fee
+filter-cap = 500             # More concurrent filters for heavy testing
+feehistory-cap = 200         # Extended fee history for analytics
+logs-cap = 20000            # Higher log return limits
+block-range-cap = 20000     # Extended block range for getLogs
+
+# Connection and performance settings
+batch-request-limit = 2000           # Higher batch limits for testing tools
+batch-response-max-size = 50000000   # 50MB response limit
+max-open-connections = 200           # More concurrent connections
+http-timeout = "60s"                # Extended timeout for complex calls
+http-idle-timeout = "300s"          # 5-minute idle timeout
+
+# Development-specific security settings
+allow-unprotected-txs = true        # Allow non-EIP155 txs (dev only)
+allow-insecure-unlock = true        # Enable personal namespace unlocking
+enable-profiling = true             # Enable pprof endpoints for debugging
+
+# Advanced gas and fee configuration
+evm-timeout = "30s"                 # Extended timeout for eth_call
+fix-revert-gas-refund-height = 0    # Disable gas refund fix for testing
+```
+
+### Development Mode Settings
+
+For rapid development and testing:
+
+```toml Development Mode Settings expandable
+# In config.toml - Fast consensus for local development
+[consensus]
+timeout_propose = "500ms"    # Faster block proposal
+timeout_prevote = "500ms"    # Faster prevote phase
+timeout_precommit = "500ms"  # Faster precommit phase
+timeout_commit = "1s"        # Quick block commit
+
+# Reduce peer connection requirements for local testing
+[p2p]
+max_num_inbound_peers = 10
+max_num_outbound_peers = 10
+persistent_peers_max_dial_period = "10s"
+
+# Mempool settings for development
+[mempool]
+size = 10000                 # Larger mempool for bulk testing
+cache_size = 20000          # Larger cache for transaction management
+```
+
+### Block Gas Limit Configuration
+
+Configure block gas limits for different testing scenarios:
+
+```bash
+# Initialize with specific block gas limit in genesis
+evmd init mynode --chain-id local-1
+
+# Edit genesis.json after initialization
+jq '.consensus_params.block.max_gas = "200000000"' ~/.evmd/config/genesis.json > temp.json
+mv temp.json ~/.evmd/config/genesis.json
+
+# Verify genesis configuration
+evmd validate-genesis ~/.evmd/config/genesis.json
+```
+
+**Common Block Gas Configurations:**
+- **Light Testing**: `50000000` (50M gas) - Basic contract deployment
+- **Standard Development**: `100000000` (100M gas) - Default configuration
+- **Heavy Load Testing**: `200000000` (200M gas) - Complex DeFi protocols
+- **Stress Testing**: `500000000` (500M gas) - Maximum throughput testing
+
+
+### Genesis Configuration Workarounds
+
+Handle common genesis configuration issues:
+
+```bash Genesis Configuration Workarounds expandable
+# Fix common genesis parameter conflicts
+evmd init mynode --chain-id local-1
+
+# Manually configure genesis parameters that aren't exposed via CLI
+cd ~/.evmd/config
+
+# Set custom EVM parameters in genesis
+jq '.app_state.vm.params.evm_denom = "atest"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.app_state.vm.params.history_serve_window = "16384"' genesis.json > temp.json && mv temp.json genesis.json
+
+# Configure fee market parameters
+jq '.app_state.feemarket.params.base_fee = "1000000000"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.app_state.feemarket.params.elasticity_multiplier = 2' genesis.json > temp.json && mv temp.json genesis.json
+
+# Set custom block parameters
+jq '.consensus_params.block.max_gas = "200000000"' genesis.json > temp.json && mv temp.json genesis.json
+jq '.consensus_params.block.max_bytes = "22020096"' genesis.json > temp.json && mv temp.json genesis.json
+
+# Validate all genesis modifications
+evmd validate-genesis genesis.json
+```
+
+## Appendix
+
+### Key Differences from Standard Cosmos SDK Networks
+
+<Info>
+**Chain ID Configuration**: Unlike standard Cosmos SDK chains, the chain ID must be set in client configuration before running genesis transaction commands.
+</Info>
+
+**Background**: EVM-specific initialization requires the chain ID to be present in client context for proper coin metadata setup. This differs from standard Cosmos SDK workflows where the chain ID is typically set later in the process.
+
+**Workflow**: Run `evmd config set client chain-id <your-chain-id>` after `evmd init` and before any `gentx` commands.
+
+<Info>
+**Process Management**: Networks started with `local_node.sh` use background process management that differs from interactive mode.
+</Info>
+
+**Background**: The local node script runs `evmd` as a background process, which continues running after terminal closure. This is different from typical development setups where processes stop with the terminal.
+
+**Management**: Use `pkill -9 evmd` or `lsof -ti:8545 | xargs kill -9` to properly terminate background processes.
+
+### Validation Commands
+
+Use these commands to verify your network setup:
+
+```bash Network Validation Commands expandable
+# Check if evmd is running
+ps aux | grep evmd
+
+# Check node status
+evmd status
+
+# Verify accounts
+evmd keys list --keyring-backend test
+
+# Query balances
+evmd q bank balances $(evmd keys show <keyname> --address)
+
+# Test JSON-RPC connectivity
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+  http://localhost:8545
+
+# Check which ports are in use
+netstat -an | grep -E "(8545|26656|26657|1317|9090)"
+```
+
+<Note>
+These workflow differences will be streamlined in future releases to align more closely with standard Cosmos SDK patterns. The current setup steps ensure proper EVM initialization during network genesis.
+</Note>
+
+## Next Steps
+
+With your custom local network running:
+
+<CardGroup cols={2}>
+  <Card title="Node Configuration" href="/docs/evm/next/documentation/getting-started/node-configuration" icon="settings">
+    Detailed reference for all configuration parameters
+  </Card>
+  <Card title="Development Tools" href="/docs/evm/next/documentation/getting-started/tooling-and-resources/overview" icon="wrench">
+    Foundry, Hardhat, and other development tools
+  </Card>
+</CardGroup>

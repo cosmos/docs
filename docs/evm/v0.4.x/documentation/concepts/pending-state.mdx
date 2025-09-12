@@ -1,0 +1,151 @@
+---
+title: "Pending State"
+description: "When a transaction is submitted to the Ethereum network, it first goes into the pending status, waiting to be executed by the nodes. A transaction can be in the pending state for a longer duration if the gas price is set very low in the transaction and the nodes are busy processing other higher gas price transactions."
+icon: "hourglass"
+---
+
+During the pending state, the transaction initiator is allowed to change the transaction fields at any time. They can do so by sending another transaction with the same nonce.
+
+## Prerequisite Readings[​](#prerequisite-readings "Direct link to Prerequisite Readings")
+
+* [Cosmos SDK Mempool](https://docs.cosmos.network/main/building-apps/app-mempool)
+* [Mempool Architecture](/docs/evm/v0.4.x/documentation/concepts/mempool)
+
+## Cosmos EVM vs Ethereum[​](#cosmos-evm-vs-ethereum "Direct link to Cosmos EVM vs Ethereum")
+
+In Ethereum, pending blocks are generated as they are queued for production by miners. These pending blocks include pending transactions that are picked out by miners, based on the highest reward paid in gas. This mechanism exists as block finality is not possible on the Ethereum network. Blocks are committed with probabilistic finality, which means that transactions and blocks become less likely to become reverted as more time (and blocks) passes.
+
+Cosmos EVM is designed differently as it uses [CometBFT](https://docs.cometbft.com/v1.0/) consensus which provides instant finality for transactions. While there is no concept of "pending blocks" that can be reorganized, Cosmos EVM implements an **experimental EVM mempool** that provides Ethereum-compatible pending state functionality.
+
+## EVM-Compliant Mempool
+
+The experimental EVM mempool introduces a two-tiered system that brings Ethereum-like pending state behavior to Cosmos EVM:
+
+### Transaction States
+
+<CardGroup cols={2}>
+  <Card title="Pending Transactions" icon="clock">
+    Transactions with correct nonces that are immediately executable. These are in the public mempool, broadcast to peers, and ready for block inclusion.
+  </Card>
+  <Card title="Queued Transactions" icon="layer-group">
+    Transactions with future nonces (nonce gaps) that are stored locally. These wait for earlier transactions to execute before being promoted to pending.
+  </Card>
+</CardGroup>
+
+### Key Differences from Traditional Cosmos
+
+1. **Nonce Gap Handling**: Unlike traditional Cosmos chains that reject out-of-order transactions, the EVM mempool queues them locally until gaps are filled.
+
+2. **Fee-Based Priority**: Both EVM and Cosmos transactions compete fairly based on their effective tips rather than FIFO ordering:
+   - **EVM transactions**: Priority = `gas_tip_cap` or `min(gas_tip_cap, gas_fee_cap - base_fee)`
+   - **Cosmos transactions**: Priority = `(fee_amount / gas_limit) - base_fee`
+
+3. **Transaction Replacement**: Supports replacing pending transactions with higher fee versions using the same nonce, enabling "speed up" functionality common in Ethereum wallets.
+
+## Pending State Queries[​](#pending-state-queries "Direct link to Pending State Queries")
+
+With the experimental EVM mempool, pending state queries now reflect a more Ethereum-compatible view:
+
+### Transaction Pool Inspection
+
+The mempool provides dedicated RPC methods to inspect pending and queued transactions:
+
+<AccordionGroup>
+  <Accordion title="txpool_status">
+    Returns counts of pending and queued transactions:
+    ```json
+    {
+      "pending": "0x10",  // 16 pending transactions
+      "queued": "0x5"     // 5 queued transactions
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="txpool_content">
+    Returns detailed information about all transactions in the pool, organized by account and nonce.
+  </Accordion>
+
+  <Accordion title="txpool_inspect">
+    Provides human-readable summaries of transactions for debugging.
+  </Accordion>
+</AccordionGroup>
+
+See the [JSON-RPC Methods](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool-methods) documentation for complete details.
+
+### Pending State Behavior
+
+When making queries with "pending" as the block parameter:
+
+1. **Balance Queries**: Reflect the account balance after all pending transactions from that account are applied
+2. **Nonce Queries**: Return the next available nonce considering all pending transactions
+3. **Gas Estimates**: Account for pending transactions that may affect gas costs
+
+<Note>
+Pending state queries are subjective to each node's local mempool view. Different nodes may return different results based on their transaction pool contents.
+</Note>
+
+## JSON-RPC Calls Supporting Pending State[​](#json-rpc-calls-on-pending-transactions "Direct link to JSON-RPC Calls on Pending Transactions")
+
+The following RPC methods support the `"pending"` block parameter:
+
+* [`eth_getBalance`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_getbalance) - Get balance considering pending transactions
+* [`eth_getTransactionCount`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_gettransactioncount) - Get next nonce considering pending transactions
+* [`eth_getBlockTransactionCountByNumber`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_getblocktransactioncountbynumber) - Count pending transactions
+* [`eth_getBlockByNumber`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_getblockbynumber) - Get pending block information
+* [`eth_getTransactionByHash`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_gettransactionbyhash) - Retrieve pending transactions
+* [`eth_getTransactionByBlockNumberAndIndex`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_gettransactionbyblockhashandindex) - Access specific pending transactions
+* [`eth_sendTransaction`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#eth_sendtransaction) - Submit new transactions
+
+Additionally, the `txpool_*` namespace provides specialized methods for mempool inspection:
+* [`txpool_status`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool_status) - Get pool statistics
+* [`txpool_content`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool_content) - View all pool transactions
+* [`txpool_contentFrom`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool_contentfrom) - Filter by address
+* [`txpool_inspect`](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool_inspect) - Human-readable summaries
+
+## Practical Examples
+
+### Monitoring Transaction Status
+
+```javascript
+// Check if transaction is pending
+const tx = await provider.getTransaction(txHash);
+if (tx && !tx.blockNumber) {
+  console.log("Transaction is pending");
+
+  // Check pool status
+  const poolStatus = await provider.send("txpool_status", []);
+  console.log(`Pool has ${poolStatus.pending} pending, ${poolStatus.queued} queued`);
+}
+```
+
+### Handling Nonce Gaps
+
+```javascript
+// Send transactions with nonce gaps (they'll be queued)
+await wallet.sendTransaction({nonce: 100, ...});  // Executes immediately
+await wallet.sendTransaction({nonce: 102, ...});  // Queued (gap at 101)
+await wallet.sendTransaction({nonce: 101, ...});  // Fills gap, both execute
+```
+
+### Transaction Replacement
+
+```javascript
+// Speed up a pending transaction
+const originalTx = await wallet.sendTransaction({
+  nonce: 100,
+  gasPrice: parseUnits("20", "gwei")
+});
+
+// Replace with higher fee
+const fasterTx = await wallet.sendTransaction({
+  nonce: 100,  // Same nonce
+  gasPrice: parseUnits("30", "gwei")  // Higher fee
+});
+```
+
+## Architecture Details
+
+For a detailed understanding of how the pending state is managed:
+- See [Mempool Architecture](/docs/evm/v0.4.x/documentation/concepts/mempool#architecture) for the two-tier system design
+- Review [Transaction Flow](/docs/evm/v0.4.x/documentation/concepts/mempool#transaction-flow) for state transitions
+- Check [Integration Guide](/docs/evm/v0.4.x/documentation/integration/mempool-integration) for implementation details

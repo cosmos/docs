@@ -1,0 +1,161 @@
+---
+title: "EIP-1559 Fee Market"
+description: "Understanding dynamic fee pricing and the EIP-1559 mechanism in Cosmos EVM chains"
+icon: "chart-line"
+---
+
+## Overview
+
+[EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) revolutionizes transaction fee mechanics by replacing the single gas price auction model with a dual-fee structure. This creates more predictable fees and improved network efficiency for EVM-compatible chains.
+
+## Core Concepts
+
+### Dual-Fee Structure
+
+Before EIP-1559, fees were simple:
+```
+fee = gasPrice * gasLimit
+```
+
+With EIP-1559, fees have two components:
+```
+fee = (baseFee + priorityTip) * gasLimit
+```
+
+where:
+- `baseFee`: Protocol-determined minimum price per gas unit
+- `priorityTip`: Optional fee for transaction prioritization
+
+<Info>
+  The Cosmos SDK uses different terminology than Ethereum. What Ethereum calls `gasLimit` is `gasWanted` in Cosmos. You'll encounter both terms in the Cosmos EVM as it bridges Ethereum and Cosmos SDK concepts.
+</Info>
+
+### Base Fee Mechanism
+
+The base fee is the minimum price per unit of gas required for transaction inclusion. It automatically adjusts each block based on network utilization.
+
+#### Adjustment Formula
+
+```
+NewBaseFee = BaseFee × (1 + (|GasUsed - GasTarget| / GasTarget / Denominator))
+```
+
+The adjustment direction depends on block utilization:
+- **Increases** when `gasUsed > gasTarget` (congested)
+- **Decreases** when `gasUsed < gasTarget` (underutilized)
+- **Remains stable** when `gasUsed == gasTarget` (optimal)
+
+#### Example Calculation
+
+With standard Ethereum parameters:
+- Current base fee: 1000 units
+- Block capacity: 10M gas
+- Target (50%): 5M gas
+- Actual usage: 8M gas (80% full)
+- Denominator: 8
+
+```
+Adjustment = (8M - 5M) / 5M / 8 = 0.075 (7.5% increase)
+New base fee = 1000 × 1.075 = 1075 units
+```
+
+### Target Utilization
+
+The target utilization determines the optimal block fullness:
+
+```
+Target Gas = MaxBlockGas / ElasticityMultiplier
+Target Utilization % = 100 / ElasticityMultiplier
+```
+
+Common configurations:
+- `ElasticityMultiplier = 2`: 50% target (Ethereum standard)
+- `ElasticityMultiplier = 4`: 25% target (aggressive pricing)
+- `ElasticityMultiplier = 1`: 100% target (maximum throughput)
+
+### Priority Tips and MEV
+
+The `max_priority_fee_per_gas` (tip) serves as an incentive for validators to include transactions faster. However, in Cosmos SDK implementations:
+- Transaction prioritization is limited compared to Ethereum
+- Tips may have minimal effect on inclusion order
+- MEV opportunities are generally reduced
+
+### Effective Gas Price
+
+For EIP-1559 transactions, users specify two limits:
+- `maxFeePerGas`: Maximum total they're willing to pay
+- `maxPriorityFeePerGas`: Maximum tip for validators
+
+The effective price becomes:
+```
+effectiveGasPrice = min(baseFee + maxPriorityFeePerGas, maxFeePerGas)
+```
+
+This ensures users never pay more than their specified maximum while allowing for priority fees when network conditions permit.
+
+## Fee Calculation Examples
+
+### Low Activity Period
+- Base fee: 100 gwei
+- User sets: maxFeePerGas = 200 gwei, maxPriorityFeePerGas = 2 gwei
+- Effective price: 100 + 2 = 102 gwei
+- User pays: 102 gwei (well below their 200 gwei max)
+
+### High Congestion
+- Base fee: 180 gwei
+- User sets: maxFeePerGas = 200 gwei, maxPriorityFeePerGas = 30 gwei
+- Effective price: min(180 + 30, 200) = 200 gwei
+- User pays: 200 gwei (capped at their maximum)
+
+## Minimum Gas Prices
+
+The fee market enforces multiple price floors:
+
+### Local vs. Global Minimums
+
+1. **Local minimum**: Set by individual validators in node configuration
+2. **Global minimum**: Set as the `MinGasPrice` parameter via governance
+3. **Base fee**: Current protocol-calculated minimum
+
+The effective minimum is always the highest of these three values.
+
+<Alert>
+  If the base fee falls below the global `MinGasPrice`, it's automatically raised to `MinGasPrice`. This prevents the base fee from dropping below the spam prevention threshold.
+</Alert>
+
+## Benefits of EIP-1559
+
+### For Users
+- **Predictable fees**: Base fee is known before submitting
+- **Better UX**: Wallets can reliably estimate costs
+- **Fair pricing**: All users in a block pay similar rates
+- **Protection**: MaxFeePerGas prevents overpayment
+
+### For Networks
+- **Automatic adjustment**: No manual intervention needed
+- **Spam resistance**: Dynamic fees deter attacks
+- **Optimal utilization**: Targets efficient block usage
+- **Economic stability**: Predictable fee revenue
+
+### For Developers
+- **Simplified estimation**: Base fee is protocol-provided
+- **Better tools**: Standard APIs for fee data
+- **Consistent behavior**: Across EVM-compatible chains
+
+## Common Misconceptions
+
+### "Tips Always Speed Up Transactions"
+In Cosmos SDK chains, transaction ordering is often FIFO within the mempool, making tips less effective than on Ethereum mainnet.
+
+### "Base Fee Always Burns"
+While Ethereum burns the base fee, Cosmos EVM chains may distribute it differently based on their economic model.
+
+### "EIP-1559 Eliminates Fee Spikes"
+It smooths volatility but can't prevent spikes during extreme congestion. The adjustment rate is intentionally limited.
+
+## Further Reading
+
+- [Original EIP-1559 Proposal](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md)
+- [Ethereum Gas Tracker](https://etherscan.io/gastracker)
+- [cosmos/evm Fee Market Module](https://github.com/cosmos/evm/tree/v0.4.1/x/feemarket)
+- [Understanding Gas and Fees](/docs/evm/next/documentation/concepts/gas-and-fees)

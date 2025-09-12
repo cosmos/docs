@@ -1,0 +1,518 @@
+---
+title: "VM"
+description: "Ethereum Virtual Machine execution environment for Cosmos SDK"
+icon: "microchip"
+---
+
+The `x/vm` module from [cosmos/evm](https://github.com/cosmos/evm) provides a fully compatible Ethereum Virtual Machine execution environment as a Cosmos SDK module.
+
+<Note>
+  For conceptual understanding of EVM architecture and design, see [EVM Architecture](/docs/evm/v0.4.x/documentation/concepts/overview).
+</Note>
+
+## Parameters
+
+The module parameters control EVM behavior and access policies ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/evm.proto)):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `evm_denom` | string | `"atest"` | Token denomination for EVM transactions (18 decimals) |
+| `extra_eips` | []int64 | `[]` | Additional EIPs to activate beyond hard fork defaults |
+| `allow_unprotected_txs` | bool | `false` | Allow non-EIP155 replay-protected transactions |
+| `active_static_precompiles` | []string | `[]` | Activated static precompile addresses |
+| `evm_channels` | []string | `[]` | IBC channel IDs for EVM-compatible chains |
+| `access_control` | AccessControl | Permissionless | Permission policy for EVM operations |
+
+### Parameter Details
+
+<Expandable title="evm_denom">
+Defines the token used for gas and value transfers in EVM:
+- Must be registered in bank module
+- Should have 18 decimal precision
+- Used for all EVM operations (gas, transfers, contracts)
+- Example: `"atest"`, `"aevmos"`, `"wei"`
+</Expandable>
+
+<Expandable title="extra_eips">
+Activates additional EIPs beyond fork defaults:
+
+| EIP | Description | Gas Impact |
+|-----|-------------|------------|
+| 1344 | ChainID opcode | Minimal |
+| 1884 | Repricing for trie-size-dependent opcodes | Increases SLOAD |
+| 2200 | Structured definitions for net gas metering | Variable |
+| 2929 | Gas cost for state access opcodes | Increases cold access |
+| 3198 | BASEFEE opcode | Minimal |
+| 3529 | Reduction in refunds | Reduces max refund |
+| 3855 | PUSH0 instruction | New opcode |
+</Expandable>
+
+<Expandable title="access_control">
+Granular control over contract operations:
+
+```go
+type AccessControl struct {
+    Create AccessControlType  // Contract deployment
+    Call   AccessControlType  // Contract execution
+}
+```
+
+**Access Types:**
+- `PERMISSIONLESS`: Open access, list = blacklist
+- `RESTRICTED`: No access, list ignored
+- `PERMISSIONED`: Limited access, list = whitelist
+</Expandable>
+
+## Configuration Profiles
+
+<Tabs>
+  <Tab title="Ethereum Compatible">
+    ```json
+    {
+      "evm_denom": "atest",
+      "extra_eips": [3855],
+      "allow_unprotected_txs": false,
+      "active_static_precompiles": [
+        "0x0000000000000000000000000000000000000100",
+        "0x0000000000000000000000000000000000000400"
+      ],
+      "access_control": {
+        "create": {"access_type": "PERMISSIONLESS", "list": []},
+        "call": {"access_type": "PERMISSIONLESS", "list": []}
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Permissioned">
+    ```json
+    {
+      "evm_denom": "atoken",
+      "extra_eips": [],
+      "allow_unprotected_txs": false,
+      "active_static_precompiles": [
+        "0x0000000000000000000000000000000000000804"
+      ],
+      "access_control": {
+        "create": {
+          "access_type": "PERMISSIONED",
+          "list": ["0x1234...", "0xABCD..."]
+        },
+        "call": {"access_type": "PERMISSIONLESS", "list": []}
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="High Security">
+    ```json
+    {
+      "evm_denom": "asecure",
+      "extra_eips": [],
+      "allow_unprotected_txs": false,
+      "active_static_precompiles": [],
+      "access_control": {
+        "create": {"access_type": "RESTRICTED", "list": []},
+        "call": {
+          "access_type": "PERMISSIONED",
+          "list": ["0xTrustedContract"]
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Chain Configuration
+
+Hard fork activation schedule ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/evm.proto#L86-L218)):
+
+| Fork | Default | Type | Opcodes/Features Added |
+|------|---------|------|------------------------|
+| `homestead_block` | 0 | Block | DELEGATECALL |
+| `byzantium_block` | 0 | Block | REVERT, RETURNDATASIZE, STATICCALL |
+| `constantinople_block` | 0 | Block | CREATE2, EXTCODEHASH, SHL/SHR/SAR |
+| `istanbul_block` | 0 | Block | CHAINID, SELFBALANCE |
+| `berlin_block` | 0 | Block | Access lists (EIP-2929, 2930) |
+| `london_block` | 0 | Block | BASEFEE, EIP-1559 |
+| `shanghai_time` | 0 | Timestamp | PUSH0 |
+| `cancun_time` | 0 | Timestamp | Transient storage, blob transactions |
+| `prague_time` | nil | Timestamp | TBD |
+| `verkle_time` | nil | Timestamp | Verkle trees |
+
+## Static Precompiles
+
+Precompiled contracts at fixed addresses ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/vm/types/precompiles.go)):
+
+| Address | Contract | Gas Cost | Description |
+|---------|----------|----------|-------------|
+| `0x0000...0100` | **P256** | 3000 | P256 curve verification |
+| `0x0000...0400` | **Bech32** | 5000 | Bech32 address encoding |
+| `0x0000...0800` | **Staking** | Variable | Delegation operations |
+| `0x0000...0801` | **Distribution** | Variable | Reward claims |
+| `0x0000...0802` | **ICS20** | Variable | IBC transfers |
+| `0x0000...0803` | **Vesting** | Variable | Vesting account ops |
+| `0x0000...0804` | **Bank** | Variable | Token transfers |
+| `0x0000...0805` | **Gov** | Variable | Governance voting |
+| `0x0000...0806` | **Slashing** | Variable | Validator slashing info |
+
+### Activation
+
+```bash
+# Via genesis
+{
+  "active_static_precompiles": [
+    "0x0000000000000000000000000000000000000804",
+    "0x0000000000000000000000000000000000000800"
+  ]
+}
+
+# Via governance proposal
+evmd tx gov submit-proposal update-params-proposal.json
+```
+
+## Messages
+
+### MsgEthereumTx
+
+Primary message for EVM transactions ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/tx.proto)):
+
+```protobuf
+message MsgEthereumTx {
+  google.protobuf.Any data = 1;  // Transaction data (Legacy/AccessList/DynamicFee)
+  string hash = 3;                // Transaction hash
+  string from = 4;                // Sender address (derived from signature)
+}
+```
+
+**Validation Requirements:**
+- Valid signature matching `from` address
+- Sufficient balance for gas + value
+- Correct nonce (account sequence)
+- Gas limit ≥ intrinsic gas
+
+### MsgUpdateParams
+
+Governance message for parameter updates:
+
+```protobuf
+message MsgUpdateParams {
+  string authority = 1;  // Must be governance module
+  Params params = 2;     // New parameters
+}
+```
+
+## State
+
+### Persistent State
+
+| Key Prefix | Description | Value Type |
+|------------|-------------|------------|
+| `0x01` | Parameters | `Params` |
+| `0x02` | Contract code | `[]byte` |
+| `0x03` | Contract storage | `[32]byte` |
+
+### Transient State
+
+| Key Prefix | Description | Value Type | Lifetime |
+|------------|-------------|------------|----------|
+| `0x01` | Transaction logs | `[]Log` | Per block |
+| `0x02` | Block bloom | `[256]byte` | Per block |
+| `0x03` | Tx index | `uint64` | Per block |
+| `0x04` | Log size | `uint64` | Per block |
+| `0x05` | Gas used | `uint64` | Per tx |
+
+## Events
+
+### Transaction Events
+
+| Event | Attributes | When Emitted |
+|-------|------------|--------------|
+| `ethereum_tx` | `amount`, `recipient`, `contract`, `txHash`, `txIndex`, `txGasUsed` | Every EVM transaction |
+| `tx_log` | `txLog` (JSON) | When contracts emit events |
+| `message` | `sender`, `action="ethereum"`, `module="evm"` | Every message |
+
+### Block Events
+
+| Event | Attributes | When Emitted |
+|-------|------------|--------------|
+| `block_bloom` | `bloom` (hex) | End of each block with EVM txs |
+
+## Queries
+
+### gRPC
+
+```protobuf
+service Query {
+  // Account queries
+  rpc Account(QueryAccountRequest) returns (QueryAccountResponse);
+  rpc CosmosAccount(QueryCosmosAccountRequest) returns (QueryCosmosAccountResponse);
+  rpc ValidatorAccount(QueryValidatorAccountRequest) returns (QueryValidatorAccountResponse);
+  
+  // State queries
+  rpc Balance(QueryBalanceRequest) returns (QueryBalanceResponse);
+  rpc Storage(QueryStorageRequest) returns (QueryStorageResponse);
+  rpc Code(QueryCodeRequest) returns (QueryCodeResponse);
+  
+  // Module queries
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse);
+  rpc Config(QueryConfigRequest) returns (QueryConfigResponse);
+  
+  // EVM operations
+  rpc EthCall(EthCallRequest) returns (MsgEthereumTxResponse);
+  rpc EstimateGas(EthCallRequest) returns (EstimateGasResponse);
+  
+  // Debugging
+  rpc TraceTx(QueryTraceTxRequest) returns (QueryTraceTxResponse);
+  rpc TraceBlock(QueryTraceBlockRequest) returns (QueryTraceBlockResponse);
+  
+  // Fee queries
+  rpc BaseFee(QueryBaseFeeRequest) returns (QueryBaseFeeResponse);
+  rpc GlobalMinGasPrice(QueryGlobalMinGasPriceRequest) returns (QueryGlobalMinGasPriceResponse);
+}
+```
+
+### CLI
+
+<CodeGroup>
+
+```bash Query-Account
+# Query EVM account
+evmd query vm account 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
+
+# Query Cosmos address
+evmd query vm cosmos-account 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
+```
+
+```bash Query-State
+# Query balance
+evmd query vm balance 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
+
+# Query storage slot
+evmd query vm storage 0xContractAddress 0xStorageKey
+
+# Query contract code
+evmd query vm code 0xContractAddress
+```
+
+```bash Query-Config
+# Query module parameters
+evmd query vm params
+
+# Query EVM config
+evmd query vm config
+```
+
+```bash Debug
+# Trace transaction
+evmd query vm trace-tx 0xTxHash
+
+# Trace block
+evmd query vm trace-block 12345
+```
+
+</CodeGroup>
+
+## JSON-RPC
+
+### Supported Methods
+
+<Tabs>
+  <Tab title="eth namespace">
+    | Method | Description |
+    |--------|-------------|
+    | `eth_accounts` | List accounts |
+    | `eth_blockNumber` | Current block number |
+    | `eth_call` | Execute call without tx |
+    | `eth_chainId` | Get chain ID |
+    | `eth_estimateGas` | Estimate gas usage |
+    | `eth_gasPrice` | Current gas price |
+    | `eth_getBalance` | Get account balance |
+    | `eth_getBlockByHash` | Get block by hash |
+    | `eth_getBlockByNumber` | Get block by number |
+    | `eth_getCode` | Get contract code |
+    | `eth_getLogs` | Get filtered logs |
+    | `eth_getStorageAt` | Get storage value |
+    | `eth_getTransactionByHash` | Get tx by hash |
+    | `eth_getTransactionCount` | Get account nonce |
+    | `eth_getTransactionReceipt` | Get tx receipt |
+    | `eth_sendRawTransaction` | Submit signed tx |
+    | `eth_syncing` | Sync status |
+  </Tab>
+  <Tab title="web3 namespace">
+    | Method | Description |
+    |--------|-------------|
+    | `web3_clientVersion` | Client version |
+    | `web3_sha3` | Keccak-256 hash |
+  </Tab>
+  <Tab title="net namespace">
+    | Method | Description |
+    |--------|-------------|
+    | `net_version` | Network ID |
+    | `net_listening` | Node accepting connections |
+    | `net_peerCount` | Number of peers |
+  </Tab>
+  <Tab title="debug namespace">
+    | Method | Description |
+    |--------|-------------|
+    | `debug_traceTransaction` | Detailed tx trace |
+    | `debug_traceBlockByNumber` | Trace all txs in block |
+    | `debug_traceBlockByHash` | Trace all txs by hash |
+    | `debug_getBadBlocks` | Get invalid blocks |
+    | `debug_storageRangeAt` | Get storage range |
+    | `debug_intermediateRoots` | Get intermediate state roots |
+  </Tab>
+</Tabs>
+
+## Hooks
+
+Post-transaction processing interface ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/vm/types/interfaces.go)):
+
+```go
+type EvmHooks interface {
+    PostTxProcessing(
+        ctx sdk.Context,
+        msg core.Message,
+        receipt *ethtypes.Receipt,
+    ) error
+}
+```
+
+### Registration
+
+```go
+// In app.go
+app.EvmKeeper = app.EvmKeeper.SetHooks(
+    vmkeeper.NewMultiEvmHooks(
+        app.Erc20Keeper.Hooks(),
+        app.CustomKeeper.Hooks(),
+    ),
+)
+```
+
+### Use Cases
+- Process EVM events in Cosmos modules
+- Bridge EVM logs to Cosmos events
+- Trigger native module actions from contracts
+- Custom indexing and monitoring
+
+## Gas Configuration
+
+### Gas Consumption Mapping
+
+| Operation | EVM Gas | Cosmos Gas | Notes |
+|-----------|---------|------------|-------|
+| Basic ops | 3-5 | 3-5 | 1:1 mapping |
+| SLOAD | 2100 | 2100 | Cold access |
+| SSTORE | 20000 | 20000 | New value |
+| CREATE | 32000 | 32000 | Contract deploy |
+| Precompile | Variable | Variable | Set per precompile |
+
+### Gas Refunds
+
+Maximum refund: 50% of gas used (after London)
+
+```go
+refund = min(gasUsed/2, gasRefund)
+finalGasUsed = gasUsed - refund
+```
+
+## Best Practices
+
+### Chain Integration
+
+1. **Precompile Selection**
+   - Only enable necessary precompiles
+   - Test gas costs in development
+   - Monitor usage patterns
+
+2. **Access Control**
+   - Start restrictive, open gradually
+   - Use governance for changes
+   - Monitor blacklist/whitelist events
+
+3. **Fork Planning**
+   ```json
+   {
+     "shanghai_time": "1681338455",  // Test first
+     "cancun_time": "1710338455"     // Delay for safety
+   }
+   ```
+
+### Contract Development
+
+1. **Gas Optimization**
+   ```solidity
+   // Cache storage reads
+   uint256 cached = storageVar;
+   // Use cached instead of storageVar
+   
+   // Pack structs
+   struct Packed {
+       uint128 a;
+       uint128 b;  // Single slot
+   }
+   ```
+
+2. **Precompile Usage**
+   ```solidity
+   IBank bank = IBank(0x0000000000000000000000000000000000000804);
+   uint256 balance = bank.balances(msg.sender, "atest");
+   ```
+
+### dApp Integration
+
+1. **Provider Setup**
+   ```javascript
+   const provider = new ethers.JsonRpcProvider(
+       "http://localhost:8545",
+       { chainId: 9000, name: "evmos" }
+   );
+   ```
+
+2. **Error Handling**
+   ```javascript
+   try {
+       await contract.method();
+   } catch (error) {
+       if (error.code === 'CALL_EXCEPTION') {
+           // Handle revert
+       }
+   }
+   ```
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "out of gas" | Insufficient gas limit | Increase gas limit or optimize contract |
+| "nonce too low" | Stale nonce | Query current nonce, retry |
+| "insufficient funds" | Low balance | Ensure balance > value + (gasLimit × gasPrice) |
+| "contract creation failed" | CREATE disabled or restricted | Check access_control settings |
+| "precompile not active" | Precompile not in active list | Enable via governance |
+
+### Debug Commands
+
+```bash
+# Check EVM parameters
+evmd query vm params
+
+# Trace failed transaction
+evmd query vm trace-tx 0xFailedTxHash
+
+# Check account state
+evmd query vm account 0xAddress
+```
+
+## References
+
+### Source Code
+- [VM Module Implementation](https://github.com/cosmos/evm/tree/v0.4.1/x/vm)
+- [StateDB](https://github.com/cosmos/evm/tree/v0.4.1/x/vm/statedb)
+- [Precompiles](https://github.com/cosmos/evm/tree/v0.4.1/precompiles)
+- [AnteHandlers](https://github.com/cosmos/evm/tree/v0.4.1/ante)
+
+### Related Documentation
+- [EVM Architecture](/docs/evm/v0.4.x/documentation/concepts/overview) - Conceptual overview
+- [Fee Market Module](/docs/evm/v0.4.x/documentation/cosmos-sdk/modules/feemarket) - EIP-1559 implementation
+- [ERC20 Module](/docs/evm/v0.4.x/documentation/cosmos-sdk/modules/erc20) - Token conversions

@@ -1,0 +1,238 @@
+---
+title: "Overview"
+mode: "wide"
+keywords: ['differences', 'ethereum', 'evm', 'cosmos', 'CometBFT', 'consensus', 'finality', 'json-rpc', 'compatibility', 'precompiles', 'ibc', 'mev', 'gas', 'basefee', 'reorganization', 'bft', 'validator', 'staking']
+---
+
+The EVM module provides **developer and end-user Ethereum compatibility** for Cosmos-SDK based chains. All standard / common Ethereum dApps, tools, and workflows work seamlessly while gaining the benefits of Cosmos consensus and interoperability.
+All the tools and workflows you rely on work exactly as they should. Deploy contracts seamlessly, connect with MetaMask, and build with Web3.js/Ethers, Hardhat, Remix, Foundry—the full Ethereum toolkit.
+
+<Tip>
+For a detailed breakdown on **Ethereum Improvement Proposal (EIP)** support and functional comparisons, see the [EIP reference](/docs/evm/next/documentation/evm-compatibility/eip-reference) table.
+</Tip>
+
+## Key Compatibility Focus Areas
+
+Cosmos EVM maintains all critical EVM behaviors that developers expect. The table below shows how we've addressed each compatibility requirement.
+
+| Feature | Ethereum Behavior | Cosmos EVM Implementation |  Compatible? |
+|---------|------------------|---------------------------|---------------|
+| **Transaction Ordering** | Gas price + nonce ordering | Fee priority + nonce ordering with configurable MinTip |  Yes |
+| **Multiple Txs per Block** | Multiple per account | Multiple per account |  Yes |
+| **Mempool Behavior** | Pending pool for transactions | ExperimentalEVMMempool with unified EVM/Cosmos pools |  Yes |
+| **Nonce Management** | Sequential nonce enforcement | Sequential nonce enforcement with gap queuing |  Yes |
+| **EIP-1559 (Dynamic Fees)** | Base fee + priority fee | Base fee + priority fee (distributed, not burned) |  Yes |
+| **EIP-7702 (Set Code)** | Account code delegation | Full support with authorization lists |  Yes |
+| **Address Format** | 0x addresses | 0x addresses (+ cosmos1 alias) |  Yes |
+| **Smart Contracts** | EVM bytecode execution | Full EVM bytecode execution |  Yes |
+| **Gas Metering** | Standard gas costs | Standard gas costs |  Yes |
+| **Event Logs** | Ethereum event system | Full event compatibility |  Yes |
+| **JSON-RPC API** | Standard Ethereum RPC | Full RPC implementation |  Yes |
+| **Block Time** | 12 seconds | 1-2 seconds |  Faster |
+| **Finality** | 12+ blocks (~3min) | 1 block (~2s) |  Instant |
+| **Reorganizations** | Possible | Not possible |  More secure |
+| **Cross-chain** | Bridge protocols | Native IBC |  Enhanced |
+
+### What This Means for Developers
+
+**You can build on Cosmos EVM exactly like you would on Ethereum.** Every essential feature works identically - from deploying contracts to managing transactions. The enhancements (faster blocks, instant finality, IBC) are pure additions that don't break any existing patterns or workflows.
+
+## Architectural Improvements Over Ethereum
+
+### Faster & Final Transactions
+
+**Instant Finality:** Transactions are final after one block (~2 seconds) thanks to 'CometBFT' BFT consensus. No waiting for confirmations, no reorganizations possible.
+
+**Validator Set:** Fixed validator set with stake-based voting power. Requires 2/3+ stake agreement for consensus.
+
+### Gas & Fees
+
+<Info>
+**Base Fee Distribution:** Unlike Ethereum where base fees are burned, Cosmos EVM distributes them to validators, preserving token economics.
+</Info>
+
+- **EIP-1559 Support:** Dynamic base fee adjustments based on block utilization
+- **Configurable:** Base fee can be disabled (`NoBaseFee` parameter)
+- **Priority Calculation:** `min(gas_tip_cap, gas_fee_cap - base_fee)`
+- **Minimum Gas Price:** Chain-wide floor price configuration
+
+### Address System
+
+Every account has two representations:
+```
+Ethereum: 0x742d35cc6644c068532fddb11B4C36A58D6D3eAb
+Cosmos:   cosmos1wskntvnryr5qxpe4tv5k64rhc6kx6ma4dxjmav
+```
+
+Both formats reference the same account - use either based on your needs.
+
+### Chain ID Architecture
+
+<Info>
+**Two Independent Chain IDs:** Cosmos EVM uses separate chain IDs:
+- **Cosmos Chain ID:** [String] (e.g., "cosmosevm-1") for native features
+- **EVM Chain ID:** [integer] (e.g., 9000) for EVM compatibility
+
+Unlike with legacy Ethermint, these values are independent.
+</Info>
+
+## Precompiled Contracts
+
+<CardGroup cols={2}>
+  <Card title="Cosmos Precompiles" icon="cube" href="/docs/evm/next/documentation/smart-contracts/precompiles">
+    Access Cosmos SDK modules (staking, governance, IBC) via precompiled contracts.
+  </Card>
+  <Card title="Standard Precompiles" icon="shield-check">
+    All Ethereum cryptographic precompiles supported (ecrecover, sha256, etc.)
+  </Card>
+</CardGroup>
+
+### Key Precompile Addresses
+
+| Function | Address |
+|----------|---------|
+| **Staking** | `0x0000000000000000000000000000000000000800` |
+| **Distribution** | `0x0000000000000000000000000000000000000801` |
+| **IBC Transfer** | `0x0000000000000000000000000000000000000802` |
+| **Bank** | `0x0000000000000000000000000000000000000804` |
+| **Governance** | `0x0000000000000000000000000000000000000805` |
+
+## JSON-RPC API
+
+<Card title="Ethereum RPC Compatibility" icon="code" href="/docs/evm/next/api-reference/ethereum-json-rpc/methods">
+  Most standard Ethereum JSON-RPC methods are supported, with some returning stub values for compatibility. View the complete reference.
+</Card>
+
+**Core functionality for developers:**
+-  All standard transaction methods (`eth_sendRawTransaction`, `eth_call`, `eth_estimateGas`)
+-  Block and receipt queries
+-  Account balances and nonces
+-  Event logs and filters
+-  Web3 utilities and net info
+-  Debug namespace (partial - tracing and profiling methods available)
+-  Websocket subscription support
+
+**Implementation notes:**
+- Some methods return stub values for compatibility (e.g., `eth_gasPrice` returns 0)
+- Mining-related methods are not applicable (Cosmos uses 'CometBFT' consensus)
+- `txpool` methods require experimental mempool configuration
+- Debug namespace includes functional tracing and profiling tools
+
+## EIP Support
+
+<Card title="EIP Compatibility Matrix" icon="list-check" href="/docs/evm/next/documentation/evm-compatibility/eip-reference">
+  Interactive table showing support status for Ethereum Improvement Proposals.
+</Card>
+
+### Notable Implementation Details
+
+- **EIP-1559:** Fully supported - with base fee distributed to validators instead of burned
+- **EIP-155:** Fully supported - per-node configuration for unprotected transactions (v0.5.0+)
+- **EIP-2935:** Full support - historical block hash storage with configurable depth (v0.5.0+) 
+- **EIP-3651:** Partial - COINBASE always returns empty address currently
+- **EIP-7702:** Full support - EOA code delegation for account abstraction (v0.5.0+)
+- **Access Lists:** Full support via `eth_createAccessList` RPC method (v0.5.0+)
+- **Custom Improvement Proposals (CIPs):** Chain-specific optimizations available
+
+## Developer Experience
+
+### Familiarity Out Of The Box
+
+**Your Ethereum skills and tools work unchanged:**
+- Deploy contracts with Hardhat, Foundry, or Remix
+- Connect MetaMask and other Web3 wallets
+- Use Web3.js, Ethers.js, Viem, or any Web3 library
+- All ERC standards work (ERC20, ERC721, ERC1155, etc.)
+- Solidity and Vyper compile and run identically
+- Standard tooling like OpenZeppelin contracts work perfectly
+
+### Additional Benefits
+
+**Enhanced capabilities without breaking compatibility:**
+- **Native IBC:** Built-in cross-chain communication to any Cosmos chain
+- **Lower Costs:** Typically much lower gas fees than Ethereum mainnet
+- **Faster Blocks:** 1-2 second block times vs 12 seconds on Ethereum
+- **Enhanced Security:** Byzantine Fault Tolerant consensus prevents attacks
+
+## v0.5.0 Compatibility Enhancements
+
+### EVM Equivalency Improvements
+
+**EOA Code Delegation (EIP-7702):**
+- **What:** Externally owned accounts can temporarily execute smart contract code
+- **Benefit:** Account abstraction, batched operations, enhanced wallet functionality
+- **Use Case:** Multi-sig wallets, automated strategies, custom transaction validation
+
+**Historical Block Hash Access (EIP-2935):**
+- **What:** BLOCKHASH opcode now provides reliable access to historical block hashes
+- **Benefit:** Smart contracts can access up to 8192 previous block hashes (configurable)
+- **Use Case:** Protocols requiring verifiable randomness or block-based logic
+
+**Access List Optimization:**
+- **What:** New `eth_createAccessList` RPC method for transaction optimization
+- **Benefit:** Generate access lists to reduce transaction costs  
+- **Compatibility:** Matches Ethereum's access list functionality exactly
+
+**Enhanced Transaction Responses:**
+- **What:** Added `max_used_gas` field to transaction responses
+- **Benefit:** Better gas estimation and transaction analytics
+- **Use Case:** Tools can optimize gas usage more effectively
+
+### Performance Optimizations
+
+**Smart Gas Estimation:**
+- **Plain Transfer Detection:** Simple ETH transfers return 21000 gas immediately (~90% faster)
+- **Optimistic Bounds:** Complex transactions use initial execution results for better estimation bounds
+- **Result:** Significantly faster `eth_estimateGas` for all transaction types
+
+**Mempool Configurability:**
+- **What:** Transaction pool limits, timeouts, and priority functions now fully configurable
+- **Benefit:** Chains can optimize for their specific throughput and economic requirements
+- **Example:** High-frequency DeFi chains can increase pool sizes, games can use custom priority
+
+### Transaction Pool
+
+**Standard Ethereum mempool behavior is fully supported.** Transactions are ordered by gas price and nonce, multiple transactions per account per block work perfectly.
+
+<Info>
+**Optional Enhancement:** An experimental two-tiered mempool is available that adds intelligent nonce gap handling and automatic transaction promotion. This is purely optional - the standard mempool works exactly like Ethereum.
+</Info>
+
+## Migration from Ethermint/Evmos
+
+Key breaking changes when migrating:
+
+1. **Chain ID Format:** Cannot use Ethermint format (`evmos_9001-2`). Must configure two separate IDs.
+2. **Module Names:** `x/evm` → `x/vm`
+3. **Parameter Types:** Several parameter type changes (e.g., MinGasPrice: string → sdk.Dec)
+4. **Precompile Addresses:** Different addresses than Ethermint
+
+<Card title="Migration Guide" icon="arrow-up" href="/docs/evm/next/documentation/integration/migration-v0.3-to-v0.4">
+  Detailed steps for migrating from Ethermint-based chains.
+</Card>
+
+## Security & Reliability
+
+**Battle-tested and audited:**
+-  **Security Audited:** Full audit by Sherlock (July 2025)
+-  **Production Ready:** Core EVM implementation is stable and deployed on multiple mainnets
+-  **Enhanced Security:** No reorganization attacks possible due to instant finality
+-  **Byzantine Fault Tolerant:** Requires 2/3+ validator stake for any state changes
+-  **Proven Stack:** Built on Cosmos SDK and 'CometBFT', powering hundreds of chains
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Integration Guide" icon="plug" href="/docs/evm/next/documentation/integration/evm-module-integration">
+    Add EVM support to your Cosmos chain
+  </Card>
+  <Card title="Concepts" icon="book" href="/docs/evm/next/documentation/concepts">
+    Deep dive into architecture and design
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/cosmos/evm">
+    Source code and issue tracker
+  </Card>
+  <Card title="Precompiles Docs" icon="code" href="/docs/evm/next/documentation/smart-contracts/precompiles">
+    Using Cosmos functionality through Solidity
+  </Card>
+</CardGroup>

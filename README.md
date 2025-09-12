@@ -1,15 +1,21 @@
-# Cosmos EVM Documentation
+# Cosmos Documentation Hub
 
-Documentation for Cosmos EVM, a framework for running Ethereum Virtual Machine (EVM) on Cosmos SDK chains with IBC support.
+Documentation for all parts of the Cosmos Stack.
+
+> [!NOTE]
+> This is a work in progress. More components (IBC, CometBFT, etc) will be migrated in the near future.
 
 ## Project Structure
 
-- `docs/next/` - Active development documentation
-- `docs/v0.4.x/` - Frozen version documentation  
-- `scripts/versioning/` - Documentation versioning tools (see [README](scripts/versioning/README.md))
-- `snippets/` - Shared React components
+- `docs/<product>/next/` - Active development documentation
+- `docs/<product>/<version>` - Versioned documentation, by major release.
+- `scripts/versioning/` - Versioning automation - see [README](scripts/versioning/README.md).
+- `snippets/` - Custom components - Due to platform limitations, components cannot be versioned. However, it is possible to feed specific / versioned data to a component through a prop in the import (see `docs/evm/v0.4.x/documentation/evm-compatibility/eip-reference.mdx` for a working example).
 
 ## Contributing
+
+> [!IMPORTANT]
+> Previous versions will only be edited under specific circumstances. All external contributions should be within the 'next' directory.
 
 Fork the repository
 

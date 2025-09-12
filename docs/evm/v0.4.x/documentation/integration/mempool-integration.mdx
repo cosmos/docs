@@ -1,0 +1,489 @@
+---
+title: "EVM Mempool Integration"
+description: "Step-by-step guide to integrate the experimental EVM mempool in your Cosmos SDK chain"
+---
+
+<Danger>
+This mempool is **experimental** and in active development. It is intended for testing and evaluation purposes. Use in production environments is **not recommended** without thorough testing and risk assessment.
+Please [report issues](https://github.com/cosmos/evm/issues/new) and submit feedback to help improve stability.
+</Danger>
+
+## Overview
+
+This guide explains how to integrate the EVM mempool in your Cosmos SDK chain to enable Ethereum-compatible transaction flows, including out-of-order transactions and nonce gap handling.
+
+## Prerequisites
+
+Before integrating the EVM mempool:
+
+1. **EVM Module Integration**: Complete the [EVM module integration](/docs/evm/v0.4.x/documentation/integration/evm-module-integration) first
+2. **FeeMarket Module**: Ensure the feemarket module is properly configured for base fee calculations
+3. **Compatible AnteHandler**: Your ante handler must support EVM transaction validation
+
+## Quick Start
+
+### Step 1: Add EVM Mempool to App Struct
+
+Update your `app/app.go` to include the EVM mempool:
+
+```go
+type App struct {
+    *baseapp.BaseApp
+    // ... other keepers
+
+    // Cosmos EVM keepers
+    FeeMarketKeeper   feemarketkeeper.Keeper
+    EVMKeeper         *evmkeeper.Keeper
+    EVMMempool        *evmmempool.ExperimentalEVMMempool
+}
+```
+
+### Step 2: Configure Mempool in NewApp Constructor
+
+<Note>
+The mempool must be initialized **after** the antehandler has been set in the app.
+</Note>
+
+Add the following configuration in your `NewApp` constructor:
+
+```go
+// Set the EVM priority nonce mempool
+if evmtypes.GetChainConfig() != nil {
+    mempoolConfig := &evmmempool.EVMMempoolConfig{
+        AnteHandler:   app.GetAnteHandler(),
+        BlockGasLimit: 100_000_000,
+    }
+
+    evmMempool := evmmempool.NewExperimentalEVMMempool(
+        app.CreateQueryContext,
+        logger,
+        app.EVMKeeper,
+        app.FeeMarketKeeper,
+        app.txConfig,
+        app.clientCtx,
+        mempoolConfig,
+    )
+    app.EVMMempool = evmMempool
+
+    // Set the global mempool for RPC access
+    if err := evmmempool.SetGlobalEVMMempool(evmMempool); err != nil {
+        panic(err)
+    }
+
+    // Replace BaseApp mempool
+    app.SetMempool(evmMempool)
+
+    // Set custom CheckTx handler for nonce gap support
+    checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
+    app.SetCheckTxHandler(checkTxHandler)
+
+    // Set custom PrepareProposal handler
+    abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
+    abciProposalHandler.SetSignerExtractionAdapter(
+        evmmempool.NewEthSignerExtractionAdapter(
+            sdkmempool.NewDefaultSignerExtractionAdapter(),
+        ),
+    )
+    app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+}
+```
+
+## Configuration Options
+
+The `EVMMempoolConfig` struct provides several configuration options for customizing the mempool behavior:
+
+### Minimal Configuration
+
+```go
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000, // 100M gas limit
+}
+```
+
+### Full Configuration Options
+
+```go
+type EVMMempoolConfig struct {
+    // Required: AnteHandler for transaction validation
+    AnteHandler   sdk.AnteHandler
+
+    // Required: Block gas limit for transaction selection
+    BlockGasLimit uint64
+
+    // Optional: Custom TxPool (defaults to LegacyPool)
+    TxPool        *txpool.TxPool
+
+    // Optional: Custom Cosmos pool (defaults to PriorityNonceMempool)
+    CosmosPool    sdkmempool.ExtMempool
+
+    // Optional: Custom broadcast function for promoted transactions
+    BroadCastTxFn func(txs []*ethtypes.Transaction) error
+}
+```
+
+### Custom Cosmos Mempool Configuration
+
+The mempool uses a `PriorityNonceMempool` for Cosmos transactions by default. You can customize the priority calculation:
+
+```go
+// Define custom priority calculation for Cosmos transactions
+priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
+    TxPriority: sdkmempool.TxPriority[math.Int]{
+        GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+            feeTx, ok := tx.(sdk.FeeTx)
+            if !ok {
+                return math.ZeroInt()
+            }
+
+            // Get fee in bond denomination
+            bondDenom := "test" // or your chain's bond denom
+            fee := feeTx.GetFee()
+            found, coin := fee.Find(bondDenom)
+            if !found {
+                return math.ZeroInt()
+            }
+
+            // Calculate gas price: fee_amount / gas_limit
+            gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
+            return gasPrice
+        },
+        Compare: func(a, b math.Int) int {
+            return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
+        },
+        MinValue: math.ZeroInt(),
+    },
+}
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000,
+    CosmosPool:    sdkmempool.NewPriorityMempool(priorityConfig),
+}
+```
+
+### Custom Block Gas Limit
+
+Different chains may require different gas limits based on their capacity:
+
+```go
+// Example: 50M gas limit for lower capacity chains
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 50_000_000,
+}
+```
+
+## Advanced Pool Parameter Customization
+
+### Modifying Hard-Coded Pool Limits
+
+Several pool parameters are compiled into the source code and require modification for custom configurations:
+
+#### TxPool Configuration Parameters
+
+**File**: `mempool/txpool/legacypool/legacypool.go`
+
+**Default Configuration (lines ~45-55):**
+```go
+var DefaultConfig = Config{
+    Locals:    []common.Address{},
+    NoLocals:  false,
+    Journal:   "",
+    Rejournal: time.Hour,
+
+    PriceLimit: 1,            // 1 gwei minimum gas price
+    PriceBump:  10,           // 10% minimum price bump
+
+    AccountSlots: 16,         // 16 pending transactions per account
+    GlobalSlots:  4096,       // 4096 total pending transactions
+    AccountQueue: 64,         // 64 queued transactions per account  
+    GlobalQueue:  1024,       // 1024 total queued transactions
+
+    Lifetime: 3 * time.Hour,  // 3 hour maximum queue time
+}
+```
+
+**Custom Configuration Example:**
+```go
+// Create custom configuration in your app initialization
+customConfig := legacypool.Config{
+    Locals:    []common.Address{},
+    NoLocals:  false,
+    Journal:   "",
+    Rejournal: time.Hour,
+
+    PriceLimit: 5,            // 5 gwei minimum (higher than default)
+    PriceBump:  15,           // 15% price bump (more aggressive)
+
+    AccountSlots: 32,         // 32 pending per account (double default)
+    GlobalSlots:  8192,       // 8192 total pending (double default)
+    AccountQueue: 128,        // 128 queued per account (double default)
+    GlobalQueue:  2048,       // 2048 total queued (double default)
+
+    Lifetime: 6 * time.Hour,  // 6 hour queue time (double default)
+}
+
+// Use in mempool initialization
+customTxPool := legacypool.New(customConfig, blockChain, opts...)
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000,
+    TxPool:        customTxPool,
+}
+```
+
+#### High-Throughput Configuration
+
+For chains handling high transaction volumes:
+
+```go
+// File modification needed in mempool/txpool/legacypool/legacypool.go
+highThroughputConfig := legacypool.Config{
+    PriceLimit: 0,            // Accept zero gas price transactions
+    PriceBump:  5,            // Lower bump requirement for faster replacement
+
+    AccountSlots: 64,         // 4x more pending per account
+    GlobalSlots:  16384,      // 4x more total pending
+    AccountQueue: 256,        // 4x more queued per account
+    GlobalQueue:  4096,       // 4x more total queued
+
+    Lifetime: 12 * time.Hour, // Longer queue retention
+}
+```
+
+#### Memory-Constrained Configuration
+
+For resource-limited environments:
+
+```go
+// Conservative memory usage configuration
+conservativeConfig := legacypool.Config{
+    PriceLimit: 10,           // Higher minimum to reduce spam
+
+    AccountSlots: 8,          // Half the default pending slots
+    GlobalSlots:  2048,       // Half the default total pending
+    AccountQueue: 32,         // Half the default queued slots
+    GlobalQueue:  512,        // Half the default total queued
+
+    Lifetime: time.Hour,      // Shorter retention time
+}
+```
+
+### Custom TxPool Implementation
+
+For complete control over pool behavior, implement a custom TxPool:
+
+**File**: Create `mempool/custom_pool.go`
+
+```go
+package mempool
+
+import (
+    "github.com/ethereum/go-ethereum/common"
+    "github.com/ethereum/go-ethereum/core/types"
+    legacypool "github.com/ethereum/go-ethereum/core/txpool/legacypool"
+)
+
+type CustomTxPool struct {
+    *legacypool.LegacyPool
+    customConfig Config
+}
+
+type Config struct {
+    // Your custom configuration parameters
+    MaxTxsPerAccount     int
+    MaxGlobalTxs         int
+    MinGasPriceGwei      int64
+    ReplacementThreshold int
+}
+
+func NewCustomPool(config Config, blockchain *core.BlockChain) *CustomTxPool {
+    legacyConfig := legacypool.Config{
+        PriceLimit:   config.MinGasPriceGwei,
+        PriceBump:    config.ReplacementThreshold,
+        AccountSlots: uint64(config.MaxTxsPerAccount),
+        GlobalSlots:  uint64(config.MaxGlobalTxs),
+        // ... other parameters
+    }
+    
+    pool := legacypool.New(legacyConfig, blockchain)
+    return &CustomTxPool{
+        LegacyPool:   pool,
+        customConfig: config,
+    }
+}
+
+// Add custom methods for advanced pool management
+func (p *CustomTxPool) SetDynamicPricing(enabled bool) {
+    // Implement dynamic gas pricing logic
+}
+
+func (p *CustomTxPool) GetPoolStatistics() PoolStats {
+    // Return detailed pool statistics
+    return PoolStats{
+        PendingCount: p.Stats().Pending,
+        QueuedCount:  p.Stats().Queued,
+        // ... additional metrics
+    }
+}
+```
+
+**Integration in app.go:**
+```go
+// In your NewApp constructor
+customPoolConfig := mempool.Config{
+    MaxTxsPerAccount:     50,
+    MaxGlobalTxs:        10000,
+    MinGasPriceGwei:     2,
+    ReplacementThreshold: 12,
+}
+
+customPool := mempool.NewCustomPool(customPoolConfig, blockChain)
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 200_000_000,
+    TxPool:        customPool,
+}
+```
+
+## Architecture Components
+
+The EVM mempool consists of several key components:
+
+### ExperimentalEVMMempool
+
+The main coordinator implementing Cosmos SDK's `ExtMempool` interface (`mempool/mempool.go`).
+
+**Key Methods**:
+- `Insert(ctx, tx)`: Routes transactions to appropriate pools
+- `Select(ctx, filter)`: Returns unified iterator over all transactions
+- `Remove(tx)`: Handles transaction removal with EVM-specific logic
+- `InsertInvalidNonce(txBytes)`: Queues nonce-gapped EVM transactions locally
+
+### CheckTx Handler
+
+Custom transaction validation that handles nonce gaps specially (`mempool/check_tx.go`).
+
+**Special Handling**: On `ErrNonceGap` for EVM transactions:
+```go
+if errors.Is(err, ErrNonceGap) {
+    // Route to local queue instead of rejecting
+    err := mempool.InsertInvalidNonce(request.Tx)
+    // Must intercept error and return success to EVM client
+    return interceptedSuccess
+}
+```
+
+### TxPool
+
+Direct port of Ethereum's transaction pool managing both pending and queued transactions (`mempool/txpool/`).
+
+**Key Features**:
+- Uses `vm.StateDB` interface for Cosmos state compatibility
+- Implements `BroadcastTxFn` callback for transaction promotion
+- Cosmos-specific reset logic for instant finality
+
+### PriorityNonceMempool
+
+Standard Cosmos SDK mempool for non-EVM transactions with fee-based prioritization.
+
+**Default Priority Calculation**:
+```go
+// Calculate effective gas price
+priority = (fee_amount / gas_limit) - base_fee
+```
+
+## Transaction Type Routing
+
+The mempool handles different transaction types appropriately:
+
+### Ethereum Transactions (MsgEthereumTx)
+
+- **Tier 1 (Local)**: EVM TxPool handles nonce gaps and promotion
+- **Tier 2 (Network)**: CometBFT broadcasts executable transactions
+
+### Cosmos Transactions (Bank, Staking, Gov, etc.)
+
+- **Direct to Tier 2**: Always go directly to CometBFT mempool
+- **Standard Flow**: Follow normal Cosmos SDK validation and broadcasting
+- **Priority-Based**: Use PriorityNonceMempool for fee-based ordering
+
+## Unified Transaction Selection
+
+During block building, both transaction types compete fairly based on their effective tips:
+
+```go
+// Simplified selection logic
+func SelectTransactions() Iterator {
+    evmTxs := GetPendingEVMTransactions()      // From local TxPool
+    cosmosTxs := GetPendingCosmosTransactions() // From Cosmos mempool
+
+    return NewUnifiedIterator(evmTxs, cosmosTxs) // Fee-based priority
+}
+```
+
+**Fee Comparison**:
+- **EVM**: `gas_tip_cap` or `min(gas_tip_cap, gas_fee_cap - base_fee)`
+- **Cosmos**: `(fee_amount / gas_limit) - base_fee`
+- **Selection**: Higher effective tip gets selected first
+
+## Testing Your Integration
+
+### Verify Nonce Gap Handling
+
+Test that transactions with nonce gaps are properly queued:
+
+```javascript
+// Send transactions out of order
+await wallet.sendTransaction({nonce: 100, ...}); // OK: Immediate execution
+await wallet.sendTransaction({nonce: 102, ...}); // OK: Queued locally (gap)
+await wallet.sendTransaction({nonce: 101, ...}); // OK: Fills gap, both execute
+```
+
+### Test Transaction Replacement
+
+Verify that higher-fee transactions replace lower-fee ones:
+
+```javascript
+// Send initial transaction
+const tx1 = await wallet.sendTransaction({
+  nonce: 100,
+  gasPrice: parseUnits("20", "gwei")
+});
+
+// Replace with higher fee
+const tx2 = await wallet.sendTransaction({
+  nonce: 100, // Same nonce
+  gasPrice: parseUnits("30", "gwei") // Higher fee
+});
+// tx1 is replaced by tx2
+```
+
+### Verify Batch Deployments
+
+Test typical deployment scripts (like Uniswap) that send many transactions at once:
+
+```javascript
+// Deploy multiple contracts in quick succession
+const factory = await Factory.deploy();
+const router = await Router.deploy(factory.address);
+const multicall = await Multicall.deploy();
+// All transactions should queue and execute properly
+```
+
+## Monitoring and Debugging
+
+Use the [txpool RPC methods](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool-methods) to monitor mempool state:
+
+- `txpool_status`: Get pending and queued transaction counts
+- `txpool_content`: View all transactions in the pool
+- `txpool_inspect`: Get human-readable transaction summaries
+- `txpool_contentFrom`: View transactions from specific addresses
+
+## Related Documentation
+
+- [Mempool Concepts](/docs/evm/v0.4.x/documentation/concepts/mempool) - Understanding mempool behavior and design
+- [EVM Module Integration](/docs/evm/v0.4.x/documentation/integration/evm-module-integration) - Prerequisites for mempool integration
+- [JSON-RPC Methods](/docs/evm/v0.4.x/api-reference/ethereum-json-rpc/methods#txpool-methods) - Mempool query methods
