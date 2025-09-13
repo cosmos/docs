@@ -171,25 +171,47 @@ npm run sheets <version>
 
 #### `release-notes.js`
 
-Standalone changelog and release notes management.
+Changelog and release notes management.
 
 **Usage:**
 
 ```bash
-npm run release-notes [version|latest] [evm|sdk|ibc]
+# Fetch latest release for default product (EVM)
+npm run release-notes
+
+# Fetch latest for specific product
+npm run release-notes latest sdk
+
+# Fetch all configured versions for a product
+npm run release-notes all sdk
+
+# Fetch specific version for a product
+npm run release-notes v0.53 sdk
+
+# Fetch specific version with custom source
+npm run release-notes release/v0.53.x sdk v0.53
 ```
 
 **What it does:**
 
-- Fetches changelog from the product's GitHub repository (auto-detects `CHANGELOG.md`/variants)
-- Parses and converts to Mintlify format
-- Updates release notes file in `docs/<subdir>/next/`
+- Fetches changelog from the product's GitHub repository
+- Supports multiple versions per product
+- Handles version-specific release branches
+- Converts to Mintlify format
+- Updates release notes in `docs/<subdir>/<version>/changelog/release-notes.mdx`
 
-**Sources:**
+**Product Configurations:**
 
-- evm → `cosmos/evm`
-- sdk → `cosmos/cosmos-sdk`
-- ibc → `cosmos/ibc-go`
+- **evm** → `cosmos/evm` (versions: `next`)
+- **sdk** → `cosmos/cosmos-sdk` (versions: `v0.53`, `v0.50`, `v0.47`)
+- **ibc** → `cosmos/ibc-go` (versions: `v8`, `v7`, `v6`)
+- **cometbft** → `cometbft/cometbft` (versions: `v0.38`, `v0.37`)
+
+**Version Resolution:**
+
+- EVM: Uses `next` as the primary version
+- SDK/IBC: Checks release branches first (`release/vX.Y.x`), then tags, then main
+- Searches for `CHANGELOG.md`, `RELEASE_NOTES.md`, and other common locations
 
 ### Supporting Scripts
 

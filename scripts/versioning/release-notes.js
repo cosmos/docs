@@ -3,6 +3,7 @@
 /**
  * Release Notes Management
  * Combines changelog fetching and parsing functionality
+ * Supports multiple products and versions
  */
 
 import fs from 'fs';
@@ -11,15 +12,33 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Get source from command line argument, default to latest release
+// Parse command line arguments
+// Usage: node release-notes.js [source/version] [product] [specific-version]
+// Examples:
+//   node release-notes.js latest evm          # Fetch latest for EVM (default behavior)
+//   node release-notes.js all sdk             # Fetch all versions for SDK
+//   node release-notes.js v0.53 sdk           # Fetch specific version for SDK
+//   node release-notes.js latest ibc v1.0     # Fetch for IBC v1.0
 const SOURCE = process.argv[2] || 'latest';
 const SUBDIR = process.argv[3] || process.env.DOCS_SUBDIR || process.env.SUBDIR || 'evm';
+const SPECIFIC_VERSION = process.argv[4]; // Optional: specific version to target
 
-// Repo mapping per product
+// Repo mapping per product - expandable for future products
 const PRODUCT_REPOS = {
   evm: 'cosmos/evm',
   sdk: 'cosmos/cosmos-sdk',
-  ibc: 'cosmos/ibc-go'
+  ibc: 'cosmos/ibc-go',
+  cometbft: 'cometbft/cometbft',
+  // Add more products as needed
+};
+
+// Version configurations per product
+const PRODUCT_VERSIONS = {
+  evm: ['next'], // EVM uses 'next' as primary
+  sdk: ['v0.53', 'v0.50', 'v0.47'], // SDK has multiple versions
+  ibc: ['v8', 'v7', 'v6'], // Example IBC versions
+  cometbft: ['v0.38', 'v0.37'], // Example CometBFT versions
+  // Add version configs as needed
 };
 
 const REPO = PRODUCT_REPOS[SUBDIR] || PRODUCT_REPOS.evm;
@@ -45,26 +64,50 @@ async function getLatestRelease() {
   }
 }
 
-async function fetchChangelog(source) {
-  console.log(` Fetching changelog from ${REPO}: ${source}...`);
+async function fetchChangelog(source, version = null) {
+  // Determine the actual source to fetch from
+  let fetchSource = source;
+
+  // For SDK/IBC, try release branches first
+  if (version && SUBDIR !== 'evm') {
+    // Try release/vX.Y.x branch format
+    fetchSource = `release/${version}.x`;
+  } else if (source === 'latest' && version) {
+    // For specific version requests
+    fetchSource = version;
+  }
+
+  console.log(` Fetching changelog from ${REPO}: ${fetchSource}...`);
 
   const errors = [];
-  for (const p of CHANGELOG_PATHS) {
-    const url = `https://raw.githubusercontent.com/${REPO}/${source}/${p}`;
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        errors.push(`${p}: ${response.status}`);
-        continue;
+  const sources = [fetchSource];
+
+  // Add fallback sources
+  if (fetchSource !== source) {
+    sources.push(source);
+  }
+  if (version && !sources.includes(version)) {
+    sources.push(version);
+  }
+
+  for (const src of sources) {
+    for (const p of CHANGELOG_PATHS) {
+      const url = `https://raw.githubusercontent.com/${REPO}/${src}/${p}`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          errors.push(`${src}/${p}: ${response.status}`);
+          continue;
+        }
+        const changelog = await response.text();
+        if (changelog && changelog.trim().length > 0) {
+          console.log(`✓ Fetched ${p} from ${src} (${changelog.split('\n').length} lines)`);
+          return changelog;
+        }
+        errors.push(`${src}/${p}: empty`);
+      } catch (err) {
+        errors.push(`${src}/${p}: ${err.message}`);
       }
-      const changelog = await response.text();
-      if (changelog && changelog.trim().length > 0) {
-        console.log(`✓ Fetched ${p} (${changelog.split('\n').length} lines)`);
-        return changelog;
-      }
-      errors.push(`${p}: empty`);
-    } catch (err) {
-      errors.push(`${p}: ${err.message}`);
     }
   }
 
@@ -151,9 +194,18 @@ ${update.changes.map(change => `  ${change}`).join('\n')}
   return mintlifyContent;
 }
 
-async function updateReleaseNotes(content) {
-  // Create directory if it doesn't exist
-  const outputPath = path.join(__dirname, '..', '..', 'docs', SUBDIR, 'next', 'changelog', 'release-notes.mdx');
+async function updateReleaseNotes(content, version = 'next') {
+  // Determine output path based on product and version
+  const outputPath = path.join(
+    __dirname,
+    '..',
+    '..',
+    'docs',
+    SUBDIR,
+    version,
+    'changelog',
+    'release-notes.mdx'
+  );
   const dir = path.dirname(outputPath);
 
   if (!fs.existsSync(dir)) {
@@ -170,26 +222,86 @@ async function updateReleaseNotes(content) {
   return { outputPath, versionCount };
 }
 
+async function processVersion(version, source) {
+  try {
+    // Fetch and process changelog for this version
+    const changelog = await fetchChangelog(source, version);
+    const mintlifyContent = parseChangelogToMintlify(changelog);
+    const result = await updateReleaseNotes(mintlifyContent, version);
+
+    return {
+      version,
+      success: true,
+      ...result
+    };
+  } catch (error) {
+    console.error(` Failed for ${version}: ${error.message}`);
+    return {
+      version,
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 async function main() {
   try {
-    // Determine source
-    let source = SOURCE;
-    if (source === 'latest') {
-      source = await getLatestRelease();
-      console.log(` Using latest release: ${source}`);
+    console.log(`\n=== Release Notes Update ===`);
+    console.log(` Product: ${PRODUCT_LABEL}`);
+    console.log(` Repository: ${REPO}`);
+
+    let results = [];
+
+    // Handle different modes
+    if (SOURCE === 'all') {
+      // Process all configured versions for this product
+      const versions = PRODUCT_VERSIONS[SUBDIR] || ['next'];
+      console.log(` Processing versions: ${versions.join(', ')}\n`);
+
+      for (const version of versions) {
+        const result = await processVersion(version, 'latest');
+        results.push(result);
+      }
+    } else if (SPECIFIC_VERSION) {
+      // Process specific version only
+      console.log(` Processing specific version: ${SPECIFIC_VERSION}\n`);
+      const result = await processVersion(SPECIFIC_VERSION, SOURCE);
+      results.push(result);
+    } else {
+      // Default behavior - process for 'next' or default version
+      let source = SOURCE;
+      if (source === 'latest') {
+        source = await getLatestRelease();
+        console.log(` Using latest release: ${source}`);
+      }
+
+      const targetVersion = PRODUCT_VERSIONS[SUBDIR]?.[0] || 'next';
+      const result = await processVersion(targetVersion, source);
+      results.push(result);
     }
 
-    // Fetch and process changelog
-    const changelog = await fetchChangelog(source);
-    const mintlifyContent = parseChangelogToMintlify(changelog);
-    const result = await updateReleaseNotes(mintlifyContent);
+    // Summary
+    console.log('\n=== Summary ===');
+    const successful = results.filter(r => r.success);
+    const failed = results.filter(r => !r.success);
 
-    console.log('\n Release notes update completed');
-    console.log(` Summary:`);
-    console.log(`   Repo: ${REPO}`);
-    console.log(`   Source: ${source}`);
-    console.log(`   Versions: ${result.versionCount}`);
-    console.log(`   Output: ${result.outputPath}`);
+    if (successful.length > 0) {
+      console.log('✓ Successful updates:');
+      successful.forEach(r => {
+        console.log(`   ${r.version}: ${r.versionCount} versions -> ${r.outputPath}`);
+      });
+    }
+
+    if (failed.length > 0) {
+      console.log('✗ Failed updates:');
+      failed.forEach(r => {
+        console.log(`   ${r.version}: ${r.error}`);
+      });
+    }
+
+    if (failed.length > 0) {
+      process.exit(1);
+    }
 
   } catch (error) {
     console.error(' Failed to update release notes:', error.message);
@@ -197,4 +309,9 @@ async function main() {
   }
 }
 
-main();
+// Support both direct execution and module import
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
+
+export { fetchChangelog, parseChangelogToMintlify, updateReleaseNotes };
