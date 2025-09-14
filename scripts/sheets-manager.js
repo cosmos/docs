@@ -130,7 +130,7 @@ async function createSheetSnapshot(version) {
       console.error('\n Setup Instructions:');
       console.error('1. Enable Google Sheets API in Google Cloud Console');
       console.error('2. Create service account and download key');
-      console.error('3. Save key as scripts/versioning/service-account-key.json');
+      console.error('3. Save key as scripts/service-account-key.json');
       console.error('4. Share spreadsheet with service account email');
       console.error('5. See GSHEET-SETUP.md for detailed instructions');
     }

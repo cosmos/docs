@@ -44,7 +44,7 @@ async function prompt(question) {
 }
 
 function listDocsSubdirs() {
-  const docsRoot = path.join(__dirname, '..', '..', 'docs');
+  const docsRoot = path.join(__dirname, '..', 'docs');
   if (!fs.existsSync(docsRoot)) return [];
   return fs
     .readdirSync(docsRoot, { withFileTypes: true })
@@ -55,7 +55,7 @@ function listDocsSubdirs() {
 
 // --- Versions registry helpers (per-product) ---
 function loadVersionsRegistry() {
-  const versionsPath = path.join(__dirname, '..', '..', 'versions.json');
+  const versionsPath = path.join(__dirname, '..', 'versions.json');
   let data = {};
   if (fs.existsSync(versionsPath)) {
     try {
@@ -74,7 +74,7 @@ function loadVersionsRegistry() {
   const products = {};
   const subdirs = listDocsSubdirs();
   for (const subdir of subdirs) {
-    const base = path.join(__dirname, '..', '..', 'docs', subdir);
+    const base = path.join(__dirname, '..', 'docs', subdir);
     const entries = fs.readdirSync(base, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
@@ -164,7 +164,7 @@ function includesVersionInReleaseNotes(content, version) {
 }
 
 async function checkReleaseNotes(currentVersion, subdir) {
-  const releaseNotesPath = path.join(__dirname, '..', '..', 'docs', subdir, 'next', 'changelog', 'release-notes.mdx');
+  const releaseNotesPath = path.join(__dirname, '..', 'docs', subdir, 'next', 'changelog', 'release-notes.mdx');
   if (!fs.existsSync(releaseNotesPath)) return false;
   const content = fs.readFileSync(releaseNotesPath, 'utf8');
   return includesVersionInReleaseNotes(content, currentVersion);
@@ -177,7 +177,7 @@ function updateVersionsRegistry({ subdir, freezeVersion, newVersion }) {
 
   const product = data.products[subdir];
   // Ensure 'next' appears if folder exists
-  const nextPath = path.join(__dirname, '..', '..', 'docs', subdir, 'next');
+  const nextPath = path.join(__dirname, '..', 'docs', subdir, 'next');
   if (fs.existsSync(nextPath) && !product.versions.includes('next')) {
     product.versions.push('next');
   }
@@ -199,7 +199,7 @@ function updateVersionsRegistry({ subdir, freezeVersion, newVersion }) {
 }
 
 function updateNavigation(version, subdir) {
-  const docsJsonPath = path.join(__dirname, '..', '..', 'docs.json');
+  const docsJsonPath = path.join(__dirname, '..', 'docs.json');
   const docsJson = JSON.parse(fs.readFileSync(docsJsonPath, 'utf8'));
 
   // Resolve dropdown label from subdir
@@ -265,8 +265,8 @@ function copyAndUpdateDocs(currentVersion, subdir) {
   printInfo('Creating version directory...');
 
   // Copy docs/<subdir>/next/ to docs/<subdir>/<VERSION>/ (contents only)
-  const sourcePath = path.join(__dirname, '..', '..', 'docs', subdir, 'next');
-  const targetPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion);
+  const sourcePath = path.join(__dirname, '..', 'docs', subdir, 'next');
+  const targetPath = path.join(__dirname, '..', 'docs', subdir, currentVersion);
   // reset target to avoid nested 'next/'
   execSync(`rm -rf "${targetPath}" && mkdir -p "${targetPath}"`);
   execSync(`cp -R "${sourcePath}/." "${targetPath}/"`);
@@ -284,8 +284,8 @@ function copyAndUpdateDocs(currentVersion, subdir) {
 }
 
 function createVersionMetadata(currentVersion, newVersion, subdir) {
-  const metadataPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion, '.version-metadata.json');
-  const frozenPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion, '.version-frozen');
+  const metadataPath = path.join(__dirname, '..', 'docs', subdir, currentVersion, '.version-metadata.json');
+  const frozenPath = path.join(__dirname, '..', 'docs', subdir, currentVersion, '.version-frozen');
 
   const metadata = {
     version: currentVersion,

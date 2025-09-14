@@ -68,7 +68,7 @@ Uses version-specific tab `v0.5.0` with snapshot data.
 3. Click "Add Key" → "Create New Key"
 4. Select "JSON" format
 5. Click "Create"
-6. Save file as `scripts/versioning/service-account-key.json`
+6. Save file as `scripts/service-account-key.json`
 
 ### 5. Share Spreadsheet
 
@@ -81,7 +81,7 @@ Uses version-specific tab `v0.5.0` with snapshot data.
 ### 6. Install Dependencies
 
 ```bash
-cd scripts/versioning
+cd scripts
 npm install
 ```
 

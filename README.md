@@ -9,7 +9,7 @@ Documentation for all parts of the Cosmos Stack.
 
 - `docs/<product>/next/` - Active development documentation
 - `docs/<product>/<version>` - Versioned documentation, by major release.
-- `scripts/versioning/` - Versioning automation - see [README](scripts/versioning/README.md).
+- `scripts/` - Versioning automation - see [README](scripts/README.md).
 - `snippets/` - Custom components - Due to platform limitations, components cannot be versioned. However, it is possible to feed specific / versioned data to a component through a prop in the import (see `docs/evm/v0.4.x/documentation/evm-compatibility/eip-reference.mdx` for a working example).
 
 ## Contributing

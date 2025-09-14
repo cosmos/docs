@@ -90,12 +90,12 @@ Each product can be versioned independently. The version manager auto-detects th
 
 1. **Google Sheets API Access**
    - Service account key saved as `service-account-key.json`
-   - See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) for detailed setup
+   - See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/GSHEET-SETUP.md) for detailed setup
 
 2. **Install Dependencies**
 
    ```bash
-   cd scripts/versioning
+   cd scripts
    npm install
    ```
 
@@ -104,7 +104,7 @@ Each product can be versioned independently. The version manager auto-detects th
 Run the version manager to freeze the current version in a chosen docs subdirectory (e.g., `evm`, `sdk`, `ibc`) and start a new one. The flow is fully interactive by default:
 
 ```bash
-cd scripts/versioning
+cd scripts
 npm run freeze
 ```
 
@@ -231,7 +231,7 @@ Navigation structure cleanup utility.
 
 ## Google Sheets Integration
 
-EIP compatibility data is versioned through Google Sheets tabs. See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) for setup and configuration.
+EIP compatibility data is versioned through Google Sheets tabs. See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/GSHEET-SETUP.md) for setup and configuration.
 
 ### Shared Component
 
@@ -325,7 +325,7 @@ See [Mintlify Constraints](../../CLAUDE.md) for details.
 
 ### 1. Google Sheets API Setup
 
-Follow [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) to:
+Follow [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/GSHEET-SETUP.md) to:
 
 1. Create a Google Cloud project
 2. Enable Sheets API
@@ -336,7 +336,7 @@ Follow [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versio
 ### 2. Install Dependencies
 
 ```bash
-cd scripts/versioning
+cd scripts
 npm install
 ```
 
@@ -345,7 +345,7 @@ npm install
 Save your service account key as:
 
 ```sh
-scripts/versioning/service-account-key.json
+scripts/service-account-key.json
 ```
 
 ### 4. Test Connection
@@ -369,7 +369,7 @@ console.log('✓ Google Sheets API configured');
 
 ```bash
 # Start the version freeze process
-cd scripts/versioning && npm run freeze
+cd scripts && npm run freeze
 
 # Enter prompts
 Enter the docs subdirectory to version [evm, sdk, ibc]: evm
@@ -380,10 +380,10 @@ Enter the new development version (e.g., v0.5.0): v0.5.0
 
 ```bash
 # Fetch latest release notes into docs/evm/next
-node scripts/versioning/release-notes.js latest evm
+node scripts/release-notes.js latest evm
 
 # Or fetch specific release into docs/evm/next
-node scripts/versioning/release-notes.js v0.4.1 evm
+node scripts/release-notes.js v0.4.1 evm
 ```
 
 ### Manual Navigation Update
@@ -441,7 +441,7 @@ rm -rf docs/<subdir>/v0.5.0/
 ## File Structure
 
 ```
-scripts/versioning/
+scripts/
 ├── README.md                     # This file
 ├── GSHEET-SETUP.md              # Google Sheets API setup guide
 ├── version-manager.js           # Main orchestration (ESM)
@@ -458,5 +458,5 @@ scripts/versioning/
 
 - [Main README](../../README.md) - Project overview
 - [CLAUDE.md](../../CLAUDE.md) - AI assistant context
-- [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) - Google Sheets API setup
+- [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/GSHEET-SETUP.md) - Google Sheets API setup
 - [Mintlify Documentation](https://mintlify.com/docs) - MDX reference
