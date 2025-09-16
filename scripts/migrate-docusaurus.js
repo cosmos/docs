@@ -305,9 +305,130 @@ function fixInternalLinks(content, version, product = 'generic') {
   // Remove heading anchors {#anchor}
   result = result.replace(/^(#+\s+.+?)\s*\{#[^}]+\}\s*$/gm, '$1');
 
-  // Fix relative links (../ or ./)
-  result = result.replace(/\]\(\.\.\//g, '](');
-  result = result.replace(/\]\(\.\//g, '](');
+  // Fix relative links (../ or ./) but NOT for images
+  // Only remove ./ and ../ from links to markdown files, not images
+  result = result.replace(/\]\(\.\.\//g, (match, offset, string) => {
+    // Check if this is followed by an image extension
+    const afterMatch = string.slice(offset + match.length);
+    if (afterMatch.match(/^[^)]+\.(png|jpg|jpeg|gif|svg|webp)/i)) {
+      return match; // Keep the ../ for images
+    }
+    return ']('; // Remove ../ for non-images
+  });
+  result = result.replace(/\]\(\.\//g, (match, offset, string) => {
+    // Check if this is followed by an image extension
+    const afterMatch = string.slice(offset + match.length);
+    if (afterMatch.match(/^[^)]+\.(png|jpg|jpeg|gif|svg|webp)/i)) {
+      return match; // Keep the ./ for images
+    }
+    return ']('; // Remove ./ for non-images
+  });
+
+  return result;
+}
+
+/**
+ * Copy static assets (images) from source to target
+ */
+function copyStaticAssets(staticPath, targetImagesDir) {
+  if (!fs.existsSync(targetImagesDir)) {
+    fs.mkdirSync(targetImagesDir, { recursive: true });
+  }
+
+  function copyImages(dir, targetSubDir = '') {
+    const items = fs.readdirSync(dir);
+
+    for (const item of items) {
+      const sourcePath = path.join(dir, item);
+      const stat = fs.statSync(sourcePath);
+
+      if (stat.isDirectory()) {
+        // Recursively copy subdirectories
+        const newTargetSubDir = path.join(targetSubDir, item);
+        copyImages(sourcePath, newTargetSubDir);
+      } else if (item.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i)) {
+        // Copy image files
+        const targetPath = path.join(targetImagesDir, 'static', targetSubDir, item);
+        const targetDir = path.dirname(targetPath);
+
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        fs.copyFileSync(sourcePath, targetPath);
+        console.log(`  Copied: static/${targetSubDir}/${item}`);
+      }
+    }
+  }
+
+  copyImages(staticPath);
+}
+
+/**
+ * Update image paths to use centralized images folder
+ */
+function updateImagePaths(content, sourceRelativePath, version) {
+  let result = content;
+
+  // Calculate the depth of the source file to determine relative path to images
+  const sourceDepth = sourceRelativePath.split('/').length - 1;
+  const pathToRoot = sourceDepth > 0 ? '../'.repeat(sourceDepth) : './';
+  // Images are at the same level as version directories (e.g., docs/sdk/images/)
+  const pathToImages = `${pathToRoot}../images/`;
+
+  // Update local image references (./image.png or ../image.png)
+  // Match both markdown images ![alt](path) and HTML img tags
+  result = result.replace(/(!\[[^\]]*\]\()(\.\.\/|\.\/)([^)]+\.(png|jpg|jpeg|gif|svg|webp))/gi,
+    (match, prefix, relative, imagePath) => {
+      const imageName = path.basename(imagePath);
+      const imageDir = path.dirname(imagePath);
+      const sourceDir = path.dirname(sourceRelativePath);
+
+      if (relative === './' && imageDir === '.') {
+        // Image in same directory as markdown
+        return `${prefix}${pathToImages}${sourceDir}/${imageName}`;
+      } else if (relative === '../') {
+        // Image in parent directory
+        const parentSourceDir = path.dirname(sourceDir);
+        return `${prefix}${pathToImages}${parentSourceDir}/${imagePath}`;
+      } else {
+        // Image in subdirectory
+        return `${prefix}${pathToImages}${sourceDir}/${imagePath}`;
+      }
+    });
+
+  // Update HTML img tags
+  result = result.replace(/(<img[^>]+src=")(\.\.\/|\.\/)([^"]+\.(png|jpg|jpeg|gif|svg|webp))/gi,
+    (match, prefix, relative, imagePath) => {
+      const imageName = path.basename(imagePath);
+      const imageDir = path.dirname(imagePath);
+
+      if (imageDir === '.') {
+        const sourceDir = path.dirname(sourceRelativePath);
+        return `${prefix}${pathToImages}${sourceDir}/${imageName}`;
+      } else {
+        return `${prefix}${pathToImages}${imagePath}`;
+      }
+    });
+
+  // Handle references to /img/ or /static/ folders (from Docusaurus static folder)
+  result = result.replace(/(!\[[^\]]*\]\()(\/(img|static)\/[^)]+\.(png|jpg|jpeg|gif|svg|webp))/gi,
+    (match, prefix, imagePath) => {
+      // Convert /img/file.png to images/static/img/file.png
+      // Convert /static/file.png to images/static/file.png
+      const cleanPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
+      return `${prefix}${pathToImages}static/${cleanPath.replace(/^static\//, '')}`;
+    });
+
+  // Handle HTML img tags with /img/ or /static/ paths
+  result = result.replace(/(<img[^>]+src=")(\/(img|static)\/[^"]+\.(png|jpg|jpeg|gif|svg|webp))/gi,
+    (match, prefix, imagePath) => {
+      const cleanPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
+      return `${prefix}${pathToImages}static/${cleanPath.replace(/^static\//, '')}`;
+    });
+
+  // Handle GitHub raw content URLs (keep them as-is)
+  // These don't need updating as they're external URLs
 
   return result;
 }
@@ -325,20 +446,50 @@ function fixMDXIssues(content) {
     // Convert URLs in angle brackets to proper markdown links
     nonCodeContent = nonCodeContent.replace(/<(https?:\/\/[^>]+)>/g, '[Link]($1)');
 
-    // Fix arrow operators that break parsing
+    // Fix arrow operators and comparison operators that break parsing
     nonCodeContent = nonCodeContent.replace(/([^`])<->([^`])/g, '$1`<->`$2');
 
-    // Remove stray closing tags
-    nonCodeContent = nonCodeContent.replace(/^\s*<\/[A-Z][a-zA-Z]*>\s*$/gm, '');
+    // Fix version markers like **<= v0.45**: (must be done BEFORE general <= replacement)
+    nonCodeContent = nonCodeContent.replace(/\*\*<=\s*v([\d.]+)\*\*:/g, '**v$1 and earlier**:');
+    nonCodeContent = nonCodeContent.replace(/\*\*>=\s*v([\d.]+)\*\*:/g, '**v$1 and later**:');
 
-    // Close unclosed details tags (add at end if missing)
-    if (nonCodeContent.includes('<details>') && !nonCodeContent.includes('</details>')) {
-      nonCodeContent += '\n</details>';
+    // Fix comparison operators in text (not in markdown emphasis)
+    nonCodeContent = nonCodeContent.replace(/(\s)(<=)(\s)/g, '$1`$2`$3');
+    nonCodeContent = nonCodeContent.replace(/(\s)(>=)(\s)/g, '$1`$2`$3');
+
+    // Fix block quotes with template variables (lazy line issue)
+    // Replace template variables at the end of block quotes
+    nonCodeContent = nonCodeContent.replace(/(^>.*\n>.*\n>.*\n)(>\s*\{[^}]+\})/gm, (match, quote, templateLine) => {
+      // Convert the template line to a regular line (not part of quote)
+      const template = templateLine.replace(/^>\s*/, '');
+      return quote + '\n' + template.replace(/\{([^}]+)\}/, '`{$1}`');
+    });
+
+    // Fix orphaned closing tags by adding opening tags
+    // Look for closing tags without matching opening tags
+    nonCodeContent = nonCodeContent.replace(/(\n\s*\n)(\s*<\/(Info|Warning|Note|Tip|Check|Accordion|details)>)/gm, (match, emptyLine, closingTag, tagName) => {
+      // Check if there's a matching opening tag
+      const openTag = new RegExp(`<${tagName}[^>]*>`, 'i');
+      if (!openTag.test(nonCodeContent)) {
+        // Add the opening tag before the closing tag
+        return `\n\n<${tagName}>\n${closingTag}`;
+      }
+      return match; // Keep as-is if there's already an opening tag
+    });
+
+    // Also handle unclosed opening tags (like <details> without </details>)
+    const detailsOpen = (nonCodeContent.match(/<details[^>]*>/gi) || []).length;
+    const detailsClose = (nonCodeContent.match(/<\/details>/gi) || []).length;
+
+    if (detailsOpen > detailsClose) {
+      const missing = detailsOpen - detailsClose;
+      for (let i = 0; i < missing; i++) {
+        nonCodeContent += '\n</details>';
+      }
     }
 
-    // Fix unclosed placeholder tags - these are template placeholders, not commands
-    nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod)>\s*([^<\n]*?)(?=\n|$)/g, '&lt;$1&gt; $2');
-    nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod)>\s+([^<>]+?)(?=\s|<|$)/g, '&lt;$1&gt; $2');
+    // Fix unclosed placeholder tags - convert to inline code
+    nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp)>/g, '`$1`');
 
     // Convert all braces to proper inline code spans (complete units)
     nonCodeContent = nonCodeContent
@@ -355,8 +506,26 @@ function fixMDXIssues(content) {
       // 4. Complete JSON objects: {"key":"value"} → `complete object`
       .replace(/(\{\"[^}]+\"\})/g, '`$1`')
 
-      // 5. Template variables with safe boundaries: {var} or {multi word} → `{var}`
-      .replace(/(?<![a-zA-Z0-9_`.])\{([a-zA-Z][a-zA-Z0-9_|\\\\s]*)\}(?![a-zA-Z0-9_`.])/g, '`{$1}`')
+      // 5. Template placeholders like {positive consequences}
+      .replace(/\{(positive|negative|neutral)\s+consequences\}/g, '`{$1 consequences}`')
+      .replace(/\{context\s+body\}/g, '`{context body}`')
+
+      // 6. Complex paths in tables: /cosmos.group.v1.Msg/UpdateGroup{Admin|Metadata|Members}
+      .replace(/(\/[\w.]+\/\w+)\{([^}]+)\}/g, '`$1{$2}`')
+
+      // 7. Array syntax in tables: []string{msg_urls}
+      .replace(/(\[\]\w+)\{([^}]+)\}/g, '$1`{$2}`')
+
+      // 8. Template variables in tables: {authorityAddress}
+      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, '`{$1}`')
+
+      // 9. General template variables (but skip JSX comments and already wrapped)
+      .replace(/(?<![a-zA-Z0-9_`.])\{([a-zA-Z][\w\s]*)\}(?![a-zA-Z0-9_`.])/g, (match, content) => {
+        // Skip if it looks like JSX comment
+        if (content.includes('/*') || content.includes('*/')) return match;
+        // Skip if already in backticks (check context)
+        return '`' + match + '`';
+      })
 
       // 6. Clean up any remaining lone braces (safety)
       .replace(/^\s*\{\s*$/gm, '') // Remove lone { lines
@@ -706,8 +875,9 @@ function convertDocusaurusToMintlify(content, options = {}) {
  */
 async function processDirectory(sourceDir, targetDir, version, product = 'generic') {
   const files = [];
+  const images = [];
 
-  // Recursively find all .md and .mdx files
+  // Recursively find all .md, .mdx, and image files
   function findFiles(dir, baseDir = '') {
     const items = fs.readdirSync(dir);
 
@@ -724,13 +894,41 @@ async function processDirectory(sourceDir, targetDir, version, product = 'generi
           relative: relativePath,
           name: item
         });
+      } else if (item.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i)) {
+        images.push({
+          source: fullPath,
+          relative: relativePath,
+          name: item
+        });
       }
     }
   }
 
   findFiles(sourceDir);
 
-  console.log(`Found ${files.length} files to convert`);
+  console.log(`Found ${files.length} files to convert and ${images.length} images`);
+
+  // Copy images first
+  if (images.length > 0) {
+    // Images directory should be at the same level as version directories
+    const parentDir = path.dirname(targetDir);
+    const imagesDir = path.join(parentDir, 'images');
+    if (!fs.existsSync(imagesDir)) {
+      fs.mkdirSync(imagesDir, { recursive: true });
+    }
+
+    console.log(`Copying ${images.length} images to ${imagesDir}`);
+    for (const image of images) {
+      const targetImagePath = path.join(imagesDir, image.relative);
+      const targetImageDir = path.dirname(targetImagePath);
+
+      if (!fs.existsSync(targetImageDir)) {
+        fs.mkdirSync(targetImageDir, { recursive: true });
+      }
+
+      fs.copyFileSync(image.source, targetImagePath);
+    }
+  }
 
   const converted = [];
 
@@ -750,8 +948,12 @@ async function processDirectory(sourceDir, targetDir, version, product = 'generi
       fs.mkdirSync(targetSubdir, { recursive: true });
     }
 
+    // Update image paths in content
+    let processedContent = result.content;
+    processedContent = updateImagePaths(processedContent, file.relative, version);
+
     // Write converted file
-    fs.writeFileSync(targetPath, result.content);
+    fs.writeFileSync(targetPath, processedContent);
 
     converted.push({
       path: targetPath,
@@ -890,8 +1092,32 @@ async function updateDocsJson(allVersionData, product = 'generic') {
   // Clear existing versions
   productDropdown.versions = [];
 
+  // Sort versions properly: highest first, 'next' at bottom
+  const sortedVersionEntries = Object.entries(allVersionData).sort(([a], [b]) => {
+    if (a === 'next') return 1;  // 'next' goes to bottom
+    if (b === 'next') return -1;
+
+    // Use semver comparison for version numbers
+    const parseVersion = (v) => {
+      const cleaned = v.replace(/^v/, ''); // Remove leading 'v'
+      const parts = cleaned.split('.');
+      return parts.map(p => parseInt(p) || 0);
+    };
+
+    const aParts = parseVersion(a);
+    const bParts = parseVersion(b);
+
+    // Compare major, minor, patch (descending order)
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+      const aVal = aParts[i] || 0;
+      const bVal = bParts[i] || 0;
+      if (aVal !== bVal) return bVal - aVal;
+    }
+    return 0;
+  });
+
   // Add version sections following the same structure as EVM
-  for (const [version, files] of Object.entries(allVersionData)) {
+  for (const [version, files] of sortedVersionEntries) {
     const versionData = {
       version: version,
       tabs: [
@@ -953,14 +1179,35 @@ async function updateDocsJson(allVersionData, product = 'generic') {
     versionsJson = { products: {} };
   }
 
-  // Add product configuration
+  // Add product configuration with proper version ordering
+  // Sort versions: highest version first, 'next' at the bottom
+  const versionKeys = Object.keys(allVersionData);
+  const sortedVersions = versionKeys.sort((a, b) => {
+    if (a === 'next') return 1;  // 'next' goes to bottom
+    if (b === 'next') return -1;
+
+    // Use semver comparison for version numbers
+    const parseVersion = (v) => {
+      const cleaned = v.replace(/^v/, ''); // Remove leading 'v'
+      const parts = cleaned.split('.');
+      return parts.map(p => parseInt(p) || 0);
+    };
+
+    const aParts = parseVersion(a);
+    const bParts = parseVersion(b);
+
+    // Compare major, minor, patch (descending order)
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+      const aVal = aParts[i] || 0;
+      const bVal = bParts[i] || 0;
+      if (aVal !== bVal) return bVal - aVal;
+    }
+    return 0;
+  });
+
   versionsJson.products[product] = {
-    versions: Object.keys(allVersionData).sort((a, b) => {
-      if (a === 'next') return -1;
-      if (b === 'next') return 1;
-      return b.localeCompare(a); // Reverse sort for versions
-    }),
-    defaultVersion: 'next'
+    versions: sortedVersions,
+    defaultVersion: sortedVersions[0] === 'next' ? sortedVersions[1] || 'next' : sortedVersions[0]
   };
 
   // Write updated files
@@ -980,7 +1227,7 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
     throw new Error('Target directory is required');
   }
 
-  console.log(`=== Migrating All Versions for ${product.toUpperCase()} ===\n`);
+  console.log(`=== Migrating All Versions ===\n`);
 
   // Expand ~ to home directory if present
   if (repositoryPath.startsWith('~/')) {
@@ -992,14 +1239,21 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
 
   const sourceBase = path.join(repositoryPath, 'versioned_docs');
   const currentDocsPath = path.join(repositoryPath, 'docs');
+  const staticPath = path.join(repositoryPath, 'static');
   const targetBase = targetDirectory;
 
-  console.log(`Debug: Repository path: ${repositoryPath}`);
-  console.log(`Debug: Source base: ${sourceBase}`);
-  console.log(`Debug: Current docs: ${currentDocsPath}`);
-  console.log(`Debug: Target base: ${targetBase}\n`);
 
   const allVersionData = {};
+
+  // Copy static assets first (if they exist)
+  if (fs.existsSync(staticPath)) {
+    // Images directory is at the same level as the target base (e.g., docs/sdk/images)
+    const targetImagesDir = path.join(targetBase, 'images');
+    console.log(`\n--- Copying static assets to ${targetImagesDir} ---`);
+
+    // Copy all image files from static folder
+    copyStaticAssets(staticPath, targetImagesDir);
+  }
 
   // 1. Process versioned docs
   if (fs.existsSync(sourceBase)) {
@@ -1042,7 +1296,9 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
 
   console.log(`\n🎉 Migration complete!`);
   console.log(`📁 Files created in: ${targetBase}`);
-  console.log(`📋 Navigation updated in docs.json and versions.json`);
+  if (updateNavigation) {
+    console.log(`📋 Navigation updated in docs.json and versions.json`);
+  }
 
   return allVersionData;
 }
@@ -1099,8 +1355,9 @@ async function main() {
       process.exit(1);
     }
 
-    console.log('\nEnter product name (e.g., sdk, ibc, evm):');
-    const product = (await prompt('> ')).trim() || 'generic';
+    // Extract product name from target directory (e.g., ./docs/sdk -> sdk)
+    const targetParts = targetDirectory.split('/');
+    const product = targetParts[targetParts.length - 1] || 'generic';
 
     console.log('\nUpdate navigation files? (y/n):');
     const updateNav = (await prompt('> ')).trim().toLowerCase() === 'y';
@@ -1188,7 +1445,9 @@ export {
   formatGoCode,
   formatJavaScriptCode,
   formatRustCode,
-  formatJsonCode
+  formatJsonCode,
+  updateImagePaths,
+  copyStaticAssets
 };
 
 // Run if called directly
