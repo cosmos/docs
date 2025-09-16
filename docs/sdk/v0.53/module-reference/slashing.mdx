@@ -179,18 +179,19 @@ Below is a pseudocode of the `MsgSrv/Unjail` RPC:
 
 ```go
 unjail(tx MsgUnjail)
-    validator = getValidator(tx.ValidatorAddr)
-    if validator == nil
-      fail with "No validator found"
 
+validator = getValidator(tx.ValidatorAddr)
+
+if validator == nil
+      fail with "No validator found"
     if getSelfDelegation(validator) == 0
       fail with "validator must self delegate before unjailing"
-
     if !validator.Jailed
       fail with "Validator not jailed, cannot unjail"
 
     info = GetValidatorSigningInfo(operator)
-    if info.Tombstoned
+
+if info.Tombstoned
       fail with "Tombstoned validator cannot be unjailed"
     if block time < info.JailedUntil
       fail with "Validator still jailed, cannot unjail until period has expired"
@@ -198,7 +199,7 @@ unjail(tx MsgUnjail)
     validator.Jailed = false
     setValidator(validator)
 
-    return
+return
 ```
 
 If the validator has enough stake to be in the top `n = MaximumBondedValidators`, it will be automatically rebonded,
@@ -230,48 +231,48 @@ for `DowntimeJailDuration`, and have the following values reset:
 
 ```go
 height := block.Height
-
-for vote in block.LastCommitInfo.Votes {
-  signInfo := GetValidatorSigningInfo(vote.Validator.Address)
+    for vote in block.LastCommitInfo.Votes {
+	signInfo := GetValidatorSigningInfo(vote.Validator.Address)
 
   // This is a relative index, so we counts blocks the validator SHOULD have
   // signed. We use the 0-value default signing info if not present, except for
   // start height.
-  index := signInfo.IndexOffset % SignedBlocksWindow()
-  signInfo.IndexOffset++
+    index := signInfo.IndexOffset % SignedBlocksWindow()
+
+signInfo.IndexOffset++
 
   // Update MissedBlocksBitArray and MissedBlocksCounter. The MissedBlocksCounter
   // just tracks the sum of MissedBlocksBitArray. That way we avoid needing to
   // read/write the whole array each time.
-  missedPrevious := GetValidatorMissedBlockBitArray(vote.Validator.Address, index)
-  missed := !signed
+    missedPrevious := GetValidatorMissedBlockBitArray(vote.Validator.Address, index)
 
-  switch {
-  case !missedPrevious && missed:
+missed := !signed
+    switch {
+	case !missedPrevious && missed:
     // array index has changed from not missed to missed, increment counter
     SetValidatorMissedBlockBitArray(vote.Validator.Address, index, true)
-    signInfo.MissedBlocksCounter++
 
-  case missedPrevious && !missed:
+signInfo.MissedBlocksCounter++
+    case missedPrevious && !missed:
     // array index has changed from missed to not missed, decrement counter
     SetValidatorMissedBlockBitArray(vote.Validator.Address, index, false)
-    signInfo.MissedBlocksCounter--
+
+signInfo.MissedBlocksCounter--
 
   default:
     // array index at this index has not changed; no need to update counter
-  }
-
-  if missed {
+}
+    if missed {
     // emit events...
-  }
+}
+    minHeight := signInfo.StartHeight + SignedBlocksWindow()
 
-  minHeight := signInfo.StartHeight + SignedBlocksWindow()
-  maxMissed := SignedBlocksWindow() - MinSignedPerWindow()
+maxMissed := SignedBlocksWindow() - MinSignedPerWindow()
 
   // If we are past the minimum height and the validator has missed too many
   // jail and slash them.
-  if height > minHeight && signInfo.MissedBlocksCounter > maxMissed {
-    validator := ValidatorByConsAddr(vote.Validator.Address)
+    if height > minHeight && signInfo.MissedBlocksCounter > maxMissed {
+	validator := ValidatorByConsAddr(vote.Validator.Address)
 
     // emit events...
 
@@ -285,18 +286,19 @@ for vote in block.LastCommitInfo.Votes {
     distributionHeight := height - sdk.ValidatorUpdateDelay - 1
 
     SlashWithInfractionReason(vote.Validator.Address, distributionHeight, vote.Validator.Power, SlashFractionDowntime(), stakingtypes.Downtime)
-    Jail(vote.Validator.Address)
 
-    signInfo.JailedUntil = block.Time.Add(DowntimeJailDuration())
+Jail(vote.Validator.Address)
+
+signInfo.JailedUntil = block.Time.Add(DowntimeJailDuration())
 
     // We need to reset the counter & array so that the validator won't be
     // immediately slashed for downtime upon rebonding.
     signInfo.MissedBlocksCounter = 0
     signInfo.IndexOffset = 0
     ClearValidatorMissedBlockBitArray(vote.Validator.Address)
-  }
+}
 
-  SetValidatorSigningInfo(vote.Validator.Address, signInfo)
+SetValidatorSigningInfo(vote.Validator.Address, signInfo)
 }
 ```
 
@@ -324,22 +326,25 @@ If the validator was out of the validator set and gets bonded again, its new bon
 ```go
 onValidatorBonded(address sdk.ValAddress)
 
-  signingInfo, found = GetValidatorSigningInfo(address)
-  if !found {
-    signingInfo = ValidatorSigningInfo {
-      StartHeight         : CurrentHeight,
+signingInfo, found = GetValidatorSigningInfo(address)
+
+if !found {
+	signingInfo = ValidatorSigningInfo {
+	StartHeight         : CurrentHeight,
       IndexOffset         : 0,
       JailedUntil         : time.Unix(0, 0),
       Tombstone           : false,
       MissedBloskCounter  : 0
-    } else {
-      signingInfo.StartHeight = CurrentHeight
-    }
+}
 
-    setValidatorSigningInfo(signingInfo)
-  }
+else {
+	signingInfo.StartHeight = CurrentHeight
+}
 
-  return
+setValidatorSigningInfo(signingInfo)
+}
+
+return
 ```
 
 ## Events
@@ -353,7 +358,7 @@ The slashing module emits the following events:
 | Type    | Attribute Key | Attribute Value    |
 | ------- | ------------- | ------------------ |
 | message | module        | slashing           |
-| message | sender        | {validatorAddress} |
+| message | sender        | `{validatorAddress}` |
 
 ### Keeper
 
@@ -361,19 +366,19 @@ The slashing module emits the following events:
 
 | Type  | Attribute Key | Attribute Value             |
 | ----- | ------------- | --------------------------- |
-| slash | address       | {validatorConsensusAddress} |
-| slash | power         | {validatorPower}            |
-| slash | reason        | {slashReason}               |
-| slash | jailed [0]    | {validatorConsensusAddress} |
+| slash | address       | `{validatorConsensusAddress}` |
+| slash | power         | `{validatorPower}`            |
+| slash | reason        | `{slashReason}`               |
+| slash | jailed [0]    | `{validatorConsensusAddress}` |
 | slash | burned coins  | {math.Int}                   |
 
 * [0] Only included if the validator is jailed.
 
 | Type     | Attribute Key | Attribute Value             |
 | -------- | ------------- | --------------------------- |
-| liveness | address       | {validatorConsensusAddress} |
-| liveness | missed_blocks | {missedBlocksCounter}       |
-| liveness | height        | {blockHeight}               |
+| liveness | address       | `{validatorConsensusAddress}` |
+| liveness | missed_blocks | `{missedBlocksCounter}`       |
+| liveness | height        | `{blockHeight}`               |
 
 #### Slash
 
@@ -383,7 +388,7 @@ The slashing module emits the following events:
 
 | Type  | Attribute Key | Attribute Value    |
 | ----- | ------------- | ------------------ |
-| slash | jailed        | {validatorAddress} |
+| slash | jailed        | `{validatorAddress}` |
 
 ## Staking Tombstone
 
@@ -568,8 +573,8 @@ simd query slashing signing-infos [flags]
 Example:
 
 ```shell
-simd query slashing signing-info '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"Auxs3865HpB/EfssYOzfqNhEJjzys6jD5B6tPgC8="}'
-
+simd query slashing signing-info '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"Auxs3865HpB/EfssYOzfqNhEJjzys6jD5B6tPgC8="
+}'
 ```
 
 Example Output:
@@ -677,7 +682,8 @@ cosmos.slashing.v1beta1.Query/SigningInfo
 Example:
 
 ```shell
-grpcurl -plaintext -d '{"cons_address":"cosmosvalcons1nrqsld3aw6lh6t082frdqc84uwxn0t958c"}' localhost:9090 cosmos.slashing.v1beta1.Query/SigningInfo
+grpcurl -plaintext -d '{"cons_address":"cosmosvalcons1nrqsld3aw6lh6t082frdqc84uwxn0t958c"
+}' localhost:9090 cosmos.slashing.v1beta1.Query/SigningInfo
 ```
 
 Example Output:
@@ -744,11 +750,11 @@ Example Output:
 ```json
 {
   "params": {
-    "signed_blocks_window": "100",
-    "min_signed_per_window": "0.500000000000000000",
-    "downtime_jail_duration": "600s",
-    "slash_fraction_double_sign": "0.050000000000000000",
-    "slash_fraction_downtime": "0.010000000000000000"
+  "signed_blocks_window": "100",
+  "min_signed_per_window": "0.500000000000000000",
+  "downtime_jail_duration": "600s",
+  "slash_fraction_double_sign": "0.050000000000000000",
+  "slash_fraction_downtime": "0.010000000000000000"
 }
 ```
 

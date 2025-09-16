@@ -206,8 +206,7 @@ func myCustomVotingFunction(
 ) (totalVoterPower math.LegacyDec, results map[v1.VoteOption]math.LegacyDec, err error) {
   // ... tally logic
 }
-
-govKeeper := govkeeper.NewKeeper(
+    govKeeper := govkeeper.NewKeeper(
   appCodec,
   runtime.NewKVStoreService(keys[govtypes.StoreKey]),
   app.AccountKeeper,
@@ -395,28 +394,28 @@ Additionally, we introduce some basic types:
 type Vote byte
 
 const (
-    VoteYes         = 0x1
-    VoteNo          = 0x2
-    VoteNoWithVeto  = 0x3
-    VoteAbstain     = 0x4
+	VoteYes        = 0x1
+	VoteNo         = 0x2
+	VoteNoWithVeto = 0x3
+	VoteAbstain    = 0x4
 )
 
-type ProposalType  string
+type ProposalType string
 
 const (
-    ProposalTypePlainText       = "Text"
-    ProposalTypeSoftwareUpgrade = "SoftwareUpgrade"
+	ProposalTypePlainText       = "Text"
+	ProposalTypeSoftwareUpgrade = "SoftwareUpgrade"
 )
 
 type ProposalStatus byte
 
 const (
-    StatusNil           ProposalStatus = 0x00
-    StatusDepositPeriod ProposalStatus = 0x01  // Proposal is submitted. Participants can deposit on it but not vote
-    StatusVotingPeriod  ProposalStatus = 0x02  // MinDeposit is reached, participants can vote
-    StatusPassed        ProposalStatus = 0x03  // Proposal passed and successfully executed
-    StatusRejected      ProposalStatus = 0x04  // Proposal has been rejected
-    StatusFailed        ProposalStatus = 0x05  // Proposal passed but failed execution
+	StatusNil           ProposalStatus = 0x00
+	StatusDepositPeriod ProposalStatus = 0x01 // Proposal is submitted. Participants can deposit on it but not vote
+	StatusVotingPeriod  ProposalStatus = 0x02 // MinDeposit is reached, participants can vote
+	StatusPassed        ProposalStatus = 0x03 // Proposal passed and successfully executed
+	StatusRejected      ProposalStatus = 0x04 // Proposal has been rejected
+	StatusFailed        ProposalStatus = 0x05 // Proposal passed but failed execution
 )
 ```
 
@@ -431,10 +430,10 @@ https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/gov/v1/gov.pr
 This type is used in a temp map when tallying
 
 ```go
-  type ValidatorGovInfo struct {
-    Minus     sdk.Dec
-    Vote      Vote
-  }
+type ValidatorGovInfo struct {
+	Minus sdk.Dec
+	Vote  Vote
+}
 ```
 
 ## Stores
@@ -474,56 +473,67 @@ For pseudocode purposes, here are the two function we will use to read or write 
 And the pseudocode for the `ProposalProcessingQueue`:
 
 ```go
-  in EndBlock do
-
+in EndBlock do
     for finishedProposalID in GetAllFinishedProposalIDs(block.Time)
-      proposal = load(Governance, <proposalID|'proposal'>) // proposal is a const key
+
+proposal = load(Governance, <proposalID|'proposal'>) // proposal is a const key
 
       validators = Keeper.getAllValidators()
-      tmpValMap := map(sdk.AccAddress)ValidatorGovInfo
+
+tmpValMap := map(sdk.AccAddress)
+
+ValidatorGovInfo
 
       // Initiate mapping at 0. This is the amount of shares of the validator's vote that will be overridden by their delegator's votes
-      for each validator in validators
+    for each validator in validators
         tmpValMap(validator.OperatorAddr).Minus = 0
 
       // Tally
       voterIterator = rangeQuery(Governance, <proposalID|'addresses'>) //return all the addresses that voted on the proposal
-      for each (voterAddress, vote) in voterIterator
-        delegations = stakingKeeper.getDelegations(voterAddress) // get all delegations for current voter
+    for each (voterAddress, vote)
 
-        for each delegation in delegations
+in voterIterator
+        delegations = stakingKeeper.getDelegations(voterAddress) // get all delegations for current voter
+    for each delegation in delegations
           // make sure delegation.Shares does NOT include shares being unbonded
           tmpValMap(delegation.ValidatorAddr).Minus += delegation.Shares
           proposal.updateTally(vote, delegation.Shares)
 
         _, isVal = stakingKeeper.getValidator(voterAddress)
-        if (isVal)
-          tmpValMap(voterAddress).Vote = vote
+
+if (isVal)
+
+tmpValMap(voterAddress).Vote = vote
 
       tallyingParam = load(GlobalParams, 'TallyingParam')
 
       // Update tally if validator voted
-      for each validator in validators
-        if tmpValMap(validator).HasVoted
+    for each validator in validators
+    if tmpValMap(validator).HasVoted
           proposal.updateTally(tmpValMap(validator).Vote, (validator.TotalShares - tmpValMap(validator).Minus))
 
       // Check if proposal is accepted or rejected
-      totalNonAbstain := proposal.YesVotes + proposal.NoVotes + proposal.NoWithVetoVotes
-      if (proposal.Votes.YesVotes/totalNonAbstain > tallyingParam.Threshold AND proposal.Votes.NoWithVetoVotes/totalNonAbstain  < tallyingParam.Veto)
+    totalNonAbstain := proposal.YesVotes + proposal.NoVotes + proposal.NoWithVetoVotes
+    if (proposal.Votes.YesVotes/totalNonAbstain > tallyingParam.Threshold AND proposal.Votes.NoWithVetoVotes/totalNonAbstain  < tallyingParam.Veto)
         //  proposal was accepted at the end of the voting period
         //  refund deposits (non-voters already punished)
-        for each (amount, depositor) in proposal.Deposits
+
+for each (amount, depositor)
+
+in proposal.Deposits
           depositor.AtomBalance += amount
 
         stateWriter, err := proposal.Handler()
-        if err != nil
+
+if err != nil
             // proposal passed but failed during state execution
             proposal.CurrentStatus = ProposalStatusFailed
          else
             // proposal pass and state is persisted
             proposal.CurrentStatus = ProposalStatusAccepted
             stateWriter.save()
-      else
+
+else
         // proposal was rejected
         proposal.CurrentStatus = ProposalStatusRejected
 
@@ -618,10 +628,10 @@ The governance module emits the following events:
 
 | Type              | Attribute Key   | Attribute Value  |
 |-------------------|-----------------|------------------|
-| inactive_proposal | proposal_id     | {proposalID}     |
-| inactive_proposal | proposal_result | {proposalResult} |
-| active_proposal   | proposal_id     | {proposalID}     |
-| active_proposal   | proposal_result | {proposalResult} |
+| inactive_proposal | proposal_id     | `{proposalID}`     |
+| inactive_proposal | proposal_result | `{proposalResult}` |
+| active_proposal   | proposal_id     | `{proposalID}`     |
+| active_proposal   | proposal_result | `{proposalResult}` |
 
 ### Handlers
 
@@ -629,13 +639,13 @@ The governance module emits the following events:
 
 | Type                | Attribute Key       | Attribute Value |
 |---------------------|---------------------|-----------------|
-| submit_proposal     | proposal_id         | {proposalID}    |
-| submit_proposal [0] | voting_period_start | {proposalID}    |
-| proposal_deposit    | amount              | {depositAmount} |
-| proposal_deposit    | proposal_id         | {proposalID}    |
+| submit_proposal     | proposal_id         | `{proposalID}`    |
+| submit_proposal [0] | voting_period_start | `{proposalID}`    |
+| proposal_deposit    | amount              | `{depositAmount}` |
+| proposal_deposit    | proposal_id         | `{proposalID}`    |
 | message             | module              | governance      |
 | message             | action              | submit_proposal |
-| message             | sender              | {senderAddress} |
+| message             | sender              | `{senderAddress}` |
 
 * [0] Event only emitted if the voting period starts during the submission.
 
@@ -643,32 +653,32 @@ The governance module emits the following events:
 
 | Type          | Attribute Key | Attribute Value |
 |---------------|---------------|-----------------|
-| proposal_vote | option        | {voteOption}    |
-| proposal_vote | proposal_id   | {proposalID}    |
+| proposal_vote | option        | `{voteOption}`    |
+| proposal_vote | proposal_id   | `{proposalID}`    |
 | message       | module        | governance      |
 | message       | action        | vote            |
-| message       | sender        | {senderAddress} |
+| message       | sender        | `{senderAddress}` |
 
 #### MsgVoteWeighted
 
 | Type          | Attribute Key | Attribute Value       |
 |---------------|---------------|-----------------------|
-| proposal_vote | option        | {weightedVoteOptions} |
-| proposal_vote | proposal_id   | {proposalID}          |
+| proposal_vote | option        | `{weightedVoteOptions}` |
+| proposal_vote | proposal_id   | `{proposalID}`          |
 | message       | module        | governance            |
 | message       | action        | vote                  |
-| message       | sender        | {senderAddress}       |
+| message       | sender        | `{senderAddress}`       |
 
 #### MsgDeposit
 
 | Type                 | Attribute Key       | Attribute Value |
 |----------------------|---------------------|-----------------|
-| proposal_deposit     | amount              | {depositAmount} |
-| proposal_deposit     | proposal_id         | {proposalID}    |
-| proposal_deposit [0] | voting_period_start | {proposalID}    |
+| proposal_deposit     | amount              | `{depositAmount}` |
+| proposal_deposit     | proposal_id         | `{proposalID}`    |
+| proposal_deposit [0] | voting_period_start | `{proposalID}`    |
 | message              | module              | governance      |
 | message              | action              | deposit         |
-| message              | sender              | {senderAddress} |
+| message              | sender              | `{senderAddress}` |
 
 * [0] Event only emitted if the voting period starts during the submission.
 
@@ -678,7 +688,7 @@ The governance module contains the following parameters:
 
 | Key                           | Type             | Example                                 |
 |-------------------------------|------------------|-----------------------------------------|
-| min_deposit                   | array (coins)    | [{"denom":"uatom","amount":"10000000"}] |
+| min_deposit                   | array (coins)    | `[{"denom":"uatom","amount":"10000000"}]` |
 | max_deposit_period            | string (time ns) | "172800000000000" (17280s)              |
 | voting_period                 | string (time ns) | "172800000000000" (17280s)              |
 | quorum                        | string (dec)     | "0.334000000000000000"                  |
@@ -686,7 +696,7 @@ The governance module contains the following parameters:
 | veto                          | string (dec)     | "0.334000000000000000"                  |
 | expedited_threshold           | string (time ns) | "0.667000000000000000"                  |
 | expedited_voting_period       | string (time ns) | "86400000000000" (8600s)                |
-| expedited_min_deposit         | array (coins)    | [{"denom":"uatom","amount":"50000000"}] |
+| expedited_min_deposit         | array (coins)    | `[{"denom":"uatom","amount":"50000000"}]` |
 | burn_proposal_deposit_prevote | bool             | false                                    |
 | burn_vote_quorum              | bool             | false                                   |
 | burn_vote_veto                | bool             | true                                    |
@@ -1087,10 +1097,12 @@ where `proposal.json` contains:
 {
   "messages": [
     {
-      "@type": "/cosmos.bank.v1beta1.MsgSend",
-      "from_address": "cosmos1...", // The gov module module address
+  "@type": "/cosmos.bank.v1beta1.MsgSend",
+  "from_address": "cosmos1...", // The gov module module address
       "to_address": "cosmos1...",
-      "amount":[{"denom": "stake","amount": "10"}]
+  "amount":[{
+  "denom": "stake",
+  "amount": "10"}]
     }
   ],
   "metadata": "AQ==",
@@ -1203,7 +1215,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Proposal
 ```
@@ -1214,27 +1227,28 @@ Example Output:
 {
   "proposal": {
     "proposalId": "1",
-    "content": {"@type":"/cosmos.gov.v1beta1.TextProposal","description":"testing, testing, 1, 2, 3","title":"Test Proposal"},
+    "content": {"@type":"/cosmos.gov.v1beta1.TextProposal","description":"testing, testing, 1, 2, 3","title":"Test Proposal"
+},
     "status": "PROPOSAL_STATUS_VOTING_PERIOD",
     "finalTallyResult": {
       "yes": "0",
       "abstain": "0",
       "no": "0",
       "noWithVeto": "0"
-    },
+},
     "submitTime": "2021-09-16T19:40:08.712440474Z",
     "depositEndTime": "2021-09-18T19:40:08.712440474Z",
     "totalDeposit": [
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ],
     "votingStartTime": "2021-09-16T19:40:08.712440474Z",
     "votingEndTime": "2021-09-18T19:40:08.712440474Z",
     "title": "Test Proposal",
     "summary": "testing, testing, 1, 2, 3"
-  }
+}
 }
 ```
 
@@ -1248,7 +1262,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Proposal
 ```
@@ -1260,7 +1275,9 @@ Example Output:
   "proposal": {
     "id": "1",
     "messages": [
-      {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."}
+      {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"
+}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."
+}
     ],
     "status": "PROPOSAL_STATUS_VOTING_PERIOD",
     "finalTallyResult": {
@@ -1268,21 +1285,21 @@ Example Output:
       "abstainCount": "0",
       "noCount": "0",
       "noWithVetoCount": "0"
-    },
+},
     "submitTime": "2022-03-28T11:50:20.819676256Z",
     "depositEndTime": "2022-03-30T11:50:20.819676256Z",
     "totalDeposit": [
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ],
     "votingStartTime": "2022-03-28T14:25:26.644857113Z",
     "votingEndTime": "2022-03-30T14:25:26.644857113Z",
     "metadata": "AQ==",
     "title": "Test Proposal",
     "summary": "testing, testing, 1, 2, 3"
-  }
+}
 }
 ```
 
@@ -1317,18 +1334,18 @@ Example Output:
         "abstain": "0",
         "no": "0",
         "noWithVeto": "0"
-      },
+},
       "submitTime": "2022-03-28T11:50:20.819676256Z",
       "depositEndTime": "2022-03-30T11:50:20.819676256Z",
       "totalDeposit": [
         {
           "denom": "stake",
           "amount": "10000000010"
-        }
+}
       ],
       "votingStartTime": "2022-03-28T14:25:26.644857113Z",
       "votingEndTime": "2022-03-30T14:25:26.644857113Z"
-    },
+},
     {
       "proposalId": "2",
       "status": "PROPOSAL_STATUS_DEPOSIT_PERIOD",
@@ -1337,24 +1354,23 @@ Example Output:
         "abstain": "0",
         "no": "0",
         "noWithVeto": "0"
-      },
+},
       "submitTime": "2022-03-28T14:02:41.165025015Z",
       "depositEndTime": "2022-03-30T14:02:41.165025015Z",
       "totalDeposit": [
         {
           "denom": "stake",
           "amount": "10"
-        }
+}
       ],
       "votingStartTime": "0001-01-01T00:00:00Z",
       "votingEndTime": "0001-01-01T00:00:00Z"
-    }
+}
   ],
   "pagination": {
     "total": "2"
-  }
 }
-
+}
 ```
 
 Using v1:
@@ -1379,7 +1395,9 @@ Example Output:
     {
       "id": "1",
       "messages": [
-        {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."}
+        {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"
+}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."
+}
       ],
       "status": "PROPOSAL_STATUS_VOTING_PERIOD",
       "finalTallyResult": {
@@ -1387,25 +1405,27 @@ Example Output:
         "abstainCount": "0",
         "noCount": "0",
         "noWithVetoCount": "0"
-      },
+},
       "submitTime": "2022-03-28T11:50:20.819676256Z",
       "depositEndTime": "2022-03-30T11:50:20.819676256Z",
       "totalDeposit": [
         {
           "denom": "stake",
           "amount": "10000000010"
-        }
+}
       ],
       "votingStartTime": "2022-03-28T14:25:26.644857113Z",
       "votingEndTime": "2022-03-30T14:25:26.644857113Z",
       "metadata": "AQ==",
       "title": "Proposal Title",
       "summary": "Proposal Summary"
-    },
+},
     {
       "id": "2",
       "messages": [
-        {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."}
+        {"@type":"/cosmos.bank.v1beta1.MsgSend","amount":[{"denom":"stake","amount":"10"
+}],"fromAddress":"cosmos1..","toAddress":"cosmos1.."
+}
       ],
       "status": "PROPOSAL_STATUS_DEPOSIT_PERIOD",
       "finalTallyResult": {
@@ -1413,23 +1433,23 @@ Example Output:
         "abstainCount": "0",
         "noCount": "0",
         "noWithVetoCount": "0"
-      },
+},
       "submitTime": "2022-03-28T14:02:41.165025015Z",
       "depositEndTime": "2022-03-30T14:02:41.165025015Z",
       "totalDeposit": [
         {
           "denom": "stake",
           "amount": "10"
-        }
+}
       ],
       "metadata": "AQ==",
       "title": "Proposal Title",
       "summary": "Proposal Summary"
-    }
+}
   ],
   "pagination": {
     "total": "2"
-  }
+}
 }
 ```
 
@@ -1447,7 +1467,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1","voter":"cosmos1.."}' \
+    -d '{"proposal_id":"1","voter":"cosmos1.."
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Vote
 ```
@@ -1464,9 +1485,9 @@ Example Output:
       {
         "option": "VOTE_OPTION_YES",
         "weight": "1000000000000000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
@@ -1480,7 +1501,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1","voter":"cosmos1.."}' \
+    -d '{"proposal_id":"1","voter":"cosmos1.."
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Vote
 ```
@@ -1497,9 +1519,9 @@ Example Output:
       {
         "option": "VOTE_OPTION_YES",
         "weight": "1.000000000000000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
@@ -1517,7 +1539,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Votes
 ```
@@ -1534,13 +1557,13 @@ Example Output:
         {
           "option": "VOTE_OPTION_YES",
           "weight": "1000000000000000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "total": "1"
-  }
+}
 }
 ```
 
@@ -1554,7 +1577,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Votes
 ```
@@ -1571,13 +1595,13 @@ Example Output:
         {
           "option": "VOTE_OPTION_YES",
           "weight": "1.000000000000000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "total": "1"
-  }
+}
 }
 ```
 
@@ -1585,7 +1609,7 @@ Example Output:
 
 The `Params` endpoint allows users to query all parameters for the `gov` module.
 
-<!-- TODO: #10197 Querying governance params outputs nil values -->
+{/* TODO: #10197 Querying governance params outputs nil values */}
 
 Using legacy v1beta1:
 
@@ -1597,7 +1621,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"params_type":"voting"}' \
+    -d '{"params_type":"voting"
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Params
 ```
@@ -1608,15 +1633,15 @@ Example Output:
 {
   "votingParams": {
     "votingPeriod": "172800s"
-  },
+},
   "depositParams": {
     "maxDepositPeriod": "0s"
-  },
+},
   "tallyParams": {
     "quorum": "MA==",
     "threshold": "MA==",
     "vetoThreshold": "MA=="
-  }
+}
 }
 ```
 
@@ -1630,7 +1655,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"params_type":"voting"}' \
+    -d '{"params_type":"voting"
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Params
 ```
@@ -1641,7 +1667,7 @@ Example Output:
 {
   "votingParams": {
     "votingPeriod": "172800s"
-  }
+}
 }
 ```
 
@@ -1659,7 +1685,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    '{"proposal_id":"1","depositor":"cosmos1.."}' \
+    '{"proposal_id":"1","depositor":"cosmos1.."
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Deposit
 ```
@@ -1675,9 +1702,9 @@ Example Output:
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
@@ -1691,7 +1718,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    '{"proposal_id":"1","depositor":"cosmos1.."}' \
+    '{"proposal_id":"1","depositor":"cosmos1.."
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Deposit
 ```
@@ -1707,9 +1735,9 @@ Example Output:
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
@@ -1727,7 +1755,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/Deposits
 ```
@@ -1744,13 +1773,13 @@ Example Output:
         {
           "denom": "stake",
           "amount": "10000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "total": "1"
-  }
+}
 }
 ```
 
@@ -1764,7 +1793,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/Deposits
 ```
@@ -1781,13 +1811,13 @@ Example Output:
         {
           "denom": "stake",
           "amount": "10000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "total": "1"
-  }
+}
 }
 ```
 
@@ -1805,7 +1835,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1beta1.Query/TallyResult
 ```
@@ -1819,7 +1850,7 @@ Example Output:
     "abstain": "0",
     "no": "0",
     "noWithVeto": "0"
-  }
+}
 }
 ```
 
@@ -1833,7 +1864,8 @@ Example:
 
 ```bash
 grpcurl -plaintext \
-    -d '{"proposal_id":"1"}' \
+    -d '{"proposal_id":"1"
+}' \
     localhost:9090 \
     cosmos.gov.v1.Query/TallyResult
 ```
@@ -1847,7 +1879,7 @@ Example Output:
     "abstain": "0",
     "no": "0",
     "noWithVeto": "0"
-  }
+}
 }
 ```
 
@@ -1862,7 +1894,9 @@ The `proposals` endpoint allows users to query a given proposal.
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}
 ```
 
 Example:
@@ -1884,25 +1918,27 @@ Example Output:
       "abstain": "0",
       "no": "0",
       "no_with_veto": "0"
-    },
+},
     "submit_time": "2022-03-28T11:50:20.819676256Z",
     "deposit_end_time": "2022-03-30T11:50:20.819676256Z",
     "total_deposit": [
       {
         "denom": "stake",
         "amount": "10000000010"
-      }
+}
     ],
     "voting_start_time": "2022-03-28T14:25:26.644857113Z",
     "voting_end_time": "2022-03-30T14:25:26.644857113Z"
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}
 ```
 
 Example:
@@ -1926,9 +1962,9 @@ Example Output:
           {
             "denom": "stake",
             "amount": "10"
-          }
+}
         ]
-      }
+}
     ],
     "status": "PROPOSAL_STATUS_VOTING_PERIOD",
     "final_tally_result": {
@@ -1936,21 +1972,21 @@ Example Output:
       "abstain_count": "0",
       "no_count": "0",
       "no_with_veto_count": "0"
-    },
+},
     "submit_time": "2022-03-28T11:50:20.819676256Z",
     "deposit_end_time": "2022-03-30T11:50:20.819676256Z",
     "total_deposit": [
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ],
     "voting_start_time": "2022-03-28T14:25:26.644857113Z",
     "voting_end_time": "2022-03-30T14:25:26.644857113Z",
     "metadata": "AQ==",
     "title": "Proposal Title",
     "summary": "Proposal Summary"
-  }
+}
 }
 ```
 
@@ -1984,18 +2020,18 @@ Example Output:
         "abstain": "0",
         "no": "0",
         "no_with_veto": "0"
-      },
+},
       "submit_time": "2022-03-28T11:50:20.819676256Z",
       "deposit_end_time": "2022-03-30T11:50:20.819676256Z",
       "total_deposit": [
         {
           "denom": "stake",
           "amount": "10000000"
-        }
+}
       ],
       "voting_start_time": "2022-03-28T14:25:26.644857113Z",
       "voting_end_time": "2022-03-30T14:25:26.644857113Z"
-    },
+},
     {
       "proposal_id": "2",
       "content": null,
@@ -2005,23 +2041,23 @@ Example Output:
         "abstain": "0",
         "no": "0",
         "no_with_veto": "0"
-      },
+},
       "submit_time": "2022-03-28T14:02:41.165025015Z",
       "deposit_end_time": "2022-03-30T14:02:41.165025015Z",
       "total_deposit": [
         {
           "denom": "stake",
           "amount": "10"
-        }
+}
       ],
       "voting_start_time": "0001-01-01T00:00:00Z",
       "voting_end_time": "0001-01-01T00:00:00Z"
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "2"
-  }
+}
 }
 ```
 
@@ -2053,9 +2089,9 @@ Example Output:
             {
               "denom": "stake",
               "amount": "10"
-            }
+}
           ]
-        }
+}
       ],
       "status": "PROPOSAL_STATUS_VOTING_PERIOD",
       "final_tally_result": {
@@ -2063,21 +2099,21 @@ Example Output:
         "abstain_count": "0",
         "no_count": "0",
         "no_with_veto_count": "0"
-      },
+},
       "submit_time": "2022-03-28T11:50:20.819676256Z",
       "deposit_end_time": "2022-03-30T11:50:20.819676256Z",
       "total_deposit": [
         {
           "denom": "stake",
           "amount": "10000000010"
-        }
+}
       ],
       "voting_start_time": "2022-03-28T14:25:26.644857113Z",
       "voting_end_time": "2022-03-30T14:25:26.644857113Z",
       "metadata": "AQ==",
       "title": "Proposal Title",
       "summary": "Proposal Summary"
-    },
+},
     {
       "id": "2",
       "messages": [
@@ -2089,9 +2125,9 @@ Example Output:
             {
               "denom": "stake",
               "amount": "10"
-            }
+}
           ]
-        }
+}
       ],
       "status": "PROPOSAL_STATUS_DEPOSIT_PERIOD",
       "final_tally_result": {
@@ -2099,26 +2135,26 @@ Example Output:
         "abstain_count": "0",
         "no_count": "0",
         "no_with_veto_count": "0"
-      },
+},
       "submit_time": "2022-03-28T14:02:41.165025015Z",
       "deposit_end_time": "2022-03-30T14:02:41.165025015Z",
       "total_deposit": [
         {
           "denom": "stake",
           "amount": "10"
-        }
+}
       ],
       "voting_start_time": null,
       "voting_end_time": null,
       "metadata": "AQ==",
       "title": "Proposal Title",
       "summary": "Proposal Summary"
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "2"
-  }
+}
 }
 ```
 
@@ -2129,7 +2165,11 @@ The `votes` endpoint allows users to query a vote for a given proposal.
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}/votes/{voter}
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}/votes/{
+  voter
+}
 ```
 
 Example:
@@ -2150,16 +2190,20 @@ Example Output:
       {
         "option": "VOTE_OPTION_YES",
         "weight": "1.000000000000000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}/votes/{voter}
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}/votes/{
+  voter
+}
 ```
 
 Example:
@@ -2179,10 +2223,10 @@ Example Output:
       {
         "option": "VOTE_OPTION_YES",
         "weight": "1.000000000000000000"
-      }
+}
     ],
     "metadata": ""
-  }
+}
 }
 ```
 
@@ -2193,7 +2237,9 @@ The `votes` endpoint allows users to query all votes for a given proposal.
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}/votes
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}/votes
 ```
 
 Example:
@@ -2215,21 +2261,23 @@ Example Output:
         {
           "option": "VOTE_OPTION_YES",
           "weight": "1.000000000000000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "1"
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}/votes
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}/votes
 ```
 
 Example:
@@ -2250,15 +2298,15 @@ Example Output:
         {
           "option": "VOTE_OPTION_YES",
           "weight": "1.000000000000000000"
-        }
+}
       ],
       "metadata": ""
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "1"
-  }
+}
 }
 ```
 
@@ -2266,12 +2314,14 @@ Example Output:
 
 The `params` endpoint allows users to query all parameters for the `gov` module.
 
-<!-- TODO: #10197 Querying governance params outputs nil values -->
+{/* TODO: #10197 Querying governance params outputs nil values */}
 
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/params/{params_type}
+/cosmos/gov/v1beta1/params/{
+  params_type
+}
 ```
 
 Example:
@@ -2286,24 +2336,26 @@ Example Output:
 {
   "voting_params": {
     "voting_period": "172800s"
-  },
+},
   "deposit_params": {
     "min_deposit": [
     ],
     "max_deposit_period": "0s"
-  },
+},
   "tally_params": {
     "quorum": "0.000000000000000000",
     "threshold": "0.000000000000000000",
     "veto_threshold": "0.000000000000000000"
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/params/{params_type}
+/cosmos/gov/v1/params/{
+  params_type
+}
 ```
 
 Example:
@@ -2318,17 +2370,17 @@ Example Output:
 {
   "voting_params": {
     "voting_period": "172800s"
-  },
+},
   "deposit_params": {
     "min_deposit": [
     ],
     "max_deposit_period": "0s"
-  },
+},
   "tally_params": {
     "quorum": "0.000000000000000000",
     "threshold": "0.000000000000000000",
     "veto_threshold": "0.000000000000000000"
-  }
+}
 }
 ```
 
@@ -2339,7 +2391,11 @@ The `deposits` endpoint allows users to query a deposit for a given proposal fro
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}/deposits/{depositor}
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}/deposits/{
+  depositor
+}
 ```
 
 Example:
@@ -2359,16 +2415,20 @@ Example Output:
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}/deposits/{depositor}
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}/deposits/{
+  depositor
+}
 ```
 
 Example:
@@ -2388,9 +2448,9 @@ Example Output:
       {
         "denom": "stake",
         "amount": "10000000"
-      }
+}
     ]
-  }
+}
 }
 ```
 
@@ -2401,7 +2461,9 @@ The `deposits` endpoint allows users to query all deposits for a given proposal.
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}/deposits
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}/deposits
 ```
 
 Example:
@@ -2422,21 +2484,23 @@ Example Output:
         {
           "denom": "stake",
           "amount": "10000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "1"
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}/deposits
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}/deposits
 ```
 
 Example:
@@ -2457,14 +2521,14 @@ Example Output:
         {
           "denom": "stake",
           "amount": "10000000"
-        }
+}
       ]
-    }
+}
   ],
   "pagination": {
     "next_key": null,
     "total": "1"
-  }
+}
 }
 ```
 
@@ -2475,7 +2539,9 @@ The `tally` endpoint allows users to query the tally of a given proposal.
 Using legacy v1beta1:
 
 ```bash
-/cosmos/gov/v1beta1/proposals/{proposal_id}/tally
+/cosmos/gov/v1beta1/proposals/{
+  proposal_id
+}/tally
 ```
 
 Example:
@@ -2493,14 +2559,16 @@ Example Output:
     "abstain": "0",
     "no": "0",
     "no_with_veto": "0"
-  }
+}
 }
 ```
 
 Using v1:
 
 ```bash
-/cosmos/gov/v1/proposals/{proposal_id}/tally
+/cosmos/gov/v1/proposals/{
+  proposal_id
+}/tally
 ```
 
 Example:
@@ -2518,7 +2586,7 @@ Example Output:
     "abstain": "0",
     "no": "0",
     "no_with_veto": "0"
-  }
+}
 }
 ```
 
