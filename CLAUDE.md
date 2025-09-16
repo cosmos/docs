@@ -2,108 +2,205 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Repository Overview
 
-This is the documentation repository for Cosmos EVM, built with Mintlify. The repository contains comprehensive documentation for the Cosmos EVM implementation, including API references, integration guides, smart contract documentation, and precompile specifications.
+This is the Cosmos Documentation Hub - a unified documentation system for all parts of the Cosmos Stack using Mintlify as the documentation platform. The repository manages documentation for multiple products including SDK, IBC, EVM, and CometBFT.
+
+## Architecture
+
+### Documentation Structure
+```
+docs/
+├── <product>/              # Product subdirectory (evm, sdk, ibc, cometbft)
+│   ├── next/              # Active development (latest unreleased)
+│   ├── v0.x.x/           # Frozen version snapshots
+│   │   ├── .version-frozen        # Marker file
+│   │   └── .version-metadata.json # Version metadata
+│   └── images/           # Product-specific images
+```
+
+### Key Files
+- `docs.json`: Mintlify navigation configuration with product dropdowns and versioning
+- `versions.json`: Registry of versions per product with defaults and next development targets
+- `scripts/`: Versioning automation and migration tools
 
 ## Common Development Commands
 
-### Local Development
+### Development Server
 ```bash
-# Start live-reload preview server
+npx mint dev         # Start local development server with live reload
+```
+
+### Validation & Linting
+```bash
+npx mint broken-links  # Check for broken internal links
+next lint             # Run Next.js linter
+```
+
+### Clean & Reset
+```bash
+yarn clean           # Remove build artifacts and dependencies
+yarn reset           # Clean and reinstall dependencies
+```
+
+## Versioning System
+
+### Freeze a Version (Interactive)
+```bash
+cd scripts
+npm run freeze       # Interactive prompts for product, version, etc.
+```
+
+### Update Release Notes
+```bash
+cd scripts
+# Fetch latest release for a product
+npm run release-notes latest sdk
+npm run release-notes latest ibc
+npm run release-notes latest evm
+
+# Fetch specific version
+npm run release-notes v0.53 sdk
+npm run release-notes v8 ibc
+```
+
+### Non-Interactive Version Freeze
+```bash
+cd scripts
+NON_INTERACTIVE=1 \
+  SUBDIR=sdk \
+  CURRENT_VERSION=v0.53.0 \
+  NEW_VERSION=v0.54.0 \
+  npm run freeze
+```
+
+## Product Configurations
+
+### SDK (Cosmos SDK)
+- **Versions**: next, v0.53, v0.50, v0.47
+- **Default**: v0.53
+- **GitHub**: cosmos/cosmos-sdk
+- **Changelog Location**: CHANGELOG.md
+
+### IBC (IBC-Go)
+- **Versions**: next, v10.1.x, v8.5.x, v7.8.x, v6.3.x, v5.4.x, v4.6.x
+- **Default**: next
+- **GitHub**: cosmos/ibc-go
+- **Changelog Location**: CHANGELOG.md
+
+### EVM (Cosmos EVM)
+- **Versions**: next, v0.4.x
+- **Default**: next
+- **Next Dev**: v0.5.0
+- **GitHub**: cosmos/evm
+- **Special**: Uses Google Sheets for EIP compatibility tables
+
+## Important Patterns
+
+### Link Management
+When editing documentation:
+- **Internal docs links**: Update to version-specific paths
+  - Before: `/docs/sdk/next/learn/intro`
+  - After: `/docs/sdk/v0.53/learn/intro`
+- **Snippet imports**: Keep unchanged (shared across versions)
+  - Always: `/snippets/component.mdx`
+- **External links**: Keep unchanged
+
+### Navigation Updates
+Navigation structure in `docs.json` uses product dropdowns:
+```json
+{
+  "navigation": {
+    "dropdowns": [
+      {
+        "dropdown": "SDK",
+        "versions": [
+          { "version": "v0.53", "tabs": [...] },
+          { "version": "next", "tabs": [...] }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Version Metadata
+Each frozen version contains:
+- `.version-frozen`: Marker file indicating frozen state
+- `.version-metadata.json`: Freeze timestamp and version info
+
+## Mintlify Constraints
+
+### Component Usage
+- Components must be imported from `/snippets/` directory
+- Props can be passed to components (e.g., `<Component prop="value" />`)
+- No inline component definitions or dynamic imports in MDX
+
+### MDX Limitations
+- No JavaScript expressions in MDX body
+- No JSON imports in MDX files
+- Standard MDX syntax only
+- HTML comments allowed for metadata
+
+## Migration and Formatting Scripts
+
+### Docusaurus to Mintlify Migration
+```bash
+cd scripts
+node migrate-docusaurus.js <source-dir> <target-dir>
+```
+
+### Code Block Formatting
+```bash
+cd scripts
+node code-formatter.js <file-path>
+```
+
+## Google Sheets Integration (EVM Only)
+
+EVM documentation uses Google Sheets for EIP compatibility tables:
+1. Service account credentials required: `scripts/service-account-key.json`
+2. Version freeze creates sheet tabs for snapshots
+3. Component usage: `<EIPCompatibilityTable sheetTab="v0.4.x" />`
+
+## Git Workflow
+
+### After Version Freeze
+```bash
+git add -A
+git commit -m "docs: freeze <product> <version> and begin <new-version> development"
+git push
+```
+
+### Documentation Updates
+- Active development: Edit files in `docs/<product>/next/`
+- Previous versions: Generally frozen, edit only for critical fixes
+- Always test locally with `npx mint dev` before committing
+
+## Testing Documentation Changes
+
+### Local Preview
+```bash
 npx mint dev
+# Navigate to http://localhost:3000
+# Changes auto-reload
+```
 
-# Check for broken internal links (run before committing)
+### Validate Links
+```bash
 npx mint broken-links
-
-# Validate OpenAPI specifications
-npx mint openapi-check docs/api-reference/ethereum-json-rpc/openapi.yaml
-
-# Clean build artifacts
-npm run clean
-
-# Full reset (clean + reinstall)
-npm run reset
 ```
 
-### Documentation Generation Scripts
-```bash
-# Generate interactive RPC documentation pages
-node scripts/generate-evm-rpc-docs.js
+### Check Navigation Structure
+Review `docs.json` to ensure:
+- All pages are included in navigation
+- Version dropdowns are correctly configured
+- Groups and tabs are properly nested
 
-# Generate OpenAPI specification from methods documentation
-node scripts/generate-evm-rpc-openapi.js
+## Recent Architecture Changes
 
-# Refresh release notes from cosmos/evm changelog
-./scripts/refresh-release-notes.sh
-
-# Parse changelog to Mintlify format
-node scripts/parse-evm-changelog.js
-```
-
-### Testing Precompiles
-```bash
-# Run all precompile tests
-./tests/run-tests.sh
-
-# Test individual precompiles
-cd tests && npm test
-```
-
-## Architecture & Structure
-
-### Documentation Organization
-The documentation follows a hierarchical structure configured in `docs.json`:
-
-- **docs/documentation/** - Main documentation content
-  - `concepts/` - Core concepts (accounts, gas, transactions, IBC)
-  - `cosmos-sdk/` - SDK modules and protocol details
-  - `smart-contracts/` - Precompiles and predeployed contracts
-  - `integration/` - Integration guides and migration docs
-  - `getting-started/` - Quick start guides and tooling
-
-- **docs/api-reference/** - API documentation
-  - `ethereum-json-rpc/` - RPC methods, OpenAPI spec, and explorer
-
-- **docs/changelog/** - Release notes auto-synced from cosmos/evm
-
-### Key Technical Components
-
-1. **Mintlify Framework**: Documentation uses Mintlify v4.2.7 with custom MDX components and interactive features. Configuration in `docs.json` controls navigation, theming, and search.
-
-2. **Script Automation**: Scripts in `/scripts` handle:
-   - Parsing cosmos/evm changelog to generate release notes
-   - Creating interactive RPC documentation from methods.mdx
-   - Generating OpenAPI specifications for API testing
-
-3. **Precompile Testing**: Comprehensive test suite in `/tests` validates all precompile contracts against documentation, tracking implementation completeness and gas costs.
-
-4. **Component Library**: Custom JSX components in `/snippets` provide:
-   - EIP compatibility tables
-   - RPC method viewers
-   - Icon libraries
-   - Reusable UI elements
-
-### Documentation Workflow
-
-When updating documentation:
-1. Edit MDX files in appropriate section under `docs/`
-2. Run `npx mint dev` to preview changes locally
-3. Validate with `npx mint broken-links` before committing
-4. For RPC changes: regenerate docs with `node scripts/generate-evm-rpc-docs.js`
-5. For release notes: use `./scripts/refresh-release-notes.sh` to sync from upstream
-
-### Integration Points
-
-- **GitHub Actions**: Automated changelog sync workflow
-- **Cosmos EVM Repository**: Release notes pulled from github.com/cosmos/evm
-- **Precompile Addresses**: Fixed addresses documented in tests/README.md
-- **Network Endpoints**: Configure in tests/config.js for testing
-
-## Important Notes
-
-- All documentation files use MDX format with Mintlify-specific components
-- Navigation structure must be updated in `docs.json` when adding new pages
-- Interactive RPC documentation is generated from the source `methods.mdx` file
-- Test findings in `tests/README.md` track documentation accuracy against implementation
-- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+Based on git status, the repository is undergoing restructuring:
+- SDK documentation reorganization (learn, tutorials, user sections)
+- Migration from proposed navigation structures to unified system
+- Cleanup of old Docusaurus artifacts
+- New content for SDK next version including advanced topics and tutorials
