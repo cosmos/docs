@@ -1,9 +1,37 @@
 #!/usr/bin/env node
 
+/**
+ * @fileoverview Docusaurus to Mintlify Migration Script
+ * @description Converts Docusaurus documentation to Mintlify format with proper MDX syntax,
+ * code formatting, and navigation structure. Supports multi-version migration with intelligent
+ * content caching and validation.
+ *
+ * @example
+ * // Interactive mode
+ * node migrate-docusaurus.js
+ *
+ * @example
+ * // Non-interactive mode (all versions)
+ * node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk
+ * node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
+ *
+ * @requires gray-matter - Parse and generate YAML frontmatter
+ * @requires unified - Unified text processing framework
+ * @requires remark-parse - Markdown parser for unified
+ * @requires remark-gfm - GitHub Flavored Markdown support
+ * @requires remark-stringify - Markdown stringifier for unified
+ * @requires unist-util-visit - Tree visitor for unified AST
+ *
+ * @author Cosmos SDK Team
+ * @version 2.0.0
+ * @since 2024
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
+import crypto from 'crypto';
 import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
@@ -24,7 +52,30 @@ const rl = readline.createInterface({
 const prompt = (question) => new Promise((resolve) => rl.question(question, resolve));
 
 /**
- * Safely process content while preserving code blocks and inline code
+ * Safely process content while preserving code blocks and inline code.
+ * This is the foundation of our text transformation system, ensuring code is never
+ * accidentally modified by markdown transformations.
+ *
+ * @function safeProcessContent
+ * @param {string} content - The markdown content to process
+ * @param {Function} processor - Function to process non-code content
+ * @returns {string} Processed content with code blocks preserved
+ *
+ * @description
+ * Pipeline steps:
+ * 1. Extract and replace fenced code blocks with placeholders
+ * 2. Extract and replace inline code with placeholders
+ * 3. Apply processor function to remaining content
+ * 4. Restore inline code from placeholders
+ * 5. Restore fenced code blocks from placeholders
+ *
+ * This ensures transformations like escaping underscores or fixing JSX
+ * comments never affect actual code content.
+ *
+ * @example
+ * const result = safeProcessContent(content, (text) => {
+ *   return text.replace(/_/g, '\\_'); // Escapes underscores in text only
+ * });
  */
 function safeProcessContent(content, processor) {
   // STEP 1: Extract all code blocks and inline code to protect them from processing
@@ -56,20 +107,62 @@ function safeProcessContent(content, processor) {
 
   // STEP 5: Restore inline code first
   // This puts back the original inline code (e.g., `{groupId}`) exactly as it was
+  // Handle both escaped and non-escaped versions (in case underscores were escaped in tables)
   for (let i = 0; i < inlineCode.length; i++) {
-    processed = processed.replace(`__INLINE_CODE_${i}__`, inlineCode[i]);
+    // Try escaped version first (if underscores were escaped in table processing)
+    const escapedPlaceholder = `__INLINE\\_CODE_${i}__`;
+    const normalPlaceholder = `__INLINE_CODE_${i}__`;
+
+    if (processed.includes(escapedPlaceholder)) {
+      processed = processed.replace(escapedPlaceholder, inlineCode[i]);
+    } else {
+      processed = processed.replace(normalPlaceholder, inlineCode[i]);
+    }
   }
 
   // STEP 6: Restore code blocks last
   for (let i = 0; i < codeBlocks.length; i++) {
-    processed = processed.replace(`__CODE_BLOCK_${i}__`, codeBlocks[i]);
+    // Try escaped version first
+    const escapedPlaceholder = `__CODE\\_BLOCK_${i}__`;
+    const normalPlaceholder = `__CODE_BLOCK_${i}__`;
+
+    if (processed.includes(escapedPlaceholder)) {
+      processed = processed.replace(escapedPlaceholder, codeBlocks[i]);
+    } else {
+      processed = processed.replace(normalPlaceholder, codeBlocks[i]);
+    }
   }
 
   return processed;
 }
 
 /**
- * Parse Docusaurus frontmatter using battle-tested gray-matter library
+ * Parse Docusaurus frontmatter using battle-tested gray-matter library.
+ * Extracts YAML frontmatter and returns parsed metadata.
+ *
+ * @function parseDocusaurusFrontmatter
+ * @param {string} content - Raw markdown content with potential frontmatter
+ * @returns {Object} Parsed result
+ * @returns {Object} result.frontmatter - Parsed YAML frontmatter as object
+ * @returns {string} result.content - Content with frontmatter removed
+ *
+ * @description
+ * Uses gray-matter to parse YAML frontmatter from markdown.
+ * Handles missing frontmatter gracefully by returning empty object.
+ *
+ * Common Docusaurus frontmatter fields:
+ * - title: Page title
+ * - sidebar_label: Navigation label
+ * - sidebar_position: Sort order in navigation
+ * - description: Page description
+ * - slug: Custom URL slug
+ *
+ * @example
+ * const { frontmatter, content } = parseDocusaurusFrontmatter(
+ *   '---\ntitle: My Page\n---\n# Content'
+ * );
+ * // frontmatter = { title: 'My Page' }
+ * // content = '# Content'
  */
 function parseDocusaurusFrontmatter(content) {
   const parsed = matter(content);
@@ -81,7 +174,24 @@ function parseDocusaurusFrontmatter(content) {
 }
 
 /**
- * Extract title from content (first H1 heading)
+ * Extract title from content (first H1 heading).
+ * Removes the H1 from content to avoid duplication.
+ *
+ * @function extractTitleFromContent
+ * @param {string} content - Markdown content potentially containing H1
+ * @returns {Object} Extraction result
+ * @returns {string|null} result.title - Extracted title or null if no H1
+ * @returns {string} result.content - Content with H1 removed
+ *
+ * @description
+ * Looks for H1 heading at the start of content (after any blank lines).
+ * Supports both # syntax and underline (===) syntax.
+ * Returns the title text and content without the H1.
+ *
+ * @example
+ * const { title, content } = extractTitleFromContent('# My Title\n\nContent here');
+ * // title = 'My Title'
+ * // content = 'Content here'
  */
 function extractTitleFromContent(content) {
   const match = content.match(/^#\s+(.+)$/m);
@@ -96,27 +206,53 @@ function extractTitleFromContent(content) {
 
 
 /**
- * Convert Docusaurus admonitions to Mintlify callouts
+ * Convert Docusaurus admonitions to Mintlify callouts.
+ * Only processes non-code content, preserving code blocks.
+ *
+ * @function convertAdmonitions
+ * @param {string} content - Markdown content with Docusaurus admonitions
+ * @returns {string} Content with Mintlify callout components
+ *
+ * @description
+ * Converts Docusaurus triple-colon syntax to Mintlify components:
+ * - note admonitions to Note components
+ * - warning admonitions to Warning components
+ * - tip admonitions to Tip components
+ * - info admonitions to Info components
+ * - caution admonitions to Warning components
+ * - danger admonitions to Warning components
+ *
+ * Features:
+ * - Supports custom titles after the admonition type
+ * - Handles nested admonitions with a stack
+ * - Cleans up malformed syntax
+ * - Ensures proper tag pairing
+ * - Processes only non-code content
+ *
+ * @example
+ * // Converts Docusaurus admonition with title
+ * // to Mintlify Note component with bold title
  */
 function convertAdmonitions(content) {
-  const admonitionMap = {
-    'note': 'Note',
-    'tip': 'Tip',
-    'info': 'Info',
-    'warning': 'Warning',
-    'danger': 'Warning',
-    'caution': 'Warning',
-    'important': 'Info',
-    'success': 'Check',
-    'details': 'Accordion' // For expandable sections
-  };
+  return safeProcessContent(content, (nonCodeContent) => {
+    const admonitionMap = {
+      'note': 'Note',
+      'tip': 'Tip',
+      'info': 'Info',
+      'warning': 'Warning',
+      'danger': 'Warning',
+      'caution': 'Warning',
+      'important': 'Info',
+      'success': 'Check',
+      'details': 'Accordion' // For expandable sections
+    };
 
-  // Use line-by-line processing to handle complex nested cases
-  const lines = content.split('\n');
-  const result = [];
-  const admonitionStack = [];
+    // Use line-by-line processing to handle complex nested cases
+    const lines = nonCodeContent.split('\n');
+    const result = [];
+    const admonitionStack = [];
 
-  for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // Check for opening admonition
@@ -178,7 +314,8 @@ function convertAdmonitions(content) {
     }
   }
 
-  return finalResult;
+    return finalResult;
+  });
 }
 
 
@@ -283,7 +420,24 @@ function formatJsonCode(code) {
 }
 
 /**
- * Generic code formatting for other languages
+ * Generic code formatting for other languages.
+ * Applies basic formatting rules for unrecognized languages.
+ *
+ * @function formatGenericCode
+ * @param {string} code - Raw code in any language
+ * @returns {string} Formatted code with basic improvements
+ *
+ * @description
+ * Applies minimal formatting:
+ * - Basic brace positioning
+ * - Removes excessive blank lines
+ * - Trims whitespace
+ *
+ * Used as fallback when language-specific formatter unavailable.
+ *
+ * @example
+ * const formatted = formatGenericCode('function() {return true}');
+ * // Returns code with improved brace positioning
  */
 function formatGenericCode(code) {
   return code
@@ -300,10 +454,38 @@ function formatGenericCode(code) {
 }
 
 /**
- * Fix internal documentation links
+ * Fix internal documentation links for Mintlify's product-based structure.
+ * Only processes non-code content, preserving links in code blocks.
+ *
+ * @function fixInternalLinks
+ * @param {string} content - Markdown content with internal links
+ * @param {string} version - Target version (e.g., 'next', 'v0.50')
+ * @param {string} [product='generic'] - Product name for namespacing
+ * @returns {string} Content with updated internal links
+ *
+ * @description
+ * Updates various link patterns:
+ * - Relative markdown links changing extension to mdx
+ * - Versioned documentation paths
+ * - Product-specific namespacing
+ * - Image paths (if product is sdk)
+ *
+ * Link transformation examples:
+ * - Relative paths become absolute with product and version
+ * - Parent directory references resolved to absolute paths
+ * - Root paths get product and version prefixes
+ *
+ * @example
+ * const fixed = fixInternalLinks(
+ *   'markdown with relative link',
+ *   'v0.50',
+ *   'sdk'
+ * );
+ * // Returns markdown with absolute versioned link
  */
 function fixInternalLinks(content, version, product = 'generic') {
-  let result = content;
+  return safeProcessContent(content, (nonCodeContent) => {
+    let result = nonCodeContent;
 
   // Remove Docusaurus-specific "Direct link" anchors
   result = result.replace(/\[​\]\(#[^)]+\s+"Direct link to[^"]+"\)/g, '');
@@ -330,11 +512,32 @@ function fixInternalLinks(content, version, product = 'generic') {
     return ']('; // Remove ./ for non-images
   });
 
-  return result;
+    return result;
+  });
 }
 
 /**
- * Copy static assets (images) from source to target
+ * Copy static assets (images) from source to target directory.
+ * Recursively copies all image files while preserving directory structure.
+ *
+ * @function copyStaticAssets
+ * @param {string} staticPath - Source directory containing static assets
+ * @param {string} targetImagesDir - Target directory for images
+ *
+ * @description
+ * Copies image assets with the following features:
+ * - Recursively traverses source directory
+ * - Preserves directory structure in target
+ * - Copies common image formats: png, jpg, jpeg, gif, svg, webp
+ * - Creates target directories as needed
+ * - Skips non-image files
+ *
+ * @example
+ * copyStaticAssets(
+ *   '/source/static',
+ *   '/docs/images'
+ * );
+ * // Copies all images from /source/static to /docs/images
  */
 function copyStaticAssets(staticPath, targetImagesDir) {
   if (!fs.existsSync(targetImagesDir)) {
@@ -371,7 +574,32 @@ function copyStaticAssets(staticPath, targetImagesDir) {
 }
 
 /**
- * Update image paths to use centralized images folder
+ * Update image paths to use centralized images folder.
+ * Moves images from versioned directories to shared location.
+ *
+ * @function updateImagePaths
+ * @param {string} content - Content with image references
+ * @param {string} sourceRelativePath - Relative path of source file
+ * @param {string} version - Version directory name
+ * @returns {string} Content with updated image paths
+ *
+ * @description
+ * Updates image references to point to centralized images directory:
+ * - Removes version from image paths
+ * - Handles both markdown and HTML image syntax
+ * - Preserves relative path structure within images folder
+ *
+ * Path transformation:
+ * - Local images to centralized dirname path
+ * - Parent directory images to root images path
+ *
+ * @example
+ * const updated = updateImagePaths(
+ *   'markdown with local image reference',
+ *   'learn/intro.md',
+ *   'v0.50'
+ * );
+ * // Returns markdown with centralized image path
  */
 function updateImagePaths(content, sourceRelativePath, version) {
   let result = content;
@@ -440,10 +668,266 @@ function updateImagePaths(content, sourceRelativePath, version) {
 }
 
 /**
- * Fix common MDX parsing issues while preserving all code content
+ * Content-based migration cache system.
+ * Implements SHA-256 checksumming to detect duplicate content across versions,
+ * significantly improving performance by processing identical content only once.
+ *
+ * @namespace migrationCache
+ * @description
+ * The cache system tracks:
+ * - Content checksums to detect duplicates
+ * - Transformation results to reuse for identical content
+ * - Validation errors per unique content block
+ * - File paths mapped to their content checksums
+ *
+ * This enables efficient processing where identical files across versions
+ * (e.g., v0.47, v0.50, v0.53) are transformed only once but written to
+ * all appropriate locations.
+ *
+ * @example
+ * // Process flow with caching:
+ * // 1. File A in v0.47: Full processing, cached
+ * // 2. File A in v0.50 (identical): Cache hit, skip processing
+ * // 3. File A in v0.53 (modified): Different checksum, full processing
  */
-function fixMDXIssues(content) {
+const migrationCache = {
+  // Map of content checksum → migration result
+  contentCache: new Map(),
+  // Map of content checksum → validation errors
+  validationCache: new Map(),
+  // Map of file path → content checksum
+  fileChecksums: new Map(),
+
+  /**
+   * Calculate SHA-256 checksum of content
+   */
+  getChecksum(content) {
+    return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+  },
+
+  /**
+   * Check if content has been processed before
+   */
+  hasProcessed(checksum) {
+    return this.contentCache.has(checksum);
+  },
+
+  /**
+   * Get cached migration result
+   */
+  getCachedResult(checksum) {
+    return this.contentCache.get(checksum);
+  },
+
+  /**
+   * Cache migration result
+   */
+  cacheResult(checksum, result) {
+    this.contentCache.set(checksum, result);
+  },
+
+  /**
+   * Get cached validation errors
+   */
+  getCachedValidation(checksum) {
+    return this.validationCache.get(checksum) || [];
+  },
+
+  /**
+   * Cache validation errors
+   */
+  cacheValidation(checksum, errors) {
+    this.validationCache.set(checksum, errors);
+  },
+
+  /**
+   * Track file checksum
+   */
+  trackFile(filepath, checksum) {
+    this.fileChecksums.set(filepath, checksum);
+  },
+
+  /**
+   * Get statistics
+   */
+  getStats() {
+    return {
+      uniqueContent: this.contentCache.size,
+      totalFiles: this.fileChecksums.size,
+      duplicates: this.fileChecksums.size - this.contentCache.size
+    };
+  },
+
+  /**
+   * Clear cache
+   */
+  clear() {
+    this.contentCache.clear();
+    this.validationCache.clear();
+    this.fileChecksums.clear();
+  }
+};
+
+// Global issue tracker for reporting
+const migrationIssues = {
+  warnings: [],
+  errors: [],
+  currentFile: '',
+  processedFiles: new Set(),
+
+  addWarning(line, issue, suggestion = '') {
+    this.warnings.push({
+      file: this.currentFile,
+      line,
+      issue,
+      suggestion
+    });
+  },
+
+  addError(line, issue, suggestion = '') {
+    this.errors.push({
+      file: this.currentFile,
+      line,
+      issue,
+      suggestion
+    });
+  },
+
+  setCurrentFile(filepath) {
+    this.currentFile = filepath;
+  },
+
+  reset() {
+    this.warnings = [];
+    this.errors = [];
+    this.currentFile = '';
+    this.processedFiles.clear();
+  },
+
+  generateReport() {
+    const totalIssues = this.warnings.length + this.errors.length;
+    if (totalIssues === 0) return '';
+
+    let report = '\n' + '='.repeat(80) + '\n';
+    report += '📋 MIGRATION REPORT\n';
+    report += '='.repeat(80) + '\n\n';
+
+    if (this.errors.length > 0) {
+      report += `❌ ERRORS (${this.errors.length}) - These need manual fixes:\n`;
+      report += '-'.repeat(40) + '\n';
+
+      const errorsByFile = {};
+      this.errors.forEach(err => {
+        if (!errorsByFile[err.file]) errorsByFile[err.file] = [];
+        errorsByFile[err.file].push(err);
+      });
+
+      Object.entries(errorsByFile).forEach(([file, errors]) => {
+        report += `\n📄 ${file}:\n`;
+        errors.forEach(err => {
+          report += `  Line ${err.line}: ${err.issue}\n`;
+          if (err.suggestion) {
+            report += `    💡 Suggestion: ${err.suggestion}\n`;
+          }
+        });
+      });
+      report += '\n';
+    }
+
+    if (this.warnings.length > 0) {
+      report += `⚠️  WARNINGS (${this.warnings.length}) - Automatically handled but please verify:\n`;
+      report += '-'.repeat(40) + '\n';
+
+      const warningsByFile = {};
+      this.warnings.forEach(warn => {
+        if (!warningsByFile[warn.file]) warningsByFile[warn.file] = [];
+        warningsByFile[warn.file].push(warn);
+      });
+
+      Object.entries(warningsByFile).forEach(([file, warnings]) => {
+        report += `\n📄 ${file}:\n`;
+        warnings.forEach(warn => {
+          report += `  Line ${warn.line}: ${warn.issue}\n`;
+          if (warn.suggestion) {
+            report += `    ✅ Applied: ${warn.suggestion}\n`;
+          }
+        });
+      });
+    }
+
+    report += '\n' + '='.repeat(80) + '\n';
+    report += `Summary: ${this.errors.length} errors, ${this.warnings.length} warnings\n`;
+    report += '='.repeat(80) + '\n';
+
+    return report;
+  }
+};
+
+/**
+ * Fix common MDX parsing issues while preserving all code content.
+ * Applies automatic fixes for known Docusaurus to Mintlify incompatibilities.
+ *
+ * @function fixMDXIssues
+ * @param {string} content - The markdown content to fix
+ * @param {string} [filepath=''] - Path to file being processed (for error context)
+ * @returns {string} Fixed content with MDX issues resolved
+ *
+ * @description
+ * Automatic fixes applied (in order):
+ * 1. Escape underscores in table cells for proper rendering
+ * 2. Fix invalid JSX comment escaping
+ * 3. Fix expressions with hyphens that break JSX parsing
+ * 4. Convert double backticks to single backticks
+ * 5. Convert HTML comments to JSX comments
+ * 6. Escape template variables outside code to inline code
+ * 7. Fix unclosed braces in expressions
+ * 8. Convert <details> to <Expandable> for Mintlify
+ *
+ * All transformations use safeProcessContent() to preserve code blocks.
+ * Error reporting is handled separately in validateMDXContent().
+ *
+ * @see {@link safeProcessContent} - For code block preservation
+ * @see {@link validateMDXContent} - For error reporting
+ */
+function fixMDXIssues(content, filepath = '') {
+  // No error reporting in this function - only fixes
+  // Error reporting is done in validateMDXContent()
+
+  // ALL transformations happen inside safeProcessContent
+  // This ensures code blocks are completely untouched
   return safeProcessContent(content, (nonCodeContent) => {
+    // CRITICAL FIX 1: Escape underscores in table cells (epochs_number -> epochs\\_number)
+    // This must be done FIRST before any other processing
+    nonCodeContent = nonCodeContent.replace(/(\|[^|]*?)([a-zA-Z]+)_([a-zA-Z]+)([^|]*?\|)/g, (match, before, word1, word2, after) => {
+      // Escape underscores within table cells (including placeholders - we handle them later)
+      return `${before}${word1}\\_${word2}${after}`;
+    });
+
+    // Fix invalid JSX comments with escaped characters
+    // Handle complete escaped comments: {/\*...\*/}
+    nonCodeContent = nonCodeContent.replace(/\{\/\\\*([^}]*)\\\*\/\}/g, (match, content) => {
+      return '{/* ' + content.trim() + ' */}';
+    });
+
+    // Handle partial escaped comment starts: {/\*
+    nonCodeContent = nonCodeContent.replace(/\{\/\\\*/g, '{/*');
+
+    // Handle partial escaped comment ends: \*/}
+    nonCodeContent = nonCodeContent.replace(/\\\*\/\}/g, '*/}');
+
+    // Fix expressions with hyphens that break JSX parsing
+    nonCodeContent = nonCodeContent.replace(/`([^`]*<[^>]*-[^>]*>[^`]*)`/g, (match, content) => {
+      if (content.match(/<-+>/)) {
+        return '`' + content + '`';
+      }
+      return match;
+    });
+
+    // Fix double backticks to single backticks
+    nonCodeContent = nonCodeContent.replace(/``([^`]+)``/g, (match, content) => {
+      return '`' + content + '`';
+    });
+
     // Convert HTML comments to JSX comments, handling incomplete ones
     nonCodeContent = nonCodeContent.replace(/<!--\s*(.*?)\s*-->/gs, '{/* $1 */}');
     // Handle incomplete HTML comments that never close
@@ -472,17 +956,57 @@ function fixMDXIssues(content) {
       return quote + '\n' + template.replace(/\{([^}]+)\}/, '`{$1}`');
     });
 
-    // Fix orphaned closing tags by adding opening tags
-    // Look for closing tags without matching opening tags
-    nonCodeContent = nonCodeContent.replace(/(\n\s*\n)(\s*<\/(Info|Warning|Note|Tip|Check|Accordion|details)>)/gm, (match, emptyLine, closingTag, tagName) => {
-      // Check if there's a matching opening tag
-      const openTag = new RegExp(`<${tagName}[^>]*>`, 'i');
-      if (!openTag.test(nonCodeContent)) {
-        // Add the opening tag before the closing tag
-        return `\n\n<${tagName}>\n${closingTag}`;
+    // CRITICAL FIX 5: Fix orphaned closing tags by removing them
+    // First pass: identify and remove orphaned closing tags
+    const lines = nonCodeContent.split('\n');
+    const processedLines = [];
+    const tagStack = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Check for opening tags
+      const openingMatch = line.match(/<(Info|Warning|Note|Tip|Check|Accordion|details|Expandable)\b[^>]*>/);
+      if (openingMatch) {
+        tagStack.push({ tag: openingMatch[1], line: i });
+        processedLines.push(line);
+        continue;
       }
-      return match; // Keep as-is if there's already an opening tag
-    });
+
+      // Check for closing tags
+      const closingMatch = line.match(/^\s*<\/(Info|Warning|Note|Tip|Check|Accordion|details|Expandable)>/);
+      if (closingMatch) {
+        const tagName = closingMatch[1];
+
+        // Find matching opening tag in stack
+        let foundMatch = false;
+        for (let j = tagStack.length - 1; j >= 0; j--) {
+          if (tagStack[j].tag === tagName) {
+            // Found matching opening tag, remove from stack
+            tagStack.splice(j, 1);
+            foundMatch = true;
+            break;
+          }
+        }
+
+        if (foundMatch) {
+          processedLines.push(line); // Keep the closing tag
+        } else {
+          // Orphaned closing tag - remove it
+        }
+      } else {
+        processedLines.push(line);
+      }
+    }
+
+    // Check for unclosed opening tags
+    if (tagStack.length > 0) {
+      tagStack.forEach(({ tag, line }) => {
+        processedLines.push(`</${tag}>`);
+      });
+    }
+
+    nonCodeContent = processedLines.join('\n');
 
     // Convert any remaining <details> tags that weren't caught by AST processing
     nonCodeContent = nonCodeContent.replace(
@@ -495,47 +1019,28 @@ function fixMDXIssues(content) {
     // Fix unclosed placeholder tags - convert to inline code
     nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp)>/g, '`$1`');
 
-    // Convert all braces to proper inline code spans (complete units)
+    // Wrap template variables and expressions in backticks to avoid JSX parsing issues
+    // But be careful not to double-wrap already wrapped content
     nonCodeContent = nonCodeContent
-      // 1. Complete API paths: /path{vars} → `complete path`
-      .replace(/(\/[a-zA-Z][a-zA-Z0-9/._-]*\{[^}]+\})/g, '`$1`')
-
-      // 2. Complete event expressions: key.action={value} → `complete expression`
-      .replace(/([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*\{[^}]+\})/g, '`$1`')
-
-      // 3. Complete type references: map[type]interface{} → `complete type`
-      .replace(/(map\[[^\]]+\]interface\{\})/g, '`$1`')
-      .replace(/(\binterface\{\})(?!\s*[\{\"'])/g, '`$1`')
-
-      // 4. Complete JSON objects: {"key":"value"} → `complete object`
-      .replace(/(\{\"[^}]+\"\})/g, '`$1`')
-
-      // 5. Template placeholders like {positive consequences}
-      .replace(/\{(positive|negative|neutral)\s+consequences\}/g, '`{$1 consequences}`')
-      .replace(/\{context\s+body\}/g, '`{context body}`')
-
-      // 6. Complex paths in tables: /cosmos.group.v1.Msg/UpdateGroup{Admin|Metadata|Members}
-      // Wrap the whole path including braces in single backticks
-      .replace(/(\/[\w.]+\/\w+\{[^}]+\})/g, '`$1`')
-
-      // 7. Array syntax in tables: []string{msg_urls}
-      .replace(/(\[\]\w+)\{([^}]+)\}/g, '$1`{$2}`')
-
-      // 8. Template variables: {authorityAddress}
-      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, '`{$1}`')
-
-      // 9. General template variables (but skip JSX comments)
-      .replace(/\{([a-zA-Z][\w\s]*)\}/g, (match, content) => {
-        // Skip if it looks like JSX comment
-        if (content.includes('/*') || content.includes('*/')) return match;
-
-        // Otherwise wrap it
+      // 1. Complete paths with template variables: /path{vars} → `/path{vars}`
+      .replace(/(\/[a-zA-Z][a-zA-Z0-9/._-]*\{[^}]+\})/g, (match) => {
+        // Check if already wrapped in backticks
+        const beforeMatch = nonCodeContent.substring(0, nonCodeContent.indexOf(match));
+        const lastChar = beforeMatch[beforeMatch.length - 1];
+        if (lastChar === '`') return match; // Already wrapped
         return '`' + match + '`';
       })
 
-      // 6. Clean up any remaining lone braces (safety)
-      .replace(/^\s*\{\s*$/gm, '') // Remove lone { lines
-      .replace(/^\s*\}\s*$/gm, ''); // Remove lone } lines
+      // 2. Template variables that look like placeholders
+      .replace(/\{([a-zA-Z_][\w\s]*)\}/g, (match, content) => {
+        if (content.includes('/*') || content.includes('*/')) return match;
+
+        const pos = nonCodeContent.indexOf(match);
+        if (pos > 0 && nonCodeContent[pos - 1] === '`') return match;
+
+        if (match.includes('__INLINE_CODE_') || match.includes('__CODE_BLOCK_')) return match;
+        return '`' + match + '`';
+      })
 
     // Fix malformed HTML tags
     nonCodeContent = nonCodeContent.replace(/<([a-z][a-z0-9-]*)\s+([^>]+?)>/gi, (match, tag, content) => {
@@ -554,12 +1059,239 @@ function fixMDXIssues(content) {
     // Remove malformed import statements
     nonCodeContent = nonCodeContent.replace(/^import\s+[^;]*$/gm, '');
 
+    // CRITICAL FIX 5: Fix JSX attributes with hyphens (convert to camelCase)
+    // <Expandable custom-prop="value"> -> <Expandable customProp="value">
+    nonCodeContent = nonCodeContent.replace(/<([A-Z][a-zA-Z]*)\s+([^>]+)>/g, (match, component, attrs) => {
+      const fixedAttrs = attrs.replace(/([a-z]+-[a-z-]+)(=)/g, (attrMatch, attrName, equals) => {
+        // Convert kebab-case to camelCase
+        const camelCase = attrName.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+        return camelCase + equals;
+      });
+      return `<${component} ${fixedAttrs}>`;
+    });
+
+    // CRITICAL FIX 6: Balance unclosed braces in expressions
+    // Find expressions with unbalanced braces and escape them
+    nonCodeContent = nonCodeContent.replace(/\{([^}]*(?:\{[^}]*)*[^}]*)\n/g, (match, expression) => {
+      const openCount = (expression.match(/\{/g) || []).length;
+      const closeCount = (expression.match(/\}/g) || []).length;
+
+      if (openCount > closeCount) {
+        // Expression has unclosed braces - escape it
+        return '`' + match.trim() + '`\n';
+      }
+      return match;
+    });
+
+    // CRITICAL FIX 7: Fix <details> to <Expandable> conversion edge cases
+    nonCodeContent = nonCodeContent.replace(/<details>/gi, '<Expandable title="Details">');
+    nonCodeContent = nonCodeContent.replace(/<\/details>/gi, '</Expandable>');
+
     return nonCodeContent;
   });
 }
 
 /**
- * AST processor for fixing links
+ * Validate MDX content and report issues that require manual intervention.
+ * This function only reports problems that couldn't be automatically fixed.
+ *
+ * @function validateMDXContent
+ * @param {string} content - The markdown content to validate
+ * @param {string} [filepath=''] - Path to file being processed
+ * @returns {string} The original content (unchanged)
+ *
+ * @description
+ * Validation checks performed:
+ * 1. Double backticks that couldn't be fixed
+ * 2. Unescaped template variables ({var} outside code)
+ * 3. JSX attributes with hyphens converted to camelCase
+ * 4. Invalid JSX comment syntax
+ * 5. Unclosed JSX expressions (missing })
+ * 6. Unclosed JSX comments
+ * 7. Orphaned or mismatched JSX tags (<Tag> without </Tag>)
+ *
+ * Uses content fingerprinting to prevent duplicate validation of identical
+ * content across different file paths.
+ *
+ * @example
+ * // Validation happens after all automatic fixes:
+ * let content = fixMDXIssues(rawContent);
+ * content = validateMDXContent(content, 'path/to/file.md');
+ * // Errors are added to migrationIssues for final report
+ */
+function validateMDXContent(content, filepath = '') {
+  // Track current file for error reporting
+  if (filepath) {
+    migrationIssues.setCurrentFile(filepath);
+
+    // Skip validation if we've already processed this file content
+    const contentHash = content.substring(0, 200); // Simple content fingerprint
+    const fileKey = `${filepath}:${contentHash}`;
+    if (migrationIssues.processedFiles.has(fileKey)) {
+      return content; // Skip duplicate processing
+    }
+    migrationIssues.processedFiles.add(fileKey);
+  }
+
+  // Use safeProcessContent to only validate non-code content
+  return safeProcessContent(content, (nonCodeContent) => {
+    const lines = nonCodeContent.split('\n');
+
+    lines.forEach((line, index) => {
+      const lineNum = index + 1;
+
+    // Check for remaining double backticks
+    if (/``[^`]+``/.test(line)) {
+      migrationIssues.addError(
+        lineNum,
+        'Double backticks still present',
+        'Manually change to single backticks or escape the content'
+      );
+    }
+
+    // Check for unescaped template variables outside of backticks
+    // But be more selective - only flag ones that look like actual template variables
+    const templateVarMatch = line.match(/(?<!`)\{([a-zA-Z_][\w]*(?:_id|_Id|Id|Address|_name|_url|_urls)?)\}(?!`)/);
+    if (templateVarMatch &&
+        !templateVarMatch[0].includes('/*') &&
+        !templateVarMatch[0].includes('*/')) {
+      migrationIssues.addError(
+        lineNum,
+        `Unescaped template variable: ${templateVarMatch[0]}`,
+        'Wrap in backticks or escape with backslash'
+      );
+    }
+
+    // Check for JSX attribute names with hyphens
+    const jsxAttrMatch = line.match(/<([A-Z][a-zA-Z]*)\s+([a-z]+-[a-z-]+)=/);
+    if (jsxAttrMatch) {
+      migrationIssues.addError(
+        lineNum,
+        `JSX attribute with hyphen: ${jsxAttrMatch[2]}`,
+        `Convert to camelCase (e.g., ${jsxAttrMatch[2].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())})`
+      );
+    }
+
+    // Don't check for orphaned tags line-by-line - this is handled better in the full content check below
+
+    // Check for invalid JSX comments with backslashes
+    if (/\{\/\\\*|\\\*\/\}/.test(line)) {
+      migrationIssues.addError(
+        lineNum,
+        'Invalid JSX comment with escaped characters',
+        'Change to proper JSX comment: {/* content */}'
+      );
+    }
+
+
+    // Check for unclosed JSX expressions (not just any braces)
+    const jsxExprMatch = line.match(/(?<!`)(\{[^}]*$)/);
+    if (jsxExprMatch && !line.includes('*/}') && !line.includes('/*')) {
+      // This looks like an unclosed JSX expression
+      // Check if it continues on the next line
+      let closedOnNextLines = false;
+      for (let j = index + 1; j < Math.min(index + 5, lines.length); j++) {
+        if (lines[j].includes('}')) {
+          closedOnNextLines = true;
+          break;
+        }
+      }
+
+      if (!closedOnNextLines) {
+        migrationIssues.addError(
+          lineNum,
+          'Unclosed JSX expression',
+          'Missing closing brace for JSX expression'
+        );
+      }
+    }
+
+
+    // Check for expressions that are LIKELY to break acorn parsing
+    // Only check for the most problematic patterns
+    if (/\{\/\*/.test(line) && !/\{\/\*.*\*\/\}/.test(line)) {
+      // Unclosed block comment in expression
+      migrationIssues.addError(
+        lineNum,
+        'Unclosed comment in JSX expression',
+        'Comments inside JSX expressions must be properly closed'
+      );
+    }
+    });
+
+    // Check for common patterns that span multiple lines
+    const fullContent = lines.join('\n');
+
+    // More accurate check for unclosed JSX tags using a stack-based approach
+    const jsxTags = ['Info', 'Warning', 'Note', 'Tip', 'Check', 'Accordion', 'Expandable'];
+    const tagStack = [];
+    const tagRegex = new RegExp(`<(/?)(${jsxTags.join('|')})[^>]*>`, 'g');
+    let match;
+
+    while ((match = tagRegex.exec(fullContent)) !== null) {
+      const isClosing = match[1] === '/';
+      const tagName = match[2];
+
+      if (!isClosing) {
+        // Opening tag
+        tagStack.push({ tag: tagName, index: match.index });
+      } else {
+        // Closing tag
+        if (tagStack.length === 0 || tagStack[tagStack.length - 1].tag !== tagName) {
+          // Orphaned closing tag or mismatched tag
+          const lineNum = fullContent.substring(0, match.index).split('\n').length;
+          migrationIssues.addError(
+            lineNum,
+            `Orphaned or mismatched closing tag </${tagName}>`,
+            'Check for missing opening tag or remove this closing tag'
+          );
+        } else {
+          // Matched pair, remove from stack
+          tagStack.pop();
+        }
+      }
+    }
+
+    // Check for unclosed opening tags
+    if (tagStack.length > 0) {
+      tagStack.forEach(({ tag, index }) => {
+        const lineNum = fullContent.substring(0, index).split('\n').length;
+        migrationIssues.addError(
+          lineNum,
+          `Unclosed opening tag <${tag}>`,
+          'Add matching closing tag or remove this opening tag'
+        );
+      });
+    }
+
+    // Return the non-code content unchanged (validation only)
+    return nonCodeContent;
+  });
+
+}
+
+/**
+ * Create an AST processor plugin for fixing internal links.
+ * Handles relative paths and versioned documentation links.
+ *
+ * @function createLinkFixerPlugin
+ * @param {string} version - Target version (e.g., 'next', 'v0.50')
+ * @param {string} product - Product name for namespacing (e.g., 'sdk', 'ibc')
+ * @returns {Function} Unified plugin function
+ *
+ * @description
+ * This remark plugin traverses the AST and fixes:
+ * 1. Relative links to absolute paths
+ * 2. Versioned links for products with proper namespacing
+ * 3. Maintains external links unchanged
+ *
+ * @example
+ * // In AST pipeline:
+ * unified()
+ *   .use(createLinkFixerPlugin('v0.50', 'sdk'))
+ *   // Transforms:
+ *   // Converts relative paths to absolute
+ *   // Adds product and version to documentation paths
  */
 function createLinkFixerPlugin(version, product) {
   return () => {
@@ -581,7 +1313,33 @@ function createLinkFixerPlugin(version, product) {
 }
 
 /**
- * AST processor for fixing HTML elements and problematic syntax
+ * Create an AST processor plugin for fixing HTML elements and MDX incompatibilities.
+ * Converts HTML to JSX-compatible syntax for Mintlify.
+ *
+ * @function createHTMLFixerPlugin
+ * @returns {Function} Unified plugin function
+ *
+ * @description
+ * This remark plugin traverses the AST and fixes:
+ * 1. HTML comments to JSX comments
+ * 2. Details tags to Expandable components
+ * 3. Command placeholders to inline code
+ * 4. Comparison operators wrapped in code
+ * 5. Generic placeholders to inline code
+ *
+ * Special handling:
+ * - Preserves content in code blocks and links
+ * - Skips table cells to avoid double-wrapping
+ * - Handles both complete and unclosed tags
+ *
+ * @example
+ * // In AST pipeline:
+ * unified()
+ *   .use(createHTMLFixerPlugin())
+ *   // Transforms:
+ *   // Transforms HTML comments to JSX format
+ *   // Converts details/summary to Expandable components
+ *   // Wraps command placeholders in backticks
  */
 function createHTMLFixerPlugin() {
   return () => {
@@ -648,27 +1406,114 @@ function createHTMLFixerPlugin() {
 }
 
 /**
- * AST processor for enhancing code blocks
+ * Fetch actual code content from GitHub repository URLs.
+ * Converts blob URLs to raw URLs and retrieves file contents.
+ *
+ * @async
+ * @function fetchGitHubCode
+ * @param {string} url - GitHub blob URL to fetch from
+ * @returns {Promise<string|null>} File content or null if fetch fails
+ *
+ * @description
+ * Transforms GitHub blob URLs to raw.githubusercontent.com URLs
+ * and fetches the actual file content. Used to replace Docusaurus
+ * reference blocks with real code.
+ *
+ * URL transformation:
+ * - github.com domain to raw.githubusercontent.com
+ * - blob path segment removed for raw access
+ *
+ * @example
+ * const url = 'https://github.com/cosmos/cosmos-sdk/blob/main/types/coin.go';
+ * const code = await fetchGitHubCode(url);
+ * // Returns actual Go code from the file
+ *
+ * @throws {Error} Logs warning if fetch fails but doesn't throw
+ */
+async function fetchGitHubCode(url) {
+  try {
+    // Convert GitHub blob URLs to raw URLs
+    const rawUrl = url.replace('github.com', 'raw.githubusercontent.com')
+                    .replace('/blob/', '/');
+
+    const response = await fetch(rawUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const content = await response.text();
+    return content.trim();
+  } catch (error) {
+    console.warn(`Failed to fetch GitHub code from ${url}: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Create an AST processor plugin for enhancing code blocks.
+ * Handles reference URLs, adds expandable attributes, and detects languages.
+ *
+ * @function createCodeBlockEnhancerPlugin
+ * @returns {Function} Async unified plugin function
+ *
+ * @description
+ * This async remark plugin enhances code blocks by:
+ * 1. Detecting and fetching GitHub reference URLs
+ * 2. Adding 'expandable' attribute for blocks >10 lines
+ * 3. Auto-detecting language from code content
+ * 4. Formatting code based on language
+ * 5. Removing 'reference' keyword from metadata
+ *
+ * Reference handling:
+ * - Detects single-line GitHub URLs in code blocks
+ * - Fetches actual code for 'go' language blocks
+ * - Converts to comments for other languages
+ *
+ * Language detection based on common patterns:
+ * - Go: package declarations, func keywords
+ * - JavaScript: const, let, function, arrow functions
+ * - Python: def, class keywords
+ * - Bash: shell commands and scripts
+ * - JSON: object notation
+ * - Protobuf: message and service definitions
+ *
+ * @example
+ * // In AST pipeline:
+ * unified()
+ *   .use(createCodeBlockEnhancerPlugin())
+ * // Fetches GitHub references and enhances code blocks
  */
 function createCodeBlockEnhancerPlugin() {
   return () => {
-    return (tree, file) => {
+    return async (tree, file) => {
+      const codeNodes = [];
       visit(tree, 'code', (node) => {
-        // Handle Docusaurus "reference" syntax
-        // e.g., ```go reference
-        //       https://github.com/...
-        //       ```
-        if (node.lang && node.lang.includes(' reference')) {
-          const parts = node.lang.split(' ');
-          const lang = parts[0]; // Keep only the language part
+        codeNodes.push(node);
+      });
 
-          // Check if the code block contains just a URL (reference pattern)
-          if (node.value && node.value.trim().startsWith('https://')) {
-            const url = node.value.trim();
-            // Convert to a comment with the reference URL preserved
-            if (lang === 'go' || lang === 'golang') {
+      // Process code nodes with potential async operations
+      for (const node of codeNodes) {
+        let isReferenceBlock = false;
+
+        // Handle Docusaurus "reference" syntax by detecting URL-only content
+        // Check if the code block contains just a GitHub URL (reference pattern)
+        if (node.value && node.value.trim().startsWith('https://github.com/') &&
+            node.value.trim().split('\n').length === 1) {
+          isReferenceBlock = true;
+          const url = node.value.trim();
+          const lang = node.lang || 'text';
+
+          // Try to fetch actual content for go reference blocks
+          if (lang === 'go' || lang === 'golang') {
+            const fetchedContent = await fetchGitHubCode(url);
+            if (fetchedContent) {
+              node.value = fetchedContent;
+            } else {
               node.value = `// Reference: ${url}`;
-            } else if (lang === 'protobuf' || lang === 'proto') {
+            }
+          } else {
+            // For other languages, convert to comment with the reference URL preserved
+            if (lang === 'protobuf' || lang === 'proto') {
               node.value = `// Reference: ${url}`;
             } else if (lang === 'javascript' || lang === 'js' || lang === 'typescript' || lang === 'ts') {
               node.value = `// Reference: ${url}`;
@@ -681,9 +1526,6 @@ function createCodeBlockEnhancerPlugin() {
               node.value = `// Reference: ${url}`;
             }
           }
-
-          // Clean the lang to remove 'reference'
-          node.lang = lang;
         }
 
         // Remove any "reference" from meta as well
@@ -691,9 +1533,14 @@ function createCodeBlockEnhancerPlugin() {
           node.meta = node.meta.replace('reference', '').trim();
         }
 
-        // Add expandable to long code blocks
+        // Add expandable to long code blocks (but not to reference blocks that became comments)
         if (node.value && node.value.split('\n').length > 10) {
-          if (!node.meta || !node.meta.includes('expandable')) {
+          // Skip adding expandable to reference blocks that became single-line comments
+          const isShortReference = isReferenceBlock &&
+            (node.value.startsWith('// Reference:') || node.value.startsWith('# Reference:')) &&
+            node.value.split('\n').length <= 2;
+
+          if (!isShortReference && (!node.meta || !node.meta.includes('expandable'))) {
             node.meta = node.meta ? `${node.meta} expandable` : 'expandable';
           }
         }
@@ -727,13 +1574,30 @@ function createCodeBlockEnhancerPlugin() {
             node.value = formatted;
           }
         }
-      });
+      }
     };
   };
 }
 
 /**
- * Helper function to format code by language
+ * Format code content based on the programming language.
+ * Delegates to language-specific formatters.
+ *
+ * @function formatCodeByLanguage
+ * @param {string} lang - Language identifier (go, js, json, etc.)
+ * @param {string} code - Raw code content to format
+ * @returns {string} Formatted code or original if no formatter available
+ *
+ * @description
+ * Routes code to appropriate language-specific formatter:
+ * - Go/Golang uses formatGoCode()
+ * - JavaScript/TypeScript uses formatJavaScriptCode()
+ * - JSON/JSONC uses formatJsonCode()
+ * - Others return unchanged
+ *
+ * @example
+ * const formatted = formatCodeByLanguage('go', 'func main(){fmt.Println("hello")}');
+ * // Returns properly formatted Go code
  */
 function formatCodeByLanguage(lang, code) {
   switch (lang.toLowerCase()) {
@@ -754,9 +1618,37 @@ function formatCodeByLanguage(lang, code) {
 }
 
 /**
- * Process markdown with AST for better accuracy
+ * Process markdown content using AST transformations for accuracy.
+ * Orchestrates all AST-based plugins in the correct order.
+ *
+ * @async
+ * @function processMarkdownWithAST
+ * @param {string} content - Raw markdown content
+ * @param {string} version - Target version for link fixing
+ * @param {string} product - Product name for link namespacing
+ * @returns {Promise<string>} Transformed markdown content
+ *
+ * @description
+ * Creates a unified processor pipeline with:
+ * 1. remarkParse - Parse markdown to AST
+ * 2. remarkGfm - Enable GitHub Flavored Markdown (tables, etc.)
+ * 3. createLinkFixerPlugin - Fix internal links
+ * 4. createHTMLFixerPlugin - Convert HTML to JSX
+ * 5. createCodeBlockEnhancerPlugin - Enhance code blocks
+ * 6. remarkStringify - Convert AST back to markdown
+ *
+ * Falls back to original content if AST processing fails,
+ * logging a warning but not breaking the conversion.
+ *
+ * @example
+ * const processed = await processMarkdownWithAST(
+ *   '# Title\n\nContent with [link](../other.md)',
+ *   'v0.50',
+ *   'sdk'
+ * );
+ * // Returns markdown with fixed links and enhanced code blocks
  */
-function processMarkdownWithAST(content, version, product) {
+async function processMarkdownWithAST(content, version, product) {
   try {
     const processor = unified()
       .use(remarkParse)
@@ -766,7 +1658,7 @@ function processMarkdownWithAST(content, version, product) {
       .use(createCodeBlockEnhancerPlugin())
       .use(remarkStringify);
 
-    const file = processor.processSync(content);
+    const file = await processor.process(content);
     return String(file);
   } catch (error) {
     console.warn('AST processing failed, falling back to regex:', error.message);
@@ -776,10 +1668,47 @@ function processMarkdownWithAST(content, version, product) {
 }
 
 /**
- * Convert a single Docusaurus file to Mintlify format
+ * Convert a single Docusaurus markdown file to Mintlify MDX format.
+ * This is the main conversion pipeline that orchestrates all transformations.
+ *
+ * @async
+ * @function convertDocusaurusToMintlify
+ * @param {string} content - Raw Docusaurus markdown content
+ * @param {Object} [options={}] - Conversion options
+ * @param {string} [options.version='next'] - Version directory (e.g., 'v0.50', 'next')
+ * @param {string} [options.product='generic'] - Product name for link resolution (REQUIRED)
+ * @param {boolean} [options.keepTitle=false] - Whether to keep H1 in content
+ * @param {string} [options.filepath=''] - Source file path for error reporting
+ * @returns {Promise<Object>} Conversion result
+ * @returns {string} result.content - Converted MDX content with frontmatter
+ * @returns {Object} result.metadata - Extracted metadata (title, sidebarPosition)
+ *
+ * @description
+ * Conversion pipeline:
+ * 1. Parse frontmatter (extract YAML metadata)
+ * 2. Extract/generate title from frontmatter or content
+ * 3. Extract description from first paragraph
+ * 4. Convert HTML comments to JSX comments
+ * 5. Process with AST for accurate transformations:
+ *    - Fix internal links for versioning
+ *    - Enhance code blocks (add expandable, fetch GitHub refs)
+ * 6. Apply MDX fixes (escape underscores, fix JSX syntax)
+ * 7. Convert Docusaurus admonitions to Mintlify callouts
+ * 8. Fix internal links for product namespace
+ * 9. Validate content and report unfixable issues
+ * 10. Generate clean Mintlify-compatible frontmatter
+ *
+ * @example
+ * const result = await convertDocusaurusToMintlify(content, {
+ *   version: 'v0.50',
+ *   product: 'sdk',
+ *   filepath: 'learn/intro.md'
+ * });
+ * // result.content contains the converted MDX
+ * // result.metadata contains { title, sidebarPosition }
  */
-function convertDocusaurusToMintlify(content, options = {}) {
-  const { version = 'next', product = 'generic', keepTitle = false } = options;
+async function convertDocusaurusToMintlify(content, options = {}) {
+  const { version = 'next', product = 'generic', keepTitle = false, filepath = '' } = options;
 
   // Parse frontmatter and content
   const { frontmatter, content: mainContent } = parseDocusaurusFrontmatter(content);
@@ -838,12 +1767,15 @@ function convertDocusaurusToMintlify(content, options = {}) {
 
   // Fix common MDX issues
   // Use AST processing first for better accuracy (handles code blocks)
-  processedContent = processMarkdownWithAST(processedContent, version, product);
+  processedContent = await processMarkdownWithAST(processedContent, version, product);
 
   // Fix MDX issues and apply conversions
-  processedContent = fixMDXIssues(processedContent);
+  processedContent = fixMDXIssues(processedContent, filepath);
   processedContent = convertAdmonitions(processedContent);
   processedContent = fixInternalLinks(processedContent, version, product);
+
+  // Validate the processed content and report any remaining issues
+  processedContent = validateMDXContent(processedContent, filepath);
 
   // Build Mintlify frontmatter
   const mintlifyFrontmatter = {
@@ -901,7 +1833,47 @@ function convertDocusaurusToMintlify(content, options = {}) {
 }
 
 /**
- * Process a directory of Docusaurus files
+ * Process a directory of Docusaurus files and migrate them to Mintlify format.
+ * Implements content caching to optimize processing of duplicate files.
+ *
+ * @async
+ * @function processDirectory
+ * @param {string} sourceDir - Source directory containing Docusaurus markdown
+ * @param {string} targetDir - Target directory for Mintlify MDX output
+ * @param {string} version - Version string (e.g., 'next', 'v0.50')
+ * @param {string} [product='generic'] - Product name for link resolution
+ * @returns {Promise<Array>} Array of converted file metadata
+ *
+ * @description
+ * Processing workflow:
+ * 1. Recursively find all .md/.mdx files and images
+ * 2. Copy images to centralized images directory
+ * 3. For each markdown file:
+ *    a. Calculate SHA-256 checksum of content
+ *    b. Check cache for previously processed identical content
+ *    c. If cached: Use cached result and report cached errors
+ *    d. If new: Process with full conversion pipeline and cache result
+ * 4. Write converted content to target directory
+ * 5. Update image paths in converted content
+ * 6. Display conversion statistics
+ *
+ * Caching behavior:
+ * - Identical content across files is processed only once
+ * - Transformation results are cached by content checksum
+ * - Validation errors are cached separately
+ * - Each file still gets written to its target location
+ *
+ * @example
+ * const results = await processDirectory(
+ *   '/path/to/docs',
+ *   '/path/to/output',
+ *   'v0.50',
+ *   'sdk'
+ * );
+ * // Output: Conversion stats for v0.50:
+ * //   - Total files: 150
+ * //   - Unique content processed: 120
+ * //   - Cache hits (duplicates): 30
  */
 async function processDirectory(sourceDir, targetDir, version, product = 'generic') {
   const files = [];
@@ -961,12 +1933,64 @@ async function processDirectory(sourceDir, targetDir, version, product = 'generi
   }
 
   const converted = [];
+  let cacheHits = 0;
+  let uniqueProcessed = 0;
 
   for (const file of files) {
-    console.log(`Converting: ${file.relative}`);
-
     const content = fs.readFileSync(file.source, 'utf-8');
-    const result = convertDocusaurusToMintlify(content, { version, product });
+    const checksum = migrationCache.getChecksum(content);
+
+    // Track this file's checksum
+    migrationCache.trackFile(`${version}/${file.relative}`, checksum);
+
+    let result;
+    let fromCache = false;
+
+    // Check if we've already processed this exact content
+    if (migrationCache.hasProcessed(checksum)) {
+      // Use cached result
+      console.log(`Converting (cached): ${file.relative}`);
+      result = migrationCache.getCachedResult(checksum);
+      fromCache = true;
+      cacheHits++;
+
+      // Add cached validation errors for this file path
+      const cachedErrors = migrationCache.getCachedValidation(checksum);
+      if (cachedErrors.length > 0) {
+        migrationIssues.setCurrentFile(file.relative);
+        cachedErrors.forEach(error => {
+          migrationIssues.addError(error.line, error.issue, error.suggestion);
+        });
+      }
+    } else {
+      // Process new content
+      console.log(`Converting (new): ${file.relative}`);
+      migrationIssues.setCurrentFile(file.relative);
+
+      // Track errors before processing
+      const errorCountBefore = migrationIssues.errors.length;
+
+      result = await convertDocusaurusToMintlify(content, {
+        version,
+        product,
+        filepath: file.relative
+      });
+
+      // Cache the result
+      migrationCache.cacheResult(checksum, result);
+
+      // Cache validation errors for this content
+      const newErrors = migrationIssues.errors.slice(errorCountBefore);
+      if (newErrors.length > 0) {
+        migrationCache.cacheValidation(checksum, newErrors.map(e => ({
+          line: e.line,
+          issue: e.issue,
+          suggestion: e.suggestion
+        })));
+      }
+
+      uniqueProcessed++;
+    }
 
     // Determine target path - remove numbered prefixes from filenames
     let cleanRelativePath = file.relative.replace(/\/(\d+-)/g, '/').replace(/^(\d+-)/, '');
@@ -990,16 +2014,40 @@ async function processDirectory(sourceDir, targetDir, version, product = 'generi
       relativePath: cleanRelativePath.replace('.md', '.mdx'),
       sidebarPosition: result.metadata.sidebarPosition || 999,
       title: result.metadata.title,
-      ...result.metadata
+      ...result.metadata,
+      fromCache
     });
   }
+
+  console.log(`\nConversion stats for ${version}:`);
+  console.log(`  - Total files: ${files.length}`);
+  console.log(`  - Unique content processed: ${uniqueProcessed}`);
+  console.log(`  - Cache hits (duplicates): ${cacheHits}`);
 
   return converted;
 }
 
 
 /**
- * Resolve sidebar position conflicts by sorting alphabetically and renumbering
+ * Resolve sidebar position conflicts by sorting alphabetically and renumbering.
+ * Ensures unique positions for navigation ordering.
+ *
+ * @function resolveSidebarPositionConflicts
+ * @param {Array<Object>} files - Array of file objects with sidebarPosition
+ * @returns {Array<Object>} Files with resolved positions
+ *
+ * @description
+ * Handles duplicate sidebar positions by:
+ * 1. Sorting by original position, then alphabetically
+ * 2. Assigning sequential positions starting from 1
+ * 3. Preserving relative ordering from Docusaurus
+ *
+ * @example
+ * const resolved = resolveSidebarPositionConflicts([
+ *   { path: 'b.md', sidebarPosition: 1 },
+ *   { path: 'a.md', sidebarPosition: 1 }
+ * ]);
+ * // Returns: [{path: 'a.md', sidebarPosition: 1}, {path: 'b.md', sidebarPosition: 2}]
  */
 function resolveSidebarPositionConflicts(files) {
   // First, sort by position then alphabetically by path
@@ -1064,7 +2112,24 @@ function resolveSidebarPositionConflicts(files) {
 }
 
 /**
- * Get appropriate icon for product
+ * Get appropriate icon for product documentation.
+ * Maps product names to Mintlify icon identifiers.
+ *
+ * @function getProductIcon
+ * @param {string} product - Product name (sdk, ibc, evm, cometbft)
+ * @returns {string} Icon identifier for Mintlify
+ *
+ * @description
+ * Returns product-specific icons for navigation:
+ * - sdk: 'gear' (configuration/tools)
+ * - ibc: 'arrows-rotate' (interconnection)
+ * - evm: 'ethereum' (EVM compatibility)
+ * - cometbft: 'cube' (consensus)
+ * - default: 'book-open' (documentation)
+ *
+ * @example
+ * const icon = getProductIcon('sdk');
+ * // Returns: 'gear'
  */
 function getProductIcon(product) {
   const iconMap = {
@@ -1079,7 +2144,39 @@ function getProductIcon(product) {
 }
 
 /**
- * Update docs.json and versions.json with complete navigation
+ * Update docs.json and versions.json with complete navigation structure.
+ * Integrates migrated documentation into Mintlify's navigation system.
+ *
+ * @async
+ * @function updateDocsJson
+ * @param {Object} allVersionData - Migrated version data with file metadata
+ * @param {string} [product='generic'] - Product name for navigation grouping
+ * @returns {Promise<void>}
+ *
+ * @description
+ * Updates two configuration files:
+ *
+ * docs.json updates:
+ * - Creates/updates product dropdown in navigation
+ * - Adds version tabs with grouped pages
+ * - Organizes files by directory structure
+ * - Respects sidebar positions from Docusaurus
+ *
+ * versions.json updates:
+ * - Adds all migrated versions for the product
+ * - Sets appropriate default version
+ * - Maintains version ordering
+ *
+ * Navigation structure:
+ * - Groups files by directory (Learn, User, etc.)
+ * - Creates nested navigation based on file paths
+ * - Preserves Docusaurus sidebar_position ordering
+ *
+ * @example
+ * await updateDocsJson({
+ *   'v0.50': [{ relativePath: 'learn/intro.mdx', title: 'Intro' }]
+ * }, 'sdk');
+ * // Updates docs.json with SDK v0.50 navigation
  */
 async function updateDocsJson(allVersionData, product = 'generic') {
   const docsJsonPath = path.join(__dirname, '../docs.json');
@@ -1244,11 +2341,43 @@ async function updateDocsJson(allVersionData, product = 'generic') {
   fs.writeFileSync(docsJsonPath, JSON.stringify(docsJson, null, 2));
   fs.writeFileSync(versionsJsonPath, JSON.stringify(versionsJson, null, 2));
 
-  console.log('✅ Updated docs.json and versions.json');
+  console.log(' Updated docs.json and versions.json');
 }
 
 /**
- * Migrate all versions from a Docusaurus repository
+ * Migrate all versions from a Docusaurus repository to Mintlify format.
+ * Processes both current (docs/) and versioned (versioned_docs/) directories.
+ *
+ * @async
+ * @function migrateAllVersions
+ * @param {string} repositoryPath - Path to Docusaurus repository
+ * @param {string} targetDirectory - Base output directory for migrated files
+ * @param {string} [product='generic'] - Product name for link resolution (REQUIRED)
+ * @param {Object} [options={}] - Migration options
+ * @param {boolean} [options.updateNav=false] - Whether to update docs.json navigation
+ * @returns {Promise<Object>} Migration results with file counts and statistics
+ *
+ * @description
+ * Complete migration workflow:
+ * 1. Discover all version directories (docs/ and versioned_docs/)
+ * 2. Map Docusaurus versions to Mintlify format (docs becomes next)
+ * 3. Process each version with content caching
+ * 4. Display migration statistics and cache performance
+ * 5. Generate error report for manual fixes
+ * 6. Optionally update navigation in docs.json
+ *
+ * Version mapping:
+ * - docs/ becomes next/ (current development)
+ * - versioned_docs/version-X.Y becomes vX.Y/
+ *
+ * @example
+ * const results = await migrateAllVersions(
+ *   '~/repos/cosmos-sdk-docs',
+ *   './tmp',
+ *   'sdk',
+ *   { updateNav: true }
+ * );
+ * // Migrates all versions and updates navigation
  */
 async function migrateAllVersions(repositoryPath, targetDirectory, product = 'generic', options = {}) {
   const { updateNavigation = false } = options;
@@ -1258,6 +2387,10 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
   }
 
   console.log(`=== Migrating All Versions ===\n`);
+
+  // Reset migration issues tracker and cache for the entire migration
+  migrationIssues.reset();
+  migrationCache.clear();
 
   // Expand ~ to home directory if present
   if (repositoryPath.startsWith('~/')) {
@@ -1294,14 +2427,16 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
     console.log(`Found versions: ${versions.join(', ')}`);
 
     for (const version of versions) {
-      console.log(`\n--- Processing ${version} ---`);
+      // Format version with 'v' prefix for GitHub release format (e.g., v0.47, v0.50)
+      const formattedVersion = version.startsWith('v') ? version : `v${version}`;
+      console.log(`\n--- Processing ${version} -> ${formattedVersion} ---`);
       const sourceDir = path.join(sourceBase, `version-${version}`);
-      const targetDir = path.join(targetBase, version);
+      const targetDir = path.join(targetBase, formattedVersion);
 
-      const files = await processDirectory(sourceDir, targetDir, version, product);
-      allVersionData[version] = files;
+      const files = await processDirectory(sourceDir, targetDir, formattedVersion, product);
+      allVersionData[formattedVersion] = files;
 
-      console.log(`✅ Converted ${files.length} files for ${version}`);
+      console.log(` Converted ${files.length} files for ${formattedVersion}`);
     }
   }
 
@@ -1313,7 +2448,7 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
     const files = await processDirectory(currentDocsPath, targetDir, 'next', product);
     allVersionData['next'] = files;
 
-    console.log(`✅ Converted ${files.length} files for 'next'`);
+    console.log(` Converted ${files.length} files for 'next'`);
   }
 
   // 3. Update navigation (only if explicitly requested)
@@ -1324,17 +2459,73 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
     console.log(`\n--- Skipping navigation update (disabled) ---`);
   }
 
-  console.log(`\n🎉 Migration complete!`);
-  console.log(`📁 Files created in: ${targetBase}`);
+  console.log(`\n Migration complete!`);
+  console.log(` Files created in: ${targetBase}`);
   if (updateNavigation) {
-    console.log(`📋 Navigation updated in docs.json and versions.json`);
+    console.log(` Navigation updated in docs.json and versions.json`);
   }
+
+  // Generate and display the final migration report
+  const report = migrationIssues.generateReport();
+  if (report) {
+    console.log(report);
+  } else {
+    console.log('\n✅ No issues detected during migration!\n');
+  }
+
+  // Show cache statistics
+  const cacheStats = migrationCache.getStats();
+  console.log('\n📊 Migration Cache Statistics:');
+  console.log('='.repeat(50));
+  console.log(`Total files processed: ${cacheStats.totalFiles}`);
+  console.log(`Unique content blocks: ${cacheStats.uniqueContent}`);
+  console.log(`Duplicate files (cache hits): ${cacheStats.duplicates}`);
+  if (cacheStats.totalFiles > 0) {
+    const duplicatePercentage = ((cacheStats.duplicates / cacheStats.totalFiles) * 100).toFixed(1);
+    console.log(`Duplicate percentage: ${duplicatePercentage}%`);
+  }
+  console.log('='.repeat(50));
 
   return allVersionData;
 }
 
 /**
- * Main interactive flow
+ * Main entry point for the migration script.
+ * Handles both interactive and non-interactive modes.
+ *
+ * @async
+ * @function main
+ * @returns {Promise<void>}
+ *
+ * @description
+ * Execution modes:
+ *
+ * Interactive mode (no arguments):
+ * - Prompts for repository path
+ * - Prompts for output directory
+ * - Prompts for product selection (REQUIRED)
+ * - Asks about navigation update
+ * - Shows progress and statistics
+ *
+ * Non-interactive mode (with arguments):
+ * - Args: <source> <target> <product> [--update-nav]
+ * - No prompts, uses provided arguments
+ * - Product parameter is REQUIRED
+ * - Suitable for CI/CD pipelines
+ *
+ * Workflow:
+ * 1. Parse command-line arguments or show prompts
+ * 2. Validate product parameter
+ * 3. Call migrateAllVersions with options
+ * 4. Display final statistics and errors
+ * 5. Exit with appropriate code
+ *
+ * @example
+ * // Interactive:
+ * node migrate-docusaurus.js
+ *
+ * // Non-interactive:
+ * node migrate-docusaurus.js ~/cosmos-sdk-docs ./tmp sdk --update-nav
  */
 async function main() {
   console.log('=== Docusaurus to Mintlify Converter ===\n');
@@ -1344,6 +2535,15 @@ async function main() {
   if (args.length >= 3) {
     const [repoPath, targetDirectory, product, ...restArgs] = args;
     let updateNavigation = false;
+
+    // Product is required
+    if (!product || product.startsWith('--')) {
+      console.error('Error: Product name is required');
+      console.error('Usage: node migrate-docusaurus.js <source-repo> <target-dir> <product> [--update-nav]');
+      console.error('Example: node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk');
+      console.error('\nValid products: sdk, ibc, evm, cometbft, or your custom product name');
+      process.exit(1);
+    }
 
     // Parse additional arguments
     for (let i = 0; i < restArgs.length; i++) {
@@ -1355,15 +2555,15 @@ async function main() {
     console.log('Running in non-interactive mode...');
     console.log(`Repository: ${repoPath}`);
     console.log(`Target directory: ${targetDirectory}`);
-    console.log(`Product: ${product || 'generic'}`);
+    console.log(`Product: ${product}`);
     console.log(`Update navigation: ${updateNavigation}`);
 
-    await migrateAllVersions(repoPath, targetDirectory, product || 'generic', { updateNavigation });
+    await migrateAllVersions(repoPath, targetDirectory, product, { updateNavigation });
     return;
   } else if (args.length > 0 && args.length < 3) {
     console.error('Error: Not enough arguments');
-    console.error('Usage: node migrate-docusaurus.js <source-repo> <target-dir> [product] [--update-nav]');
-    console.error('Example: node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp/sdk sdk');
+    console.error('Usage: node migrate-docusaurus.js <source-repo> <target-dir> <product> [--update-nav]');
+    console.error('Example: node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk');
     process.exit(1);
   }
 
@@ -1385,9 +2585,15 @@ async function main() {
       process.exit(1);
     }
 
-    // Extract product name from target directory (e.g., ./docs/sdk -> sdk)
-    const targetParts = targetDirectory.split('/');
-    const product = targetParts[targetParts.length - 1] || 'generic';
+    // Get product name (required)
+    console.log('\nEnter product name (e.g., sdk, ibc, evm, cometbft):');
+    let product = (await prompt('> ')).trim();
+
+    while (!product) {
+      console.log('Product name is required for proper link resolution.');
+      console.log('Enter product name (e.g., sdk, ibc, evm, cometbft):');
+      product = (await prompt('> ')).trim();
+    }
 
     console.log('\nUpdate navigation files? (y/n):');
     const updateNav = (await prompt('> ')).trim().toLowerCase() === 'y';
@@ -1437,15 +2643,25 @@ async function main() {
       process.exit(0);
     }
 
-    // Get product name
-    console.log('\nEnter product name:');
-    const productName = (await prompt('> ')).trim() || 'generic';
+    // Get product name (required)
+    console.log('\nEnter product name (e.g., sdk, ibc, evm, cometbft):');
+    let productName = (await prompt('> ')).trim();
+
+    while (!productName) {
+      console.log('Product name is required for proper link resolution.');
+      console.log('Enter product name (e.g., sdk, ibc, evm, cometbft):');
+      productName = (await prompt('> ')).trim();
+    }
 
     // Process files
     console.log('\nProcessing files...\n');
+
+    // Reset migration issues tracker for single version migration
+    migrationIssues.reset();
+
     const convertedFiles = await processDirectory(sourceDir, targetDir, `v${versionInput.trim()}`, productName);
 
-    console.log(`\n✅ Successfully converted ${convertedFiles.length} files`);
+    console.log(`\n Successfully converted ${convertedFiles.length} files`);
 
     // Create single-version data structure for navigation update
     const singleVersionData = {};
@@ -1453,6 +2669,14 @@ async function main() {
 
     // Optionally update navigation
     await updateDocsJson(singleVersionData, productName);
+
+    // Generate and display migration report
+    const report = migrationIssues.generateReport();
+    if (report) {
+      console.log(report);
+    } else {
+      console.log('\n✅ No issues detected during migration!\n');
+    }
 
   } else {
     console.error(`Source directory not found: ${sourceBase}`);
@@ -1477,7 +2701,8 @@ export {
   formatRustCode,
   formatJsonCode,
   updateImagePaths,
-  copyStaticAssets
+  copyStaticAssets,
+  migrationIssues
 };
 
 // Run if called directly

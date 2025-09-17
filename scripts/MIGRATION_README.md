@@ -9,20 +9,34 @@ Full repository migration with versioning support and navigation updates.
 
 **Usage:**
 ```bash
-# Interactive mode
+# Interactive mode (with prompts)
 node migrate-docusaurus.js
 
-# Non-interactive mode
-node migrate-docusaurus.js <repo-path> <product> [--target <dir>] [--update-nav]
+# Non-interactive mode (migrate all versions)
+node migrate-docusaurus.js <source-repo> <target-dir> <product> [--update-nav]
 
-# Example
-node migrate-docusaurus.js /path/to/cosmos-sdk-docs sdk --target ./tmp
+# Examples
+node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk
+node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
 ```
 
+**Parameters:**
+- `<source-repo>`: Path to Docusaurus repository (e.g., `~/repos/cosmos-sdk-docs`)
+- `<target-dir>`: Output directory for migrated files (e.g., `./tmp`)
+- `<product>`: **Required** - Product name for link resolution (e.g., `sdk`, `ibc`, `evm`, `cometbft`)
+  - Determines internal link structure: `/docs/<product>/<version>/<path>`
+  - Critical for proper link resolution in final documentation
+- `--update-nav`: Optional flag to update `docs.json` navigation
+
 **Features:**
-- Migrates all versioned documentation (`versioned_docs/version-*`)
+- **Content-based caching**: Processes identical content only once
+- **SHA-256 checksumming**: Detects duplicate files across versions
+- **Intelligent processing**: Cache hits for duplicate content, full processing for unique content
+- **GitHub reference fetching**: Automatically fetches code from GitHub URLs in reference blocks
+- **Comprehensive validation**: Reports issues requiring manual intervention
+- **Performance optimized**: Shows cache statistics and duplicate percentage
+- Migrates all versions: `docs/` (next) and `versioned_docs/version-*`
 - Preserves `sidebar_position` for navigation ordering
-- Updates `docs.json` navigation (when `--update-nav` flag is used)
 - AST-based processing for accuracy
 
 ### `migrate-single-file.js`
@@ -36,35 +50,41 @@ node migrate-single-file.js <input-file> <output-file>
 node migrate-single-file.js ../cosmos-sdk-docs/docs/learn/events.md ../tmp/events.mdx
 ```
 
-## Conversion Pipeline
+## Migration Workflow
 
-### Multi-Pass Processing (Sequential)
+### Content Processing Pipeline
 
-1. **Fix Malformed Code Blocks**
-   - Remove whitespace before backticks
-   - Close unclosed code blocks
-   - Normalize code block structure
+1. **Content Checksumming**
+   - SHA-256 hash calculated for each file's raw content
+   - Duplicate detection across versions
+   - Cache lookup for previously processed content
 
-2. **Handle Reference Syntax**
-   - Convert Docusaurus ````lang reference\nURL\n```' blocks
-   - Preserve URLs as comments in code blocks
-   - Maintain language specification
+2. **Transformation Steps** (for new content only)
+   - Parse frontmatter and extract metadata
+   - Convert HTML comments to JSX: `<!-- -->` → `{/* */}`
+   - Process with AST for link fixing and code enhancement
+   - Apply MDX fixes (escape underscores, fix JSX expressions)
+   - Convert admonitions to Mintlify format
+   - Validate content and report issues
+   - Generate Mintlify-compatible frontmatter
 
-3. **Enhance Code Blocks**
-   - Add `expandable` property for blocks >10 lines
-   - Auto-detect language from content
-   - Format code based on language
+3. **Caching System**
+   - Transformation results cached by content checksum
+   - Validation errors cached separately
+   - Cache hits skip processing but still write output files
+   - Statistics track unique content vs duplicates
 
-4. **Fix Inline Code & Brackets**
-   - Wrap `{value}` patterns in backticks
-   - Handle `interface{}` and similar Go patterns
-   - Fix curly brackets in tables
+4. **GitHub Reference Fetching**
+   - Detects `go reference` blocks with GitHub URLs
+   - Automatically fetches actual code content
+   - Falls back to comment if fetch fails
+   - Only fetches once per unique URL
 
-5. **Convert HTML Elements**
-   - Convert HTML comments `<!-- -->` to JSX `{/* */}`
-   - Replace `<details>` with `<Expandable>`
-   - Fix command placeholders (`<appd>` → `` `appd` ``)
-   - Handle comparison operators (`<=>` → `` `<=>` ``)
+5. **Validation & Error Reporting**
+   - Checks for unclosed JSX expressions
+   - Validates matching open/close tags
+   - Reports only issues needing manual fixes
+   - No duplicate reporting for identical content
 
 ## Conversions Applied
 
@@ -146,6 +166,38 @@ When using `--update-nav`, the script updates `docs.json` with:
 - Tables with curly brackets
 - Go-specific patterns (`interface{}`, `map[string]interface{}`)
 
+## Migration Output
+
+### Reports Generated
+
+**Per-version statistics:**
+```
+Conversion stats for v0.50:
+  - Total files: 150
+  - Unique content processed: 120
+  - Cache hits (duplicates): 30
+```
+
+**Final cache statistics:**
+```
+📊 Migration Cache Statistics:
+==================================================
+Total files processed: 600
+Unique content blocks: 450
+Duplicate files (cache hits): 150
+Duplicate percentage: 25.0%
+==================================================
+```
+
+**Error report (if issues found):**
+```
+❌ ERRORS (10) - These need manual fixes:
+----------------------------------------
+📄 path/to/file.md:
+  Line 45: Unclosed opening tag <Expandable>
+    💡 Suggestion: Add matching closing tag
+```
+
 ## Dependencies
 
 ```json
@@ -155,15 +207,38 @@ When using `--update-nav`, the script updates `docs.json` with:
     "unified": "^11.0.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
+    "remark-gfm": "^4.0.0",
     "unist-util-visit": "^5.0.0"
   }
 }
 ```
 
-## Notes
+## Important Notes
 
+### Product Parameter
+- **Required** for all migrations (interactive and non-interactive)
+- Determines internal link structure: `/docs/<product>/<version>/<path>`
+- Without correct product, internal documentation links will be broken
+- Common values: `sdk`, `ibc`, `evm`, `cometbft`
+
+### Processing Behavior
+- Identical content across versions is processed only once
+- Each file still gets written to its appropriate version directory
+- Validation errors are reported for each file location
+- Cache system significantly improves performance for large repositories
+
+### Recent Improvements (2025)
+- Content-based caching with SHA-256 checksums
+- Automatic GitHub code fetching for reference blocks
+- Duplicate error prevention
+- Comprehensive migration statistics
+- Required product parameter for proper link resolution
+- Fixed JSX comment escaping issues
+- Improved validation with fewer false positives
+
+### Technical Details
 - Code content is preserved exactly - no arbitrary removal
-- Reference URLs are converted to comments, not deleted
+- Reference URLs are fetched or converted to comments
 - AST processing used where possible, regex as fallback
 - Multiple passes ensure proper sequencing of fixes
-- Code blocks are processed first to prevent syntax breaking
+- Code blocks are protected during transformations

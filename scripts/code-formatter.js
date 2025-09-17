@@ -216,7 +216,7 @@ async function perfectBulkFormat() {
     const codeBlockCount = (content.match(/```/g) || []).length / 2;
 
     if (codeBlockCount > 0) {
-      console.log(`📁 ${path.relative(process.cwd(), filePath)} (${codeBlockCount} blocks)`);
+      console.log(` ${path.relative(process.cwd(), filePath)} (${codeBlockCount} blocks)`);
 
       const formattedContent = await formatter.formatAllCodeBlocks(content);
 
@@ -224,7 +224,7 @@ async function perfectBulkFormat() {
         fs.writeFileSync(filePath, formattedContent);
         filesProcessed++;
         blocksFormatted += codeBlockCount;
-        console.log(`   ✅ Updated with perfect formatting`);
+        console.log(`    Updated with perfect formatting`);
       } else {
         console.log(`   ✓ Already well-formatted`);
       }
@@ -239,9 +239,9 @@ async function perfectBulkFormat() {
   formatter.cleanup();
 
   console.log('\n=== PERFECT FORMATTING COMPLETE ===');
-  console.log(`📊 Files processed: ${filesProcessed}`);
-  console.log(`🎯 Code blocks formatted: ${blocksFormatted}`);
-  console.log('✅ All code now formatted with native language tools!');
+  console.log(` Files processed: ${filesProcessed}`);
+  console.log(` Code blocks formatted: ${blocksFormatted}`);
+  console.log(' All code now formatted with native language tools!');
 }
 
 // Run if called directly
