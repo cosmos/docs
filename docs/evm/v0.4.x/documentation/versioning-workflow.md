@@ -242,30 +242,6 @@ import EIPCompatibilityTableStatic from '/snippets/eip-compatibility-table-stati
 - External dependencies captured
 - Self-contained frozen versions
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Script Permissions**
-
-   ```bash
-   chmod +x scripts/*.sh
-   ```
-
-2. **Missing versions.json**
-
-   ```bash
-   echo '{"versions": ["main"]}' > versions.json
-   ```
-
-3. **EIP Snapshot Fails**
-   - Check Google Sheets API access
-   - Verify network connectivity
-   - Manual snapshot: `node scripts/snapshot-eip-data.js v0.4.x`
-
-4. **Navigation Not Updated**
-   - Run: `node scripts/update-navigation.js v0.4.x`
-   - Manually check docs.json structure
 
 ## Best Practices
 
