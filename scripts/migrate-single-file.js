@@ -34,8 +34,9 @@ function safeProcessContent(content, processor) {
     return `__CODE_BLOCK_${index}__`;
   });
 
-  // Replace inline code with placeholders
-  processed = processed.replace(/`[^`\n]+`/g, (match) => {
+  // Replace inline code with placeholders - handle ANY number of backticks
+  // This regex matches any number of backticks, content, then same number of backticks
+  processed = processed.replace(/(`+)([^`\n]*?)\1/g, (match) => {
     const index = inlineCode.length;
     inlineCode.push(match);
     return `__INLINE_CODE_${index}__`;

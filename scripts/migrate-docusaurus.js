@@ -7,6 +7,7 @@ import readline from 'readline';
 import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
 import remarkStringify from 'remark-stringify';
 import { visit } from 'unist-util-visit';
 import { execSync } from 'child_process';
@@ -26,35 +27,40 @@ const prompt = (question) => new Promise((resolve) => rl.question(question, reso
  * Safely process content while preserving code blocks and inline code
  */
 function safeProcessContent(content, processor) {
-  // Extract all code blocks and inline code
+  // STEP 1: Extract all code blocks and inline code to protect them from processing
   const codeBlocks = [];
   const inlineCode = [];
 
   let processed = content;
 
-  // Replace code blocks with placeholders
+  // STEP 2: Replace triple-backtick code blocks with placeholders
+  // This prevents code blocks from being modified by subsequent processing
   processed = processed.replace(/```[\s\S]*?```/g, (match) => {
     const index = codeBlocks.length;
-    codeBlocks.push(match);
-    return `__CODE_BLOCK_${index}__`;
+    codeBlocks.push(match); // Store original code block
+    return `__CODE_BLOCK_${index}__`; // Replace with placeholder
   });
 
-  // Replace inline code with placeholders
-  processed = processed.replace(/`[^`\n]+`/g, (match) => {
+  // STEP 3: Replace inline code spans of ANY tick length with placeholders
+  // This handles `, ``, ```, etc. to protect all code spans from processing
+  // The regex (`+)([^`\n]*?)\1 matches any number of backticks, content, then same number of backticks
+  processed = processed.replace(/(`+)([^`\n]*?)\1/g, (match) => {
     const index = inlineCode.length;
-    inlineCode.push(match);
-    return `__INLINE_CODE_${index}__`;
+    inlineCode.push(match); // Store original inline code (e.g., `{groupId}` or ``{groupId}``)
+    return `__INLINE_CODE_${index}__`; // Replace with placeholder
   });
 
-  // Process the content without code
+  // STEP 4: Process the content (with code replaced by placeholders)
+  // The processor function won't see any backtick-wrapped content
   processed = processor(processed);
 
-  // Restore inline code first
+  // STEP 5: Restore inline code first
+  // This puts back the original inline code (e.g., `{groupId}`) exactly as it was
   for (let i = 0; i < inlineCode.length; i++) {
     processed = processed.replace(`__INLINE_CODE_${i}__`, inlineCode[i]);
   }
 
-  // Restore code blocks last
+  // STEP 6: Restore code blocks last
   for (let i = 0; i < codeBlocks.length; i++) {
     processed = processed.replace(`__CODE_BLOCK_${i}__`, codeBlocks[i]);
   }
@@ -447,7 +453,8 @@ function fixMDXIssues(content) {
     nonCodeContent = nonCodeContent.replace(/<(https?:\/\/[^>]+)>/g, '[Link]($1)');
 
     // Fix arrow operators and comparison operators that break parsing
-    nonCodeContent = nonCodeContent.replace(/([^`])<->([^`])/g, '$1`<->`$2');
+    // Don't wrap if it's already in backticks or part of HTML tag
+    nonCodeContent = nonCodeContent.replace(/(?<!`)(<->)(?!`)/g, '`$1`');
 
     // Fix version markers like **<= v0.45**: (must be done BEFORE general <= replacement)
     nonCodeContent = nonCodeContent.replace(/\*\*<=\s*v([\d.]+)\*\*:/g, '**v$1 and earlier**:');
@@ -477,16 +484,13 @@ function fixMDXIssues(content) {
       return match; // Keep as-is if there's already an opening tag
     });
 
-    // Also handle unclosed opening tags (like <details> without </details>)
-    const detailsOpen = (nonCodeContent.match(/<details[^>]*>/gi) || []).length;
-    const detailsClose = (nonCodeContent.match(/<\/details>/gi) || []).length;
-
-    if (detailsOpen > detailsClose) {
-      const missing = detailsOpen - detailsClose;
-      for (let i = 0; i < missing; i++) {
-        nonCodeContent += '\n</details>';
+    // Convert any remaining <details> tags that weren't caught by AST processing
+    nonCodeContent = nonCodeContent.replace(
+      /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)(?:<\/details>|$)/gi,
+      (match, summary, content) => {
+        return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
       }
-    }
+    );
 
     // Fix unclosed placeholder tags - convert to inline code
     nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp)>/g, '`$1`');
@@ -511,19 +515,60 @@ function fixMDXIssues(content) {
       .replace(/\{context\s+body\}/g, '`{context body}`')
 
       // 6. Complex paths in tables: /cosmos.group.v1.Msg/UpdateGroup{Admin|Metadata|Members}
-      .replace(/(\/[\w.]+\/\w+)\{([^}]+)\}/g, '`$1{$2}`')
+      // Wrap the whole path including braces in single backticks
+      .replace(/(\/[\w.]+\/\w+\{[^}]+\})/g, '`$1`')
 
       // 7. Array syntax in tables: []string{msg_urls}
       .replace(/(\[\]\w+)\{([^}]+)\}/g, '$1`{$2}`')
 
-      // 8. Template variables in tables: {authorityAddress}
-      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, '`{$1}`')
+      // 8. Template variables: {authorityAddress}
+      // NOTE: Table cells are handled in AST processing with proper inlineCode nodes
+      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, (match, content, offset, str) => {
+        // Check if we're in a table row
+        const lineStart = str.lastIndexOf('\n', offset) + 1;
+        const lineEnd = str.indexOf('\n', offset);
+        const line = str.substring(lineStart, lineEnd === -1 ? str.length : lineEnd);
+
+        // More robust table detection - check for pipes in the line
+        const isProbablyTableRow = /^\s*\|/.test(line) || (line.split('|').length >= 3);
+        if (isProbablyTableRow) {
+          return match; // Already handled in AST processing
+        }
+
+        // Check if already wrapped in backticks of any length
+        const before = str.slice(0, offset).match(/`+$/);
+        const after = str.slice(offset + match.length).match(/^`+/);
+        if (before && after) {
+          return match; // Already wrapped
+        }
+
+        return '`{$1}`'.replace('$1', content);
+      })
 
       // 9. General template variables (but skip JSX comments and already wrapped)
-      .replace(/(?<![a-zA-Z0-9_`.])\{([a-zA-Z][\w\s]*)\}(?![a-zA-Z0-9_`.])/g, (match, content) => {
+      .replace(/\{([a-zA-Z][\w\s]*)\}/g, (match, content, offset, str) => {
         // Skip if it looks like JSX comment
         if (content.includes('/*') || content.includes('*/')) return match;
-        // Skip if already in backticks (check context)
+
+        // Check if we're in a table row
+        const lineStart = str.lastIndexOf('\n', offset) + 1;
+        const lineEnd = str.indexOf('\n', offset);
+        const line = str.substring(lineStart, lineEnd === -1 ? str.length : lineEnd);
+
+        // More robust table detection - check for pipes in the line
+        const isProbablyTableRow = /^\s*\|/.test(line) || (line.split('|').length >= 3);
+        if (isProbablyTableRow) {
+          return match; // Tables handled in AST processing
+        }
+
+        // Check if already wrapped in backticks of any length
+        const before = str.slice(0, offset).match(/`+$/);
+        const after = str.slice(offset + match.length).match(/^`+/);
+        if (before && after) {
+          return match; // Already wrapped
+        }
+
+        // Otherwise wrap it
         return '`' + match + '`';
       })
 
@@ -589,15 +634,27 @@ function createHTMLFixerPlugin() {
 
         // Convert <details> tags to Mintlify Expandable
         if (node.value.includes('<details')) {
+          // Handle complete details tags
           node.value = node.value.replace(
             /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)<\/details>/gi,
             (match, summary, content) => {
               return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
             });
+
+          // Handle unclosed details tags (missing </details>)
+          node.value = node.value.replace(
+            /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]+?)$/gm,
+            (match, summary, content) => {
+              // Only convert if there's no closing tag
+              if (!match.includes('</details>')) {
+                return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
+              }
+              return match;
+            });
         }
       });
 
-      // Process text nodes to fix problematic angle brackets
+      // Process text nodes to fix problematic angle brackets and template variables
       visit(tree, 'text', (node, index, parent) => {
         if (!node.value) return;
 
@@ -606,16 +663,25 @@ function createHTMLFixerPlugin() {
           return;
         }
 
+        // Don't process text in table cells here - we'll handle them properly below
+        if (parent && parent.type === 'tableCell') {
+          return; // Skip table cell text processing
+        }
+
         // Fix command placeholders like <appd>, <simd>
         node.value = node.value.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp)>/g, '`$1`');
 
         // Fix comparison operators and arrows
-        node.value = node.value.replace(/([^`])<=>([^`])/g, '$1`<=>`$2');
-        node.value = node.value.replace(/([^`])<->([^`])/g, '$1`<->`$2');
+        // Don't wrap if already in backticks
+        node.value = node.value.replace(/(?<!`)(<=>)(?!`)/g, '`$1`');
+        node.value = node.value.replace(/(?<!`)(<->)(?!`)/g, '`$1`');
 
         // Fix generic placeholders like <host>, <port>
         node.value = node.value.replace(/<([a-z]+(?:-[a-z]+)*)>/g, '`<$1>`');
       });
+
+      // Remove table cell processing - we handle template variables in fixMDXIssues instead
+      // This avoids double-wrapping issues
     };
   };
 }
@@ -731,16 +797,19 @@ function formatCodeByLanguage(lang, code) {
  */
 function processMarkdownWithAST(content, version, product) {
   try {
-    const file = unified()
+    const processor = unified()
       .use(remarkParse)
+      .use(remarkGfm)  // Enable GitHub Flavored Markdown for proper table parsing
       .use(createLinkFixerPlugin(version, product))
       .use(createHTMLFixerPlugin())
       .use(createCodeBlockEnhancerPlugin())
-      .use(remarkStringify)
-      .processSync(content);
+      .use(remarkStringify);
+
+    const file = processor.processSync(content);
     return String(file);
   } catch (error) {
     console.warn('AST processing failed, falling back to regex:', error.message);
+    console.warn('Error details:', error);
     return content;
   }
 }
