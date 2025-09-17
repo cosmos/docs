@@ -191,24 +191,26 @@ function fixInlineCodeAndBrackets(content) {
     return `__CODE_BLOCK_${index}__`;
   });
 
-  // Replace existing inline code with placeholders
-  processed = processed.replace(/`[^`\n]+`/g, (match) => {
+  // Replace existing inline code with placeholders - handle ANY number of backticks
+  processed = processed.replace(/(`+)([^`\n]*?)\1/g, (match) => {
     const index = inlineCode.length;
     inlineCode.push(match);
     return `__INLINE_CODE_${index}__`;
   });
 
-  // Now fix curly brackets in tables and other places
-  // Match table cells with {value} patterns
-  processed = processed.replace(/\|([^|\n]*\{[^}]+\}[^|\n]*)\|/g, (match, cell) => {
-    // Add backticks around {value} patterns in table cells
-    const fixed = cell.replace(/(\{[^}]+\})/g, '`$1`');
-    return `|${fixed}|`;
-  });
-
-  // Fix standalone {value} patterns outside of JSX/MDX components
+  // Fix {value} patterns everywhere - tables and non-tables alike
   // But avoid touching JSX comments {/* */} or component props
-  processed = processed.replace(/(?<![\w<\/])(\{[a-zA-Z_][\w\s]*\})(?![>}])/g, '`$1`');
+  processed = processed.replace(/\{([a-zA-Z_][\w\s]*)\}/g, (match, content) => {
+    // Skip JSX comments
+    if (content.includes('/*') || content.includes('*/')) return match;
+
+    // Don't wrap if it's a placeholder
+    if (match.includes('__INLINE_CODE_') || match.includes('__CODE_BLOCK_')) {
+      return match;
+    }
+
+    return '`' + match + '`';
+  });
 
   // Fix interface{} and similar Go patterns
   processed = processed.replace(/\binterface\{\}/g, '`interface{}`');
@@ -289,7 +291,8 @@ function convertCodeBlocks(content) {
   content = fixMalformedCodeBlocks(content);
   content = convertReferenceCodeBlocks(content);
   content = enhanceCodeBlocks(content);
-  content = fixInlineCodeAndBrackets(content);
+  // DON'T call fixInlineCodeAndBrackets here - it will be called inside safeProcessContent
+  // content = fixInlineCodeAndBrackets(content);
   content = convertHTMLElements(content);
 
   return content;
@@ -501,6 +504,9 @@ function convertFile(inputPath, outputPath) {
 
     // NOW: Apply other conversions with code block protection
     processedContent = safeProcessContent(processedContent, (content) => {
+      // Fix inline code and brackets (template variables)
+      content = fixInlineCodeAndBrackets(content);
+
       // Convert admonitions
       content = convertAdmonitions(content);
 

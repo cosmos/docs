@@ -522,51 +522,12 @@ function fixMDXIssues(content) {
       .replace(/(\[\]\w+)\{([^}]+)\}/g, '$1`{$2}`')
 
       // 8. Template variables: {authorityAddress}
-      // NOTE: Table cells are handled in AST processing with proper inlineCode nodes
-      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, (match, content, offset, str) => {
-        // Check if we're in a table row
-        const lineStart = str.lastIndexOf('\n', offset) + 1;
-        const lineEnd = str.indexOf('\n', offset);
-        const line = str.substring(lineStart, lineEnd === -1 ? str.length : lineEnd);
+      .replace(/\{(\w+Address|\w+Id|msg_urls|groupId)\}/g, '`{$1}`')
 
-        // More robust table detection - check for pipes in the line
-        const isProbablyTableRow = /^\s*\|/.test(line) || (line.split('|').length >= 3);
-        if (isProbablyTableRow) {
-          return match; // Already handled in AST processing
-        }
-
-        // Check if already wrapped in backticks of any length
-        const before = str.slice(0, offset).match(/`+$/);
-        const after = str.slice(offset + match.length).match(/^`+/);
-        if (before && after) {
-          return match; // Already wrapped
-        }
-
-        return '`{$1}`'.replace('$1', content);
-      })
-
-      // 9. General template variables (but skip JSX comments and already wrapped)
-      .replace(/\{([a-zA-Z][\w\s]*)\}/g, (match, content, offset, str) => {
+      // 9. General template variables (but skip JSX comments)
+      .replace(/\{([a-zA-Z][\w\s]*)\}/g, (match, content) => {
         // Skip if it looks like JSX comment
         if (content.includes('/*') || content.includes('*/')) return match;
-
-        // Check if we're in a table row
-        const lineStart = str.lastIndexOf('\n', offset) + 1;
-        const lineEnd = str.indexOf('\n', offset);
-        const line = str.substring(lineStart, lineEnd === -1 ? str.length : lineEnd);
-
-        // More robust table detection - check for pipes in the line
-        const isProbablyTableRow = /^\s*\|/.test(line) || (line.split('|').length >= 3);
-        if (isProbablyTableRow) {
-          return match; // Tables handled in AST processing
-        }
-
-        // Check if already wrapped in backticks of any length
-        const before = str.slice(0, offset).match(/`+$/);
-        const after = str.slice(offset + match.length).match(/^`+/);
-        if (before && after) {
-          return match; // Already wrapped
-        }
 
         // Otherwise wrap it
         return '`' + match + '`';
