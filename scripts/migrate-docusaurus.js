@@ -2224,7 +2224,7 @@ function fixNumberedPrefixLinks(targetBase, allMappings) {
   console.log('\n--- Fixing numbered prefix links in migrated files ---');
 
   let totalFilesProcessed = 0;
-  let totalLinksFixed = 0;
+  let totalReplacementsFixed = 0;
 
   // Process all MDX files recursively
   function processFiles(dir) {
@@ -2239,37 +2239,94 @@ function fixNumberedPrefixLinks(targetBase, allMappings) {
       } else if (item.endsWith('.mdx')) {
         let content = fs.readFileSync(fullPath, 'utf8');
         let originalContent = content;
+        let fileModified = false;
 
-        // Fix links in the format [text](link)
-        content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, link) => {
-          // Skip external links, anchors, and already processed links
-          if (link.startsWith('http') || link.startsWith('#') || link.startsWith('/')) {
+        // First, ensure there's an empty line after frontmatter
+        const frontmatterMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+        if (frontmatterMatch) {
+          const frontmatter = frontmatterMatch[0];
+          const afterFrontmatter = content.substring(frontmatter.length);
+
+          // Check if there's already an empty line after frontmatter
+          if (!afterFrontmatter.startsWith('\n')) {
+            content = frontmatter + '\n' + afterFrontmatter;
+            fileModified = true;
+          }
+        }
+
+        // Fix numbered prefixes ONLY in markdown links and URL references
+        // This ensures we don't accidentally replace text content or code examples
+
+        // Pattern 1: Fix markdown links [text](url)
+        content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+          // Skip external URLs (http/https)
+          if (url.startsWith('http://') || url.startsWith('https://')) {
             return match;
           }
 
-          // Check if this link needs to be fixed
-          const linkWithoutAnchor = link.split('#')[0];
-          const anchor = link.includes('#') ? '#' + link.split('#')[1] : '';
+          // Skip anchor-only links
+          if (url.startsWith('#')) {
+            return match;
+          }
 
-          // Try to find mapping for this link
+          let fixedUrl = url;
+
+          // Apply all mappings to this URL
           for (const [oldPath, newPath] of Object.entries(allMappings)) {
-            if (linkWithoutAnchor === oldPath ||
-                linkWithoutAnchor === oldPath + '.md' ||
-                linkWithoutAnchor === oldPath + '.mdx' ||
-                linkWithoutAnchor.endsWith('/' + oldPath)) {
-              const fixedLink = linkWithoutAnchor.replace(oldPath, newPath) + anchor;
-              if (fixedLink !== link) {
-                totalLinksFixed++;
-                return `[${text}](${fixedLink})`;
-              }
+            if (oldPath === newPath) continue;
+
+            // Escape special regex characters
+            const escapedOldPath = oldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            // Replace the old path with new path in the URL
+            // This regex ensures we match the pattern as part of a path
+            const regex = new RegExp(`(^|/)${escapedOldPath}(/|#|$)`, 'g');
+            const beforeFix = fixedUrl;
+            fixedUrl = fixedUrl.replace(regex, `$1${newPath}$2`);
+
+            if (fixedUrl !== beforeFix) {
+              totalReplacementsFixed++;
+              fileModified = true;
             }
           }
 
-          return match;
+          return `[${text}](${fixedUrl})`;
+        });
+
+        // Pattern 2: Fix HTML anchor href attributes <a href="url">
+        content = content.replace(/<a\s+([^>]*\s)?href="([^"]+)"([^>]*)>/g, (match, before, url, after) => {
+          // Skip external URLs
+          if (url.startsWith('http://') || url.startsWith('https://')) {
+            return match;
+          }
+
+          // Skip anchor-only links
+          if (url.startsWith('#')) {
+            return match;
+          }
+
+          let fixedUrl = url;
+
+          // Apply all mappings to this URL
+          for (const [oldPath, newPath] of Object.entries(allMappings)) {
+            if (oldPath === newPath) continue;
+
+            const escapedOldPath = oldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(^|/)${escapedOldPath}(/|#|$)`, 'g');
+            const beforeFix = fixedUrl;
+            fixedUrl = fixedUrl.replace(regex, `$1${newPath}$2`);
+
+            if (fixedUrl !== beforeFix) {
+              totalReplacementsFixed++;
+              fileModified = true;
+            }
+          }
+
+          return `<a ${before || ''}href="${fixedUrl}"${after || ''}>`;
         });
 
         // Write back if content changed
-        if (content !== originalContent) {
+        if (fileModified && content !== originalContent) {
           fs.writeFileSync(fullPath, content);
           totalFilesProcessed++;
         }
@@ -2278,7 +2335,7 @@ function fixNumberedPrefixLinks(targetBase, allMappings) {
   }
 
   processFiles(targetBase);
-  console.log(`  Fixed ${totalLinksFixed} links in ${totalFilesProcessed} files`);
+  console.log(`  Fixed ${totalReplacementsFixed} replacements across ${totalFilesProcessed} files`);
 }
 
 /**
@@ -2721,6 +2778,13 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
 
   // 3. Fix numbered prefix links using the filename mappings
   if (Object.keys(allFilenameMappings).length > 0) {
+    console.log(`\n--- Collected ${Object.keys(allFilenameMappings).length} filename mappings ---`);
+    // Show a sample of the mappings for debugging
+    const sampleMappings = Object.entries(allFilenameMappings).slice(0, 5);
+    console.log('Sample mappings:');
+    sampleMappings.forEach(([old, newPath]) => {
+      console.log(`  "${old}" -> "${newPath}"`);
+    });
     fixNumberedPrefixLinks(targetBase, allFilenameMappings);
   }
 
