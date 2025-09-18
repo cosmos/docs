@@ -8,7 +8,7 @@ This document describes how to generate an (unsigned) transaction, signing it (w
 
 ## Using the CLI
 
-The easiest way to send transactions is using the CLI, as we have seen in the previous page when [interacting with a node](02-interact-node.md#using-the-cli). For example, running the following command
+The easiest way to send transactions is using the CLI, as we have seen in the previous page when [interacting with a node](/docs/sdk/next/02-interact-node#using-the-cli). For example, running the following command
 
 ```bash
 simd tx bank send $MY_VALIDATOR_ADDRESS $RECIPIENT 1000stake --chain-id my-test-chain --keyring-backend test
@@ -18,7 +18,7 @@ will run the following steps:
 
 * generate a transaction with one `Msg` (`x/bank`'s `MsgSend`), and print the generated transaction to the console.
 * ask the user for confirmation to send the transaction from the `$MY_VALIDATOR_ADDRESS` account.
-* fetch `$MY_VALIDATOR_ADDRESS` from the keyring. This is possible because we have [set up the CLI's keyring](00-keyring.md) in a previous step.
+* fetch `$MY_VALIDATOR_ADDRESS` from the keyring. This is possible because we have [set up the CLI's keyring](/docs/sdk/next/00-keyring) in a previous step.
 * sign the generated transaction with the keyring's account.
 * broadcast the signed transaction to the network. This is possible because the CLI connects to the node's CometBFT RPC endpoint.
 
@@ -150,8 +150,100 @@ priv3, _, addr3 := testdata.KeyTestPubAddr()
 
 Populating the `TxBuilder` can be done via its methods:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/client/tx_config.go#L39-L57
+```go expandable
+package client
+
+import (
+    
+	"time"
+
+	txsigning "cosmossdk.io/x/tx/signing"
+
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/tx"
+	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
+    "github.com/cosmos/cosmos-sdk/x/auth/signing"
+)
+
+type (
+	// TxEncodingConfig defines an interface that contains transaction
+	// encoders and decoders
+	TxEncodingConfig interface {
+    TxEncoder()
+
+sdk.TxEncoder
+		TxDecoder()
+
+sdk.TxDecoder
+		TxJSONEncoder()
+
+sdk.TxEncoder
+		TxJSONDecoder()
+
+sdk.TxDecoder
+		MarshalSignatureJSON([]signingtypes.SignatureV2) ([]byte, error)
+
+UnmarshalSignatureJSON([]byte) ([]signingtypes.SignatureV2, error)
+}
+
+	// TxConfig defines an interface a client can utilize to generate an
+	// application-defined concrete transaction type. The type returned must
+	// implement TxBuilder.
+	TxConfig interface {
+    TxEncodingConfig
+
+		NewTxBuilder()
+
+TxBuilder
+		WrapTxBuilder(sdk.Tx) (TxBuilder, error)
+
+SignModeHandler() *txsigning.HandlerMap
+		SigningContext() *txsigning.Context
+}
+
+	// TxBuilder defines an interface which an application-defined concrete transaction
+	// type must implement. Namely, it must be able to set messages, generate
+	// signatures, and provide canonical bytes to sign over. The transaction must
+	// also know how to encode itself.
+	TxBuilder interface {
+    GetTx()
+
+signing.Tx
+
+		SetMsgs(msgs ...sdk.Msg)
+
+error
+		SetSignatures(signatures ...signingtypes.SignatureV2)
+
+error
+		SetMemo(memo string)
+
+SetFeeAmount(amount sdk.Coins)
+
+SetFeePayer(feePayer sdk.AccAddress)
+
+SetGasLimit(limit uint64)
+
+SetTimeoutHeight(height uint64)
+
+SetTimeoutTimestamp(timestamp time.Time)
+
+SetUnordered(v bool)
+
+SetFeeGranter(feeGranter sdk.AccAddress)
+
+AddAuxSignerData(tx.AuxSignerData)
+
+error
+}
+
+	// ExtendedTxBuilder extends the TxBuilder interface,
+	// which is used to set extension options to be included in a transaction.
+	ExtendedTxBuilder interface {
+    SetExtensionOptions(extOpts ...*codectypes.Any)
+}
+)
 ```
 
 ```go expandable
@@ -240,7 +332,7 @@ txb.SetTimeoutTimestamp(time.Now().Add(expiration + (1 * time.Nanosecond)))
 
 ### Signing a Transaction
 
-We set encoding config to use Protobuf, which will use `SIGN_MODE_DIRECT` by default. As per [ADR-020](https://github.com/cosmos/cosmos-sdk/blob/main/docs/sdk/next/architecture/adr-020-protobuf-transaction-encoding.md), each signer needs to sign the `SignerInfo`s of all other signers. This means that we need to perform two steps sequentially:
+We set encoding config to use Protobuf, which will use `SIGN_MODE_DIRECT` by default. As per [ADR-020](https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-020-protobuf-transaction-encoding.md), each signer needs to sign the `SignerInfo`s of all other signers. This means that we need to perform two steps sequentially:
 
 * for each signer, populate the signer's `SignerInfo` inside `TxBuilder`,
 * once all `SignerInfo`s are populated, for each signer, sign the `SignDoc` (the payload to be signed).
@@ -339,7 +431,7 @@ error {
 
 ### Broadcasting a Transaction
 
-The preferred way to broadcast a transaction is to use gRPC, though using REST (via `gRPC-gateway`) or the CometBFT RPC is also possible. An overview of the differences between these methods is exposed [here](/../learn/advanced/06-grpc_rest.md). For this tutorial, we will only describe the gRPC method.
+The preferred way to broadcast a transaction is to use gRPC, though using REST (via `gRPC-gateway`) or the CometBFT RPC is also possible. An overview of the differences between these methods is exposed [here](/docs/sdk/next//learn/advanced/06-grpc_rest). For this tutorial, we will only describe the gRPC method.
 
 ```go expandable
 import (

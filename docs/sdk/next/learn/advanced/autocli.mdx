@@ -141,8 +141,141 @@ By default, `autocli` generates a command for each method in your gRPC service. 
 
 This example shows how to use the `autocliv1.ServiceCommandDescriptor` struct to group related commands together and specify subcommands in your gRPC service by defining an instance of `autocliv1.ModuleOptions` in your `autocli.go`.
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-beta.0/x/gov/autocli.go#L94-L97
+```go expandable
+package gov
+
+import (
+    
+	"fmt"
+
+	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	govv1 "cosmossdk.io/api/cosmos/gov/v1"
+	govv1beta1 "cosmossdk.io/api/cosmos/gov/v1beta1"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
+func (am AppModule)
+
+AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+    Query: &autocliv1.ServiceCommandDescriptor{
+    Service: govv1.Query_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+    RpcMethod: "Params",
+    Use:       "params",
+    Short:     "Query the parameters of the governance process",
+    Long:      "Query the parameters of the governance process. Specify specific param types (voting|tallying|deposit)
+
+to filter results.",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "params_type",
+    Optional: true
+},
+},
+},
+				{
+    RpcMethod: "Proposals",
+    Use:       "proposals",
+    Short:     "Query proposals with optional filters",
+    Example:   fmt.Sprintf("%[1]s query gov proposals --depositor cosmos1...\n%[1]s query gov proposals --voter cosmos1...\n%[1]s query gov proposals --proposal-status (PROPOSAL_STATUS_DEPOSIT_PERIOD|PROPOSAL_STATUS_VOTING_PERIOD|PROPOSAL_STATUS_PASSED|PROPOSAL_STATUS_REJECTED|PROPOSAL_STATUS_FAILED)", version.AppName),
+},
+				{
+    RpcMethod: "Proposal",
+    Use:       "proposal [proposal-id]",
+    Short:     "Query details of a single proposal",
+    Example:   fmt.Sprintf("%s query gov proposal 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Vote",
+    Use:       "vote [proposal-id] [voter-addr]",
+    Short:     "Query details of a single vote",
+    Example:   fmt.Sprintf("%s query gov vote 1 cosmos1...", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+						{
+    ProtoField: "voter"
+},
+},
+},
+				{
+    RpcMethod: "Votes",
+    Use:       "votes [proposal-id]",
+    Short:     "Query votes of a single proposal",
+    Example:   fmt.Sprintf("%s query gov votes 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Deposit",
+    Use:       "deposit [proposal-id] [depositer-addr]",
+    Short:     "Query details of a deposit",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+						{
+    ProtoField: "depositor"
+},
+},
+},
+				{
+    RpcMethod: "Deposits",
+    Use:       "deposits [proposal-id]",
+    Short:     "Query deposits on a proposal",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "TallyResult",
+    Use:       "tally [proposal-id]",
+    Short:     "Query the tally of a proposal vote",
+    Example:   fmt.Sprintf("%s query gov tally 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Constitution",
+    Use:       "constitution",
+    Short:     "Query the current chain constitution",
+},
+},
+			// map v1beta1 as a sub-command
+			SubCommands: map[string]*autocliv1.ServiceCommandDescriptor{
+				"v1beta1": {
+    Service: govv1beta1.Query_ServiceDesc.ServiceName
+},
+},
+},
+    Tx: &autocliv1.ServiceCommandDescriptor{
+    Service: govv1.Msg_ServiceDesc.ServiceName,
+			// map v1beta1 as a sub-command
+			SubCommands: map[string]*autocliv1.ServiceCommandDescriptor{
+				"v1beta1": {
+    Service: govv1beta1.Msg_ServiceDesc.ServiceName
+},
+},
+},
+}
+}
 ```
 
 ### Positional Arguments
@@ -153,8 +286,103 @@ To add positional arguments to a command, use the `autocliv1.PositionalArgDescri
 
 Here's an example of how to define a positional argument for the `Account` method of the `auth` service:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-beta.0/x/auth/autocli.go#L25-L30
+```go expandable
+package auth
+
+import (
+    
+	"fmt"
+
+	authv1beta1 "cosmossdk.io/api/cosmos/auth/v1beta1"
+	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	_ "cosmossdk.io/api/cosmos/crypto/secp256k1" // register to that it shows up in protoregistry.GlobalTypes
+	_ "cosmossdk.io/api/cosmos/crypto/secp256r1" // register to that it shows up in protoregistry.GlobalTypes
+
+	"github.com/cosmos/cosmos-sdk/version"
+)
+
+// AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
+func (am AppModule)
+
+AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+    Query: &autocliv1.ServiceCommandDescriptor{
+    Service: authv1beta1.Query_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+    RpcMethod: "Accounts",
+    Use:       "accounts",
+    Short:     "Query all the accounts",
+},
+				{
+    RpcMethod:      "Account",
+    Use:            "account [address]",
+    Short:          "Query account by address",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "address"
+}},
+},
+				{
+    RpcMethod:      "AccountInfo",
+    Use:            "account-info [address]",
+    Short:          "Query account info which is common to all account types.",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "address"
+}},
+},
+				{
+    RpcMethod:      "AccountAddressByID",
+    Use:            "address-by-acc-num [acc-num]",
+    Short:          "Query account address by account number",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "id"
+}},
+},
+				{
+    RpcMethod: "ModuleAccounts",
+    Use:       "module-accounts",
+    Short:     "Query all module accounts",
+},
+				{
+    RpcMethod:      "ModuleAccountByName",
+    Use:            "module-account [module-name]",
+    Short:          "Query module account info by module name",
+    Example:        fmt.Sprintf("%s q auth module-account gov", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "name"
+}},
+},
+				{
+    RpcMethod:      "AddressBytesToString",
+    Use:            "address-bytes-to-string [address-bytes]",
+    Short:          "Transform an address bytes to string",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "address_bytes"
+}},
+},
+				{
+    RpcMethod:      "AddressStringToBytes",
+    Use:            "address-string-to-bytes [address-string]",
+    Short:          "Transform an address string to bytes",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "address_string"
+}},
+},
+				{
+    RpcMethod: "Bech32Prefix",
+    Use:       "bech32-prefix",
+    Short:     "Query the chain bech32 prefix (if applicable)",
+},
+				{
+    RpcMethod: "Params",
+    Use:       "params",
+    Short:     "Query the current auth parameters",
+},
+},
+},
+		// Tx is purposely left empty, as the only tx is MsgUpdateParams which is gov gated.
+}
+}
 ```
 
 Then the command can be used as follows, instead of having to specify the `--address` flag:
@@ -238,8 +466,142 @@ AutoCLI can be used alongside other commands within a module. For example, the `
 
 In order to enable this behavior, set in `AutoCLIOptions()` the `EnhanceCustomCommand` field to `true`, for the command type (queries and/or transactions) you want to enhance.
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/fa4d87ef7e6d87aaccc94c337ffd2fe90fcb7a9d/x/gov/autocli.go#L98
+```go expandable
+package gov
+
+import (
+    
+	"fmt"
+
+	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	govv1 "cosmossdk.io/api/cosmos/gov/v1"
+	govv1beta1 "cosmossdk.io/api/cosmos/gov/v1beta1"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
+func (am AppModule)
+
+AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+    Query: &autocliv1.ServiceCommandDescriptor{
+    Service: govv1.Query_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+    RpcMethod: "Params",
+    Use:       "params",
+    Short:     "Query the parameters of the governance process",
+    Long:      "Query the parameters of the governance process. Specify specific param types (voting|tallying|deposit)
+
+to filter results.",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "params_type",
+    Optional: true
+},
+},
+},
+				{
+    RpcMethod: "Proposals",
+    Use:       "proposals",
+    Short:     "Query proposals with optional filters",
+    Example:   fmt.Sprintf("%[1]s query gov proposals --depositor cosmos1...\n%[1]s query gov proposals --voter cosmos1...\n%[1]s query gov proposals --proposal-status (PROPOSAL_STATUS_DEPOSIT_PERIOD|PROPOSAL_STATUS_VOTING_PERIOD|PROPOSAL_STATUS_PASSED|PROPOSAL_STATUS_REJECTED|PROPOSAL_STATUS_FAILED)", version.AppName),
+},
+				{
+    RpcMethod: "Proposal",
+    Use:       "proposal [proposal-id]",
+    Short:     "Query details of a single proposal",
+    Example:   fmt.Sprintf("%s query gov proposal 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Vote",
+    Use:       "vote [proposal-id] [voter-addr]",
+    Short:     "Query details of a single vote",
+    Example:   fmt.Sprintf("%s query gov vote 1 cosmos1...", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+						{
+    ProtoField: "voter"
+},
+},
+},
+				{
+    RpcMethod: "Votes",
+    Use:       "votes [proposal-id]",
+    Short:     "Query votes of a single proposal",
+    Example:   fmt.Sprintf("%s query gov votes 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Deposit",
+    Use:       "deposit [proposal-id] [depositer-addr]",
+    Short:     "Query details of a deposit",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+						{
+    ProtoField: "depositor"
+},
+},
+},
+				{
+    RpcMethod: "Deposits",
+    Use:       "deposits [proposal-id]",
+    Short:     "Query deposits on a proposal",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "TallyResult",
+    Use:       "tally [proposal-id]",
+    Short:     "Query the tally of a proposal vote",
+    Example:   fmt.Sprintf("%s query gov tally 1", version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "proposal_id"
+},
+},
+},
+				{
+    RpcMethod: "Constitution",
+    Use:       "constitution",
+    Short:     "Query the current chain constitution",
+},
+},
+			// map v1beta1 as a sub-command
+			SubCommands: map[string]*autocliv1.ServiceCommandDescriptor{
+				"v1beta1": {
+    Service: govv1beta1.Query_ServiceDesc.ServiceName
+},
+},
+    EnhanceCustomCommand: true, // We still have manual commands in gov that we want to keep
+},
+    Tx: &autocliv1.ServiceCommandDescriptor{
+    Service: govv1.Msg_ServiceDesc.ServiceName,
+			// map v1beta1 as a sub-command
+			SubCommands: map[string]*autocliv1.ServiceCommandDescriptor{
+				"v1beta1": {
+    Service: govv1beta1.Msg_ServiceDesc.ServiceName
+},
+},
+},
+}
+}
 ```
 
 If not set to true, `AutoCLI` will not generate commands for the module if there are already commands registered for the module (when `GetTxCmd()` or `GetTxCmd()` are defined).
@@ -263,8 +625,99 @@ It is possible to use `AutoCLI` for non module commands. The trick is still to i
 
 For example, here is how the SDK does it for `cometbft` gRPC commands:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/client/v2.0.0-beta.1/client/grpc/cmtservice/autocli.go#L52-L71
+```go expandable
+package cmtservice
+
+import (
+    
+	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	cmtv1beta1 "cosmossdk.io/api/cosmos/base/tendermint/v1beta1"
+)
+
+var CometBFTAutoCLIDescriptor = &autocliv1.ServiceCommandDescriptor{
+    Service: cmtv1beta1.Service_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+		{
+    RpcMethod: "GetNodeInfo",
+    Use:       "node-info",
+    Short:     "Query the current node info",
+},
+		{
+    RpcMethod: "GetSyncing",
+    Use:       "syncing",
+    Short:     "Query node syncing status",
+},
+		{
+    RpcMethod: "GetLatestBlock",
+    Use:       "block-latest",
+    Short:     "Query for the latest committed block",
+},
+		{
+    RpcMethod:      "GetBlockByHeight",
+    Use:            "block-by-height [height]",
+    Short:          "Query for a committed block by height",
+    Long:           "Query for a specific committed block using the CometBFT RPC `block_by_height` method",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "height"
+}},
+},
+		{
+    RpcMethod: "GetLatestValidatorSet",
+    Use:       "validator-set",
+    Alias:     []string{"validator-set-latest", "comet-validator-set", "cometbft-validator-set", "tendermint-validator-set"
+},
+    Short:     "Query for the latest validator set",
+},
+		{
+    RpcMethod:      "GetValidatorSetByHeight",
+    Use:            "validator-set-by-height [height]",
+    Short:          "Query for a validator set by height",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "height"
+}},
+},
+		{
+    RpcMethod: "ABCIQuery",
+    Skip:      true,
+},
+},
+}
+
+// NewCometBFTCommands is a fake `appmodule.Module` to be considered as a module
+// and be added in AutoCLI.
+func NewCometBFTCommands() *cometModule { //nolint:revive // fake module and limiting import of core
+	return &cometModule{
+}
+}
+
+type cometModule struct{
+}
+
+func (m cometModule)
+
+IsOnePerModuleType() {
+}
+
+func (m cometModule)
+
+IsAppModule() {
+}
+
+func (m cometModule)
+
+Name()
+
+string {
+    return "comet"
+}
+
+func (m cometModule)
+
+AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+    Query: CometBFTAutoCLIDescriptor,
+}
+}
 ```
 
 ## Summary

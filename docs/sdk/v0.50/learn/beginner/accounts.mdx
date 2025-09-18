@@ -9,13 +9,13 @@ This document describes the in-built account and public key system of the Cosmos
 <Note>
 **Pre-requisite Readings**
 
-* [Anatomy of a Cosmos SDK Application](00-app-anatomy.md)
+* [Anatomy of a Cosmos SDK Application](/docs/sdk/v0.50/00-app-anatomy)
 
 </Note>
 
 ## Account Definition
 
-In the Cosmos SDK, an *account* designates a pair of *public key* `PubKey` and *private key* `PrivKey`. The `PubKey` can be derived to generate various `Addresses`, which are used to identify users (among other parties) in the application. `Addresses` are also associated with [`message`s](/../build/building-modules/02-messages-and-queries.md#messages) to identify the sender of the `message`. The `PrivKey` is used to generate [digital signatures](#signatures) to prove that an `Address` associated with the `PrivKey` approved of a given `message`.
+In the Cosmos SDK, an *account* designates a pair of *public key* `PubKey` and *private key* `PrivKey`. The `PubKey` can be derived to generate various `Addresses`, which are used to identify users (among other parties) in the application. `Addresses` are also associated with [`message`s](/docs/sdk/v0.50//build/building-modules/02-messages-and-queries#messages) to identify the sender of the `message`. The `PrivKey` is used to generate [digital signatures](#signatures) to prove that an `Address` associated with the `PrivKey` approved of a given `message`.
 
 For HD key derivation the Cosmos SDK uses a standard called [BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki). The BIP32 allows users to create an HD wallet (as specified in [BIP44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)) - a set of accounts derived from an initial secret seed. A seed is usually created from a 12- or 24-word mnemonic. A single seed can derive any number of `PrivKey`s using a one-way cryptographic function. Then, a `PubKey` can be derived from the `PrivKey`. Naturally, the mnemonic is the most sensitive information, as private keys can always be re-generated if the mnemonic is preserved.
 
@@ -74,10 +74,10 @@ The Cosmos SDK supports the following digital key schemes for creating digital s
 * `tm-ed25519`, as implemented in the [Cosmos SDK `crypto/keys/ed25519` package](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/keys/ed25519/ed25519.go). This scheme is supported only for the consensus validation.
 
 |              | Address length in bytes | Public key length in bytes | Used for transaction authentication | Used for consensus (cometbft) |
-| :----------: | :---------------------: | :------------------------: | :---------------------------------: | :-----------------------------: |
-| `secp256k1`  |           20            |             33             |                 yes                 |               no                |
-| `secp256r1`  |           32            |             33             |                 yes                 |               no                |
-| `tm-ed25519` |     -- not used --      |             32             |                 no                  |               yes               |
+| :----------: | :---------------------: | :------------------------: | :---------------------------------: | :---------------------------: |
+|  `secp256k1` |            20           |             33             |                 yes                 |               no              |
+|  `secp256r1` |            32           |             33             |                 yes                 |               no              |
+| `tm-ed25519` |      -- not used --     |             32             |                  no                 |              yes              |
 
 ## Addresses
 
@@ -91,11 +91,874 @@ Each account is identified using `Address` which is a sequence of bytes derived 
 
 These types implement the `Address` interface:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/types/address.go#L126-L134
+```go expandable
+package types
+
+import (
+    
+	"bytes"
+    "encoding/hex"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "strings"
+    "sync"
+    "sync/atomic"
+    "github.com/hashicorp/golang-lru/simplelru"
+    "sigs.k8s.io/yaml"
+
+	errorsmod "cosmossdk.io/errors"
+
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+    "github.com/cosmos/cosmos-sdk/internal/conv"
+    "github.com/cosmos/cosmos-sdk/types/address"
+    "github.com/cosmos/cosmos-sdk/types/bech32"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+)
+
+const (
+	// Constants defined here are the defaults value for address.
+	// You can use the specific values for your project.
+	// Add the follow lines to the `main()` of your server.
+	//
+	//	config := sdk.GetConfig()
+	//	config.SetBech32PrefixForAccount(yourBech32PrefixAccAddr, yourBech32PrefixAccPub)
+	//	config.SetBech32PrefixForValidator(yourBech32PrefixValAddr, yourBech32PrefixValPub)
+	//	config.SetBech32PrefixForConsensusNode(yourBech32PrefixConsAddr, yourBech32PrefixConsPub)
+	//	config.SetPurpose(yourPurpose)
+	//	config.SetCoinType(yourCoinType)
+	//	config.Seal()
+
+	// Bech32MainPrefix defines the main SDK Bech32 prefix of an account's address
+	Bech32MainPrefix = "cosmos"
+
+	// Purpose is the ATOM purpose as defined in SLIP44 (https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+
+Purpose = 44
+
+	// CoinType is the ATOM coin type as defined in SLIP44 (https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+
+CoinType = 118
+
+	// FullFundraiserPath is the parts of the BIP44 HD path that are fixed by
+	// what we used during the ATOM fundraiser.
+	FullFundraiserPath = "m/44'/118'/0'/0/0"
+
+	// PrefixAccount is the prefix for account keys
+	PrefixAccount = "acc"
+	// PrefixValidator is the prefix for validator keys
+	PrefixValidator = "val"
+	// PrefixConsensus is the prefix for consensus keys
+	PrefixConsensus = "cons"
+	// PrefixPublic is the prefix for public keys
+	PrefixPublic = "pub"
+	// PrefixOperator is the prefix for operator keys
+	PrefixOperator = "oper"
+
+	// PrefixAddress is the prefix for addresses
+	PrefixAddress = "addr"
+
+	// Bech32PrefixAccAddr defines the Bech32 prefix of an account's address
+	Bech32PrefixAccAddr = Bech32MainPrefix
+	// Bech32PrefixAccPub defines the Bech32 prefix of an account's public key
+	Bech32PrefixAccPub = Bech32MainPrefix + PrefixPublic
+	// Bech32PrefixValAddr defines the Bech32 prefix of a validator's operator address
+	Bech32PrefixValAddr = Bech32MainPrefix + PrefixValidator + PrefixOperator
+	// Bech32PrefixValPub defines the Bech32 prefix of a validator's operator public key
+	Bech32PrefixValPub = Bech32MainPrefix + PrefixValidator + PrefixOperator + PrefixPublic
+	// Bech32PrefixConsAddr defines the Bech32 prefix of a consensus node address
+	Bech32PrefixConsAddr = Bech32MainPrefix + PrefixValidator + PrefixConsensus
+	// Bech32PrefixConsPub defines the Bech32 prefix of a consensus node public key
+	Bech32PrefixConsPub = Bech32MainPrefix + PrefixValidator + PrefixConsensus + PrefixPublic
+)
+
+// cache variables
+var (
+	// AccAddress.String()
+
+is expensive and if unoptimized dominantly showed up in profiles,
+	// yet has no mechanisms to trivially cache the result given that AccAddress is a []byte type.
+	accAddrMu     sync.Mutex
+	accAddrCache  *simplelru.LRU
+	consAddrMu    sync.Mutex
+	consAddrCache *simplelru.LRU
+	valAddrMu     sync.Mutex
+	valAddrCache  *simplelru.LRU
+
+	isCachingEnabled atomic.Bool
+)
+
+// sentinel errors
+var (
+	ErrEmptyHexAddress = errors.New("decoding address from hex string failed: empty address")
+)
+
+func init() {
+    var err error
+	SetAddrCacheEnabled(true)
+
+	// in total the cache size is 61k entries. Key is 32 bytes and value is around 50-70 bytes.
+	// That will make around 92 * 61k * 2 (LRU)
+
+bytes ~ 11 MB
+    if accAddrCache, err = simplelru.NewLRU(60000, nil); err != nil {
+    panic(err)
+}
+    if consAddrCache, err = simplelru.NewLRU(500, nil); err != nil {
+    panic(err)
+}
+    if valAddrCache, err = simplelru.NewLRU(500, nil); err != nil {
+    panic(err)
+}
+}
+
+// SetAddrCacheEnabled enables or disables accAddrCache, consAddrCache, and valAddrCache. By default, caches are enabled.
+func SetAddrCacheEnabled(enabled bool) {
+    isCachingEnabled.Store(enabled)
+}
+
+// IsAddrCacheEnabled returns if the address caches are enabled.
+func IsAddrCacheEnabled()
+
+bool {
+    return isCachingEnabled.Load()
+}
+
+// Address is a common interface for different types of addresses used by the SDK
+type Address interface {
+    Equals(Address)
+
+bool
+	Empty()
+
+bool
+	Marshal() ([]byte, error)
+
+MarshalJSON() ([]byte, error)
+
+Bytes() []byte
+	String()
+
+string
+	Format(s fmt.State, verb rune)
+}
+
+// Ensure that different address types implement the interface
+var (
+	_ Address = AccAddress{
+}
+	_ Address = ValAddress{
+}
+	_ Address = ConsAddress{
+}
+)
+
+// ----------------------------------------------------------------------------
+// account
+// ----------------------------------------------------------------------------
+
+// AccAddress a wrapper around bytes meant to represent an account address.
+// When marshaled to a string or JSON, it uses Bech32.
+type AccAddress []byte
+
+// AccAddressFromHexUnsafe creates an AccAddress from a HEX-encoded string.
+//
+// Note, this function is considered unsafe as it may produce an AccAddress from
+// otherwise invalid input, such as a transaction hash. Please use
+// AccAddressFromBech32.
+func AccAddressFromHexUnsafe(address string) (addr AccAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return AccAddress(bz), err
+}
+
+// VerifyAddressFormat verifies that the provided bytes form a valid address
+// according to the default address rules or a custom address verifier set by
+// GetConfig().SetAddressVerifier().
+// TODO make an issue to get rid of global Config
+// ref: https://github.com/cosmos/cosmos-sdk/issues/9690
+func VerifyAddressFormat(bz []byte)
+
+error {
+    verifier := GetConfig().GetAddressVerifier()
+    if verifier != nil {
+    return verifier(bz)
+}
+    if len(bz) == 0 {
+    return errorsmod.Wrap(sdkerrors.ErrUnknownAddress, "addresses cannot be empty")
+}
+    if len(bz) > address.MaxAddrLen {
+    return errorsmod.Wrapf(sdkerrors.ErrUnknownAddress, "address max length is %d, got %d", address.MaxAddrLen, len(bz))
+}
+
+return nil
+}
+
+// MustAccAddressFromBech32 calls AccAddressFromBech32 and panics on error.
+func MustAccAddressFromBech32(address string)
+
+AccAddress {
+    addr, err := AccAddressFromBech32(address)
+    if err != nil {
+    panic(err)
+}
+
+return addr
+}
+
+// AccAddressFromBech32 creates an AccAddress from a Bech32 string.
+func AccAddressFromBech32(address string) (addr AccAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return AccAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixAccAddr := GetConfig().GetBech32AccountAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixAccAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return AccAddress(bz), nil
+}
+
+// Returns boolean for whether two AccAddresses are Equal
+func (aa AccAddress)
+
+Equals(aa2 Address)
+
+bool {
+    if aa.Empty() && aa2.Empty() {
+    return true
+}
+
+return bytes.Equal(aa.Bytes(), aa2.Bytes())
+}
+
+// Returns boolean for whether an AccAddress is empty
+func (aa AccAddress)
+
+Empty()
+
+bool {
+    return len(aa) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (aa AccAddress)
+
+Marshal() ([]byte, error) {
+    return aa, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (aa *AccAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*aa = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (aa AccAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(aa.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (aa AccAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return aa.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (aa *AccAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*aa = AccAddress{
+}
+
+return nil
+}
+
+aa2, err := AccAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*aa = aa2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from JSON assuming Bech32 encoding.
+func (aa *AccAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*aa = AccAddress{
+}
+
+return nil
+}
+
+aa2, err := AccAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*aa = aa2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (aa AccAddress)
+
+Bytes() []byte {
+    return aa
+}
+
+// String implements the Stringer interface.
+func (aa AccAddress)
+
+String()
+
+string {
+    if aa.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(aa)
+    if IsAddrCacheEnabled() {
+    accAddrMu.Lock()
+
+defer accAddrMu.Unlock()
+
+addr, ok := accAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32AccountAddrPrefix(), aa, accAddrCache, key)
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (aa AccAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(aa.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", aa)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(aa))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// validator operator
+// ----------------------------------------------------------------------------
+
+// ValAddress defines a wrapper around bytes meant to present a validator's
+// operator. When marshaled to a string or JSON, it uses Bech32.
+type ValAddress []byte
+
+// ValAddressFromHex creates a ValAddress from a hex string.
+func ValAddressFromHex(address string) (addr ValAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return ValAddress(bz), err
+}
+
+// ValAddressFromBech32 creates a ValAddress from a Bech32 string.
+func ValAddressFromBech32(address string) (addr ValAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return ValAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixValAddr := GetConfig().GetBech32ValidatorAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixValAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return ValAddress(bz), nil
+}
+
+// Returns boolean for whether two ValAddresses are Equal
+func (va ValAddress)
+
+Equals(va2 Address)
+
+bool {
+    if va.Empty() && va2.Empty() {
+    return true
+}
+
+return bytes.Equal(va.Bytes(), va2.Bytes())
+}
+
+// Returns boolean for whether an AccAddress is empty
+func (va ValAddress)
+
+Empty()
+
+bool {
+    return len(va) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (va ValAddress)
+
+Marshal() ([]byte, error) {
+    return va, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (va *ValAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*va = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (va ValAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(va.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (va ValAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return va.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (va *ValAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*va = ValAddress{
+}
+
+return nil
+}
+
+va2, err := ValAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*va = va2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from YAML assuming Bech32 encoding.
+func (va *ValAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*va = ValAddress{
+}
+
+return nil
+}
+
+va2, err := ValAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*va = va2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (va ValAddress)
+
+Bytes() []byte {
+    return va
+}
+
+// String implements the Stringer interface.
+func (va ValAddress)
+
+String()
+
+string {
+    if va.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(va)
+    if IsAddrCacheEnabled() {
+    valAddrMu.Lock()
+
+defer valAddrMu.Unlock()
+
+addr, ok := valAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32ValidatorAddrPrefix(), va, valAddrCache, key)
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (va ValAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(va.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", va)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(va))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// consensus node
+// ----------------------------------------------------------------------------
+
+// ConsAddress defines a wrapper around bytes meant to present a consensus node.
+// When marshaled to a string or JSON, it uses Bech32.
+type ConsAddress []byte
+
+// ConsAddressFromHex creates a ConsAddress from a hex string.
+func ConsAddressFromHex(address string) (addr ConsAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return ConsAddress(bz), err
+}
+
+// ConsAddressFromBech32 creates a ConsAddress from a Bech32 string.
+func ConsAddressFromBech32(address string) (addr ConsAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return ConsAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixConsAddr := GetConfig().GetBech32ConsensusAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixConsAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return ConsAddress(bz), nil
+}
+
+// get ConsAddress from pubkey
+func GetConsAddress(pubkey cryptotypes.PubKey)
+
+ConsAddress {
+    return ConsAddress(pubkey.Address())
+}
+
+// Returns boolean for whether two ConsAddress are Equal
+func (ca ConsAddress)
+
+Equals(ca2 Address)
+
+bool {
+    if ca.Empty() && ca2.Empty() {
+    return true
+}
+
+return bytes.Equal(ca.Bytes(), ca2.Bytes())
+}
+
+// Returns boolean for whether an ConsAddress is empty
+func (ca ConsAddress)
+
+Empty()
+
+bool {
+    return len(ca) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (ca ConsAddress)
+
+Marshal() ([]byte, error) {
+    return ca, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (ca *ConsAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*ca = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (ca ConsAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(ca.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (ca ConsAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return ca.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (ca *ConsAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*ca = ConsAddress{
+}
+
+return nil
+}
+
+ca2, err := ConsAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*ca = ca2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from YAML assuming Bech32 encoding.
+func (ca *ConsAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*ca = ConsAddress{
+}
+
+return nil
+}
+
+ca2, err := ConsAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*ca = ca2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (ca ConsAddress)
+
+Bytes() []byte {
+    return ca
+}
+
+// String implements the Stringer interface.
+func (ca ConsAddress)
+
+String()
+
+string {
+    if ca.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(ca)
+    if IsAddrCacheEnabled() {
+    consAddrMu.Lock()
+
+defer consAddrMu.Unlock()
+
+addr, ok := consAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32ConsensusAddrPrefix(), ca, consAddrCache, key)
+}
+
+// Bech32ifyAddressBytes returns a bech32 representation of address bytes.
+// Returns an empty sting if the byte slice is 0-length. Returns an error if the bech32 conversion
+// fails or the prefix is empty.
+func Bech32ifyAddressBytes(prefix string, bs []byte) (string, error) {
+    if len(bs) == 0 {
+    return "", nil
+}
+    if len(prefix) == 0 {
+    return "", errors.New("prefix cannot be empty")
+}
+
+return bech32.ConvertAndEncode(prefix, bs)
+}
+
+// MustBech32ifyAddressBytes returns a bech32 representation of address bytes.
+// Returns an empty sting if the byte slice is 0-length. It panics if the bech32 conversion
+// fails or the prefix is empty.
+func MustBech32ifyAddressBytes(prefix string, bs []byte)
+
+string {
+    s, err := Bech32ifyAddressBytes(prefix, bs)
+    if err != nil {
+    panic(err)
+}
+
+return s
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (ca ConsAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(ca.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", ca)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(ca))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// auxiliary
+// ----------------------------------------------------------------------------
+
+var errBech32EmptyAddress = errors.New("decoding Bech32 address failed: must provide a non empty address")
+
+// GetFromBech32 decodes a bytestring from a Bech32 encoded string.
+func GetFromBech32(bech32str, prefix string) ([]byte, error) {
+    if len(bech32str) == 0 {
+    return nil, errBech32EmptyAddress
+}
+
+hrp, bz, err := bech32.DecodeAndConvert(bech32str)
+    if err != nil {
+    return nil, err
+}
+    if hrp != prefix {
+    return nil, fmt.Errorf("invalid Bech32 prefix; expected %s, got %s", prefix, hrp)
+}
+
+return bz, nil
+}
+
+func addressBytesFromHexString(address string) ([]byte, error) {
+    if len(address) == 0 {
+    return nil, ErrEmptyHexAddress
+}
+
+return hex.DecodeString(address)
+}
+
+// cacheBech32Addr is not concurrency safe. Concurrent access to cache causes race condition.
+func cacheBech32Addr(prefix string, addr []byte, cache *simplelru.LRU, cacheKey string)
+
+string {
+    bech32Addr, err := bech32.ConvertAndEncode(prefix, addr)
+    if err != nil {
+    panic(err)
+}
+    if IsAddrCacheEnabled() {
+    cache.Add(cacheKey, bech32Addr)
+}
+
+return bech32Addr
+}
 ```
 
-Address construction algorithm is defined in [ADR-28](https://github.com/cosmos/cosmos-sdk/blob/main/docs/sdk/0.5/architecture/adr-028-public-key-addresses.md).
+Address construction algorithm is defined in [ADR-28](https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-028-public-key-addresses.md).
 Here is the standard way to obtain an account address from a `pub` public key:
 
 ```go
@@ -106,8 +969,871 @@ Of note, the `Marshal()` and `Bytes()` method both return the same raw `[]byte` 
 
 For user interaction, addresses are formatted using [Bech32](https://en.bitcoin.it/wiki/Bech32) and implemented by the `String` method. The Bech32 method is the only supported format to use when interacting with a blockchain. The Bech32 human-readable part (Bech32 prefix) is used to denote an address type. Example:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/types/address.go#L299-L316
+```go expandable
+package types
+
+import (
+    
+	"bytes"
+    "encoding/hex"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "strings"
+    "sync"
+    "sync/atomic"
+    "github.com/hashicorp/golang-lru/simplelru"
+    "sigs.k8s.io/yaml"
+
+	errorsmod "cosmossdk.io/errors"
+
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+    "github.com/cosmos/cosmos-sdk/internal/conv"
+    "github.com/cosmos/cosmos-sdk/types/address"
+    "github.com/cosmos/cosmos-sdk/types/bech32"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+)
+
+const (
+	// Constants defined here are the defaults value for address.
+	// You can use the specific values for your project.
+	// Add the follow lines to the `main()` of your server.
+	//
+	//	config := sdk.GetConfig()
+	//	config.SetBech32PrefixForAccount(yourBech32PrefixAccAddr, yourBech32PrefixAccPub)
+	//	config.SetBech32PrefixForValidator(yourBech32PrefixValAddr, yourBech32PrefixValPub)
+	//	config.SetBech32PrefixForConsensusNode(yourBech32PrefixConsAddr, yourBech32PrefixConsPub)
+	//	config.SetPurpose(yourPurpose)
+	//	config.SetCoinType(yourCoinType)
+	//	config.Seal()
+
+	// Bech32MainPrefix defines the main SDK Bech32 prefix of an account's address
+	Bech32MainPrefix = "cosmos"
+
+	// Purpose is the ATOM purpose as defined in SLIP44 (https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+
+Purpose = 44
+
+	// CoinType is the ATOM coin type as defined in SLIP44 (https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+
+CoinType = 118
+
+	// FullFundraiserPath is the parts of the BIP44 HD path that are fixed by
+	// what we used during the ATOM fundraiser.
+	FullFundraiserPath = "m/44'/118'/0'/0/0"
+
+	// PrefixAccount is the prefix for account keys
+	PrefixAccount = "acc"
+	// PrefixValidator is the prefix for validator keys
+	PrefixValidator = "val"
+	// PrefixConsensus is the prefix for consensus keys
+	PrefixConsensus = "cons"
+	// PrefixPublic is the prefix for public keys
+	PrefixPublic = "pub"
+	// PrefixOperator is the prefix for operator keys
+	PrefixOperator = "oper"
+
+	// PrefixAddress is the prefix for addresses
+	PrefixAddress = "addr"
+
+	// Bech32PrefixAccAddr defines the Bech32 prefix of an account's address
+	Bech32PrefixAccAddr = Bech32MainPrefix
+	// Bech32PrefixAccPub defines the Bech32 prefix of an account's public key
+	Bech32PrefixAccPub = Bech32MainPrefix + PrefixPublic
+	// Bech32PrefixValAddr defines the Bech32 prefix of a validator's operator address
+	Bech32PrefixValAddr = Bech32MainPrefix + PrefixValidator + PrefixOperator
+	// Bech32PrefixValPub defines the Bech32 prefix of a validator's operator public key
+	Bech32PrefixValPub = Bech32MainPrefix + PrefixValidator + PrefixOperator + PrefixPublic
+	// Bech32PrefixConsAddr defines the Bech32 prefix of a consensus node address
+	Bech32PrefixConsAddr = Bech32MainPrefix + PrefixValidator + PrefixConsensus
+	// Bech32PrefixConsPub defines the Bech32 prefix of a consensus node public key
+	Bech32PrefixConsPub = Bech32MainPrefix + PrefixValidator + PrefixConsensus + PrefixPublic
+)
+
+// cache variables
+var (
+	// AccAddress.String()
+
+is expensive and if unoptimized dominantly showed up in profiles,
+	// yet has no mechanisms to trivially cache the result given that AccAddress is a []byte type.
+	accAddrMu     sync.Mutex
+	accAddrCache  *simplelru.LRU
+	consAddrMu    sync.Mutex
+	consAddrCache *simplelru.LRU
+	valAddrMu     sync.Mutex
+	valAddrCache  *simplelru.LRU
+
+	isCachingEnabled atomic.Bool
+)
+
+// sentinel errors
+var (
+	ErrEmptyHexAddress = errors.New("decoding address from hex string failed: empty address")
+)
+
+func init() {
+    var err error
+	SetAddrCacheEnabled(true)
+
+	// in total the cache size is 61k entries. Key is 32 bytes and value is around 50-70 bytes.
+	// That will make around 92 * 61k * 2 (LRU)
+
+bytes ~ 11 MB
+    if accAddrCache, err = simplelru.NewLRU(60000, nil); err != nil {
+    panic(err)
+}
+    if consAddrCache, err = simplelru.NewLRU(500, nil); err != nil {
+    panic(err)
+}
+    if valAddrCache, err = simplelru.NewLRU(500, nil); err != nil {
+    panic(err)
+}
+}
+
+// SetAddrCacheEnabled enables or disables accAddrCache, consAddrCache, and valAddrCache. By default, caches are enabled.
+func SetAddrCacheEnabled(enabled bool) {
+    isCachingEnabled.Store(enabled)
+}
+
+// IsAddrCacheEnabled returns if the address caches are enabled.
+func IsAddrCacheEnabled()
+
+bool {
+    return isCachingEnabled.Load()
+}
+
+// Address is a common interface for different types of addresses used by the SDK
+type Address interface {
+    Equals(Address)
+
+bool
+	Empty()
+
+bool
+	Marshal() ([]byte, error)
+
+MarshalJSON() ([]byte, error)
+
+Bytes() []byte
+	String()
+
+string
+	Format(s fmt.State, verb rune)
+}
+
+// Ensure that different address types implement the interface
+var (
+	_ Address = AccAddress{
+}
+	_ Address = ValAddress{
+}
+	_ Address = ConsAddress{
+}
+)
+
+// ----------------------------------------------------------------------------
+// account
+// ----------------------------------------------------------------------------
+
+// AccAddress a wrapper around bytes meant to represent an account address.
+// When marshaled to a string or JSON, it uses Bech32.
+type AccAddress []byte
+
+// AccAddressFromHexUnsafe creates an AccAddress from a HEX-encoded string.
+//
+// Note, this function is considered unsafe as it may produce an AccAddress from
+// otherwise invalid input, such as a transaction hash. Please use
+// AccAddressFromBech32.
+func AccAddressFromHexUnsafe(address string) (addr AccAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return AccAddress(bz), err
+}
+
+// VerifyAddressFormat verifies that the provided bytes form a valid address
+// according to the default address rules or a custom address verifier set by
+// GetConfig().SetAddressVerifier().
+// TODO make an issue to get rid of global Config
+// ref: https://github.com/cosmos/cosmos-sdk/issues/9690
+func VerifyAddressFormat(bz []byte)
+
+error {
+    verifier := GetConfig().GetAddressVerifier()
+    if verifier != nil {
+    return verifier(bz)
+}
+    if len(bz) == 0 {
+    return errorsmod.Wrap(sdkerrors.ErrUnknownAddress, "addresses cannot be empty")
+}
+    if len(bz) > address.MaxAddrLen {
+    return errorsmod.Wrapf(sdkerrors.ErrUnknownAddress, "address max length is %d, got %d", address.MaxAddrLen, len(bz))
+}
+
+return nil
+}
+
+// MustAccAddressFromBech32 calls AccAddressFromBech32 and panics on error.
+func MustAccAddressFromBech32(address string)
+
+AccAddress {
+    addr, err := AccAddressFromBech32(address)
+    if err != nil {
+    panic(err)
+}
+
+return addr
+}
+
+// AccAddressFromBech32 creates an AccAddress from a Bech32 string.
+func AccAddressFromBech32(address string) (addr AccAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return AccAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixAccAddr := GetConfig().GetBech32AccountAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixAccAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return AccAddress(bz), nil
+}
+
+// Returns boolean for whether two AccAddresses are Equal
+func (aa AccAddress)
+
+Equals(aa2 Address)
+
+bool {
+    if aa.Empty() && aa2.Empty() {
+    return true
+}
+
+return bytes.Equal(aa.Bytes(), aa2.Bytes())
+}
+
+// Returns boolean for whether an AccAddress is empty
+func (aa AccAddress)
+
+Empty()
+
+bool {
+    return len(aa) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (aa AccAddress)
+
+Marshal() ([]byte, error) {
+    return aa, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (aa *AccAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*aa = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (aa AccAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(aa.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (aa AccAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return aa.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (aa *AccAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*aa = AccAddress{
+}
+
+return nil
+}
+
+aa2, err := AccAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*aa = aa2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from JSON assuming Bech32 encoding.
+func (aa *AccAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*aa = AccAddress{
+}
+
+return nil
+}
+
+aa2, err := AccAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*aa = aa2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (aa AccAddress)
+
+Bytes() []byte {
+    return aa
+}
+
+// String implements the Stringer interface.
+func (aa AccAddress)
+
+String()
+
+string {
+    if aa.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(aa)
+    if IsAddrCacheEnabled() {
+    accAddrMu.Lock()
+
+defer accAddrMu.Unlock()
+
+addr, ok := accAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32AccountAddrPrefix(), aa, accAddrCache, key)
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (aa AccAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(aa.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", aa)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(aa))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// validator operator
+// ----------------------------------------------------------------------------
+
+// ValAddress defines a wrapper around bytes meant to present a validator's
+// operator. When marshaled to a string or JSON, it uses Bech32.
+type ValAddress []byte
+
+// ValAddressFromHex creates a ValAddress from a hex string.
+func ValAddressFromHex(address string) (addr ValAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return ValAddress(bz), err
+}
+
+// ValAddressFromBech32 creates a ValAddress from a Bech32 string.
+func ValAddressFromBech32(address string) (addr ValAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return ValAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixValAddr := GetConfig().GetBech32ValidatorAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixValAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return ValAddress(bz), nil
+}
+
+// Returns boolean for whether two ValAddresses are Equal
+func (va ValAddress)
+
+Equals(va2 Address)
+
+bool {
+    if va.Empty() && va2.Empty() {
+    return true
+}
+
+return bytes.Equal(va.Bytes(), va2.Bytes())
+}
+
+// Returns boolean for whether an AccAddress is empty
+func (va ValAddress)
+
+Empty()
+
+bool {
+    return len(va) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (va ValAddress)
+
+Marshal() ([]byte, error) {
+    return va, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (va *ValAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*va = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (va ValAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(va.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (va ValAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return va.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (va *ValAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*va = ValAddress{
+}
+
+return nil
+}
+
+va2, err := ValAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*va = va2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from YAML assuming Bech32 encoding.
+func (va *ValAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*va = ValAddress{
+}
+
+return nil
+}
+
+va2, err := ValAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*va = va2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (va ValAddress)
+
+Bytes() []byte {
+    return va
+}
+
+// String implements the Stringer interface.
+func (va ValAddress)
+
+String()
+
+string {
+    if va.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(va)
+    if IsAddrCacheEnabled() {
+    valAddrMu.Lock()
+
+defer valAddrMu.Unlock()
+
+addr, ok := valAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32ValidatorAddrPrefix(), va, valAddrCache, key)
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (va ValAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(va.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", va)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(va))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// consensus node
+// ----------------------------------------------------------------------------
+
+// ConsAddress defines a wrapper around bytes meant to present a consensus node.
+// When marshaled to a string or JSON, it uses Bech32.
+type ConsAddress []byte
+
+// ConsAddressFromHex creates a ConsAddress from a hex string.
+func ConsAddressFromHex(address string) (addr ConsAddress, err error) {
+    bz, err := addressBytesFromHexString(address)
+
+return ConsAddress(bz), err
+}
+
+// ConsAddressFromBech32 creates a ConsAddress from a Bech32 string.
+func ConsAddressFromBech32(address string) (addr ConsAddress, err error) {
+    if len(strings.TrimSpace(address)) == 0 {
+    return ConsAddress{
+}, errors.New("empty address string is not allowed")
+}
+
+bech32PrefixConsAddr := GetConfig().GetBech32ConsensusAddrPrefix()
+
+bz, err := GetFromBech32(address, bech32PrefixConsAddr)
+    if err != nil {
+    return nil, err
+}
+
+err = VerifyAddressFormat(bz)
+    if err != nil {
+    return nil, err
+}
+
+return ConsAddress(bz), nil
+}
+
+// get ConsAddress from pubkey
+func GetConsAddress(pubkey cryptotypes.PubKey)
+
+ConsAddress {
+    return ConsAddress(pubkey.Address())
+}
+
+// Returns boolean for whether two ConsAddress are Equal
+func (ca ConsAddress)
+
+Equals(ca2 Address)
+
+bool {
+    if ca.Empty() && ca2.Empty() {
+    return true
+}
+
+return bytes.Equal(ca.Bytes(), ca2.Bytes())
+}
+
+// Returns boolean for whether an ConsAddress is empty
+func (ca ConsAddress)
+
+Empty()
+
+bool {
+    return len(ca) == 0
+}
+
+// Marshal returns the raw address bytes. It is needed for protobuf
+// compatibility.
+func (ca ConsAddress)
+
+Marshal() ([]byte, error) {
+    return ca, nil
+}
+
+// Unmarshal sets the address to the given data. It is needed for protobuf
+// compatibility.
+func (ca *ConsAddress)
+
+Unmarshal(data []byte)
+
+error {
+	*ca = data
+	return nil
+}
+
+// MarshalJSON marshals to JSON using Bech32.
+func (ca ConsAddress)
+
+MarshalJSON() ([]byte, error) {
+    return json.Marshal(ca.String())
+}
+
+// MarshalYAML marshals to YAML using Bech32.
+func (ca ConsAddress)
+
+MarshalYAML() (interface{
+}, error) {
+    return ca.String(), nil
+}
+
+// UnmarshalJSON unmarshals from JSON assuming Bech32 encoding.
+func (ca *ConsAddress)
+
+UnmarshalJSON(data []byte)
+
+error {
+    var s string
+    err := json.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*ca = ConsAddress{
+}
+
+return nil
+}
+
+ca2, err := ConsAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*ca = ca2
+	return nil
+}
+
+// UnmarshalYAML unmarshals from YAML assuming Bech32 encoding.
+func (ca *ConsAddress)
+
+UnmarshalYAML(data []byte)
+
+error {
+    var s string
+    err := yaml.Unmarshal(data, &s)
+    if err != nil {
+    return err
+}
+    if s == "" {
+		*ca = ConsAddress{
+}
+
+return nil
+}
+
+ca2, err := ConsAddressFromBech32(s)
+    if err != nil {
+    return err
+}
+
+	*ca = ca2
+	return nil
+}
+
+// Bytes returns the raw address bytes.
+func (ca ConsAddress)
+
+Bytes() []byte {
+    return ca
+}
+
+// String implements the Stringer interface.
+func (ca ConsAddress)
+
+String()
+
+string {
+    if ca.Empty() {
+    return ""
+}
+    key := conv.UnsafeBytesToStr(ca)
+    if IsAddrCacheEnabled() {
+    consAddrMu.Lock()
+
+defer consAddrMu.Unlock()
+
+addr, ok := consAddrCache.Get(key)
+    if ok {
+    return addr.(string)
+}
+	
+}
+
+return cacheBech32Addr(GetConfig().GetBech32ConsensusAddrPrefix(), ca, consAddrCache, key)
+}
+
+// Bech32ifyAddressBytes returns a bech32 representation of address bytes.
+// Returns an empty sting if the byte slice is 0-length. Returns an error if the bech32 conversion
+// fails or the prefix is empty.
+func Bech32ifyAddressBytes(prefix string, bs []byte) (string, error) {
+    if len(bs) == 0 {
+    return "", nil
+}
+    if len(prefix) == 0 {
+    return "", errors.New("prefix cannot be empty")
+}
+
+return bech32.ConvertAndEncode(prefix, bs)
+}
+
+// MustBech32ifyAddressBytes returns a bech32 representation of address bytes.
+// Returns an empty sting if the byte slice is 0-length. It panics if the bech32 conversion
+// fails or the prefix is empty.
+func MustBech32ifyAddressBytes(prefix string, bs []byte)
+
+string {
+    s, err := Bech32ifyAddressBytes(prefix, bs)
+    if err != nil {
+    panic(err)
+}
+
+return s
+}
+
+// Format implements the fmt.Formatter interface.
+
+func (ca ConsAddress)
+
+Format(s fmt.State, verb rune) {
+    switch verb {
+    case 's':
+		s.Write([]byte(ca.String()))
+    case 'p':
+		s.Write([]byte(fmt.Sprintf("%p", ca)))
+
+default:
+		s.Write([]byte(fmt.Sprintf("%X", []byte(ca))))
+}
+}
+
+// ----------------------------------------------------------------------------
+// auxiliary
+// ----------------------------------------------------------------------------
+
+var errBech32EmptyAddress = errors.New("decoding Bech32 address failed: must provide a non empty address")
+
+// GetFromBech32 decodes a bytestring from a Bech32 encoded string.
+func GetFromBech32(bech32str, prefix string) ([]byte, error) {
+    if len(bech32str) == 0 {
+    return nil, errBech32EmptyAddress
+}
+
+hrp, bz, err := bech32.DecodeAndConvert(bech32str)
+    if err != nil {
+    return nil, err
+}
+    if hrp != prefix {
+    return nil, fmt.Errorf("invalid Bech32 prefix; expected %s, got %s", prefix, hrp)
+}
+
+return bz, nil
+}
+
+func addressBytesFromHexString(address string) ([]byte, error) {
+    if len(address) == 0 {
+    return nil, ErrEmptyHexAddress
+}
+
+return hex.DecodeString(address)
+}
+
+// cacheBech32Addr is not concurrency safe. Concurrent access to cache causes race condition.
+func cacheBech32Addr(prefix string, addr []byte, cache *simplelru.LRU, cacheKey string)
+
+string {
+    bech32Addr, err := bech32.ConvertAndEncode(prefix, addr)
+    if err != nil {
+    panic(err)
+}
+    if IsAddrCacheEnabled() {
+    cache.Add(cacheKey, bech32Addr)
+}
+
+return bech32Addr
+}
 ```
 
 |                    | Address Bech32 Prefix |
@@ -120,8 +1846,77 @@ https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/types/address.go#L299-
 
 Public keys in Cosmos SDK are defined by `cryptotypes.PubKey` interface. Since public keys are saved in a store, `cryptotypes.PubKey` extends the `proto.Message` interface:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/types/types.go#L8-L17
+```go expandable
+package types
+
+import (
+    
+	cmtcrypto "github.com/cometbft/cometbft/crypto"
+	proto "github.com/cosmos/gogoproto/proto"
+)
+
+// PubKey defines a public key and extends proto.Message.
+type PubKey interface {
+    proto.Message
+
+	Address()
+
+Address
+	Bytes() []byte
+	VerifySignature(msg, sig []byte)
+
+bool
+	Equals(PubKey)
+
+bool
+	Type()
+
+string
+}
+
+// LedgerPrivKey defines a private key that is not a proto message. For now,
+// LedgerSecp256k1 keys are not converted to proto.Message yet, this is why
+// they use LedgerPrivKey instead of PrivKey. All other keys must use PrivKey
+// instead of LedgerPrivKey.
+// TODO https://github.com/cosmos/cosmos-sdk/issues/7357.
+type LedgerPrivKey interface {
+    Bytes() []byte
+	Sign(msg []byte) ([]byte, error)
+
+PubKey()
+
+PubKey
+	Equals(LedgerPrivKey)
+
+bool
+	Type()
+
+string
+}
+
+// LedgerPrivKeyAminoJSON is a Ledger PrivKey type that supports signing with
+// SIGN_MODE_LEGACY_AMINO_JSON. It is added as a non-breaking change, instead of directly
+// on the LedgerPrivKey interface (whose Sign method will sign with TEXTUAL),
+// and will be deprecated/removed once LEGACY_AMINO_JSON is removed.
+type LedgerPrivKeyAminoJSON interface {
+    LedgerPrivKey
+	// SignLedgerAminoJSON signs a messages on the Ledger device using
+	// SIGN_MODE_LEGACY_AMINO_JSON.
+	SignLedgerAminoJSON(msg []byte) ([]byte, error)
+}
+
+// PrivKey defines a private key and extends proto.Message. For now, it extends
+// LedgerPrivKey (see godoc for LedgerPrivKey). Ultimately, we should remove
+// LedgerPrivKey and add its methods here directly.
+// TODO https://github.com/cosmos/cosmos-sdk/issues/7357.
+type PrivKey interface {
+    proto.Message
+	LedgerPrivKey
+}
+
+type (
+	Address = cmtcrypto.Address
+)
 ```
 
 A compressed format is used for `secp256k1` and `secp256r1` serialization.
@@ -134,26 +1929,1271 @@ This prefix is followed by the `x`-coordinate.
 Public Keys are not used to reference accounts (or users) and in general are not used when composing transaction messages (with few exceptions: `MsgCreateValidator`, `Validator` and `Multisig` messages).
 For user interactions, `PubKey` is formatted using Protobufs JSON ([ProtoMarshalJSON](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/codec/json.go#L14-L34) function). Example:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/client/keys/output.go#L23-L39
+```go expandable
+package keys
+
+import (
+    
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+    "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+// Use protobuf interface marshaler rather then generic JSON
+
+// KeyOutput defines a structure wrapping around an Info object used for output
+// functionality.
+type KeyOutput struct {
+    Name     string `json:"name" yaml:"name"`
+	Type     string `json:"type" yaml:"type"`
+	Address  string `json:"address" yaml:"address"`
+	PubKey   string `json:"pubkey" yaml:"pubkey"`
+	Mnemonic string `json:"mnemonic,omitempty" yaml:"mnemonic"`
+}
+
+// NewKeyOutput creates a default KeyOutput instance without Mnemonic, Threshold and PubKeys
+func NewKeyOutput(name string, keyType keyring.KeyType, a sdk.Address, pk cryptotypes.PubKey) (KeyOutput, error) {
+    apk, err := codectypes.NewAnyWithValue(pk)
+    if err != nil {
+    return KeyOutput{
+}, err
+}
+
+bz, err := codec.ProtoMarshalJSON(apk, nil)
+    if err != nil {
+    return KeyOutput{
+}, err
+}
+
+return KeyOutput{
+    Name:    name,
+    Type:    keyType.String(),
+    Address: a.String(),
+    PubKey:  string(bz),
+}, nil
+}
+
+// MkConsKeyOutput create a KeyOutput in with "cons" Bech32 prefixes.
+func MkConsKeyOutput(k *keyring.Record) (KeyOutput, error) {
+    pk, err := k.GetPubKey()
+    if err != nil {
+    return KeyOutput{
+}, err
+}
+    addr := sdk.ConsAddress(pk.Address())
+
+return NewKeyOutput(k.Name, k.GetType(), addr, pk)
+}
+
+// MkValKeyOutput create a KeyOutput in with "val" Bech32 prefixes.
+func MkValKeyOutput(k *keyring.Record) (KeyOutput, error) {
+    pk, err := k.GetPubKey()
+    if err != nil {
+    return KeyOutput{
+}, err
+}
+    addr := sdk.ValAddress(pk.Address())
+
+return NewKeyOutput(k.Name, k.GetType(), addr, pk)
+}
+
+// MkAccKeyOutput create a KeyOutput in with "acc" Bech32 prefixes. If the
+// public key is a multisig public key, then the threshold and constituent
+// public keys will be added.
+func MkAccKeyOutput(k *keyring.Record) (KeyOutput, error) {
+    pk, err := k.GetPubKey()
+    if err != nil {
+    return KeyOutput{
+}, err
+}
+    addr := sdk.AccAddress(pk.Address())
+
+return NewKeyOutput(k.Name, k.GetType(), addr, pk)
+}
+
+// MkAccKeysOutput returns a slice of KeyOutput objects, each with the "acc"
+// Bech32 prefixes, given a slice of Record objects. It returns an error if any
+// call to MkKeyOutput fails.
+func MkAccKeysOutput(records []*keyring.Record) ([]KeyOutput, error) {
+    kos := make([]KeyOutput, len(records))
+
+var err error
+    for i, r := range records {
+    kos[i], err = MkAccKeyOutput(r)
+    if err != nil {
+    return nil, err
+}
+	
+}
+
+return kos, nil
+}
 ```
 
 ## Keyring
 
 A `Keyring` is an object that stores and manages accounts. In the Cosmos SDK, a `Keyring` implementation follows the `Keyring` interface:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/keyring/keyring.go#L57-L105
+```go expandable
+package keyring
+
+import (
+    
+	"bufio"
+    "encoding/hex"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+    "sort"
+    "strings"
+    "github.com/99designs/keyring"
+    "github.com/cockroachdb/errors"
+    "github.com/cosmos/go-bip39"
+
+	errorsmod "cosmossdk.io/errors"
+    "golang.org/x/crypto/bcrypt"
+    "github.com/cosmos/cosmos-sdk/client/input"
+    "github.com/cosmos/cosmos-sdk/codec"
+    "github.com/cosmos/cosmos-sdk/crypto"
+    "github.com/cosmos/cosmos-sdk/crypto/hd"
+    "github.com/cosmos/cosmos-sdk/crypto/ledger"
+    "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+    "github.com/cosmos/cosmos-sdk/types/tx/signing"
+)
+
+// Backend options for Keyring
+const (
+	BackendFile    = "file"
+	BackendOS      = "os"
+	BackendKWallet = "kwallet"
+	BackendPass    = "pass"
+	BackendTest    = "test"
+	BackendMemory  = "memory"
+)
+
+const (
+	keyringFileDirName = "keyring-file"
+	keyringTestDirName = "keyring-test"
+	passKeyringPrefix  = "keyring-%s"
+
+	// temporary pass phrase for exporting a key during a key rename
+	passPhrase = "temp"
+)
+
+var (
+	_                          Keyring = &keystore{
+}
+
+maxPassphraseEntryAttempts         = 3
+)
+
+// Keyring exposes operations over a backend supported by github.com/99designs/keyring.
+type Keyring interface {
+	// Get the backend type used in the keyring config: "file", "os", "kwallet", "pass", "test", "memory".
+	Backend()
+
+string
+	// List all keys.
+	List() ([]*Record, error)
+
+	// Supported signing algorithms for Keyring and Ledger respectively.
+	SupportedAlgorithms() (SigningAlgoList, SigningAlgoList)
+
+	// Key and KeyByAddress return keys by uid and address respectively.
+	Key(uid string) (*Record, error)
+
+KeyByAddress(address sdk.Address) (*Record, error)
+
+	// Delete and DeleteByAddress remove keys from the keyring.
+	Delete(uid string)
+
+error
+	DeleteByAddress(address sdk.Address)
+
+error
+
+	// Rename an existing key from the Keyring
+	Rename(from, to string)
+
+error
+
+	// NewMnemonic generates a new mnemonic, derives a hierarchical deterministic key from it, and
+	// persists the key to storage. Returns the generated mnemonic and the key Info.
+	// It returns an error if it fails to generate a key for the given algo type, or if
+	// another key is already stored under the same name or address.
+	//
+	// A passphrase set to the empty string will set the passphrase to the DefaultBIP39Passphrase value.
+	NewMnemonic(uid string, language Language, hdPath, bip39Passphrase string, algo SignatureAlgo) (*Record, string, error)
+
+	// NewAccount converts a mnemonic to a private key and BIP-39 HD Path and persists it.
+	// It fails if there is an existing key Info with the same address.
+	NewAccount(uid, mnemonic, bip39Passphrase, hdPath string, algo SignatureAlgo) (*Record, error)
+
+	// SaveLedgerKey retrieves a public key reference from a Ledger device and persists it.
+	SaveLedgerKey(uid string, algo SignatureAlgo, hrp string, coinType, account, index uint32) (*Record, error)
+
+	// SaveOfflineKey stores a public key and returns the persisted Info structure.
+	SaveOfflineKey(uid string, pubkey types.PubKey) (*Record, error)
+
+	// SaveMultisig stores and returns a new multsig (offline)
+
+key reference.
+	SaveMultisig(uid string, pubkey types.PubKey) (*Record, error)
+
+Signer
+
+	Importer
+	Exporter
+
+	Migrator
+}
+
+// Signer is implemented by key stores that want to provide signing capabilities.
+type Signer interface {
+	// Sign sign byte messages with a user key.
+	Sign(uid string, msg []byte, signMode signing.SignMode) ([]byte, types.PubKey, error)
+
+	// SignByAddress sign byte messages with a user key providing the address.
+	SignByAddress(address sdk.Address, msg []byte, signMode signing.SignMode) ([]byte, types.PubKey, error)
+}
+
+// Importer is implemented by key stores that support import of public and private keys.
+type Importer interface {
+	// ImportPrivKey imports ASCII armored passphrase-encrypted private keys.
+	ImportPrivKey(uid, armor, passphrase string)
+
+error
+
+	// ImportPubKey imports ASCII armored public keys.
+	ImportPubKey(uid, armor string)
+
+error
+}
+
+// Migrator is implemented by key stores and enables migration of keys from amino to proto
+type Migrator interface {
+    MigrateAll() ([]*Record, error)
+}
+
+// Exporter is implemented by key stores that support export of public and private keys.
+type Exporter interface {
+	// Export public key
+	ExportPubKeyArmor(uid string) (string, error)
+
+ExportPubKeyArmorByAddress(address sdk.Address) (string, error)
+
+	// ExportPrivKeyArmor returns a private key in ASCII armored format.
+	// It returns an error if the key does not exist or a wrong encryption passphrase is supplied.
+	ExportPrivKeyArmor(uid, encryptPassphrase string) (armor string, err error)
+
+ExportPrivKeyArmorByAddress(address sdk.Address, encryptPassphrase string) (armor string, err error)
+}
+
+// Option overrides keyring configuration options.
+type Option func(options *Options)
+
+// Options define the options of the Keyring.
+type Options struct {
+	// supported signing algorithms for keyring
+	SupportedAlgos SigningAlgoList
+	// supported signing algorithms for Ledger
+	SupportedAlgosLedger SigningAlgoList
+	// define Ledger Derivation function
+	LedgerDerivation func() (ledger.SECP256K1, error)
+	// define Ledger key generation function
+	LedgerCreateKey func([]byte)
+
+types.PubKey
+	// define Ledger app name
+	LedgerAppName string
+	// indicate whether Ledger should skip DER Conversion on signature,
+	// depending on which format (DER or BER)
+
+the Ledger app returns signatures
+	LedgerSigSkipDERConv bool
+}
+
+// NewInMemory creates a transient keyring useful for testing
+// purposes and on-the-fly key generation.
+// Keybase options can be applied when generating this new Keybase.
+func NewInMemory(cdc codec.Codec, opts ...Option)
+
+Keyring {
+    return NewInMemoryWithKeyring(keyring.NewArrayKeyring(nil), cdc, opts...)
+}
+
+// NewInMemoryWithKeyring returns an in memory keyring using the specified keyring.Keyring
+// as the backing keyring.
+func NewInMemoryWithKeyring(kr keyring.Keyring, cdc codec.Codec, opts ...Option)
+
+Keyring {
+    return newKeystore(kr, cdc, BackendMemory, opts...)
+}
+
+// New creates a new instance of a keyring.
+// Keyring options can be applied when generating the new instance.
+// Available backends are "os", "file", "kwallet", "memory", "pass", "test".
+func New(
+	appName, backend, rootDir string, userInput io.Reader, cdc codec.Codec, opts ...Option,
+) (Keyring, error) {
+    var (
+		db  keyring.Keyring
+		err error
+	)
+    switch backend {
+    case BackendMemory:
+		return NewInMemory(cdc, opts...), err
+    case BackendTest:
+		db, err = keyring.Open(newTestBackendKeyringConfig(appName, rootDir))
+    case BackendFile:
+		db, err = keyring.Open(newFileBackendKeyringConfig(appName, rootDir, userInput))
+    case BackendOS:
+		db, err = keyring.Open(newOSBackendKeyringConfig(appName, rootDir, userInput))
+    case BackendKWallet:
+		db, err = keyring.Open(newKWalletBackendKeyringConfig(appName, rootDir, userInput))
+    case BackendPass:
+		db, err = keyring.Open(newPassBackendKeyringConfig(appName, rootDir, userInput))
+
+default:
+		return nil, errorsmod.Wrap(ErrUnknownBacked, backend)
+}
+    if err != nil {
+    return nil, err
+}
+
+return newKeystore(db, cdc, backend, opts...), nil
+}
+
+type keystore struct {
+    db      keyring.Keyring
+	cdc     codec.Codec
+	backend string
+	options Options
+}
+
+func newKeystore(kr keyring.Keyring, cdc codec.Codec, backend string, opts ...Option)
+
+keystore {
+	// Default options for keybase, these can be overwritten using the
+	// Option function
+    options := Options{
+    SupportedAlgos:       SigningAlgoList{
+    hd.Secp256k1
+},
+    SupportedAlgosLedger: SigningAlgoList{
+    hd.Secp256k1
+},
+}
+    for _, optionFn := range opts {
+    optionFn(&options)
+}
+    if options.LedgerDerivation != nil {
+    ledger.SetDiscoverLedger(options.LedgerDerivation)
+}
+    if options.LedgerCreateKey != nil {
+    ledger.SetCreatePubkey(options.LedgerCreateKey)
+}
+    if options.LedgerAppName != "" {
+    ledger.SetAppName(options.LedgerAppName)
+}
+    if options.LedgerSigSkipDERConv {
+    ledger.SetSkipDERConversion()
+}
+
+return keystore{
+    db:      kr,
+		cdc:     cdc,
+		backend: backend,
+		options: options,
+}
+}
+
+// Backend returns the keyring backend option used in the config
+func (ks keystore)
+
+Backend()
+
+string {
+    return ks.backend
+}
+
+func (ks keystore)
+
+ExportPubKeyArmor(uid string) (string, error) {
+    k, err := ks.Key(uid)
+    if err != nil {
+    return "", err
+}
+
+key, err := k.GetPubKey()
+    if err != nil {
+    return "", err
+}
+
+bz, err := ks.cdc.MarshalInterface(key)
+    if err != nil {
+    return "", err
+}
+
+return crypto.ArmorPubKeyBytes(bz, key.Type()), nil
+}
+
+func (ks keystore)
+
+ExportPubKeyArmorByAddress(address sdk.Address) (string, error) {
+    k, err := ks.KeyByAddress(address)
+    if err != nil {
+    return "", err
+}
+
+return ks.ExportPubKeyArmor(k.Name)
+}
+
+// ExportPrivKeyArmor exports encrypted privKey
+func (ks keystore)
+
+ExportPrivKeyArmor(uid, encryptPassphrase string) (armor string, err error) {
+    priv, err := ks.ExportPrivateKeyObject(uid)
+    if err != nil {
+    return "", err
+}
+
+return crypto.EncryptArmorPrivKey(priv, encryptPassphrase, priv.Type()), nil
+}
+
+// ExportPrivateKeyObject exports an armored private key object.
+func (ks keystore)
+
+ExportPrivateKeyObject(uid string) (types.PrivKey, error) {
+    k, err := ks.Key(uid)
+    if err != nil {
+    return nil, err
+}
+
+priv, err := extractPrivKeyFromRecord(k)
+    if err != nil {
+    return nil, err
+}
+
+return priv, err
+}
+
+func (ks keystore)
+
+ExportPrivKeyArmorByAddress(address sdk.Address, encryptPassphrase string) (armor string, err error) {
+    k, err := ks.KeyByAddress(address)
+    if err != nil {
+    return "", err
+}
+
+return ks.ExportPrivKeyArmor(k.Name, encryptPassphrase)
+}
+
+func (ks keystore)
+
+ImportPrivKey(uid, armor, passphrase string)
+
+error {
+    if k, err := ks.Key(uid); err == nil {
+    if uid == k.Name {
+    return errorsmod.Wrap(ErrOverwriteKey, uid)
+}
+	
+}
+
+privKey, _, err := crypto.UnarmorDecryptPrivKey(armor, passphrase)
+    if err != nil {
+    return errorsmod.Wrap(err, "failed to decrypt private key")
+}
+
+	_, err = ks.writeLocalKey(uid, privKey)
+    if err != nil {
+    return err
+}
+
+return nil
+}
+
+func (ks keystore)
+
+ImportPubKey(uid, armor string)
+
+error {
+    if _, err := ks.Key(uid); err == nil {
+    return errorsmod.Wrap(ErrOverwriteKey, uid)
+}
+
+pubBytes, _, err := crypto.UnarmorPubKeyBytes(armor)
+    if err != nil {
+    return err
+}
+
+var pubKey types.PubKey
+    if err := ks.cdc.UnmarshalInterface(pubBytes, &pubKey); err != nil {
+    return err
+}
+
+	_, err = ks.writeOfflineKey(uid, pubKey)
+    if err != nil {
+    return err
+}
+
+return nil
+}
+
+func (ks keystore)
+
+Sign(uid string, msg []byte, signMode signing.SignMode) ([]byte, types.PubKey, error) {
+    k, err := ks.Key(uid)
+    if err != nil {
+    return nil, nil, err
+}
+    switch {
+    case k.GetLocal() != nil:
+		priv, err := extractPrivKeyFromLocal(k.GetLocal())
+    if err != nil {
+    return nil, nil, err
+}
+
+sig, err := priv.Sign(msg)
+    if err != nil {
+    return nil, nil, err
+}
+
+return sig, priv.PubKey(), nil
+    case k.GetLedger() != nil:
+		return SignWithLedger(k, msg, signMode)
+
+		// multi or offline record
+	default:
+		pub, err := k.GetPubKey()
+    if err != nil {
+    return nil, nil, err
+}
+
+return nil, pub, ErrOfflineSign
+}
+}
+
+func (ks keystore)
+
+SignByAddress(address sdk.Address, msg []byte, signMode signing.SignMode) ([]byte, types.PubKey, error) {
+    k, err := ks.KeyByAddress(address)
+    if err != nil {
+    return nil, nil, err
+}
+
+return ks.Sign(k.Name, msg, signMode)
+}
+
+func (ks keystore)
+
+SaveLedgerKey(uid string, algo SignatureAlgo, hrp string, coinType, account, index uint32) (*Record, error) {
+    if !ks.options.SupportedAlgosLedger.Contains(algo) {
+    return nil, errorsmod.Wrap(ErrUnsupportedSigningAlgo, fmt.Sprintf("signature algo %s is not defined in the keyring options", algo.Name()))
+}
+    hdPath := hd.NewFundraiserParams(account, coinType, index)
+
+priv, _, err := ledger.NewPrivKeySecp256k1(*hdPath, hrp)
+    if err != nil {
+    return nil, errors.CombineErrors(ErrLedgerGenerateKey, err)
+}
+
+return ks.writeLedgerKey(uid, priv.PubKey(), hdPath)
+}
+
+func (ks keystore)
+
+writeLedgerKey(name string, pk types.PubKey, path *hd.BIP44Params) (*Record, error) {
+    k, err := NewLedgerRecord(name, pk, path)
+    if err != nil {
+    return nil, err
+}
+
+return k, ks.writeRecord(k)
+}
+
+func (ks keystore)
+
+SaveMultisig(uid string, pubkey types.PubKey) (*Record, error) {
+    return ks.writeMultisigKey(uid, pubkey)
+}
+
+func (ks keystore)
+
+SaveOfflineKey(uid string, pubkey types.PubKey) (*Record, error) {
+    return ks.writeOfflineKey(uid, pubkey)
+}
+
+func (ks keystore)
+
+DeleteByAddress(address sdk.Address)
+
+error {
+    k, err := ks.KeyByAddress(address)
+    if err != nil {
+    return err
+}
+
+err = ks.Delete(k.Name)
+    if err != nil {
+    return err
+}
+
+return nil
+}
+
+func (ks keystore)
+
+Rename(oldName, newName string)
+
+error {
+	_, err := ks.Key(newName)
+    if err == nil {
+    return errorsmod.Wrap(ErrKeyAlreadyExists, fmt.Sprintf("rename failed, %s", newName))
+}
+
+armor, err := ks.ExportPrivKeyArmor(oldName, passPhrase)
+    if err != nil {
+    return err
+}
+    if err := ks.Delete(oldName); err != nil {
+    return err
+}
+    if err := ks.ImportPrivKey(newName, armor, passPhrase); err != nil {
+    return err
+}
+
+return nil
+}
+
+// Delete deletes a key in the keyring. `uid` represents the key name, without
+// the `.info` suffix.
+func (ks keystore)
+
+Delete(uid string)
+
+error {
+    k, err := ks.Key(uid)
+    if err != nil {
+    return err
+}
+
+addr, err := k.GetAddress()
+    if err != nil {
+    return err
+}
+
+err = ks.db.Remove(addrHexKeyAsString(addr))
+    if err != nil {
+    return err
+}
+
+err = ks.db.Remove(infoKey(uid))
+    if err != nil {
+    return err
+}
+
+return nil
+}
+
+func (ks keystore)
+
+KeyByAddress(address sdk.Address) (*Record, error) {
+    ik, err := ks.db.Get(addrHexKeyAsString(address))
+    if err != nil {
+    return nil, wrapKeyNotFound(err, fmt.Sprintf("key with address %s not found", address.String()))
+}
+    if len(ik.Data) == 0 {
+    return nil, wrapKeyNotFound(err, fmt.Sprintf("key with address %s not found", address.String()))
+}
+
+return ks.Key(string(ik.Data))
+}
+
+func wrapKeyNotFound(err error, msg string)
+
+error {
+    if err == keyring.ErrKeyNotFound {
+    return errorsmod.Wrap(sdkerrors.ErrKeyNotFound, msg)
+}
+
+return err
+}
+
+func (ks keystore)
+
+List() ([]*Record, error) {
+    return ks.MigrateAll()
+}
+
+func (ks keystore)
+
+NewMnemonic(uid string, language Language, hdPath, bip39Passphrase string, algo SignatureAlgo) (*Record, string, error) {
+    if language != English {
+    return nil, "", ErrUnsupportedLanguage
+}
+    if !ks.isSupportedSigningAlgo(algo) {
+    return nil, "", ErrUnsupportedSigningAlgo
+}
+
+	// Default number of words (24): This generates a mnemonic directly from the
+	// number of words by reading system entropy.
+	entropy, err := bip39.NewEntropy(defaultEntropySize)
+    if err != nil {
+    return nil, "", err
+}
+
+mnemonic, err := bip39.NewMnemonic(entropy)
+    if err != nil {
+    return nil, "", err
+}
+    if bip39Passphrase == "" {
+    bip39Passphrase = DefaultBIP39Passphrase
+}
+
+k, err := ks.NewAccount(uid, mnemonic, bip39Passphrase, hdPath, algo)
+    if err != nil {
+    return nil, "", err
+}
+
+return k, mnemonic, nil
+}
+
+func (ks keystore)
+
+NewAccount(name, mnemonic, bip39Passphrase, hdPath string, algo SignatureAlgo) (*Record, error) {
+    if !ks.isSupportedSigningAlgo(algo) {
+    return nil, ErrUnsupportedSigningAlgo
+}
+
+	// create master key and derive first key for keyring
+	derivedPriv, err := algo.Derive()(mnemonic, bip39Passphrase, hdPath)
+    if err != nil {
+    return nil, err
+}
+    privKey := algo.Generate()(derivedPriv)
+
+	// check if the key already exists with the same address and return an error
+	// if found
+    address := sdk.AccAddress(privKey.PubKey().Address())
+    if _, err := ks.KeyByAddress(address); err == nil {
+    return nil, ErrDuplicatedAddress
+}
+
+return ks.writeLocalKey(name, privKey)
+}
+
+func (ks keystore)
+
+isSupportedSigningAlgo(algo SignatureAlgo)
+
+bool {
+    return ks.options.SupportedAlgos.Contains(algo)
+}
+
+func (ks keystore)
+
+Key(uid string) (*Record, error) {
+    k, err := ks.migrate(uid)
+    if err != nil {
+    return nil, err
+}
+
+return k, nil
+}
+
+// SupportedAlgorithms returns the keystore Options' supported signing algorithm.
+// for the keyring and Ledger.
+func (ks keystore)
+
+SupportedAlgorithms() (SigningAlgoList, SigningAlgoList) {
+    return ks.options.SupportedAlgos, ks.options.SupportedAlgosLedger
+}
+
+// SignWithLedger signs a binary message with the ledger device referenced by an Info object
+// and returns the signed bytes and the public key. It returns an error if the device could
+// not be queried or it returned an error.
+func SignWithLedger(k *Record, msg []byte, signMode signing.SignMode) (sig []byte, pub types.PubKey, err error) {
+    ledgerInfo := k.GetLedger()
+    if ledgerInfo == nil {
+    return nil, nil, ErrNotLedgerObj
+}
+    path := ledgerInfo.GetPath()
+
+priv, err := ledger.NewPrivKeySecp256k1Unsafe(*path)
+    if err != nil {
+    return
+}
+    switch signMode {
+    case signing.SignMode_SIGN_MODE_TEXTUAL:
+		sig, err = priv.Sign(msg)
+    if err != nil {
+    return nil, nil, err
+}
+    case signing.SignMode_SIGN_MODE_LEGACY_AMINO_JSON:
+		sig, err = priv.SignLedgerAminoJSON(msg)
+    if err != nil {
+    return nil, nil, err
+}
+
+default:
+		return nil, nil, errorsmod.Wrap(ErrInvalidSignMode, fmt.Sprintf("%v", signMode))
+}
+    if !priv.PubKey().VerifySignature(msg, sig) {
+    return nil, nil, ErrLedgerInvalidSignature
+}
+
+return sig, priv.PubKey(), nil
+}
+
+func newOSBackendKeyringConfig(appName, dir string, buf io.Reader)
+
+keyring.Config {
+    return keyring.Config{
+    ServiceName:              appName,
+    FileDir:                  dir,
+    KeychainTrustApplication: true,
+    FilePasswordFunc:         newRealPrompt(dir, buf),
+}
+}
+
+func newTestBackendKeyringConfig(appName, dir string)
+
+keyring.Config {
+    return keyring.Config{
+    AllowedBackends: []keyring.BackendType{
+    keyring.FileBackend
+},
+    ServiceName:     appName,
+    FileDir:         filepath.Join(dir, keyringTestDirName),
+    FilePasswordFunc: func(_ string) (string, error) {
+    return "test", nil
+},
+}
+}
+
+func newKWalletBackendKeyringConfig(appName, _ string, _ io.Reader)
+
+keyring.Config {
+    return keyring.Config{
+    AllowedBackends: []keyring.BackendType{
+    keyring.KWalletBackend
+},
+    ServiceName:     "kdewallet",
+    KWalletAppID:    appName,
+    KWalletFolder:   "",
+}
+}
+
+func newPassBackendKeyringConfig(appName, _ string, _ io.Reader)
+
+keyring.Config {
+    prefix := fmt.Sprintf(passKeyringPrefix, appName)
+
+return keyring.Config{
+    AllowedBackends: []keyring.BackendType{
+    keyring.PassBackend
+},
+    ServiceName:     appName,
+    PassPrefix:      prefix,
+}
+}
+
+func newFileBackendKeyringConfig(name, dir string, buf io.Reader)
+
+keyring.Config {
+    fileDir := filepath.Join(dir, keyringFileDirName)
+
+return keyring.Config{
+    AllowedBackends:  []keyring.BackendType{
+    keyring.FileBackend
+},
+    ServiceName:      name,
+    FileDir:          fileDir,
+    FilePasswordFunc: newRealPrompt(fileDir, buf),
+}
+}
+
+func newRealPrompt(dir string, buf io.Reader)
+
+func(string) (string, error) {
+    return func(prompt string) (string, error) {
+    keyhashStored := false
+    keyhashFilePath := filepath.Join(dir, "keyhash")
+
+var keyhash []byte
+
+		_, err := os.Stat(keyhashFilePath)
+    switch {
+    case err == nil:
+			keyhash, err = os.ReadFile(keyhashFilePath)
+    if err != nil {
+    return "", errorsmod.Wrap(err, fmt.Sprintf("failed to read %s", keyhashFilePath))
+}
+
+keyhashStored = true
+    case os.IsNotExist(err):
+			keyhashStored = false
+
+		default:
+			return "", errorsmod.Wrap(err, fmt.Sprintf("failed to open %s", keyhashFilePath))
+}
+    failureCounter := 0
+    for {
+    failureCounter++
+    if failureCounter > maxPassphraseEntryAttempts {
+    return "", ErrMaxPassPhraseAttempts
+}
+    buf := bufio.NewReader(buf)
+
+pass, err := input.GetPassword(fmt.Sprintf("Enter keyring passphrase (attempt %d/%d):", failureCounter, maxPassphraseEntryAttempts), buf)
+    if err != nil {
+				// NOTE: LGTM.io reports a false positive alert that states we are printing the password,
+				// but we only log the error.
+				//
+				// lgtm [go/clear-text-logging]
+				fmt.Fprintln(os.Stderr, err)
+
+continue
+}
+    if keyhashStored {
+    if err := bcrypt.CompareHashAndPassword(keyhash, []byte(pass)); err != nil {
+    fmt.Fprintln(os.Stderr, "incorrect passphrase")
+
+continue
+}
+
+return pass, nil
+}
+
+reEnteredPass, err := input.GetPassword("Re-enter keyring passphrase:", buf)
+    if err != nil {
+				// NOTE: LGTM.io reports a false positive alert that states we are printing the password,
+				// but we only log the error.
+				//
+				// lgtm [go/clear-text-logging]
+				fmt.Fprintln(os.Stderr, err)
+
+continue
+}
+    if pass != reEnteredPass {
+    fmt.Fprintln(os.Stderr, "passphrase do not match")
+
+continue
+}
+
+passwordHash, err := bcrypt.GenerateFromPassword([]byte(pass), 2)
+    if err != nil {
+    fmt.Fprintln(os.Stderr, err)
+
+continue
+}
+    if err := os.WriteFile(keyhashFilePath, passwordHash, 0o600); err != nil {
+    return "", err
+}
+
+return pass, nil
+}
+	
+}
+}
+
+func (ks keystore)
+
+writeLocalKey(name string, privKey types.PrivKey) (*Record, error) {
+    k, err := NewLocalRecord(name, privKey, privKey.PubKey())
+    if err != nil {
+    return nil, err
+}
+
+return k, ks.writeRecord(k)
+}
+
+// writeRecord persists a keyring item in keystore if it does not exist there.
+// For each key record, we actually write 2 items:
+// - one with key `<uid>.info`, with Data = the serialized protobuf key
+// - another with key `<addr_as_hex>.address`, with Data = the uid (i.e. the key name)
+// This is to be able to query keys both by name and by address.
+func (ks keystore)
+
+writeRecord(k *Record)
+
+error {
+    addr, err := k.GetAddress()
+    if err != nil {
+    return err
+}
+    key := infoKey(k.Name)
+
+exists, err := ks.existsInDb(addr, key)
+    if err != nil {
+    return err
+}
+    if exists {
+    return errorsmod.Wrap(ErrKeyAlreadyExists, key)
+}
+
+serializedRecord, err := ks.cdc.Marshal(k)
+    if err != nil {
+    return errors.CombineErrors(ErrUnableToSerialize, err)
+}
+    item := keyring.Item{
+    Key:  key,
+    Data: serializedRecord,
+}
+    if err := ks.SetItem(item); err != nil {
+    return err
+}
+
+item = keyring.Item{
+    Key:  addrHexKeyAsString(addr),
+    Data: []byte(key),
+}
+    if err := ks.SetItem(item); err != nil {
+    return err
+}
+
+return nil
+}
+
+// existsInDb returns (true, nil)
+    if either addr or name exist is in keystore DB.
+// On the other hand, it returns (false, error)
+    if Get method returns error different from keyring.ErrKeyNotFound
+// In case of inconsistent keyring, it recovers it automatically.
+func (ks keystore)
+
+existsInDb(addr sdk.Address, name string) (bool, error) {
+	_, errAddr := ks.db.Get(addrHexKeyAsString(addr))
+    if errAddr != nil && !errors.Is(errAddr, keyring.ErrKeyNotFound) {
+    return false, errAddr
+}
+
+	_, errInfo := ks.db.Get(infoKey(name))
+    if errInfo == nil {
+    return true, nil // uid lookup succeeds - info exists
+}
+
+else if !errors.Is(errInfo, keyring.ErrKeyNotFound) {
+    return false, errInfo // received unexpected error - returns
+}
+
+	// looking for an issue, record with meta (getByAddress)
+
+exists, but record with public key itself does not
+    if errAddr == nil && errors.Is(errInfo, keyring.ErrKeyNotFound) {
+    fmt.Fprintf(os.Stderr, "address \"%s\" exists but pubkey itself does not\n", hex.EncodeToString(addr.Bytes()))
+
+fmt.Fprintln(os.Stderr, "recreating pubkey record")
+    err := ks.db.Remove(addrHexKeyAsString(addr))
+    if err != nil {
+    return true, err
+}
+
+return false, nil
+}
+
+	// both lookups failed, info does not exist
+	return false, nil
+}
+
+func (ks keystore)
+
+writeOfflineKey(name string, pk types.PubKey) (*Record, error) {
+    k, err := NewOfflineRecord(name, pk)
+    if err != nil {
+    return nil, err
+}
+
+return k, ks.writeRecord(k)
+}
+
+// writeMultisigKey investigate where thisf function is called maybe remove it
+func (ks keystore)
+
+writeMultisigKey(name string, pk types.PubKey) (*Record, error) {
+    k, err := NewMultiRecord(name, pk)
+    if err != nil {
+    return nil, err
+}
+
+return k, ks.writeRecord(k)
+}
+
+func (ks keystore)
+
+MigrateAll() ([]*Record, error) {
+    keys, err := ks.db.Keys()
+    if err != nil {
+    return nil, err
+}
+    if len(keys) == 0 {
+    return nil, nil
+}
+
+sort.Strings(keys)
+
+var recs []*Record
+    for _, key := range keys {
+		// The keyring items only with `.info` consists the key info.
+    if !strings.HasSuffix(key, infoSuffix) {
+    continue
+}
+
+rec, err := ks.migrate(key)
+    if err != nil {
+    fmt.Printf("migrate err for key %s: %q\n", key, err)
+
+continue
+}
+
+recs = append(recs, rec)
+}
+
+return recs, nil
+}
+
+// migrate converts keyring.Item from amino to proto serialization format.
+// the `key` argument can be a key uid (e.g. "alice")
+
+or with the '.info'
+// suffix (e.g. "alice.info").
+//
+// It operates as follows:
+// 1. retrieve any key
+// 2. try to decode it using protobuf
+// 3. if ok, then return the key, do nothing else
+// 4. if it fails, then try to decode it using amino
+// 5. convert from the amino struct to the protobuf struct
+// 6. write the proto-encoded key back to the keyring
+func (ks keystore)
+
+migrate(key string) (*Record, error) {
+    if !strings.HasSuffix(key, infoSuffix) {
+    key = infoKey(key)
+}
+
+	// 1. get the key.
+	item, err := ks.db.Get(key)
+    if err != nil {
+    return nil, wrapKeyNotFound(err, key)
+}
+    if len(item.Data) == 0 {
+    return nil, errorsmod.Wrap(sdkerrors.ErrKeyNotFound, key)
+}
+
+	// 2. Try to deserialize using proto
+	k, err := ks.protoUnmarshalRecord(item.Data)
+	// 3. If ok then return the key
+    if err == nil {
+    return k, nil
+}
+
+	// 4. Try to decode with amino
+	legacyInfo, err := unMarshalLegacyInfo(item.Data)
+    if err != nil {
+    return nil, errorsmod.Wrap(err, "unable to unmarshal item.Data")
+}
+
+	// 5. Convert and serialize info using proto
+	k, err = ks.convertFromLegacyInfo(legacyInfo)
+    if err != nil {
+    return nil, errorsmod.Wrap(err, "convertFromLegacyInfo")
+}
+
+serializedRecord, err := ks.cdc.Marshal(k)
+    if err != nil {
+    return nil, errors.CombineErrors(ErrUnableToSerialize, err)
+}
+
+item = keyring.Item{
+    Key:  key,
+    Data: serializedRecord,
+}
+
+	// 6. Overwrite the keyring entry with the new proto-encoded key.
+    if err := ks.SetItem(item); err != nil {
+    return nil, errorsmod.Wrap(err, "unable to set keyring.Item")
+}
+
+fmt.Printf("Successfully migrated key %s.\n", key)
+
+return k, nil
+}
+
+func (ks keystore)
+
+protoUnmarshalRecord(bz []byte) (*Record, error) {
+    k := new(Record)
+    if err := ks.cdc.Unmarshal(bz, k); err != nil {
+    return nil, err
+}
+
+return k, nil
+}
+
+func (ks keystore)
+
+SetItem(item keyring.Item)
+
+error {
+    return ks.db.Set(item)
+}
+
+func (ks keystore)
+
+convertFromLegacyInfo(info LegacyInfo) (*Record, error) {
+    if info == nil {
+    return nil, errorsmod.Wrap(ErrLegacyToRecord, "info is nil")
+}
+    name := info.GetName()
+    pk := info.GetPubKey()
+    switch info.GetType() {
+    case TypeLocal:
+		priv, err := privKeyFromLegacyInfo(info)
+    if err != nil {
+    return nil, err
+}
+
+return NewLocalRecord(name, priv, pk)
+    case TypeOffline:
+		return NewOfflineRecord(name, pk)
+    case TypeMulti:
+		return NewMultiRecord(name, pk)
+    case TypeLedger:
+		path, err := info.GetPath()
+    if err != nil {
+    return nil, err
+}
+
+return NewLedgerRecord(name, pk, path)
+
+default:
+		return nil, ErrUnknownLegacyType
+}
+}
+
+func addrHexKeyAsString(address sdk.Address)
+
+string {
+    return fmt.Sprintf("%s.%s", hex.EncodeToString(address.Bytes()), addressSuffix)
+}
 ```
 
 The default implementation of `Keyring` comes from the third-party [`99designs/keyring`](https://github.com/99designs/keyring) library.
 
 A few notes on the `Keyring` methods:
 
-* `Sign(uid string, msg []byte) ([]byte, types.PubKey, error)` strictly deals with the signature of the `msg` bytes. You must prepare and encode the transaction into a canonical `[]byte` form. Because protobuf is not deterministic, it has been decided in [ADR-020](/../build/architecture/adr-020-protobuf-transaction-encoding.md) that the canonical `payload` to sign is the `SignDoc` struct, deterministically encoded using [ADR-027](/../build/architecture/adr-027-deterministic-protobuf-serialization.md). Note that signature verification is not implemented in the Cosmos SDK by default, it is deferred to the [`anteHandler`](/advanced/00-baseapp.md#antehandler).
+* `Sign(uid string, msg []byte) ([]byte, types.PubKey, error)` strictly deals with the signature of the `msg` bytes. You must prepare and encode the transaction into a canonical `[]byte` form. Because protobuf is not deterministic, it has been decided in [ADR-020](/docs/sdk/v0.50//build/architecture/adr-020-protobuf-transaction-encoding) that the canonical `payload` to sign is the `SignDoc` struct, deterministically encoded using [ADR-027](/docs/sdk/v0.50//build/architecture/adr-027-deterministic-protobuf-serialization). Note that signature verification is not implemented in the Cosmos SDK by default, it is deferred to the [`anteHandler`](/docs/sdk/v0.50/advanced/00-baseapp#antehandler).
 
 ```protobuf
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta1/tx.proto#L50-L66
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta1/tx.proto#L50-L66
 ```
 
 * `NewAccount(uid, mnemonic, bip39Passphrase, hdPath string, algo SignatureAlgo) (*Record, error)` creates a new account based on the [`bip44 path`](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki) and persists it on disk. The `PrivKey` is **never stored unencrypted**, instead it is [encrypted with a passphrase](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/armor.go) before being persisted. In the context of this method, the key type and sequence number refer to the segment of the BIP44 derivation path (for example, `0`, `1`, `2`, ...) that is used to derive a private and a public key from the mnemonic. Using the same mnemonic and derivation path, the same `PrivKey`, `PubKey` and `Address` is generated. The following keys are supported by the keyring:
@@ -168,14 +3208,175 @@ https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta
 
 To create a new key type for using in keyring, `keyring.SignatureAlgo` interface must be fulfilled.
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/keyring/signing_algorithms.go#L10-L15
+```go expandable
+package keyring
+
+import (
+    
+	"strings"
+    "github.com/cockroachdb/errors"
+    "github.com/cosmos/cosmos-sdk/crypto/hd"
+)
+
+// SignatureAlgo defines the interface for a keyring supported algorithm.
+type SignatureAlgo interface {
+    Name()
+
+hd.PubKeyType
+	Derive()
+
+hd.DeriveFn
+	Generate()
+
+hd.GenerateFn
+}
+
+// NewSigningAlgoFromString creates a supported SignatureAlgo.
+func NewSigningAlgoFromString(str string, algoList SigningAlgoList) (SignatureAlgo, error) {
+    for _, algo := range algoList {
+    if str == string(algo.Name()) {
+    return algo, nil
+}
+	
+}
+
+return nil, errors.Wrap(ErrUnsupportedSigningAlgo, str)
+}
+
+// SigningAlgoList is a slice of signature algorithms
+type SigningAlgoList []SignatureAlgo
+
+// Contains returns true if the SigningAlgoList the given SignatureAlgo.
+func (sal SigningAlgoList)
+
+Contains(algo SignatureAlgo)
+
+bool {
+    for _, cAlgo := range sal {
+    if cAlgo.Name() == algo.Name() {
+    return true
+}
+	
+}
+
+return false
+}
+
+// String returns a comma separated string of the signature algorithm names in the list.
+func (sal SigningAlgoList)
+
+String()
+
+string {
+    names := make([]string, len(sal))
+    for i := range sal {
+    names[i] = string(sal[i].Name())
+}
+
+return strings.Join(names, ",")
+}
 ```
 
 The interface consists in three methods where `Name()` returns the name of the algorithm as a `hd.PubKeyType` and `Derive()` and `Generate()` must return the following functions respectively:
 
-```go
-https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/hd/algo.go#L28-L31
+```go expandable
+package hd
+
+import (
+    
+	"github.com/cosmos/go-bip39"
+    "github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+    "github.com/cosmos/cosmos-sdk/crypto/types"
+)
+
+// PubKeyType defines an algorithm to derive key-pairs which can be used for cryptographic signing.
+type PubKeyType string
+
+const (
+	// MultiType implies that a pubkey is a multisignature
+	MultiType = PubKeyType("multi")
+	// Secp256k1Type uses the Bitcoin secp256k1 ECDSA parameters.
+	Secp256k1Type = PubKeyType("secp256k1")
+	// Ed25519Type represents the Ed25519Type signature system.
+	// It is currently not supported for end-user keys (wallets/ledgers).
+	Ed25519Type = PubKeyType("ed25519")
+	// Sr25519Type represents the Sr25519Type signature system.
+	Sr25519Type = PubKeyType("sr25519")
+)
+
+// Secp256k1 uses the Bitcoin secp256k1 ECDSA parameters.
+var Secp256k1 = secp256k1Algo{
+}
+
+type (
+	DeriveFn   func(mnemonic, bip39Passphrase, hdPath string) ([]byte, error)
+
+GenerateFn func(bz []byte)
+
+types.PrivKey
+)
+
+type WalletGenerator interface {
+    Derive(mnemonic, bip39Passphrase, hdPath string) ([]byte, error)
+
+Generate(bz []byte)
+
+types.PrivKey
+}
+
+type secp256k1Algo struct{
+}
+
+func (s secp256k1Algo)
+
+Name()
+
+PubKeyType {
+    return Secp256k1Type
+}
+
+// Derive derives and returns the secp256k1 private key for the given seed and HD path.
+func (s secp256k1Algo)
+
+Derive()
+
+DeriveFn {
+    return func(mnemonic, bip39Passphrase, hdPath string) ([]byte, error) {
+    seed, err := bip39.NewSeedWithErrorChecking(mnemonic, bip39Passphrase)
+    if err != nil {
+    return nil, err
+}
+
+masterPriv, ch := ComputeMastersFromSeed(seed)
+    if len(hdPath) == 0 {
+    return masterPriv[:], nil
+}
+
+derivedKey, err := DerivePrivateKeyForPath(masterPriv, ch, hdPath)
+
+return derivedKey, err
+}
+}
+
+// Generate generates a secp256k1 private key from the given bytes.
+func (s secp256k1Algo)
+
+Generate()
+
+GenerateFn {
+    return func(bz []byte)
+
+types.PrivKey {
+    bzArr := make([]byte, secp256k1.PrivKeySize)
+
+copy(bzArr, bz)
+
+return &secp256k1.PrivKey{
+    Key: bzArr
+}
+	
+}
+}
 ```
 
 Once the `keyring.SignatureAlgo` has been implemented it must be added to the [list of supported algos](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/crypto/keyring/keyring.go#L217) of the keyring.
