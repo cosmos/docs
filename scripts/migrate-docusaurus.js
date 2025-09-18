@@ -173,6 +173,7 @@ function parseDocusaurusFrontmatter(content) {
   };
 }
 
+
 /**
  * Extract title from content (first H1 heading).
  * Removes the H1 from content to avoid duplication.
@@ -465,15 +466,18 @@ function formatGenericCode(code) {
  *
  * @description
  * Updates various link patterns:
- * - Relative markdown links changing extension to mdx
- * - Versioned documentation paths
- * - Product-specific namespacing
- * - Image paths (if product is sdk)
+ * - Removes Docusaurus-specific anchor links
+ * - Removes heading anchors from headers
+ * - Fixes relative paths for non-image links
+ * - Preserves relative paths for images
+ *
+ * Note: File extension removal and product/version prefixing
+ * is handled by the AST createLinkFixerPlugin.
  *
  * Link transformation examples:
- * - Relative paths become absolute with product and version
- * - Parent directory references resolved to absolute paths
- * - Root paths get product and version prefixes
+ * - Removes direct link anchors
+ * - Removes heading ID anchors
+ * - Converts relative paths to absolute for documents
  *
  * @example
  * const fixed = fixInternalLinks(
@@ -772,6 +776,7 @@ const migrationCache = {
 const migrationIssues = {
   warnings: [],
   errors: [],
+  info: [],
   currentFile: '',
   processedFiles: new Set(),
 
@@ -781,6 +786,14 @@ const migrationIssues = {
       line,
       issue,
       suggestion
+    });
+  },
+
+  addRemoval(message, details) {
+    this.info.push({
+      file: this.currentFile,
+      message,
+      details
     });
   },
 
@@ -855,8 +868,32 @@ const migrationIssues = {
       });
     }
 
+    // Report removed content that couldn't be safely converted
+    if (this.info.length > 0) {
+      report += `REMOVED CONTENT (${this.info.length}) - Content that was removed:\n`;
+      report += '-'.repeat(40) + '\n';
+
+      const infoByFile = {};
+      this.info.forEach(info => {
+        if (!infoByFile[info.file]) infoByFile[info.file] = [];
+        infoByFile[info.file].push(info);
+      });
+
+      Object.entries(infoByFile).forEach(([file, infos]) => {
+        report += `\n${file}:\n`;
+        infos.forEach(info => {
+          report += `  ${info.message}: ${info.details}\n`;
+        });
+      });
+      report += '\n';
+    }
+
     report += '\n' + '='.repeat(80) + '\n';
-    report += `Summary: ${this.errors.length} errors, ${this.warnings.length} warnings\n`;
+    report += `Summary: ${this.errors.length} errors, ${this.warnings.length} warnings`;
+    if (this.info.length > 0) {
+      report += `, ${this.info.length} removals`;
+    }
+    report += '\n';
     report += '='.repeat(80) + '\n';
 
     return report;
@@ -903,6 +940,13 @@ function fixMDXIssues(content, filepath = '') {
       return `${before}${word1}\\_${word2}${after}`;
     });
 
+    // CRITICAL FIX 1b: Escape template variables and JSON objects in table cells
+    // This prevents acorn parsing errors for content like {"denom":"uatom"}
+    nonCodeContent = nonCodeContent.replace(/(\|[^|\n]*)(\{[^}|\n]+\})([^|\n]*\|)/g, (match, before, templateVar, after) => {
+      // Wrap template variables and JSON in backticks within table cells
+      return `${before}\`${templateVar}\`${after}`;
+    });
+
     // Fix invalid JSX comments with escaped characters
     // Handle complete escaped comments: {/\*...\*/}
     nonCodeContent = nonCodeContent.replace(/\{\/\\\*([^}]*)\\\*\/\}/g, (match, content) => {
@@ -914,6 +958,37 @@ function fixMDXIssues(content, filepath = '') {
 
     // Handle partial escaped comment ends: \*/}
     nonCodeContent = nonCodeContent.replace(/\\\*\/\}/g, '*/}');
+
+    // Fix unclosed JSX comments - ensure all {/* have matching */}
+    nonCodeContent = nonCodeContent.replace(/\{\/\*([^*]|\*(?!\/))*$/gm, (match) => {
+      // Add closing */} if missing
+      return match + ' */}';
+    });
+
+    // Fix orphaned comment closings */} without opening {/*
+    nonCodeContent = nonCodeContent.replace(/^[^{]*\*\/\}/gm, (match) => {
+      // Add opening {/* if missing
+      return '{/* ' + match;
+    });
+
+    // Fix HTML elements with hyphens in tag names (e.g., <custom-element>)
+    // Convert to PascalCase for JSX compatibility
+    nonCodeContent = nonCodeContent.replace(/<([a-z]+(?:-[a-z]+)+)([^>]*>)/gi, (match, tagName, rest) => {
+      // Skip if already in backticks
+      if (match.includes('`')) return match;
+      // Convert kebab-case to PascalCase
+      const pascalCase = tagName.split('-')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+      return `<${pascalCase}${rest}`;
+    });
+    // Also convert closing tags
+    nonCodeContent = nonCodeContent.replace(/<\/([a-z]+(?:-[a-z]+)+)>/gi, (match, tagName) => {
+      const pascalCase = tagName.split('-')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+      return `</${pascalCase}>`;
+    });
 
     // Fix expressions with hyphens that break JSX parsing
     nonCodeContent = nonCodeContent.replace(/`([^`]*<[^>]*-[^>]*>[^`]*)`/g, (match, content) => {
@@ -939,6 +1014,7 @@ function fixMDXIssues(content, filepath = '') {
     // Fix arrow operators and comparison operators that break parsing
     // Don't wrap if it's already in backticks or part of HTML tag
     nonCodeContent = nonCodeContent.replace(/(?<!`)(<->)(?!`)/g, '`$1`');
+    nonCodeContent = nonCodeContent.replace(/(?<!`)(<=>)(?!`)/g, '`$1`');
 
     // Fix version markers like **<= v0.45**: (must be done BEFORE general <= replacement)
     nonCodeContent = nonCodeContent.replace(/\*\*<=\s*v([\d.]+)\*\*:/g, '**v$1 and earlier**:');
@@ -1009,15 +1085,18 @@ function fixMDXIssues(content, filepath = '') {
     nonCodeContent = processedLines.join('\n');
 
     // Convert any remaining <details> tags that weren't caught by AST processing
+    // IMPORTANT: Make sure to close the Expandable tag properly
     nonCodeContent = nonCodeContent.replace(
-      /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)(?:<\/details>|$)/gi,
-      (match, summary, content) => {
-        return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
+      /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)(<\/details>|$)/gi,
+      (match, summary, content, closingTag) => {
+        // Only add closing tag if we found </details>
+        const expandableClose = closingTag.includes('</details>') ? '</Expandable>' : '';
+        return `<Expandable title="${summary.trim()}">\n${content.trim()}\n${expandableClose}`;
       }
     );
 
     // Fix unclosed placeholder tags - convert to inline code
-    nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp)>/g, '`$1`');
+    nonCodeContent = nonCodeContent.replace(/<(appd|simd|gaiad|osmosisd|junod|yourapp|module)>/g, '`$1`');
 
     // Wrap template variables and expressions in backticks to avoid JSX parsing issues
     // But be careful not to double-wrap already wrapped content
@@ -1039,6 +1118,23 @@ function fixMDXIssues(content, filepath = '') {
         if (pos > 0 && nonCodeContent[pos - 1] === '`') return match;
 
         if (match.includes('__INLINE_CODE_') || match.includes('__CODE_BLOCK_')) return match;
+        return '`' + match + '`';
+      })
+
+      // 3. Fix template expressions with periods that break acorn parsing
+      // e.g., {module.path} or {params.value}
+      .replace(/\{([a-zA-Z_][\w]*\.[\w.]+)\}/g, (match) => {
+        // Check if already wrapped
+        const pos = nonCodeContent.indexOf(match);
+        if (pos > 0 && nonCodeContent[pos - 1] === '`') return match;
+        return '`' + match + '`';
+      })
+
+      // 4. Fix array/object access patterns that break acorn
+      // e.g., {data[0]} or {obj['key']}
+      .replace(/\{([a-zA-Z_][\w]*\[[^\]]+\])\}/g, (match) => {
+        const pos = nonCodeContent.indexOf(match);
+        if (pos > 0 && nonCodeContent[pos - 1] === '`') return match;
         return '`' + match + '`';
       })
 
@@ -1282,29 +1378,49 @@ function validateMDXContent(content, filepath = '') {
  * @description
  * This remark plugin traverses the AST and fixes:
  * 1. Relative links to absolute paths
- * 2. Versioned links for products with proper namespacing
- * 3. Maintains external links unchanged
+ * 2. Removes .md and .mdx extensions from internal links
+ * 3. Adds product and version namespacing to internal links
+ * 4. Maintains external links and anchors unchanged
  *
  * @example
  * // In AST pipeline:
  * unified()
  *   .use(createLinkFixerPlugin('v0.50', 'sdk'))
  *   // Transforms:
- *   // Converts relative paths to absolute
- *   // Adds product and version to documentation paths
+ *   // ../intro.md becomes /docs/sdk/v0.50/intro
+ *   // ./guide.mdx becomes /docs/sdk/v0.50/guide
+ *   // /learn/overview.md becomes /docs/sdk/v0.50/learn/overview
  */
 function createLinkFixerPlugin(version, product) {
   return () => {
     return (tree) => {
       visit(tree, 'link', (node) => {
         if (node.url) {
+          // Skip external links
+          if (node.url.startsWith('http://') || node.url.startsWith('https://')) {
+            return;
+          }
+
+          // Skip anchor-only links
+          if (node.url.startsWith('#')) {
+            return;
+          }
+
           // Fix relative links
           if (node.url.startsWith('../') || node.url.startsWith('./')) {
-            node.url = node.url.replace(/\.\.\//, '/');
+            node.url = node.url.replace(/\.\.\//g, '/').replace(/\.\//, '/');
           }
-          // Fix versioned links for SDK docs
-          if (product === 'sdk' && node.url.includes('/docs/')) {
-            node.url = node.url.replace('/docs/', `/docs/sdk/${version}/`);
+
+          // Remove .md or .mdx extensions from internal links
+          node.url = node.url.replace(/\.mdx?(?=#|$)/g, '');
+
+          // Fix versioned links for product docs
+          if (node.url.startsWith('/') && !node.url.startsWith('/docs/')) {
+            // Add /docs/product/version prefix for absolute internal links
+            node.url = `/docs/${product}/${version}${node.url}`;
+          } else if (node.url.includes('/docs/') && !node.url.includes(`/docs/${product}/`)) {
+            // Update existing /docs/ links to include product and version
+            node.url = node.url.replace('/docs/', `/docs/${product}/${version}/`);
           }
         }
       });
@@ -1353,23 +1469,23 @@ function createHTMLFixerPlugin() {
 
         // Convert <details> tags to Mintlify Expandable
         if (node.value.includes('<details')) {
-          // Handle complete details tags
+          // First try to handle complete details tags
           node.value = node.value.replace(
             /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)<\/details>/gi,
             (match, summary, content) => {
               return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
             });
 
-          // Handle unclosed details tags (missing </details>)
-          node.value = node.value.replace(
-            /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]+?)$/gm,
-            (match, summary, content) => {
-              // Only convert if there's no closing tag
-              if (!match.includes('</details>')) {
-                return `<Expandable title="${summary.trim()}">\n${content.trim()}\n</Expandable>`;
-              }
-              return match;
-            });
+          // Then handle any remaining unclosed details tags
+          // This catches cases where </details> is in a different node
+          if (node.value.includes('<details') && !node.value.includes('</details>')) {
+            node.value = node.value.replace(
+              /<details[^>]*>\s*<summary[^>]*>(.*?)<\/summary>\s*([\s\S]*?)$/gi,
+              (match, summary, content) => {
+                // Add Expandable but DON'T add closing tag - it may be in another node
+                return `<Expandable title="${summary.trim()}">\n${content.trim()}`;
+              });
+          }
         }
       });
 
@@ -1395,8 +1511,11 @@ function createHTMLFixerPlugin() {
         node.value = node.value.replace(/(?<!`)(<=>)(?!`)/g, '`$1`');
         node.value = node.value.replace(/(?<!`)(<->)(?!`)/g, '`$1`');
 
-        // Fix generic placeholders like <host>, <port>
-        node.value = node.value.replace(/<([a-z]+(?:-[a-z]+)*)>/g, '`<$1>`');
+        // Fix generic placeholders like <host>, <port>, <module>
+        // Common placeholders that should be wrapped in backticks
+        node.value = node.value.replace(/<(host|port|path|user|pass|module|version|namespace|service)>/g, '`<$1>`');
+        // Fix hyphenated placeholders
+        node.value = node.value.replace(/<([a-z]+-[a-z]+(?:-[a-z]+)*)>/g, '`<$1>`');
       });
 
       // Remove table cell processing - we handle template variables in fixMDXIssues instead
@@ -1719,8 +1838,22 @@ async function convertDocusaurusToMintlify(content, options = {}) {
 
   if (!title) {
     const extracted = extractTitleFromContent(processedContent);
-    title = extracted.title || 'Documentation';
-    processedContent = extracted.content;
+    title = extracted.title;
+    if (title) {
+      processedContent = extracted.content;
+    } else {
+      // Generate title from filename if no title found
+      if (filepath) {
+        const filename = path.basename(filepath, path.extname(filepath));
+        // Convert filename to title: adr-046-module-params -> ADR 046 Module Params
+        title = filename
+          .replace(/[-_]/g, ' ')
+          .replace(/\b\w/g, char => char.toUpperCase())
+          .replace(/\bAdr\b/g, 'ADR'); // Special case for ADR
+      } else {
+        title = 'Documentation';
+      }
+    }
   } else if (!keepTitle) {
     // Remove H1 if we have title from frontmatter
     const extracted = extractTitleFromContent(processedContent);
@@ -1759,11 +1892,38 @@ async function convertDocusaurusToMintlify(content, options = {}) {
   // Apply conversions
   // Convert HTML comments to JSX comments for MDX compatibility
   // Handle both complete and incomplete HTML comments
-  processedContent = processedContent.replace(/<!--\s*(.*?)\s*-->/gs, '{/* $1 */}');
+  processedContent = processedContent.replace(/<!--\s*([\s\S]*?)\s*-->/g, (match, content) => {
+    // For very long comments (>10 lines), just remove them as they're likely documentation notes
+    const lineCount = content.split('\n').length;
+    if (lineCount > 10) {
+      // Track that we removed a long HTML comment
+      if (filepath) {
+        migrationIssues.setCurrentFile(filepath);
+        migrationIssues.addRemoval(
+          'Removed long HTML comment',
+          `${lineCount}-line comment removed (likely documentation notes)`
+        );
+      }
+      return '';
+    }
+    // Clean up the content - preserve structure but avoid nested comment syntax
+    // Replace any /* or */ inside the comment to prevent JSX issues
+    const cleaned = content
+      .replace(/\/\*/g, '/')
+      .replace(/\*\//g, '/')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join(' '); // Join with space, not newline, to avoid JSX issues
+    return `{/* ${cleaned} */}`;
+  });
 
   // Handle malformed or incomplete HTML comments
-  processedContent = processedContent.replace(/<!--([^>]*?)$/gm, '{/* $1 */}');
-  processedContent = processedContent.replace(/<!--([^>]*?)(?!-->)/g, '{/* $1 */}');
+  processedContent = processedContent.replace(/<!--([^>]*?)$/gm, (match, content) => {
+    const cleaned = content.trim();
+    return `{/* ${cleaned} */}`;
+  });
+
 
   // Fix common MDX issues
   // Use AST processing first for better accuracy (handles code blocks)
@@ -1773,6 +1933,19 @@ async function convertDocusaurusToMintlify(content, options = {}) {
   processedContent = fixMDXIssues(processedContent, filepath);
   processedContent = convertAdmonitions(processedContent);
   processedContent = fixInternalLinks(processedContent, version, product);
+
+  // Final cleanup: ensure all Expandable tags are closed
+  // Count opening and closing Expandable tags
+  const openExpandables = (processedContent.match(/<Expandable[^>]*>/g) || []).length;
+  const closeExpandables = (processedContent.match(/<\/Expandable>/g) || []).length;
+
+  // Add missing closing tags at the end if needed
+  if (openExpandables > closeExpandables) {
+    const missing = openExpandables - closeExpandables;
+    for (let i = 0; i < missing; i++) {
+      processedContent += '\n</Expandable>';
+    }
+  }
 
   // Validate the processed content and report any remaining issues
   processedContent = validateMDXContent(processedContent, filepath);
@@ -2707,5 +2880,12 @@ export {
 
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(console.error);
+  main()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('Migration failed:', error);
+      process.exit(1);
+    });
 }

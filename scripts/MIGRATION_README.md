@@ -2,6 +2,8 @@
 
 Convert Docusaurus documentation to Mintlify format with proper MDX syntax, code formatting, and navigation structure.
 
+Comprehensive migration tool that handles complex conversions, caching, and automatic fixes while reporting issues that need manual intervention.
+
 ## Scripts
 
 ### `migrate-docusaurus.js`
@@ -29,15 +31,18 @@ node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
 - `--update-nav`: Optional flag to update `docs.json` navigation
 
 **Features:**
-- **Content-based caching**: Processes identical content only once
-- **SHA-256 checksumming**: Detects duplicate files across versions
+- **Content-based caching**: Processes identical content only once using SHA-256 checksums
 - **Intelligent processing**: Cache hits for duplicate content, full processing for unique content
 - **GitHub reference fetching**: Automatically fetches code from GitHub URLs in reference blocks
-- **Comprehensive validation**: Reports issues requiring manual intervention
+- **Title generation**: Creates titles from filenames when missing (e.g., `adr-046-module-params` → "ADR 046 Module Params")
+- **Smart comment handling**: Removes long HTML comments (>10 lines) that break JSX conversion
+- **Comprehensive validation**: Reports only real issues requiring manual intervention
 - **Performance optimized**: Shows cache statistics and duplicate percentage
+- **Proper exit handling**: Script exits cleanly with appropriate exit codes
 - Migrates all versions: `docs/` (next) and `versioned_docs/version-*`
 - Preserves `sidebar_position` for navigation ordering
 - AST-based processing for accuracy
+- Removes file extensions from internal links for Mintlify compatibility
 
 ### `migrate-single-file.js`
 Convert individual Docusaurus markdown files to Mintlify MDX.
@@ -109,19 +114,26 @@ Content
 - Preserves reference URLs as comments
 
 ### Links & Paths
-- Fixes relative paths (`../file.md` → `/file.md`)
-- Updates versioned links for products
+- Fixes relative paths (`../file.md` → absolute path)
+- Removes file extensions from internal links (`.md` and `.mdx` removed)
+- Updates versioned links: `/docs/` → `/docs/<product>/<version>/`
 - Maintains external links unchanged
 
 ### MDX Compatibility
-- HTML comments → JSX comments
+- HTML comments → JSX comments (short ones only)
+- Long HTML comments (>10 lines) are removed entirely
 - `<details>` → `<Expandable>`
-- Problematic angle brackets wrapped in backticks
+- Placeholders like `<module>`, `<appd>` wrapped in backticks
 - Template variables `{foo}` wrapped in backticks
+- JSON objects in tables wrapped in backticks
+- Escapes underscores in table cells
 
 ### Frontmatter
+- Generates title from filename if missing (e.g., `adr-046-module-params` → "ADR 046 Module Params")
+- Extracts title from H1 heading if not in frontmatter
 - Preserves `sidebar_position` for navigation ordering
-- Extracts title from content if not in frontmatter
+- Cleans multi-line descriptions for single-line format
+- Removes problematic content from descriptions
 - Generates clean Mintlify-compatible frontmatter
 - Removes Docusaurus-specific fields
 
@@ -189,13 +201,25 @@ Duplicate percentage: 25.0%
 ==================================================
 ```
 
-**Error report (if issues found):**
+**Migration report example:**
 ```
-❌ ERRORS (10) - These need manual fixes:
+📋 MIGRATION REPORT
+================================================================================
+
+❌ ERRORS (6) - These need manual fixes:
 ----------------------------------------
 📄 path/to/file.md:
   Line 45: Unclosed opening tag <Expandable>
     💡 Suggestion: Add matching closing tag
+
+REMOVED CONTENT (2) - Content that was removed:
+----------------------------------------
+build/building-modules/09-module-interfaces.md:
+  Removed long HTML comment: 69-line comment removed (likely documentation notes)
+
+================================================================================
+Summary: 6 errors, 0 warnings, 2 removals
+================================================================================
 ```
 
 ## Dependencies
@@ -212,6 +236,21 @@ Duplicate percentage: 25.0%
   }
 }
 ```
+
+## Migration Report Details
+
+The script generates a comprehensive report showing:
+
+1. **ERRORS**: Issues that require manual intervention
+   - Unclosed JSX expressions
+   - Mismatched tags
+   - Syntax that couldn't be automatically fixed
+
+2. **WARNINGS**: Issues that were automatically fixed but should be reviewed
+
+3. **REMOVED CONTENT**: Content that was removed because it couldn't be safely converted
+   - Long HTML comments (>10 lines)
+   - Malformed syntax that would break MDX
 
 ## Important Notes
 
@@ -230,11 +269,14 @@ Duplicate percentage: 25.0%
 ### Recent Improvements (2025)
 - Content-based caching with SHA-256 checksums
 - Automatic GitHub code fetching for reference blocks
-- Duplicate error prevention
-- Comprehensive migration statistics
+- Title generation from filenames when missing
+- Smart handling of long HTML comments (removed with tracking)
+- File extension removal from internal links
+- Proper script exit handling with exit codes
 - Required product parameter for proper link resolution
 - Fixed JSX comment escaping issues
 - Improved validation with fewer false positives
+- Template variables and JSON in tables properly escaped
 
 ### Technical Details
 - Code content is preserved exactly - no arbitrary removal
@@ -242,3 +284,41 @@ Duplicate percentage: 25.0%
 - AST processing used where possible, regex as fallback
 - Multiple passes ensure proper sequencing of fixes
 - Code blocks are protected during transformations
+- Script exits with code 0 on success, 1 on failure
+- Long HTML comments (>10 lines) are removed to prevent JSX errors
+- Placeholders like `<module>` are wrapped in backticks automatically
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Script doesn't exit**: Fixed in latest version - now properly exits with appropriate codes
+
+2. **False positive JSX errors**: Most "Unclosed JSX expression" errors are false positives from validation checking code inside code blocks
+
+3. **Missing titles**: Script now generates titles from filenames when no title exists in frontmatter or H1
+
+4. **Long HTML comments breaking conversion**: Comments >10 lines are automatically removed and reported
+
+5. **Internal links not working**: Ensure you specify the correct product parameter (e.g., `sdk`, `ibc`)
+
+### Migration Best Practices
+
+1. Always specify the product parameter for proper link resolution
+2. Review the "REMOVED CONTENT" section to ensure no important content was removed
+3. Check files with reported errors - many may be false positives
+4. Run `npx mint dev` to test the migrated documentation
+5. Use cache statistics to verify efficient processing
+
+## Example Commands
+
+```bash
+# Migrate SDK docs without updating navigation
+node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk
+
+# Migrate IBC docs and update navigation
+node migrate-docusaurus.js ~/repos/ibc-go-docs ./tmp ibc --update-nav
+
+# Migrate a single file
+node migrate-single-file.js ~/repos/cosmos-sdk-docs/docs/learn/intro.md ./tmp/intro.mdx
+```
