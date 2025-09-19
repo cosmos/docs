@@ -1,0 +1,1081 @@
+---
+title: Module Interfaces
+---
+
+<Note>
+**Synopsis**
+This document details how to build CLI and REST interfaces for a module. Examples from various Cosmos SDK modules are included.
+</Note>
+
+<Note>
+**Pre-requisite Readings**
+
+* [Building Modules Intro](/docs/sdk/v0.50/intro)
+
+</Note>
+
+## CLI
+
+One of the main interfaces for an application is the [command-line interface](/docs/sdk/v0.50//learn/advanced/cli). This entrypoint adds commands from the application's modules enabling end-users to create [**messages**](/docs/sdk/v0.50/messages-and-queries#messages) wrapped in transactions and [**queries**](/docs/sdk/v0.50/messages-and-queries#queries). The CLI files are typically found in the module's `./client/cli` folder.
+
+### Transaction Commands
+
+In order to create messages that trigger state changes, end-users must create [transactions](/docs/sdk/v0.50//learn/advanced/transactions) that wrap and deliver the messages. A transaction command creates a transaction that includes one or more messages.
+
+Transaction commands typically have their own `tx.go` file that lives within the module's `./client/cli` folder. The commands are specified in getter functions and the name of the function should include the name of the command.
+
+Here is an example from the `x/bank` module:
+
+```go expandable
+package cli
+
+import (
+    
+	"fmt"
+    "cosmossdk.io/core/address"
+	sdkmath "cosmossdk.io/math"
+    "github.com/spf13/cobra"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/client/flags"
+    "github.com/cosmos/cosmos-sdk/client/tx"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/bank/types"
+)
+
+var FlagSplit = "split"
+
+// NewTxCmd returns a root CLI command handler for all x/bank transaction commands.
+func NewTxCmd(ac address.Codec) *cobra.Command {
+    txCmd := &cobra.Command{
+    Use:                        types.ModuleName,
+    Short:                      "Bank transaction subcommands",
+    DisableFlagParsing:         true,
+    SuggestionsMinimumDistance: 2,
+    RunE:                       client.ValidateCmd,
+}
+
+txCmd.AddCommand(
+		NewSendTxCmd(ac),
+		NewMultiSendTxCmd(ac),
+	)
+
+return txCmd
+}
+
+// NewSendTxCmd returns a CLI command handler for creating a MsgSend transaction.
+func NewSendTxCmd(ac address.Codec) *cobra.Command {
+    cmd := &cobra.Command{
+    Use:   "send [from_key_or_address] [to_address] [amount]",
+    Short: "Send funds from one account to another.",
+    Long: `Send funds from one account to another.
+Note, the '--from' flag is ignored as it is implied from [from_key_or_address].
+When using '--dry-run' a key name cannot be used, only a bech32 address.
+`,
+    Args: cobra.ExactArgs(3),
+    RunE: func(cmd *cobra.Command, args []string)
+
+error {
+    cmd.Flags().Set(flags.FlagFrom, args[0])
+
+clientCtx, err := client.GetClientTxContext(cmd)
+    if err != nil {
+    return err
+}
+
+toAddr, err := ac.StringToBytes(args[1])
+    if err != nil {
+    return err
+}
+
+coins, err := sdk.ParseCoinsNormalized(args[2])
+    if err != nil {
+    return err
+}
+    if len(coins) == 0 {
+    return fmt.Errorf("invalid coins")
+}
+    msg := types.NewMsgSend(clientCtx.GetFromAddress(), toAddr, coins)
+
+return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+},
+}
+
+flags.AddTxFlagsToCmd(cmd)
+
+return cmd
+}
+
+// NewMultiSendTxCmd returns a CLI command handler for creating a MsgMultiSend transaction.
+// For a better UX this command is limited to send funds from one account to two or more accounts.
+func NewMultiSendTxCmd(ac address.Codec) *cobra.Command {
+    cmd := &cobra.Command{
+    Use:   "multi-send [from_key_or_address] [to_address_1, to_address_2, ...] [amount]",
+    Short: "Send funds from one account to two or more accounts.",
+    Long: `Send funds from one account to two or more accounts.
+By default, sends the [amount] to each address of the list.
+Using the '--split' flag, the [amount] is split equally between the addresses.
+Note, the '--from' flag is ignored as it is implied from [from_key_or_address].
+When using '--dry-run' a key name cannot be used, only a bech32 address.
+`,
+    Args: cobra.MinimumNArgs(4),
+    RunE: func(cmd *cobra.Command, args []string)
+
+error {
+    cmd.Flags().Set(flags.FlagFrom, args[0])
+
+clientCtx, err := client.GetClientTxContext(cmd)
+    if err != nil {
+    return err
+}
+
+coins, err := sdk.ParseCoinsNormalized(args[len(args)-1])
+    if err != nil {
+    return err
+}
+    if coins.IsZero() {
+    return fmt.Errorf("must send positive amount")
+}
+
+split, err := cmd.Flags().GetBool(FlagSplit)
+    if err != nil {
+    return err
+}
+    totalAddrs := sdkmath.NewInt(int64(len(args) - 2))
+			// coins to be received by the addresses
+    sendCoins := coins
+    if split {
+    sendCoins = coins.QuoInt(totalAddrs)
+}
+
+var output []types.Output
+    for _, arg := range args[1 : len(args)-1] {
+    toAddr, err := ac.StringToBytes(arg)
+    if err != nil {
+    return err
+}
+
+output = append(output, types.NewOutput(toAddr, sendCoins))
+}
+
+			// amount to be send from the from address
+			var amount sdk.Coins
+    if split {
+				// user input: 1000stake to send to 3 addresses
+				// actual: 333stake to each address (=> 999stake actually sent)
+
+amount = sendCoins.MulInt(totalAddrs)
+}
+
+else {
+    amount = coins.MulInt(totalAddrs)
+}
+    msg := types.NewMsgMultiSend(types.NewInput(clientCtx.FromAddress, amount), output)
+
+return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+},
+}
+
+cmd.Flags().Bool(FlagSplit, false, "Send the equally split token amount to each address")
+
+flags.AddTxFlagsToCmd(cmd)
+
+return cmd
+}
+```
+
+In the example, `NewSendTxCmd()` creates and returns the transaction command for a transaction that wraps and delivers `MsgSend`. `MsgSend` is the message used to send tokens from one account to another.
+
+In general, the getter function does the following:
+
+* **Constructs the command:** Read the [Cobra Documentation](https://pkg.go.dev/github.com/spf13/cobra) for more detailed information on how to create commands.
+  * **Use:** Specifies the format of the user input required to invoke the command. In the example above, `send` is the name of the transaction command and `[from_key_or_address]`, `[to_address]`, and `[amount]` are the arguments.
+  * **Args:** The number of arguments the user provides. In this case, there are exactly three: `[from_key_or_address]`, `[to_address]`, and `[amount]`.
+  * **Short and Long:** Descriptions for the command. A `Short` description is expected. A `Long` description can be used to provide additional information that is displayed when a user adds the `--help` flag.
+  * **RunE:** Defines a function that can return an error. This is the function that is called when the command is executed. This function encapsulates all of the logic to create a new transaction.
+    * The function typically starts by getting the `clientCtx`, which can be done with `client.GetClientTxContext(cmd)`. The `clientCtx` contains information relevant to transaction handling, including information about the user. In this example, the `clientCtx` is used to retrieve the address of the sender by calling `clientCtx.GetFromAddress()`.
+    * If applicable, the command's arguments are parsed. In this example, the arguments `[to_address]` and `[amount]` are both parsed.
+    * A [message](/docs/sdk/v0.50/messages-and-queries) is created using the parsed arguments and information from the `clientCtx`. The constructor function of the message type is called directly. In this case, `types.NewMsgSend(fromAddr, toAddr, amount)`. Its good practice to call, if possible, the necessary [message validation methods](/docs/sdk/v0.50/building-modules/msg-services#Validation) before broadcasting the message.
+    * Depending on what the user wants, the transaction is either generated offline or signed and broadcasted to the preconfigured node using `tx.GenerateOrBroadcastTxCLI(clientCtx, flags, msg)`.
+* **Adds transaction flags:** All transaction commands must add a set of transaction [flags](#flags). The transaction flags are used to collect additional information from the user (e.g. the amount of fees the user is willing to pay). The transaction flags are added to the constructed command using `AddTxFlagsToCmd(cmd)`.
+* **Returns the command:** Finally, the transaction command is returned.
+
+Each module can implement `NewTxCmd()`, which aggregates all of the transaction commands of the module. Here is an example from the `x/bank` module:
+
+```go expandable
+package cli
+
+import (
+    
+	"fmt"
+    "cosmossdk.io/core/address"
+	sdkmath "cosmossdk.io/math"
+    "github.com/spf13/cobra"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/client/flags"
+    "github.com/cosmos/cosmos-sdk/client/tx"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/bank/types"
+)
+
+var FlagSplit = "split"
+
+// NewTxCmd returns a root CLI command handler for all x/bank transaction commands.
+func NewTxCmd(ac address.Codec) *cobra.Command {
+    txCmd := &cobra.Command{
+    Use:                        types.ModuleName,
+    Short:                      "Bank transaction subcommands",
+    DisableFlagParsing:         true,
+    SuggestionsMinimumDistance: 2,
+    RunE:                       client.ValidateCmd,
+}
+
+txCmd.AddCommand(
+		NewSendTxCmd(ac),
+		NewMultiSendTxCmd(ac),
+	)
+
+return txCmd
+}
+
+// NewSendTxCmd returns a CLI command handler for creating a MsgSend transaction.
+func NewSendTxCmd(ac address.Codec) *cobra.Command {
+    cmd := &cobra.Command{
+    Use:   "send [from_key_or_address] [to_address] [amount]",
+    Short: "Send funds from one account to another.",
+    Long: `Send funds from one account to another.
+Note, the '--from' flag is ignored as it is implied from [from_key_or_address].
+When using '--dry-run' a key name cannot be used, only a bech32 address.
+`,
+    Args: cobra.ExactArgs(3),
+    RunE: func(cmd *cobra.Command, args []string)
+
+error {
+    cmd.Flags().Set(flags.FlagFrom, args[0])
+
+clientCtx, err := client.GetClientTxContext(cmd)
+    if err != nil {
+    return err
+}
+
+toAddr, err := ac.StringToBytes(args[1])
+    if err != nil {
+    return err
+}
+
+coins, err := sdk.ParseCoinsNormalized(args[2])
+    if err != nil {
+    return err
+}
+    if len(coins) == 0 {
+    return fmt.Errorf("invalid coins")
+}
+    msg := types.NewMsgSend(clientCtx.GetFromAddress(), toAddr, coins)
+
+return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+},
+}
+
+flags.AddTxFlagsToCmd(cmd)
+
+return cmd
+}
+
+// NewMultiSendTxCmd returns a CLI command handler for creating a MsgMultiSend transaction.
+// For a better UX this command is limited to send funds from one account to two or more accounts.
+func NewMultiSendTxCmd(ac address.Codec) *cobra.Command {
+    cmd := &cobra.Command{
+    Use:   "multi-send [from_key_or_address] [to_address_1, to_address_2, ...] [amount]",
+    Short: "Send funds from one account to two or more accounts.",
+    Long: `Send funds from one account to two or more accounts.
+By default, sends the [amount] to each address of the list.
+Using the '--split' flag, the [amount] is split equally between the addresses.
+Note, the '--from' flag is ignored as it is implied from [from_key_or_address].
+When using '--dry-run' a key name cannot be used, only a bech32 address.
+`,
+    Args: cobra.MinimumNArgs(4),
+    RunE: func(cmd *cobra.Command, args []string)
+
+error {
+    cmd.Flags().Set(flags.FlagFrom, args[0])
+
+clientCtx, err := client.GetClientTxContext(cmd)
+    if err != nil {
+    return err
+}
+
+coins, err := sdk.ParseCoinsNormalized(args[len(args)-1])
+    if err != nil {
+    return err
+}
+    if coins.IsZero() {
+    return fmt.Errorf("must send positive amount")
+}
+
+split, err := cmd.Flags().GetBool(FlagSplit)
+    if err != nil {
+    return err
+}
+    totalAddrs := sdkmath.NewInt(int64(len(args) - 2))
+			// coins to be received by the addresses
+    sendCoins := coins
+    if split {
+    sendCoins = coins.QuoInt(totalAddrs)
+}
+
+var output []types.Output
+    for _, arg := range args[1 : len(args)-1] {
+    toAddr, err := ac.StringToBytes(arg)
+    if err != nil {
+    return err
+}
+
+output = append(output, types.NewOutput(toAddr, sendCoins))
+}
+
+			// amount to be send from the from address
+			var amount sdk.Coins
+    if split {
+				// user input: 1000stake to send to 3 addresses
+				// actual: 333stake to each address (=> 999stake actually sent)
+
+amount = sendCoins.MulInt(totalAddrs)
+}
+
+else {
+    amount = coins.MulInt(totalAddrs)
+}
+    msg := types.NewMsgMultiSend(types.NewInput(clientCtx.FromAddress, amount), output)
+
+return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+},
+}
+
+cmd.Flags().Bool(FlagSplit, false, "Send the equally split token amount to each address")
+
+flags.AddTxFlagsToCmd(cmd)
+
+return cmd
+}
+```
+
+Each module then can also implement a `GetTxCmd()` method that simply returns `NewTxCmd()`. This allows the root command to easily aggregate all of the transaction commands for each module. Here is an example:
+
+```go expandable
+package bank
+
+import (
+    
+	"context"
+    "encoding/json"
+    "fmt"
+    "time"
+
+	modulev1 "cosmossdk.io/api/cosmos/bank/module/v1"
+    "cosmossdk.io/core/address"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/depinject"
+    "cosmossdk.io/log"
+	abci "github.com/cometbft/cometbft/abci/types"
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+    "github.com/spf13/cobra"
+
+	corestore "cosmossdk.io/core/store"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+    "github.com/cosmos/cosmos-sdk/telemetry"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+    "github.com/cosmos/cosmos-sdk/x/bank/client/cli"
+    "github.com/cosmos/cosmos-sdk/x/bank/exported"
+    "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+	v1bank "github.com/cosmos/cosmos-sdk/x/bank/migrations/v1"
+    "github.com/cosmos/cosmos-sdk/x/bank/simulation"
+    "github.com/cosmos/cosmos-sdk/x/bank/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+)
+
+// ConsensusVersion defines the current x/bank module consensus version.
+const ConsensusVersion = 4
+
+var (
+	_ module.AppModule           = AppModule{
+}
+	_ module.AppModuleBasic      = AppModuleBasic{
+}
+	_ module.AppModuleSimulation = AppModule{
+}
+)
+
+// AppModuleBasic defines the basic application module used by the bank module.
+type AppModuleBasic struct {
+    cdc codec.Codec
+	ac  address.Codec
+}
+
+// Name returns the bank module's name.
+func (AppModuleBasic)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterLegacyAminoCodec registers the bank module's types on the LegacyAmino codec.
+func (AppModuleBasic)
+
+RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    types.RegisterLegacyAminoCodec(cdc)
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the bank
+// module.
+func (AppModuleBasic)
+
+DefaultGenesis(cdc codec.JSONCodec)
+
+json.RawMessage {
+    return cdc.MustMarshalJSON(types.DefaultGenesisState())
+}
+
+// ValidateGenesis performs genesis state validation for the bank module.
+func (AppModuleBasic)
+
+ValidateGenesis(cdc codec.JSONCodec, _ client.TxEncodingConfig, bz json.RawMessage)
+
+error {
+    var data types.GenesisState
+    if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+    return fmt.Errorf("failed to unmarshal %s genesis state: %w", types.ModuleName, err)
+}
+
+return data.Validate()
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the bank module.
+func (AppModuleBasic)
+
+RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *gwruntime.ServeMux) {
+    if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
+    panic(err)
+}
+}
+
+// GetTxCmd returns the root tx command for the bank module.
+func (ab AppModuleBasic)
+
+GetTxCmd() *cobra.Command {
+    return cli.NewTxCmd(ab.ac)
+}
+
+// GetQueryCmd returns no root query command for the bank module.
+func (ab AppModuleBasic)
+
+GetQueryCmd() *cobra.Command {
+    return cli.GetQueryCmd(ab.ac)
+}
+
+// RegisterInterfaces registers interfaces and implementations of the bank module.
+func (AppModuleBasic)
+
+RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    types.RegisterInterfaces(registry)
+
+	// Register legacy interfaces for migration scripts.
+	v1bank.RegisterInterfaces(registry)
+}
+
+// AppModule implements an application module for the bank module.
+type AppModule struct {
+    AppModuleBasic
+
+	keeper        keeper.Keeper
+	accountKeeper types.AccountKeeper
+
+	// legacySubspace is used solely for migration of x/params managed parameters
+	legacySubspace exported.Subspace
+}
+
+var _ appmodule.AppModule = AppModule{
+}
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule)
+
+IsOnePerModuleType() {
+}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule)
+
+IsAppModule() {
+}
+
+// RegisterServices registers module services.
+func (am AppModule)
+
+RegisterServices(cfg module.Configurator) {
+    types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+
+types.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+    m := keeper.NewMigrator(am.keeper.(keeper.BaseKeeper), am.legacySubspace)
+    if err := cfg.RegisterMigration(types.ModuleName, 1, m.Migrate1to2); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/bank from version 1 to 2: %v", err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 2, m.Migrate2to3); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/bank from version 2 to 3: %v", err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 3, m.Migrate3to4); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/bank from version 3 to 4: %v", err))
+}
+}
+
+// NewAppModule creates a new AppModule object
+func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, accountKeeper types.AccountKeeper, ss exported.Subspace)
+
+AppModule {
+    return AppModule{
+    AppModuleBasic: AppModuleBasic{
+    cdc: cdc, ac: accountKeeper.AddressCodec()
+},
+		keeper:         keeper,
+		accountKeeper:  accountKeeper,
+		legacySubspace: ss,
+}
+}
+
+// Name returns the bank module's name.
+func (AppModule)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterInvariants registers the bank module invariants.
+func (am AppModule)
+
+RegisterInvariants(ir sdk.InvariantRegistry) {
+    keeper.RegisterInvariants(ir, am.keeper)
+}
+
+// QuerierRoute returns the bank module's querier route name.
+func (AppModule)
+
+QuerierRoute()
+
+string {
+    return types.RouterKey
+}
+
+// InitGenesis performs genesis initialization for the bank module. It returns
+// no validator updates.
+func (am AppModule)
+
+InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+    start := time.Now()
+
+var genesisState types.GenesisState
+	cdc.MustUnmarshalJSON(data, &genesisState)
+
+telemetry.MeasureSince(start, "InitGenesis", "crisis", "unmarshal")
+
+am.keeper.InitGenesis(ctx, &genesisState)
+
+return []abci.ValidatorUpdate{
+}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the bank
+// module.
+func (am AppModule)
+
+ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+json.RawMessage {
+    gs := am.keeper.ExportGenesis(ctx)
+
+return cdc.MustMarshalJSON(gs)
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule)
+
+ConsensusVersion()
+
+uint64 {
+    return ConsensusVersion
+}
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the bank module.
+func (AppModule)
+
+GenerateGenesisState(simState *module.SimulationState) {
+    simulation.RandomizedGenState(simState)
+}
+
+// ProposalMsgs returns msgs used for governance proposals for simulations.
+func (AppModule)
+
+ProposalMsgs(simState module.SimulationState) []simtypes.WeightedProposalMsg {
+    return simulation.ProposalMsgs()
+}
+
+// RegisterStoreDecoder registers a decoder for supply module's types
+func (am AppModule)
+
+RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+    sdr[types.StoreKey] = simtypes.NewStoreDecoderFuncFromCollectionsSchema(am.keeper.(keeper.BaseKeeper).Schema)
+}
+
+// WeightedOperations returns the all the gov module operations with their respective weights.
+func (am AppModule)
+
+WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+    return simulation.WeightedOperations(
+		simState.AppParams, simState.Cdc, simState.TxConfig, am.accountKeeper, am.keeper,
+	)
+}
+
+// App Wiring Setup
+
+func init() {
+    appmodule.Register(&modulev1.Module{
+},
+		appmodule.Provide(ProvideModule),
+	)
+}
+
+type ModuleInputs struct {
+    depinject.In
+
+	Config       *modulev1.Module
+	Cdc          codec.Codec
+	StoreService corestore.KVStoreService
+	Logger       log.Logger
+
+	AccountKeeper types.AccountKeeper
+
+	// LegacySubspace is used solely for migration of x/params managed parameters
+	LegacySubspace exported.Subspace `optional:"true"`
+}
+
+type ModuleOutputs struct {
+    depinject.Out
+
+	BankKeeper keeper.BaseKeeper
+	Module     appmodule.AppModule
+}
+
+func ProvideModule(in ModuleInputs)
+
+ModuleOutputs {
+	// Configure blocked module accounts.
+	//
+	// Default behavior for blockedAddresses is to regard any module mentioned in
+	// AccountKeeper's module account permissions as blocked.
+    blockedAddresses := make(map[string]bool)
+    if len(in.Config.BlockedModuleAccountsOverride) > 0 {
+    for _, moduleName := range in.Config.BlockedModuleAccountsOverride {
+    blockedAddresses[authtypes.NewModuleAddress(moduleName).String()] = true
+}
+	
+}
+
+else {
+    for _, permission := range in.AccountKeeper.GetModulePermissions() {
+    blockedAddresses[permission.GetAddress().String()] = true
+}
+	
+}
+
+	// default to governance authority if not provided
+    authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+    if in.Config.Authority != "" {
+    authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
+}
+    bankKeeper := keeper.NewBaseKeeper(
+		in.Cdc,
+		in.StoreService,
+		in.AccountKeeper,
+		blockedAddresses,
+		authority.String(),
+		in.Logger,
+	)
+    m := NewAppModule(in.Cdc, bankKeeper, in.AccountKeeper, in.LegacySubspace)
+
+return ModuleOutputs{
+    BankKeeper: bankKeeper,
+    Module: m
+}
+}
+```
+
+### Query Commands
+
+<Warning>
+This section is being rewritten. Refer to [AutoCLI](https://docs.cosmos.network/main/core/autocli) while this section is being updated.
+</Warning>
+
+## gRPC
+
+[gRPC](https://grpc.io/) is a Remote Procedure Call (RPC) framework. RPC is the preferred way for external clients like wallets and exchanges to interact with a blockchain.
+
+In addition to providing an ABCI query pathway, the Cosmos SDK provides a gRPC proxy server that routes gRPC query requests to ABCI query requests.
+
+In order to do that, modules must implement `RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux)` on `AppModuleBasic` to wire the client gRPC requests to the correct handler inside the module.
+
+Here's an example from the `x/auth` module:
+
+```go expandable
+package auth
+
+import (
+    
+	"context"
+    "encoding/json"
+    "fmt"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+    "github.com/spf13/cobra"
+    "cosmossdk.io/depinject"
+
+	authcodec "github.com/cosmos/cosmos-sdk/x/auth/codec"
+    "cosmossdk.io/core/address"
+    "cosmossdk.io/core/appmodule"
+
+	modulev1 "cosmossdk.io/api/cosmos/auth/module/v1"
+    "cosmossdk.io/core/store"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+    "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
+    "github.com/cosmos/cosmos-sdk/x/auth/exported"
+    "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+    "github.com/cosmos/cosmos-sdk/x/auth/simulation"
+    "github.com/cosmos/cosmos-sdk/x/auth/types"
+)
+
+// ConsensusVersion defines the current x/auth module consensus version.
+const (
+	ConsensusVersion = 5
+	GovModuleName    = "gov"
+)
+
+var (
+	_ module.AppModule           = AppModule{
+}
+	_ module.AppModuleBasic      = AppModuleBasic{
+}
+	_ module.AppModuleSimulation = AppModule{
+}
+)
+
+// AppModuleBasic defines the basic application module used by the auth module.
+type AppModuleBasic struct {
+    ac address.Codec
+}
+
+// Name returns the auth module's name.
+func (AppModuleBasic)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterLegacyAminoCodec registers the auth module's types for the given codec.
+func (AppModuleBasic)
+
+RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    types.RegisterLegacyAminoCodec(cdc)
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the auth
+// module.
+func (AppModuleBasic)
+
+DefaultGenesis(cdc codec.JSONCodec)
+
+json.RawMessage {
+    return cdc.MustMarshalJSON(types.DefaultGenesisState())
+}
+
+// ValidateGenesis performs genesis state validation for the auth module.
+func (AppModuleBasic)
+
+ValidateGenesis(cdc codec.JSONCodec, config client.TxEncodingConfig, bz json.RawMessage)
+
+error {
+    var data types.GenesisState
+    if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+    return fmt.Errorf("failed to unmarshal %s genesis state: %w", types.ModuleName, err)
+}
+
+return types.ValidateGenesis(data)
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the auth module.
+func (AppModuleBasic)
+
+RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *gwruntime.ServeMux) {
+    if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
+    panic(err)
+}
+}
+
+// GetTxCmd returns the root tx command for the auth module.
+func (AppModuleBasic)
+
+GetTxCmd() *cobra.Command {
+    return nil
+}
+
+// GetQueryCmd returns the root query command for the auth module.
+func (ab AppModuleBasic)
+
+GetQueryCmd() *cobra.Command {
+    return cli.GetQueryCmd(ab.ac)
+}
+
+// RegisterInterfaces registers interfaces and implementations of the auth module.
+func (AppModuleBasic)
+
+RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    types.RegisterInterfaces(registry)
+}
+
+// AppModule implements an application module for the auth module.
+type AppModule struct {
+    AppModuleBasic
+
+	accountKeeper     keeper.AccountKeeper
+	randGenAccountsFn types.RandomGenesisAccountsFn
+
+	// legacySubspace is used solely for migration of x/params managed parameters
+	legacySubspace exported.Subspace
+}
+
+var _ appmodule.AppModule = AppModule{
+}
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule)
+
+IsOnePerModuleType() {
+}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule)
+
+IsAppModule() {
+}
+
+// NewAppModule creates a new AppModule object
+func NewAppModule(cdc codec.Codec, accountKeeper keeper.AccountKeeper, randGenAccountsFn types.RandomGenesisAccountsFn, ss exported.Subspace)
+
+AppModule {
+    return AppModule{
+    AppModuleBasic:    AppModuleBasic{
+    ac: accountKeeper.AddressCodec()
+},
+		accountKeeper:     accountKeeper,
+		randGenAccountsFn: randGenAccountsFn,
+		legacySubspace:    ss,
+}
+}
+
+// Name returns the auth module's name.
+func (AppModule)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterServices registers a GRPC query service to respond to the
+// module-specific GRPC queries.
+func (am AppModule)
+
+RegisterServices(cfg module.Configurator) {
+    types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.accountKeeper))
+
+types.RegisterQueryServer(cfg.QueryServer(), keeper.NewQueryServer(am.accountKeeper))
+    m := keeper.NewMigrator(am.accountKeeper, cfg.QueryServer(), am.legacySubspace)
+    if err := cfg.RegisterMigration(types.ModuleName, 1, m.Migrate1to2); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", types.ModuleName, err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 2, m.Migrate2to3); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 2 to 3: %v", types.ModuleName, err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 3, m.Migrate3to4); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 3 to 4: %v", types.ModuleName, err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 4, m.Migrate4To5); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 4 to 5", types.ModuleName))
+}
+}
+
+// InitGenesis performs genesis initialization for the auth module. It returns
+// no validator updates.
+func (am AppModule)
+
+InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+    var genesisState types.GenesisState
+	cdc.MustUnmarshalJSON(data, &genesisState)
+
+am.accountKeeper.InitGenesis(ctx, genesisState)
+
+return []abci.ValidatorUpdate{
+}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the auth
+// module.
+func (am AppModule)
+
+ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+json.RawMessage {
+    gs := am.accountKeeper.ExportGenesis(ctx)
+
+return cdc.MustMarshalJSON(gs)
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule)
+
+ConsensusVersion()
+
+uint64 {
+    return ConsensusVersion
+}
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the auth module
+func (am AppModule)
+
+GenerateGenesisState(simState *module.SimulationState) {
+    simulation.RandomizedGenState(simState, am.randGenAccountsFn)
+}
+
+// ProposalMsgs returns msgs used for governance proposals for simulations.
+func (AppModule)
+
+ProposalMsgs(simState module.SimulationState) []simtypes.WeightedProposalMsg {
+    return simulation.ProposalMsgs()
+}
+
+// RegisterStoreDecoder registers a decoder for auth module's types
+func (am AppModule)
+
+RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+    sdr[types.StoreKey] = simtypes.NewStoreDecoderFuncFromCollectionsSchema(am.accountKeeper.Schema)
+}
+
+// WeightedOperations doesn't return any auth module operation.
+func (AppModule)
+
+WeightedOperations(_ module.SimulationState) []simtypes.WeightedOperation {
+    return nil
+}
+
+//
+// App Wiring Setup
+//
+
+func init() {
+    appmodule.Register(&modulev1.Module{
+},
+		appmodule.Provide(ProvideAddressCodec),
+		appmodule.Provide(ProvideModule),
+	)
+}
+
+// ProvideAddressCodec provides an address.Codec to the container for any
+// modules that want to do address string <> bytes conversion.
+func ProvideAddressCodec(config *modulev1.Module)
+
+address.Codec {
+    return authcodec.NewBech32Codec(config.Bech32Prefix)
+}
+
+type ModuleInputs struct {
+    depinject.In
+
+	Config       *modulev1.Module
+	StoreService store.KVStoreService
+	Cdc          codec.Codec
+
+	RandomGenesisAccountsFn types.RandomGenesisAccountsFn `optional:"true"`
+	AccountI                func()
+
+sdk.AccountI           `optional:"true"`
+
+	// LegacySubspace is used solely for migration of x/params managed parameters
+	LegacySubspace exported.Subspace `optional:"true"`
+}
+
+type ModuleOutputs struct {
+    depinject.Out
+
+	AccountKeeper keeper.AccountKeeper
+	Module        appmodule.AppModule
+}
+
+func ProvideModule(in ModuleInputs)
+
+ModuleOutputs {
+    maccPerms := map[string][]string{
+}
+    for _, permission := range in.Config.ModuleAccountPermissions {
+    maccPerms[permission.Account] = permission.Permissions
+}
+
+	// default to governance authority if not provided
+    authority := types.NewModuleAddress(GovModuleName)
+    if in.Config.Authority != "" {
+    authority = types.NewModuleAddressOrBech32Address(in.Config.Authority)
+}
+    if in.RandomGenesisAccountsFn == nil {
+    in.RandomGenesisAccountsFn = simulation.RandomGenesisAccounts
+}
+    if in.AccountI == nil {
+    in.AccountI = types.ProtoBaseAccount
+}
+    k := keeper.NewAccountKeeper(in.Cdc, in.StoreService, in.AccountI, maccPerms, in.Config.Bech32Prefix, authority.String())
+    m := NewAppModule(in.Cdc, k, in.RandomGenesisAccountsFn, in.LegacySubspace)
+
+return ModuleOutputs{
+    AccountKeeper: k,
+    Module: m
+}
+}
+```
+
+## gRPC-gateway REST
+
+Applications need to support web services that use HTTP requests (e.g. a web wallet like [Keplr](https://keplr.app)). [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) translates REST calls into gRPC calls, which might be useful for clients that do not use gRPC.
+
+Modules that want to expose REST queries should add `google.api.http` annotations to their `rpc` methods, such as in the example below from the `x/auth` module:
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/auth/v1beta1/query.proto#L14-L89
+```
+
+gRPC gateway is started in-process along with the application and CometBFT. It can be enabled or disabled by setting gRPC Configuration `enable` in [`app.toml`](/docs/sdk/v0.50/run-node/run-node#configuring-the-node-using-apptoml-and-configtoml).
+
+The Cosmos SDK provides a command for generating [Swagger](https://swagger.io/) documentation (`protoc-gen-swagger`). Setting `swagger` in [`app.toml`](/docs/sdk/v0.50/run-node/run-node#configuring-the-node-using-apptoml-and-configtoml) defines if swagger documentation should be automatically registered.

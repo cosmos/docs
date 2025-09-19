@@ -1,0 +1,591 @@
+---
+title: '`x/circuit`'
+---
+
+## Concepts
+
+Circuit Breaker is a module that is meant to avoid a chain needing to halt/shut down in the presence of a vulnerability, instead the module will allow specific messages or all messages to be disabled. When operating a chain, if it is app specific then a halt of the chain is less detrimental, but if there are applications built on top of the chain then halting is expensive due to the disturbance to applications.
+
+Circuit Breaker works with the idea that an address or set of addresses have the right to block messages from being executed and/or included in the mempool. Any address with a permission is able to reset the circuit breaker for the message.
+
+The transactions are checked and can be rejected at two points:
+
+* In `CircuitBreakerDecorator` [ante handler](https://docs.cosmos.network/main/learn/advanced/baseapp#antehandler):
+
+```go expandable
+package ante
+
+import (
+    
+	"context"
+    "github.com/cockroachdb/errors"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+// CircuitBreaker is an interface that defines the methods for a circuit breaker.
+type CircuitBreaker interface {
+    IsAllowed(ctx context.Context, typeURL string) (bool, error)
+}
+
+// CircuitBreakerDecorator is an AnteDecorator that checks if the transaction type is allowed to enter the mempool or be executed
+type CircuitBreakerDecorator struct {
+    circuitKeeper CircuitBreaker
+}
+
+func NewCircuitBreakerDecorator(ck CircuitBreaker)
+
+CircuitBreakerDecorator {
+    return CircuitBreakerDecorator{
+    circuitKeeper: ck,
+}
+}
+
+func (cbd CircuitBreakerDecorator)
+
+AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	// loop through all the messages and check if the message type is allowed
+    for _, msg := range tx.GetMsgs() {
+    isAllowed, err := cbd.circuitKeeper.IsAllowed(ctx, sdk.MsgTypeURL(msg))
+    if err != nil {
+    return ctx, err
+}
+    if !isAllowed {
+    return ctx, errors.New("tx type not allowed")
+}
+	
+}
+
+return next(ctx, tx, simulate)
+}
+```
+
+* With a [message router check](https://docs.cosmos.network/main/learn/advanced/baseapp#msg-service-router):
+
+```go expandable
+package baseapp
+
+import (
+    
+	"context"
+    "fmt"
+
+	gogogrpc "github.com/cosmos/gogoproto/grpc"
+    "github.com/cosmos/gogoproto/proto"
+    "google.golang.org/grpc"
+    "google.golang.org/protobuf/runtime/protoiface"
+
+	errorsmod "cosmossdk.io/errors"
+    "github.com/cosmos/cosmos-sdk/baseapp/internal/protocompat"
+    "github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+)
+
+// MessageRouter ADR 031 request type routing
+// https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-031-msg-service.md
+type MessageRouter interface {
+    Handler(msg sdk.Msg)
+
+MsgServiceHandler
+	HandlerByTypeURL(typeURL string)
+
+MsgServiceHandler
+}
+
+// MsgServiceRouter routes fully-qualified Msg service methods to their handler.
+type MsgServiceRouter struct {
+    interfaceRegistry codectypes.InterfaceRegistry
+	routes            map[string]MsgServiceHandler
+	hybridHandlers    map[string]func(ctx context.Context, req, resp protoiface.MessageV1)
+
+error
+	circuitBreaker    CircuitBreaker
+}
+
+var _ gogogrpc.Server = &MsgServiceRouter{
+}
+
+// NewMsgServiceRouter creates a new MsgServiceRouter.
+func NewMsgServiceRouter() *MsgServiceRouter {
+    return &MsgServiceRouter{
+    routes:         map[string]MsgServiceHandler{
+},
+		hybridHandlers: map[string]func(ctx context.Context, req, resp protoiface.MessageV1)
+
+error{
+},
+}
+}
+
+func (msr *MsgServiceRouter)
+
+SetCircuit(cb CircuitBreaker) {
+    msr.circuitBreaker = cb
+}
+
+// MsgServiceHandler defines a function type which handles Msg service message.
+type MsgServiceHandler = func(ctx sdk.Context, req sdk.Msg) (*sdk.Result, error)
+
+// Handler returns the MsgServiceHandler for a given msg or nil if not found.
+func (msr *MsgServiceRouter)
+
+Handler(msg sdk.Msg)
+
+MsgServiceHandler {
+    return msr.routes[sdk.MsgTypeURL(msg)]
+}
+
+// HandlerByTypeURL returns the MsgServiceHandler for a given query route path or nil
+// if not found.
+func (msr *MsgServiceRouter)
+
+HandlerByTypeURL(typeURL string)
+
+MsgServiceHandler {
+    return msr.routes[typeURL]
+}
+
+// RegisterService implements the gRPC Server.RegisterService method. sd is a gRPC
+// service description, handler is an object which implements that gRPC service.
+//
+// This function PANICs:
+//   - if it is called before the service `Msg`s have been registered using
+//     RegisterInterfaces,
+//   - or if a service is being registered twice.
+func (msr *MsgServiceRouter)
+
+RegisterService(sd *grpc.ServiceDesc, handler interface{
+}) {
+	// Adds a top-level query handler based on the gRPC service name.
+    for _, method := range sd.Methods {
+    err := msr.registerMsgServiceHandler(sd, method, handler)
+    if err != nil {
+    panic(err)
+}
+
+err = msr.registerHybridHandler(sd, method, handler)
+    if err != nil {
+    panic(err)
+}
+	
+}
+}
+
+func (msr *MsgServiceRouter)
+
+HybridHandlerByMsgName(msgName string)
+
+func(ctx context.Context, req, resp protoiface.MessageV1)
+
+error {
+    return msr.hybridHandlers[msgName]
+}
+
+func (msr *MsgServiceRouter)
+
+registerHybridHandler(sd *grpc.ServiceDesc, method grpc.MethodDesc, handler interface{
+})
+
+error {
+    inputName, err := protocompat.RequestFullNameFromMethodDesc(sd, method)
+    if err != nil {
+    return err
+}
+    cdc := codec.NewProtoCodec(msr.interfaceRegistry)
+
+hybridHandler, err := protocompat.MakeHybridHandler(cdc, sd, method, handler)
+    if err != nil {
+    return err
+}
+	// if circuit breaker is not nil, then we decorate the hybrid handler with the circuit breaker
+    if msr.circuitBreaker == nil {
+    msr.hybridHandlers[string(inputName)] = hybridHandler
+		return nil
+}
+	// decorate the hybrid handler with the circuit breaker
+    circuitBreakerHybridHandler := func(ctx context.Context, req, resp protoiface.MessageV1)
+
+error {
+    messageName := codectypes.MsgTypeURL(req)
+
+allowed, err := msr.circuitBreaker.IsAllowed(ctx, messageName)
+    if err != nil {
+    return err
+}
+    if !allowed {
+    return fmt.Errorf("circuit breaker disallows execution of message %s", messageName)
+}
+
+return hybridHandler(ctx, req, resp)
+}
+
+msr.hybridHandlers[string(inputName)] = circuitBreakerHybridHandler
+	return nil
+}
+
+func (msr *MsgServiceRouter)
+
+registerMsgServiceHandler(sd *grpc.ServiceDesc, method grpc.MethodDesc, handler interface{
+})
+
+error {
+    fqMethod := fmt.Sprintf("/%s/%s", sd.ServiceName, method.MethodName)
+    methodHandler := method.Handler
+
+	var requestTypeName string
+
+	// NOTE: This is how we pull the concrete request type for each handler for registering in the InterfaceRegistry.
+	// This approach is maybe a bit hacky, but less hacky than reflecting on the handler object itself.
+	// We use a no-op interceptor to avoid actually calling into the handler itself.
+	_, _ = methodHandler(nil, context.Background(), func(i interface{
+})
+
+error {
+    msg, ok := i.(sdk.Msg)
+    if !ok {
+			// We panic here because there is no other alternative and the app cannot be initialized correctly
+			// this should only happen if there is a problem with code generation in which case the app won't
+			// work correctly anyway.
+			panic(fmt.Errorf("unable to register service method %s: %T does not implement sdk.Msg", fqMethod, i))
+}
+
+requestTypeName = sdk.MsgTypeURL(msg)
+
+return nil
+}, noopInterceptor)
+
+	// Check that the service Msg fully-qualified method name has already
+	// been registered (via RegisterInterfaces). If the user registers a
+	// service without registering according service Msg type, there might be
+	// some unexpected behavior down the road. Since we can't return an error
+	// (`Server.RegisterService` interface restriction)
+
+we panic (at startup).
+	reqType, err := msr.interfaceRegistry.Resolve(requestTypeName)
+    if err != nil || reqType == nil {
+    return fmt.Errorf(
+			"type_url %s has not been registered yet. "+
+				"Before calling RegisterService, you must register all interfaces by calling the `RegisterInterfaces` "+
+				"method on module.BasicManager. Each module should call `msgservice.RegisterMsgServiceDesc` inside its "+
+				"`RegisterInterfaces` method with the `_Msg_serviceDesc` generated by proto-gen",
+			requestTypeName,
+		)
+}
+
+	// Check that each service is only registered once. If a service is
+	// registered more than once, then we should error. Since we can't
+	// return an error (`Server.RegisterService` interface restriction)
+
+we
+	// panic (at startup).
+	_, found := msr.routes[requestTypeName]
+    if found {
+    return fmt.Errorf(
+			"msg service %s has already been registered. Please make sure to only register each service once. "+
+				"This usually means that there are conflicting modules registering the same msg service",
+			fqMethod,
+		)
+}
+
+msr.routes[requestTypeName] = func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
+    ctx = ctx.WithEventManager(sdk.NewEventManager())
+    interceptor := func(goCtx context.Context, _ interface{
+}, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{
+}, error) {
+    goCtx = context.WithValue(goCtx, sdk.SdkContextKey, ctx)
+
+return handler(goCtx, msg)
+}
+    if m, ok := msg.(sdk.HasValidateBasic); ok {
+    if err := m.ValidateBasic(); err != nil {
+    return nil, err
+}
+	
+}
+    if msr.circuitBreaker != nil {
+    msgURL := sdk.MsgTypeURL(msg)
+
+isAllowed, err := msr.circuitBreaker.IsAllowed(ctx, msgURL)
+    if err != nil {
+    return nil, err
+}
+    if !isAllowed {
+    return nil, fmt.Errorf("circuit breaker disables execution of this message: %s", msgURL)
+}
+	
+}
+
+		// Call the method handler from the service description with the handler object.
+		// We don't do any decoding here because the decoding was already done.
+		res, err := methodHandler(handler, ctx, noopDecoder, interceptor)
+    if err != nil {
+    return nil, err
+}
+
+resMsg, ok := res.(proto.Message)
+    if !ok {
+    return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidType, "Expecting proto.Message, got %T", resMsg)
+}
+
+return sdk.WrapServiceResult(ctx, resMsg, err)
+}
+
+return nil
+}
+
+// SetInterfaceRegistry sets the interface registry for the router.
+func (msr *MsgServiceRouter)
+
+SetInterfaceRegistry(interfaceRegistry codectypes.InterfaceRegistry) {
+    msr.interfaceRegistry = interfaceRegistry
+}
+
+func noopDecoder(_ interface{
+})
+
+error {
+    return nil
+}
+
+func noopInterceptor(_ context.Context, _ interface{
+}, _ *grpc.UnaryServerInfo, _ grpc.UnaryHandler) (interface{
+}, error) {
+    return nil, nil
+}
+```
+
+<Note>
+The `CircuitBreakerDecorator` works for most use cases, but [does not check the inner messages of a transaction](https://docs.cosmos.network/main/learn/beginner/tx-lifecycle#antehandler). This some transactions (such as `x/authz` transactions or some `x/gov` transactions) may pass the ante handler. **This does not affect the circuit breaker** as the message router check will still fail the transaction.
+This tradeoff is to avoid introducing more dependencies in the `x/circuit` module. Chains can re-define the `CircuitBreakerDecorator` to check for inner messages if they wish to do so.
+</Note>
+
+## State
+
+### Accounts
+
+* AccountPermissions `0x1 | account_address  -> ProtocolBuffer(CircuitBreakerPermissions)`
+
+```go expandable
+type level int32
+
+const (
+    // LEVEL_NONE_UNSPECIFIED indicates that the account will have no circuit
+    // breaker permissions.
+    LEVEL_NONE_UNSPECIFIED = iota
+    // LEVEL_SOME_MSGS indicates that the account will have permission to
+    // trip or reset the circuit breaker for some Msg type URLs. If this level
+    // is chosen, a non-empty list of Msg type URLs must be provided in
+    // limit_type_urls.
+    LEVEL_SOME_MSGS
+    // LEVEL_ALL_MSGS indicates that the account can trip or reset the circuit
+    // breaker for Msg's of all type URLs.
+    LEVEL_ALL_MSGS 
+    // LEVEL_SUPER_ADMIN indicates that the account can take all circuit breaker
+    // actions and can grant permissions to other accounts.
+    LEVEL_SUPER_ADMIN
+)
+
+type Access struct {
+    level int32 
+	msgs []string // if full permission, msgs can be empty
+}
+```
+
+### Disable List
+
+List of type urls that are disabled.
+
+* DisableList `0x2 | msg_type_url -> []byte{}` {/* - should this be stored in json to skip encoding and decoding each block, does it matter? */}
+
+## State Transitions
+
+### Authorize
+
+Authorize, is called by the module authority (default governance module account) or any account with `LEVEL_SUPER_ADMIN` to give permission to disable/enable messages to another account. There are three levels of permissions that can be granted. `LEVEL_SOME_MSGS` limits the number of messages that can be disabled. `LEVEL_ALL_MSGS` permits all messages to be disabled. `LEVEL_SUPER_ADMIN` allows an account to take all circuit breaker actions including authorizing and deauthorizing other accounts.
+
+```protobuf
+  // AuthorizeCircuitBreaker allows a super-admin to grant (or revoke) another
+  // account's circuit breaker permissions.
+  rpc AuthorizeCircuitBreaker(MsgAuthorizeCircuitBreaker) returns (MsgAuthorizeCircuitBreakerResponse);
+```
+
+### Trip
+
+Trip, is called by an authorized account to disable message execution for a specific msgURL. If empty, all the msgs will be disabled.
+
+```protobuf
+  // TripCircuitBreaker pauses processing of Msg's in the state machine.
+  rpc TripCircuitBreaker(MsgTripCircuitBreaker) returns (MsgTripCircuitBreakerResponse);
+```
+
+### Reset
+
+Reset is called by an authorized account to enable execution for a specific msgURL of previously disabled message. If empty, all the disabled messages will be enabled.
+
+```protobuf
+  // ResetCircuitBreaker resumes processing of Msg's in the state machine that
+  // have been been paused using TripCircuitBreaker.
+  rpc ResetCircuitBreaker(MsgResetCircuitBreaker) returns (MsgResetCircuitBreakerResponse);
+```
+
+## Messages
+
+### MsgAuthorizeCircuitBreaker
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/circuit/v1/tx.proto#L25-L75
+```
+
+This message is expected to fail if:
+
+* the granter is not an account with permission level `LEVEL_SUPER_ADMIN` or the module authority
+
+### MsgTripCircuitBreaker
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/circuit/v1/tx.proto#L77-L93
+```
+
+This message is expected to fail if:
+
+* if the signer does not have a permission level with the ability to disable the specified type url message
+
+### MsgResetCircuitBreaker
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/circuit/v1/tx.proto#L95-109
+```
+
+This message is expected to fail if:
+
+* if the type url is not disabled
+
+## Events - list and describe event tags
+
+The circuit module emits the following events:
+
+### Message Events
+
+#### MsgAuthorizeCircuitBreaker
+
+| Type    | Attribute Key | Attribute Value             |
+| ------- | ------------- | --------------------------- |
+| string  | granter       | `{granterAddress}`            |
+| string  | grantee       | `{granteeAddress}`            |
+| string  | permission    | `{granteePermissions}`        |
+| message | module        | circuit                     |
+| message | action        | authorize\_circuit\_breaker |
+
+#### MsgTripCircuitBreaker
+
+| Type      | Attribute Key | Attribute Value        |
+| --------- | ------------- | ---------------------- |
+| string    | authority     | `{authorityAddress}`     |
+| \[]string | msg\_urls     | \[]string`{msg\_urls}`   |
+| message   | module        | circuit                |
+| message   | action        | trip\_circuit\_breaker |
+
+#### ResetCircuitBreaker
+
+| Type      | Attribute Key | Attribute Value         |
+| --------- | ------------- | ----------------------- |
+| string    | authority     | `{authorityAddress}`      |
+| \[]string | msg\_urls     | \[]string`{msg\_urls}`    |
+| message   | module        | circuit                 |
+| message   | action        | reset\_circuit\_breaker |
+
+## Keys - list of key prefixes used by the circuit module
+
+* `AccountPermissionPrefix` - `0x01`
+* `DisableListPrefix` -  `0x02`
+
+## Client - list and describe CLI commands and gRPC and REST endpoints
+
+## Examples: Using Circuit Breaker CLI Commands
+
+This section provides practical examples for using the Circuit Breaker module through the command-line interface (CLI). These examples demonstrate how to authorize accounts, disable (trip) specific message types, and re-enable (reset) them when needed.
+
+### Querying Circuit Breaker Permissions
+
+Check an account's current circuit breaker permissions:
+
+```bash
+# Query permissions for a specific account
+<appd> query circuit account-permissions <account_address>
+
+# Example:
+simd query circuit account-permissions cosmos1...
+```
+
+Check which message types are currently disabled:
+
+```bash
+# Query all disabled message types
+<appd> query circuit disabled-list
+
+# Example:
+simd query circuit disabled-list
+```
+
+### Authorizing an Account as Circuit Breaker
+
+Only a super-admin or the module authority (typically the governance module account) can grant circuit breaker permissions to other accounts:
+
+```bash
+# Grant LEVEL_ALL_MSGS permission (can disable any message type)
+<appd> tx circuit authorize <grantee_address> --level=ALL_MSGS --from=<super_admin_key> --gas=auto --gas-adjustment=1.5
+
+# Grant LEVEL_SOME_MSGS permission (can only disable specific message types)
+<appd> tx circuit authorize <grantee_address> --level=SOME_MSGS --limit-type-urls="/cosmos.bank.v1beta1.MsgSend,/cosmos.staking.v1beta1.MsgDelegate" --from=<super_admin_key> --gas=auto --gas-adjustment=1.5
+
+# Grant LEVEL_SUPER_ADMIN permission (can disable messages and authorize other accounts)
+<appd> tx circuit authorize <grantee_address> --level=SUPER_ADMIN --from=<super_admin_key> --gas=auto --gas-adjustment=1.5
+```
+
+### Disabling Message Processing (Trip)
+
+Disable specific message types to prevent their execution (requires authorization):
+
+```bash
+# Disable a single message type
+<appd> tx circuit trip --type-urls="/cosmos.bank.v1beta1.MsgSend" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+
+# Disable multiple message types
+<appd> tx circuit trip --type-urls="/cosmos.bank.v1beta1.MsgSend,/cosmos.staking.v1beta1.MsgDelegate" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+
+# Disable all message types (emergency measure)
+<appd> tx circuit trip --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+```
+
+### Re-enabling Message Processing (Reset)
+
+Re-enable previously disabled message types (requires authorization):
+
+```bash
+# Re-enable a single message type
+<appd> tx circuit reset --type-urls="/cosmos.bank.v1beta1.MsgSend" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+
+# Re-enable multiple message types
+<appd> tx circuit reset --type-urls="/cosmos.bank.v1beta1.MsgSend,/cosmos.staking.v1beta1.MsgDelegate" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+
+# Re-enable all disabled message types
+<appd> tx circuit reset --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+```
+
+### Usage in Emergency Scenarios
+
+In case of a critical vulnerability in a specific message type:
+
+1. Quickly disable the vulnerable message type:
+   ```bash
+   <appd> tx circuit trip --type-urls="/cosmos.vulnerable.v1beta1.MsgVulnerable" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+   ```
+
+2. After a fix is deployed, re-enable the message type:
+   ```bash
+   <appd> tx circuit reset --type-urls="/cosmos.vulnerable.v1beta1.MsgVulnerable" --from=<authorized_key> --gas=auto --gas-adjustment=1.5
+   ```
+
+This allows chains to surgically disable problematic functionality without halting the entire chain, providing time for developers to implement and deploy fixes.

@@ -1,0 +1,1877 @@
+---
+title: What is `runtime`?
+description: >-
+  The runtime package in the Cosmos SDK provides a flexible framework for
+  configuring and managing blockchain applications. It serves as the foundation
+  for creating modular blockchain applications using a declarative configuration
+  approach.
+---
+
+The `runtime` package in the Cosmos SDK provides a flexible framework for configuring and managing blockchain applications. It serves as the foundation for creating modular blockchain applications using a declarative configuration approach.
+
+## Overview
+
+The runtime package acts as a wrapper around the `BaseApp` and `ModuleManager`, offering a hybrid approach where applications can be configured both declaratively through configuration files and programmatically through traditional methods.
+It is a layer of abstraction between `baseapp` and the application modules that simplifies the process of building a Cosmos SDK application.
+
+## Core Components
+
+### App Structure
+
+The runtime App struct contains several key components:
+
+```go
+type App struct {
+    *baseapp.BaseApp
+    ModuleManager    *module.Manager
+    configurator     module.Configurator
+    config           *runtimev1alpha1.Module
+    storeKeys        []storetypes.StoreKey
+    // ... other fields
+}
+```
+
+Cosmos SDK applications should embed the `*runtime.App` struct to leverage the runtime module.
+
+```go expandable
+//go:build !app_v1
+
+package simapp
+
+import (
+    
+	"io"
+
+	dbm "github.com/cosmos/cosmos-db"
+
+	clienthelpers "cosmossdk.io/client/v2/helpers"
+    "cosmossdk.io/depinject"
+    "cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
+	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	evidencekeeper "cosmossdk.io/x/evidence/keeper"
+	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
+	nftkeeper "cosmossdk.io/x/nft/keeper"
+	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/server"
+    "github.com/cosmos/cosmos-sdk/server/api"
+    "github.com/cosmos/cosmos-sdk/server/config"
+	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	testdata_pulsar "github.com/cosmos/cosmos-sdk/testutil/testdata/testpb"
+    "github.com/cosmos/cosmos-sdk/types/module"
+    "github.com/cosmos/cosmos-sdk/x/auth"
+    "github.com/cosmos/cosmos-sdk/x/auth/ante"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	authsims "github.com/cosmos/cosmos-sdk/x/auth/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
+	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+	consensuskeeper "github.com/cosmos/cosmos-sdk/x/consensus/keeper"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	epochskeeper "github.com/cosmos/cosmos-sdk/x/epochs/keeper"
+	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	groupkeeper "github.com/cosmos/cosmos-sdk/x/group/keeper"
+	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
+	protocolpoolkeeper "github.com/cosmos/cosmos-sdk/x/protocolpool/keeper"
+	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+)
+
+// DefaultNodeHome default home directories for the application daemon
+var DefaultNodeHome string
+
+var (
+	_ runtime.AppI            = (*SimApp)(nil)
+	_ servertypes.Application = (*SimApp)(nil)
+)
+
+// SimApp extends an ABCI application, but with most of its parameters exported.
+// They are exported for convenience in creating helper functions, as object
+// capabilities aren't needed for testing.
+type SimApp struct {
+	*runtime.App
+	legacyAmino       *codec.LegacyAmino
+	appCodec          codec.Codec
+	txConfig          client.TxConfig
+	interfaceRegistry codectypes.InterfaceRegistry
+
+	// essential keepers
+	AccountKeeper         authkeeper.AccountKeeper
+	BankKeeper            bankkeeper.BaseKeeper
+	StakingKeeper         *stakingkeeper.Keeper
+	SlashingKeeper        slashingkeeper.Keeper
+	MintKeeper            mintkeeper.Keeper
+	DistrKeeper           distrkeeper.Keeper
+	GovKeeper             *govkeeper.Keeper
+	UpgradeKeeper         *upgradekeeper.Keeper
+	EvidenceKeeper        evidencekeeper.Keeper
+	ConsensusParamsKeeper consensuskeeper.Keeper
+	CircuitKeeper         circuitkeeper.Keeper
+
+	// supplementary keepers
+	FeeGrantKeeper     feegrantkeeper.Keeper
+	GroupKeeper        groupkeeper.Keeper
+	AuthzKeeper        authzkeeper.Keeper
+	NFTKeeper          nftkeeper.Keeper
+	EpochsKeeper       epochskeeper.Keeper
+	ProtocolPoolKeeper protocolpoolkeeper.Keeper
+
+	// simulation manager
+	sm *module.SimulationManager
+}
+
+func init() {
+    var err error
+	DefaultNodeHome, err = clienthelpers.GetNodeHomeDirectory(".simapp")
+    if err != nil {
+    panic(err)
+}
+}
+
+// NewSimApp returns a reference to an initialized SimApp.
+func NewSimApp(
+	logger log.Logger,
+	db dbm.DB,
+	traceStore io.Writer,
+	loadLatest bool,
+	appOpts servertypes.AppOptions,
+	baseAppOptions ...func(*baseapp.BaseApp),
+) *SimApp {
+    var (
+		app        = &SimApp{
+}
+
+appBuilder *runtime.AppBuilder
+
+		// merge the AppConfig and other configuration in one config
+		appConfig = depinject.Configs(
+			AppConfig,
+			depinject.Supply(
+				// supply the application options
+				appOpts,
+				// supply the logger
+				logger,
+
+				// ADVANCED CONFIGURATION
+
+				//
+				// AUTH
+				//
+				// For providing a custom function required in auth to generate custom account types
+				// add it below. By default the auth module uses simulation.RandomGenesisAccounts.
+				//
+				// authtypes.RandomGenesisAccountsFn(simulation.RandomGenesisAccounts),
+				//
+				// For providing a custom a base account type add it below.
+				// By default the auth module uses authtypes.ProtoBaseAccount().
+				//
+				// func()
+
+sdk.AccountI {
+    return authtypes.ProtoBaseAccount()
+},
+				//
+				// For providing a different address codec, add it below.
+				// By default the auth module uses a Bech32 address codec,
+				// with the prefix defined in the auth module configuration.
+				//
+				// func()
+
+address.Codec {
+    return <- custom address codec type ->
+}
+				//
+				// STAKING
+				//
+				// For provinding a different validator and consensus address codec, add it below.
+				// By default the staking module uses the bech32 prefix provided in the auth config,
+				// and appends "valoper" and "valcons" for validator and consensus addresses respectively.
+				// When providing a custom address codec in auth, custom address codecs must be provided here as well.
+				//
+				// func()
+
+runtime.ValidatorAddressCodec {
+    return <- custom validator address codec type ->
+}
+				// func()
+
+runtime.ConsensusAddressCodec {
+    return <- custom consensus address codec type ->
+}
+
+				//
+				// MINT
+				//
+
+				// For providing a custom inflation function for x/mint add here your
+				// custom minting function that implements the mintkeeper.MintFn
+				// interface.
+			),
+		)
+	)
+    if err := depinject.Inject(appConfig,
+		&appBuilder,
+		&app.appCodec,
+		&app.legacyAmino,
+		&app.txConfig,
+		&app.interfaceRegistry,
+		&app.AccountKeeper,
+		&app.BankKeeper,
+		&app.StakingKeeper,
+		&app.SlashingKeeper,
+		&app.MintKeeper,
+		&app.DistrKeeper,
+		&app.GovKeeper,
+		&app.UpgradeKeeper,
+		&app.AuthzKeeper,
+		&app.EvidenceKeeper,
+		&app.FeeGrantKeeper,
+		&app.GroupKeeper,
+		&app.NFTKeeper,
+		&app.ConsensusParamsKeeper,
+		&app.CircuitKeeper,
+		&app.EpochsKeeper,
+		&app.ProtocolPoolKeeper,
+	); err != nil {
+    panic(err)
+}
+
+	// Below we could construct and set an application specific mempool and
+	// ABCI 1.0 PrepareProposal and ProcessProposal handlers. These defaults are
+	// already set in the SDK's BaseApp, this shows an example of how to override
+	// them.
+	//
+	// Example:
+	//
+	// app.App = appBuilder.Build(...)
+	// nonceMempool := mempool.NewSenderNonceMempool()
+	// abciPropHandler := NewDefaultProposalHandler(nonceMempool, app.App.BaseApp)
+	//
+	// app.App.BaseApp.SetMempool(nonceMempool)
+	// app.App.BaseApp.SetPrepareProposal(abciPropHandler.PrepareProposalHandler())
+	// app.App.BaseApp.SetProcessProposal(abciPropHandler.ProcessProposalHandler())
+	//
+	// Alternatively, you can construct BaseApp options, append those to
+	// baseAppOptions and pass them to the appBuilder.
+	//
+	// Example:
+	//
+	// prepareOpt = func(app *baseapp.BaseApp) {
+	// 	abciPropHandler := baseapp.NewDefaultProposalHandler(nonceMempool, app)
+	// 	app.SetPrepareProposal(abciPropHandler.PrepareProposalHandler())
+	//
+}
+	// baseAppOptions = append(baseAppOptions, prepareOpt)
+
+	// create and set dummy vote extension handler
+    voteExtOp := func(bApp *baseapp.BaseApp) {
+    voteExtHandler := NewVoteExtensionHandler()
+
+voteExtHandler.SetHandlers(bApp)
+}
+
+baseAppOptions = append(baseAppOptions, voteExtOp, baseapp.SetOptimisticExecution())
+
+app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
+
+	// register streaming services
+    if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {
+    panic(err)
+}
+
+	/****  Module Options ****/
+
+	// RegisterUpgradeHandlers is used for registering any on-chain upgrades.
+	app.RegisterUpgradeHandlers()
+
+	// add test gRPC service for testing gRPC queries in isolation
+	testdata_pulsar.RegisterQueryServer(app.GRPCQueryRouter(), testdata_pulsar.QueryImpl{
+})
+
+	// create the simulation manager and define the order of the modules for deterministic simulations
+	//
+	// NOTE: this is not required apps that don't use the simulator for fuzz testing
+	// transactions
+    overrideModules := map[string]module.AppModuleSimulation{
+    authtypes.ModuleName: auth.NewAppModule(app.appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, nil),
+}
+
+app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
+
+app.sm.RegisterStoreDecoders()
+
+	// A custom InitChainer can be set if extra pre-init-genesis logic is required.
+	// By default, when using app wiring enabled module, this is not required.
+	// For instance, the upgrade module will set automatically the module version map in its init genesis thanks to app wiring.
+	// However, when registering a module manually (i.e. that does not support app wiring), the module version map
+	// must be set manually as follow. The upgrade module will de-duplicate the module version map.
+	//
+	// app.SetInitChainer(func(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+	// 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap())
+	// 	return app.App.InitChainer(ctx, req)
+	//
+})
+
+	// set custom ante handler
+	app.setAnteHandler(app.txConfig)
+    if err := app.Load(loadLatest); err != nil {
+    panic(err)
+}
+
+return app
+}
+
+// setAnteHandler sets custom ante handlers.
+// "x/auth/tx" pre-defined ante handler have been disabled in app_config.
+func (app *SimApp)
+
+setAnteHandler(txConfig client.TxConfig) {
+    anteHandler, err := NewAnteHandler(
+		HandlerOptions{
+    ante.HandlerOptions{
+    AccountKeeper:   app.AccountKeeper,
+    BankKeeper:      app.BankKeeper,
+    SignModeHandler: txConfig.SignModeHandler(),
+    FeegrantKeeper:  app.FeeGrantKeeper,
+    SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+},
+			&app.CircuitKeeper,
+},
+	)
+    if err != nil {
+    panic(err)
+}
+
+	// Set the AnteHandler for the app
+	app.SetAnteHandler(anteHandler)
+}
+
+// LegacyAmino returns SimApp's amino codec.
+//
+// NOTE: This is solely to be used for testing purposes as it may be desirable
+// for modules to register their own custom testing types.
+func (app *SimApp)
+
+LegacyAmino() *codec.LegacyAmino {
+    return app.legacyAmino
+}
+
+// AppCodec returns SimApp's app codec.
+//
+// NOTE: This is solely to be used for testing purposes as it may be desirable
+// for modules to register their own custom testing types.
+func (app *SimApp)
+
+AppCodec()
+
+codec.Codec {
+    return app.appCodec
+}
+
+// InterfaceRegistry returns SimApp's InterfaceRegistry.
+func (app *SimApp)
+
+InterfaceRegistry()
+
+codectypes.InterfaceRegistry {
+    return app.interfaceRegistry
+}
+
+// TxConfig returns SimApp's TxConfig
+func (app *SimApp)
+
+TxConfig()
+
+client.TxConfig {
+    return app.txConfig
+}
+
+// GetKey returns the KVStoreKey for the provided store key.
+//
+// NOTE: This is solely to be used for testing purposes.
+func (app *SimApp)
+
+GetKey(storeKey string) *storetypes.KVStoreKey {
+    sk := app.UnsafeFindStoreKey(storeKey)
+
+kvStoreKey, ok := sk.(*storetypes.KVStoreKey)
+    if !ok {
+    return nil
+}
+
+return kvStoreKey
+}
+
+func (app *SimApp)
+
+kvStoreKeys()
+
+map[string]*storetypes.KVStoreKey {
+    keys := make(map[string]*storetypes.KVStoreKey)
+    for _, k := range app.GetStoreKeys() {
+    if kv, ok := k.(*storetypes.KVStoreKey); ok {
+    keys[kv.Name()] = kv
+}
+	
+}
+
+return keys
+}
+
+// SimulationManager implements the SimulationApp interface
+func (app *SimApp)
+
+SimulationManager() *module.SimulationManager {
+    return app.sm
+}
+
+// RegisterAPIRoutes registers all application module routes with the provided
+// API server.
+func (app *SimApp)
+
+RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
+    app.App.RegisterAPIRoutes(apiSvr, apiConfig)
+	// register swagger API in app.go so that other applications can override easily
+    if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
+    panic(err)
+}
+}
+
+// GetMaccPerms returns a copy of the module account permissions
+//
+// NOTE: This is solely to be used for testing purposes.
+func GetMaccPerms()
+
+map[string][]string {
+    dup := make(map[string][]string)
+    for _, perms := range moduleAccPerms {
+    dup[perms.Account] = perms.Permissions
+}
+
+return dup
+}
+
+// BlockedAddresses returns all the app's blocked account addresses.
+func BlockedAddresses()
+
+map[string]bool {
+    result := make(map[string]bool)
+    if len(blockAccAddrs) > 0 {
+    for _, addr := range blockAccAddrs {
+    result[addr] = true
+}
+	
+}
+
+else {
+    for addr := range GetMaccPerms() {
+    result[addr] = true
+}
+	
+}
+
+return result
+}
+```
+
+### Configuration
+
+The runtime module is configured using App Wiring. The main configuration object is the [`Module` message](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0-rc.2/proto/cosmos/app/runtime/v1alpha1/module.proto), which supports the following key settings:
+
+* `app_name`: The name of the application
+* `begin_blockers`: List of module names to call during BeginBlock
+* `end_blockers`: List of module names to call during EndBlock
+* `init_genesis`: Order of module initialization during genesis
+* `export_genesis`: Order for exporting module genesis data
+* `pre_blockers`: Modules to execute before block processing
+
+Learn more about wiring `runtime` in the [next section](/docs/sdk/v0.53/app-go-di).
+
+#### Store Configuration
+
+By default, the runtime module uses the module name as the store key.
+However it provides a flexible store key configuration through:
+
+* `override_store_keys`: Allows customizing module store keys
+* `skip_store_keys`: Specifies store keys to skip during keeper construction
+
+Example configuration:
+
+```go expandable
+package simapp
+
+import (
+    
+	"time"
+    "google.golang.org/protobuf/types/known/durationpb"
+
+	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
+	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
+	authmodulev1 "cosmossdk.io/api/cosmos/auth/module/v1"
+	authzmodulev1 "cosmossdk.io/api/cosmos/authz/module/v1"
+	bankmodulev1 "cosmossdk.io/api/cosmos/bank/module/v1"
+	circuitmodulev1 "cosmossdk.io/api/cosmos/circuit/module/v1"
+	consensusmodulev1 "cosmossdk.io/api/cosmos/consensus/module/v1"
+	distrmodulev1 "cosmossdk.io/api/cosmos/distribution/module/v1"
+	epochsmodulev1 "cosmossdk.io/api/cosmos/epochs/module/v1"
+	evidencemodulev1 "cosmossdk.io/api/cosmos/evidence/module/v1"
+	feegrantmodulev1 "cosmossdk.io/api/cosmos/feegrant/module/v1"
+	genutilmodulev1 "cosmossdk.io/api/cosmos/genutil/module/v1"
+	govmodulev1 "cosmossdk.io/api/cosmos/gov/module/v1"
+	groupmodulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+	mintmodulev1 "cosmossdk.io/api/cosmos/mint/module/v1"
+	nftmodulev1 "cosmossdk.io/api/cosmos/nft/module/v1"
+	protocolpoolmodulev1 "cosmossdk.io/api/cosmos/protocolpool/module/v1"
+	slashingmodulev1 "cosmossdk.io/api/cosmos/slashing/module/v1"
+	stakingmodulev1 "cosmossdk.io/api/cosmos/staking/module/v1"
+	txconfigv1 "cosmossdk.io/api/cosmos/tx/config/v1"
+	upgrademodulev1 "cosmossdk.io/api/cosmos/upgrade/module/v1"
+	vestingmodulev1 "cosmossdk.io/api/cosmos/vesting/module/v1"
+    "cosmossdk.io/core/appconfig"
+    "cosmossdk.io/depinject"
+	_ "cosmossdk.io/x/circuit" // import for side-effects
+	circuittypes "cosmossdk.io/x/circuit/types"
+	_ "cosmossdk.io/x/evidence" // import for side-effects
+	evidencetypes "cosmossdk.io/x/evidence/types"
+    "cosmossdk.io/x/feegrant"
+	_ "cosmossdk.io/x/feegrant/module" // import for side-effects
+	"cosmossdk.io/x/nft"
+	_ "cosmossdk.io/x/nft/module" // import for side-effects
+	_ "cosmossdk.io/x/upgrade"    // import for side-effects
+	upgradetypes "cosmossdk.io/x/upgrade/types"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config" // import for side-effects
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/vesting" // import for side-effects
+	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+    "github.com/cosmos/cosmos-sdk/x/authz"
+	_ "github.com/cosmos/cosmos-sdk/x/authz/module" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/bank"         // import for side-effects
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	_ "github.com/cosmos/cosmos-sdk/x/consensus" // import for side-effects
+	consensustypes "github.com/cosmos/cosmos-sdk/x/consensus/types"
+	_ "github.com/cosmos/cosmos-sdk/x/distribution" // import for side-effects
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	_ "github.com/cosmos/cosmos-sdk/x/epochs" // import for side-effects
+	epochstypes "github.com/cosmos/cosmos-sdk/x/epochs/types"
+    "github.com/cosmos/cosmos-sdk/x/genutil"
+	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+    "github.com/cosmos/cosmos-sdk/x/gov"
+	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+    "github.com/cosmos/cosmos-sdk/x/group"
+	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+	_ "github.com/cosmos/cosmos-sdk/x/protocolpool" // import for side-effects
+	protocolpooltypes "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
+	_ "github.com/cosmos/cosmos-sdk/x/slashing" // import for side-effects
+	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
+	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+)
+
+var (
+	// module account permissions
+	moduleAccPerms = []*authmodulev1.ModuleAccountPermission{
+		{
+    Account: authtypes.FeeCollectorName
+},
+		{
+    Account: distrtypes.ModuleName
+},
+		{
+    Account: minttypes.ModuleName,
+    Permissions: []string{
+    authtypes.Minter
+}},
+		{
+    Account: stakingtypes.BondedPoolName,
+    Permissions: []string{
+    authtypes.Burner, stakingtypes.ModuleName
+}},
+		{
+    Account: stakingtypes.NotBondedPoolName,
+    Permissions: []string{
+    authtypes.Burner, stakingtypes.ModuleName
+}},
+		{
+    Account: govtypes.ModuleName,
+    Permissions: []string{
+    authtypes.Burner
+}},
+		{
+    Account: nft.ModuleName
+},
+		{
+    Account: protocolpooltypes.ModuleName
+},
+		{
+    Account: protocolpooltypes.ProtocolPoolEscrowAccount
+},
+}
+
+	// blocked account addresses
+	blockAccAddrs = []string{
+    authtypes.FeeCollectorName,
+		distrtypes.ModuleName,
+		minttypes.ModuleName,
+		stakingtypes.BondedPoolName,
+		stakingtypes.NotBondedPoolName,
+		nft.ModuleName,
+		// We allow the following module accounts to receive funds:
+		// govtypes.ModuleName
+}
+
+ModuleConfig = []*appv1alpha1.ModuleConfig{
+		{
+    Name: runtime.ModuleName,
+    Config: appconfig.WrapAny(&runtimev1alpha1.Module{
+    AppName: "SimApp",
+				// NOTE: upgrade module is required to be prioritized
+				PreBlockers: []string{
+    upgradetypes.ModuleName,
+					authtypes.ModuleName,
+},
+				// During begin block slashing happens after distr.BeginBlocker so that
+				// there is nothing left over in the validator fee pool, so as to keep the
+				// CanWithdrawInvariant invariant.
+				// NOTE: staking module is required if HistoricalEntries param > 0
+				BeginBlockers: []string{
+    minttypes.ModuleName,
+					distrtypes.ModuleName,
+					protocolpooltypes.ModuleName,
+					slashingtypes.ModuleName,
+					evidencetypes.ModuleName,
+					stakingtypes.ModuleName,
+					authz.ModuleName,
+					epochstypes.ModuleName,
+},
+    EndBlockers: []string{
+    govtypes.ModuleName,
+					stakingtypes.ModuleName,
+					feegrant.ModuleName,
+					group.ModuleName,
+					protocolpooltypes.ModuleName,
+},
+    OverrideStoreKeys: []*runtimev1alpha1.StoreKeyConfig{
+					{
+    ModuleName: authtypes.ModuleName,
+    KvStoreKey: "acc",
+},
+},
+    SkipStoreKeys: []string{
+					"tx",
+},
+				// NOTE: The genutils module must occur after staking so that pools are
+				// properly initialized with tokens from genesis accounts.
+				// NOTE: The genutils module must also occur after auth so that it can access the params from auth.
+				InitGenesis: []string{
+    authtypes.ModuleName,
+					banktypes.ModuleName,
+					distrtypes.ModuleName,
+					stakingtypes.ModuleName,
+					slashingtypes.ModuleName,
+					govtypes.ModuleName,
+					minttypes.ModuleName,
+					genutiltypes.ModuleName,
+					evidencetypes.ModuleName,
+					authz.ModuleName,
+					feegrant.ModuleName,
+					nft.ModuleName,
+					group.ModuleName,
+					upgradetypes.ModuleName,
+					vestingtypes.ModuleName,
+					circuittypes.ModuleName,
+					epochstypes.ModuleName,
+					protocolpooltypes.ModuleName,
+},
+				// When ExportGenesis is not specified, the export genesis module order
+				// is equal to the init genesis order
+				ExportGenesis: []string{
+    consensustypes.ModuleName,
+					authtypes.ModuleName,
+					protocolpooltypes.ModuleName, // Must be exported before bank
+					banktypes.ModuleName,
+					distrtypes.ModuleName,
+					stakingtypes.ModuleName,
+					slashingtypes.ModuleName,
+					govtypes.ModuleName,
+					minttypes.ModuleName,
+					genutiltypes.ModuleName,
+					evidencetypes.ModuleName,
+					authz.ModuleName,
+					feegrant.ModuleName,
+					nft.ModuleName,
+					group.ModuleName,
+					upgradetypes.ModuleName,
+					vestingtypes.ModuleName,
+					circuittypes.ModuleName,
+					epochstypes.ModuleName,
+},
+				// Uncomment if you want to set a custom migration order here.
+				// OrderMigrations: []string{
+},
+}),
+},
+		{
+    Name: authtypes.ModuleName,
+    Config: appconfig.WrapAny(&authmodulev1.Module{
+    Bech32Prefix:             "cosmos",
+    ModuleAccountPermissions: moduleAccPerms,
+				// By default modules authority is the governance module. This is configurable with the following:
+				// Authority: "group", // A custom module authority can be set using a module name
+				// Authority: "cosmos1cwwv22j5ca08ggdv9c2uky355k908694z577tv", // or a specific address
+				EnableUnorderedTransactions: true,
+}),
+},
+		{
+    Name:   vestingtypes.ModuleName,
+    Config: appconfig.WrapAny(&vestingmodulev1.Module{
+}),
+},
+		{
+    Name: banktypes.ModuleName,
+    Config: appconfig.WrapAny(&bankmodulev1.Module{
+    BlockedModuleAccountsOverride: blockAccAddrs,
+}),
+},
+		{
+    Name: stakingtypes.ModuleName,
+    Config: appconfig.WrapAny(&stakingmodulev1.Module{
+				// NOTE: specifying a prefix is only necessary when using bech32 addresses
+				// If not specfied, the auth Bech32Prefix appended with "valoper" and "valcons" is used by default
+				Bech32PrefixValidator: "cosmosvaloper",
+				Bech32PrefixConsensus: "cosmosvalcons",
+}),
+},
+		{
+    Name:   slashingtypes.ModuleName,
+    Config: appconfig.WrapAny(&slashingmodulev1.Module{
+}),
+},
+		{
+    Name: "tx",
+    Config: appconfig.WrapAny(&txconfigv1.Config{
+    SkipAnteHandler: true, // Enable this to skip the default antehandlers and set custom ante handlers.
+}),
+},
+		{
+    Name:   genutiltypes.ModuleName,
+    Config: appconfig.WrapAny(&genutilmodulev1.Module{
+}),
+},
+		{
+    Name:   authz.ModuleName,
+    Config: appconfig.WrapAny(&authzmodulev1.Module{
+}),
+},
+		{
+    Name:   upgradetypes.ModuleName,
+    Config: appconfig.WrapAny(&upgrademodulev1.Module{
+}),
+},
+		{
+    Name:   distrtypes.ModuleName,
+    Config: appconfig.WrapAny(&distrmodulev1.Module{
+}),
+},
+		{
+    Name:   evidencetypes.ModuleName,
+    Config: appconfig.WrapAny(&evidencemodulev1.Module{
+}),
+},
+		{
+    Name:   minttypes.ModuleName,
+    Config: appconfig.WrapAny(&mintmodulev1.Module{
+}),
+},
+		{
+    Name: group.ModuleName,
+    Config: appconfig.WrapAny(&groupmodulev1.Module{
+    MaxExecutionPeriod: durationpb.New(time.Second * 1209600),
+    MaxMetadataLen:     255,
+}),
+},
+		{
+    Name:   nft.ModuleName,
+    Config: appconfig.WrapAny(&nftmodulev1.Module{
+}),
+},
+		{
+    Name:   feegrant.ModuleName,
+    Config: appconfig.WrapAny(&feegrantmodulev1.Module{
+}),
+},
+		{
+    Name:   govtypes.ModuleName,
+    Config: appconfig.WrapAny(&govmodulev1.Module{
+}),
+},
+		{
+    Name:   consensustypes.ModuleName,
+    Config: appconfig.WrapAny(&consensusmodulev1.Module{
+}),
+},
+		{
+    Name:   circuittypes.ModuleName,
+    Config: appconfig.WrapAny(&circuitmodulev1.Module{
+}),
+},
+		{
+    Name:   epochstypes.ModuleName,
+    Config: appconfig.WrapAny(&epochsmodulev1.Module{
+}),
+},
+		{
+    Name:   protocolpooltypes.ModuleName,
+    Config: appconfig.WrapAny(&protocolpoolmodulev1.Module{
+}),
+},
+}
+
+	// AppConfig is application configuration (used by depinject)
+
+AppConfig = depinject.Configs(appconfig.Compose(&appv1alpha1.Config{
+    Modules: ModuleConfig,
+}),
+		depinject.Supply(
+			// supply custom module basics
+			map[string]module.AppModuleBasic{
+    genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
+				govtypes.ModuleName: gov.NewAppModuleBasic(
+					[]govclient.ProposalHandler{
+},
+				),
+},
+		),
+	)
+)
+```
+
+## Key Features
+
+### 1. BaseApp and other Core SDK components integration
+
+The runtime module integrates with the `BaseApp` and other core SDK components to provide a seamless experience for developers.
+
+The developer only needs to embed the `runtime.App` struct in their application to leverage the runtime module.
+The configuration of the module manager and other core components is handled internally via the [`AppBuilder`](#4-application-building).
+
+### 2. Module Registration
+
+Runtime has built-in support for [`depinject`-enabled modules](/docs/sdk/v0.53/building-modules/depinject).
+Such modules can be registered through the configuration file (often named `app_config.go`), with no additional code required.
+
+```go expandable
+package simapp
+
+import (
+    
+	"time"
+    "google.golang.org/protobuf/types/known/durationpb"
+
+	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
+	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
+	authmodulev1 "cosmossdk.io/api/cosmos/auth/module/v1"
+	authzmodulev1 "cosmossdk.io/api/cosmos/authz/module/v1"
+	bankmodulev1 "cosmossdk.io/api/cosmos/bank/module/v1"
+	circuitmodulev1 "cosmossdk.io/api/cosmos/circuit/module/v1"
+	consensusmodulev1 "cosmossdk.io/api/cosmos/consensus/module/v1"
+	distrmodulev1 "cosmossdk.io/api/cosmos/distribution/module/v1"
+	epochsmodulev1 "cosmossdk.io/api/cosmos/epochs/module/v1"
+	evidencemodulev1 "cosmossdk.io/api/cosmos/evidence/module/v1"
+	feegrantmodulev1 "cosmossdk.io/api/cosmos/feegrant/module/v1"
+	genutilmodulev1 "cosmossdk.io/api/cosmos/genutil/module/v1"
+	govmodulev1 "cosmossdk.io/api/cosmos/gov/module/v1"
+	groupmodulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+	mintmodulev1 "cosmossdk.io/api/cosmos/mint/module/v1"
+	nftmodulev1 "cosmossdk.io/api/cosmos/nft/module/v1"
+	protocolpoolmodulev1 "cosmossdk.io/api/cosmos/protocolpool/module/v1"
+	slashingmodulev1 "cosmossdk.io/api/cosmos/slashing/module/v1"
+	stakingmodulev1 "cosmossdk.io/api/cosmos/staking/module/v1"
+	txconfigv1 "cosmossdk.io/api/cosmos/tx/config/v1"
+	upgrademodulev1 "cosmossdk.io/api/cosmos/upgrade/module/v1"
+	vestingmodulev1 "cosmossdk.io/api/cosmos/vesting/module/v1"
+    "cosmossdk.io/core/appconfig"
+    "cosmossdk.io/depinject"
+	_ "cosmossdk.io/x/circuit" // import for side-effects
+	circuittypes "cosmossdk.io/x/circuit/types"
+	_ "cosmossdk.io/x/evidence" // import for side-effects
+	evidencetypes "cosmossdk.io/x/evidence/types"
+    "cosmossdk.io/x/feegrant"
+	_ "cosmossdk.io/x/feegrant/module" // import for side-effects
+	"cosmossdk.io/x/nft"
+	_ "cosmossdk.io/x/nft/module" // import for side-effects
+	_ "cosmossdk.io/x/upgrade"    // import for side-effects
+	upgradetypes "cosmossdk.io/x/upgrade/types"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config" // import for side-effects
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/vesting" // import for side-effects
+	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+    "github.com/cosmos/cosmos-sdk/x/authz"
+	_ "github.com/cosmos/cosmos-sdk/x/authz/module" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/bank"         // import for side-effects
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	_ "github.com/cosmos/cosmos-sdk/x/consensus" // import for side-effects
+	consensustypes "github.com/cosmos/cosmos-sdk/x/consensus/types"
+	_ "github.com/cosmos/cosmos-sdk/x/distribution" // import for side-effects
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	_ "github.com/cosmos/cosmos-sdk/x/epochs" // import for side-effects
+	epochstypes "github.com/cosmos/cosmos-sdk/x/epochs/types"
+    "github.com/cosmos/cosmos-sdk/x/genutil"
+	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+    "github.com/cosmos/cosmos-sdk/x/gov"
+	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+    "github.com/cosmos/cosmos-sdk/x/group"
+	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+	_ "github.com/cosmos/cosmos-sdk/x/protocolpool" // import for side-effects
+	protocolpooltypes "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
+	_ "github.com/cosmos/cosmos-sdk/x/slashing" // import for side-effects
+	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
+	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+)
+
+var (
+	// module account permissions
+	moduleAccPerms = []*authmodulev1.ModuleAccountPermission{
+		{
+    Account: authtypes.FeeCollectorName
+},
+		{
+    Account: distrtypes.ModuleName
+},
+		{
+    Account: minttypes.ModuleName,
+    Permissions: []string{
+    authtypes.Minter
+}},
+		{
+    Account: stakingtypes.BondedPoolName,
+    Permissions: []string{
+    authtypes.Burner, stakingtypes.ModuleName
+}},
+		{
+    Account: stakingtypes.NotBondedPoolName,
+    Permissions: []string{
+    authtypes.Burner, stakingtypes.ModuleName
+}},
+		{
+    Account: govtypes.ModuleName,
+    Permissions: []string{
+    authtypes.Burner
+}},
+		{
+    Account: nft.ModuleName
+},
+		{
+    Account: protocolpooltypes.ModuleName
+},
+		{
+    Account: protocolpooltypes.ProtocolPoolEscrowAccount
+},
+}
+
+	// blocked account addresses
+	blockAccAddrs = []string{
+    authtypes.FeeCollectorName,
+		distrtypes.ModuleName,
+		minttypes.ModuleName,
+		stakingtypes.BondedPoolName,
+		stakingtypes.NotBondedPoolName,
+		nft.ModuleName,
+		// We allow the following module accounts to receive funds:
+		// govtypes.ModuleName
+}
+
+ModuleConfig = []*appv1alpha1.ModuleConfig{
+		{
+    Name: runtime.ModuleName,
+    Config: appconfig.WrapAny(&runtimev1alpha1.Module{
+    AppName: "SimApp",
+				// NOTE: upgrade module is required to be prioritized
+				PreBlockers: []string{
+    upgradetypes.ModuleName,
+					authtypes.ModuleName,
+},
+				// During begin block slashing happens after distr.BeginBlocker so that
+				// there is nothing left over in the validator fee pool, so as to keep the
+				// CanWithdrawInvariant invariant.
+				// NOTE: staking module is required if HistoricalEntries param > 0
+				BeginBlockers: []string{
+    minttypes.ModuleName,
+					distrtypes.ModuleName,
+					protocolpooltypes.ModuleName,
+					slashingtypes.ModuleName,
+					evidencetypes.ModuleName,
+					stakingtypes.ModuleName,
+					authz.ModuleName,
+					epochstypes.ModuleName,
+},
+    EndBlockers: []string{
+    govtypes.ModuleName,
+					stakingtypes.ModuleName,
+					feegrant.ModuleName,
+					group.ModuleName,
+					protocolpooltypes.ModuleName,
+},
+    OverrideStoreKeys: []*runtimev1alpha1.StoreKeyConfig{
+					{
+    ModuleName: authtypes.ModuleName,
+    KvStoreKey: "acc",
+},
+},
+    SkipStoreKeys: []string{
+					"tx",
+},
+				// NOTE: The genutils module must occur after staking so that pools are
+				// properly initialized with tokens from genesis accounts.
+				// NOTE: The genutils module must also occur after auth so that it can access the params from auth.
+				InitGenesis: []string{
+    authtypes.ModuleName,
+					banktypes.ModuleName,
+					distrtypes.ModuleName,
+					stakingtypes.ModuleName,
+					slashingtypes.ModuleName,
+					govtypes.ModuleName,
+					minttypes.ModuleName,
+					genutiltypes.ModuleName,
+					evidencetypes.ModuleName,
+					authz.ModuleName,
+					feegrant.ModuleName,
+					nft.ModuleName,
+					group.ModuleName,
+					upgradetypes.ModuleName,
+					vestingtypes.ModuleName,
+					circuittypes.ModuleName,
+					epochstypes.ModuleName,
+					protocolpooltypes.ModuleName,
+},
+				// When ExportGenesis is not specified, the export genesis module order
+				// is equal to the init genesis order
+				ExportGenesis: []string{
+    consensustypes.ModuleName,
+					authtypes.ModuleName,
+					protocolpooltypes.ModuleName, // Must be exported before bank
+					banktypes.ModuleName,
+					distrtypes.ModuleName,
+					stakingtypes.ModuleName,
+					slashingtypes.ModuleName,
+					govtypes.ModuleName,
+					minttypes.ModuleName,
+					genutiltypes.ModuleName,
+					evidencetypes.ModuleName,
+					authz.ModuleName,
+					feegrant.ModuleName,
+					nft.ModuleName,
+					group.ModuleName,
+					upgradetypes.ModuleName,
+					vestingtypes.ModuleName,
+					circuittypes.ModuleName,
+					epochstypes.ModuleName,
+},
+				// Uncomment if you want to set a custom migration order here.
+				// OrderMigrations: []string{
+},
+}),
+},
+		{
+    Name: authtypes.ModuleName,
+    Config: appconfig.WrapAny(&authmodulev1.Module{
+    Bech32Prefix:             "cosmos",
+    ModuleAccountPermissions: moduleAccPerms,
+				// By default modules authority is the governance module. This is configurable with the following:
+				// Authority: "group", // A custom module authority can be set using a module name
+				// Authority: "cosmos1cwwv22j5ca08ggdv9c2uky355k908694z577tv", // or a specific address
+				EnableUnorderedTransactions: true,
+}),
+},
+		{
+    Name:   vestingtypes.ModuleName,
+    Config: appconfig.WrapAny(&vestingmodulev1.Module{
+}),
+},
+		{
+    Name: banktypes.ModuleName,
+    Config: appconfig.WrapAny(&bankmodulev1.Module{
+    BlockedModuleAccountsOverride: blockAccAddrs,
+}),
+},
+		{
+    Name: stakingtypes.ModuleName,
+    Config: appconfig.WrapAny(&stakingmodulev1.Module{
+				// NOTE: specifying a prefix is only necessary when using bech32 addresses
+				// If not specfied, the auth Bech32Prefix appended with "valoper" and "valcons" is used by default
+				Bech32PrefixValidator: "cosmosvaloper",
+				Bech32PrefixConsensus: "cosmosvalcons",
+}),
+},
+		{
+    Name:   slashingtypes.ModuleName,
+    Config: appconfig.WrapAny(&slashingmodulev1.Module{
+}),
+},
+		{
+    Name: "tx",
+    Config: appconfig.WrapAny(&txconfigv1.Config{
+    SkipAnteHandler: true, // Enable this to skip the default antehandlers and set custom ante handlers.
+}),
+},
+		{
+    Name:   genutiltypes.ModuleName,
+    Config: appconfig.WrapAny(&genutilmodulev1.Module{
+}),
+},
+		{
+    Name:   authz.ModuleName,
+    Config: appconfig.WrapAny(&authzmodulev1.Module{
+}),
+},
+		{
+    Name:   upgradetypes.ModuleName,
+    Config: appconfig.WrapAny(&upgrademodulev1.Module{
+}),
+},
+		{
+    Name:   distrtypes.ModuleName,
+    Config: appconfig.WrapAny(&distrmodulev1.Module{
+}),
+},
+		{
+    Name:   evidencetypes.ModuleName,
+    Config: appconfig.WrapAny(&evidencemodulev1.Module{
+}),
+},
+		{
+    Name:   minttypes.ModuleName,
+    Config: appconfig.WrapAny(&mintmodulev1.Module{
+}),
+},
+		{
+    Name: group.ModuleName,
+    Config: appconfig.WrapAny(&groupmodulev1.Module{
+    MaxExecutionPeriod: durationpb.New(time.Second * 1209600),
+    MaxMetadataLen:     255,
+}),
+},
+		{
+    Name:   nft.ModuleName,
+    Config: appconfig.WrapAny(&nftmodulev1.Module{
+}),
+},
+		{
+    Name:   feegrant.ModuleName,
+    Config: appconfig.WrapAny(&feegrantmodulev1.Module{
+}),
+},
+		{
+    Name:   govtypes.ModuleName,
+    Config: appconfig.WrapAny(&govmodulev1.Module{
+}),
+},
+		{
+    Name:   consensustypes.ModuleName,
+    Config: appconfig.WrapAny(&consensusmodulev1.Module{
+}),
+},
+		{
+    Name:   circuittypes.ModuleName,
+    Config: appconfig.WrapAny(&circuitmodulev1.Module{
+}),
+},
+		{
+    Name:   epochstypes.ModuleName,
+    Config: appconfig.WrapAny(&epochsmodulev1.Module{
+}),
+},
+		{
+    Name:   protocolpooltypes.ModuleName,
+    Config: appconfig.WrapAny(&protocolpoolmodulev1.Module{
+}),
+},
+}
+
+	// AppConfig is application configuration (used by depinject)
+
+AppConfig = depinject.Configs(appconfig.Compose(&appv1alpha1.Config{
+    Modules: ModuleConfig,
+}),
+		depinject.Supply(
+			// supply custom module basics
+			map[string]module.AppModuleBasic{
+    genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
+				govtypes.ModuleName: gov.NewAppModuleBasic(
+					[]govclient.ProposalHandler{
+},
+				),
+},
+		),
+	)
+)
+```
+
+Additionally, the runtime package facilitates manual module registration through the `RegisterModules` method. This is the primary integration point for modules not registered via configuration.
+
+<Warning>
+Even when using manual registration, the module should still be configured in the `Module` message in AppConfig.
+</Warning>
+
+```go
+func (a *App)
+
+RegisterModules(modules ...module.AppModule)
+
+error
+```
+
+The SDK recommends using the declarative approach with `depinject` for module registration whenever possible.
+
+### 3. Service Registration
+
+Runtime registers all [core services](https://pkg.go.dev/cosmossdk.io/core) required by modules.
+These services include `store`, `event manager`, `context`, and `logger`.
+Runtime ensures that services are scoped to their respective modules during the wiring process.
+
+```go expandable
+package runtime
+
+import (
+    
+	"fmt"
+    "os"
+    "slices"
+    "github.com/cosmos/gogoproto/proto"
+    "google.golang.org/protobuf/reflect/protodesc"
+    "google.golang.org/protobuf/reflect/protoregistry"
+
+	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
+	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
+	authmodulev1 "cosmossdk.io/api/cosmos/auth/module/v1"
+	stakingmodulev1 "cosmossdk.io/api/cosmos/staking/module/v1"
+    "cosmossdk.io/core/address"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/core/comet"
+    "cosmossdk.io/core/event"
+    "cosmossdk.io/core/genesis"
+    "cosmossdk.io/core/header"
+    "cosmossdk.io/core/store"
+    "cosmossdk.io/depinject"
+    "cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
+    "cosmossdk.io/x/tx/signing"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+    "github.com/cosmos/cosmos-sdk/std"
+    "github.com/cosmos/cosmos-sdk/types/module"
+    "github.com/cosmos/cosmos-sdk/types/msgservice"
+)
+
+type appModule struct {
+    app *App
+}
+
+func (m appModule)
+
+RegisterServices(configurator module.Configurator) {
+    err := m.app.registerRuntimeServices(configurator)
+    if err != nil {
+    panic(err)
+}
+}
+
+func (m appModule)
+
+IsOnePerModuleType() {
+}
+
+func (m appModule)
+
+IsAppModule() {
+}
+
+var (
+	_ appmodule.AppModule = appModule{
+}
+	_ module.HasServices  = appModule{
+}
+)
+
+// BaseAppOption is a depinject.AutoGroupType which can be used to pass
+// BaseApp options into the depinject. It should be used carefully.
+type BaseAppOption func(*baseapp.BaseApp)
+
+// IsManyPerContainerType indicates that this is a depinject.ManyPerContainerType.
+func (b BaseAppOption)
+
+IsManyPerContainerType() {
+}
+
+func init() {
+    appmodule.Register(&runtimev1alpha1.Module{
+},
+		appmodule.Provide(
+			ProvideApp,
+			ProvideInterfaceRegistry,
+			ProvideKVStoreKey,
+			ProvideTransientStoreKey,
+			ProvideMemoryStoreKey,
+			ProvideGenesisTxHandler,
+			ProvideKVStoreService,
+			ProvideMemoryStoreService,
+			ProvideTransientStoreService,
+			ProvideEventService,
+			ProvideHeaderInfoService,
+			ProvideCometInfoService,
+			ProvideBasicManager,
+			ProvideAddressCodec,
+		),
+		appmodule.Invoke(SetupAppBuilder),
+	)
+}
+
+func ProvideApp(interfaceRegistry codectypes.InterfaceRegistry) (
+	codec.Codec,
+	*codec.LegacyAmino,
+	*AppBuilder,
+	*baseapp.MsgServiceRouter,
+	*baseapp.GRPCQueryRouter,
+	appmodule.AppModule,
+	protodesc.Resolver,
+	protoregistry.MessageTypeResolver,
+	error,
+) {
+    protoFiles := proto.HybridResolver
+    protoTypes := protoregistry.GlobalTypes
+
+	// At startup, check that all proto annotations are correct.
+    if err := msgservice.ValidateProtoAnnotations(protoFiles); err != nil {
+		// Once we switch to using protoreflect-based ante handlers, we might
+		// want to panic here instead of logging a warning.
+		_, _ = fmt.Fprintln(os.Stderr, err.Error())
+}
+    amino := codec.NewLegacyAmino()
+
+std.RegisterInterfaces(interfaceRegistry)
+
+std.RegisterLegacyAminoCodec(amino)
+    cdc := codec.NewProtoCodec(interfaceRegistry)
+    msgServiceRouter := baseapp.NewMsgServiceRouter()
+    grpcQueryRouter := baseapp.NewGRPCQueryRouter()
+    app := &App{
+    storeKeys:         nil,
+		interfaceRegistry: interfaceRegistry,
+		cdc:               cdc,
+		amino:             amino,
+		basicManager:      module.BasicManager{
+},
+		msgServiceRouter:  msgServiceRouter,
+		grpcQueryRouter:   grpcQueryRouter,
+}
+    appBuilder := &AppBuilder{
+    app
+}
+
+return cdc, amino, appBuilder, msgServiceRouter, grpcQueryRouter, appModule{
+    app
+}, protoFiles, protoTypes, nil
+}
+
+type AppInputs struct {
+    depinject.In
+
+	AppConfig          *appv1alpha1.Config `optional:"true"`
+	Config             *runtimev1alpha1.Module
+	AppBuilder         *AppBuilder
+	Modules            map[string]appmodule.AppModule
+	CustomModuleBasics map[string]module.AppModuleBasic `optional:"true"`
+	BaseAppOptions     []BaseAppOption
+	InterfaceRegistry  codectypes.InterfaceRegistry
+	LegacyAmino        *codec.LegacyAmino
+	Logger             log.Logger
+}
+
+func SetupAppBuilder(inputs AppInputs) {
+    app := inputs.AppBuilder.app
+	app.baseAppOptions = inputs.BaseAppOptions
+	app.config = inputs.Config
+	app.appConfig = inputs.AppConfig
+	app.logger = inputs.Logger
+	app.ModuleManager = module.NewManagerFromMap(inputs.Modules)
+    for name, mod := range inputs.Modules {
+    if customBasicMod, ok := inputs.CustomModuleBasics[name]; ok {
+    app.basicManager[name] = customBasicMod
+			customBasicMod.RegisterInterfaces(inputs.InterfaceRegistry)
+
+customBasicMod.RegisterLegacyAminoCodec(inputs.LegacyAmino)
+
+continue
+}
+    coreAppModuleBasic := module.CoreAppModuleBasicAdaptor(name, mod)
+
+app.basicManager[name] = coreAppModuleBasic
+		coreAppModuleBasic.RegisterInterfaces(inputs.InterfaceRegistry)
+
+coreAppModuleBasic.RegisterLegacyAminoCodec(inputs.LegacyAmino)
+}
+}
+
+func ProvideInterfaceRegistry(addressCodec address.Codec, validatorAddressCodec ValidatorAddressCodec, customGetSigners []signing.CustomGetSigner) (codectypes.InterfaceRegistry, error) {
+    signingOptions := signing.Options{
+    AddressCodec:          addressCodec,
+    ValidatorAddressCodec: validatorAddressCodec,
+}
+    for _, signer := range customGetSigners {
+    signingOptions.DefineCustomGetSigners(signer.MsgType, signer.Fn)
+}
+
+interfaceRegistry, err := codectypes.NewInterfaceRegistryWithOptions(codectypes.InterfaceRegistryOptions{
+    ProtoFiles:     proto.HybridResolver,
+    SigningOptions: signingOptions,
+})
+    if err != nil {
+    return nil, err
+}
+    if err := interfaceRegistry.SigningContext().Validate(); err != nil {
+    return nil, err
+}
+
+return interfaceRegistry, nil
+}
+
+func registerStoreKey(wrapper *AppBuilder, key storetypes.StoreKey) {
+    wrapper.app.storeKeys = append(wrapper.app.storeKeys, key)
+}
+
+func storeKeyOverride(config *runtimev1alpha1.Module, moduleName string) *runtimev1alpha1.StoreKeyConfig {
+    for _, cfg := range config.OverrideStoreKeys {
+    if cfg.ModuleName == moduleName {
+    return cfg
+}
+	
+}
+
+return nil
+}
+
+func ProvideKVStoreKey(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder) *storetypes.KVStoreKey {
+    if slices.Contains(config.SkipStoreKeys, key.Name()) {
+    return nil
+}
+    override := storeKeyOverride(config, key.Name())
+
+var storeKeyName string
+    if override != nil {
+    storeKeyName = override.KvStoreKey
+}
+
+else {
+    storeKeyName = key.Name()
+}
+    storeKey := storetypes.NewKVStoreKey(storeKeyName)
+
+registerStoreKey(app, storeKey)
+
+return storeKey
+}
+
+func ProvideTransientStoreKey(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder) *storetypes.TransientStoreKey {
+    if slices.Contains(config.SkipStoreKeys, key.Name()) {
+    return nil
+}
+    storeKey := storetypes.NewTransientStoreKey(fmt.Sprintf("transient:%s", key.Name()))
+
+registerStoreKey(app, storeKey)
+
+return storeKey
+}
+
+func ProvideMemoryStoreKey(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder) *storetypes.MemoryStoreKey {
+    if slices.Contains(config.SkipStoreKeys, key.Name()) {
+    return nil
+}
+    storeKey := storetypes.NewMemoryStoreKey(fmt.Sprintf("memory:%s", key.Name()))
+
+registerStoreKey(app, storeKey)
+
+return storeKey
+}
+
+func ProvideGenesisTxHandler(appBuilder *AppBuilder)
+
+genesis.TxHandler {
+    return appBuilder.app
+}
+
+func ProvideKVStoreService(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder)
+
+store.KVStoreService {
+    storeKey := ProvideKVStoreKey(config, key, app)
+
+return kvStoreService{
+    key: storeKey
+}
+}
+
+func ProvideMemoryStoreService(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder)
+
+store.MemoryStoreService {
+    storeKey := ProvideMemoryStoreKey(config, key, app)
+
+return memStoreService{
+    key: storeKey
+}
+}
+
+func ProvideTransientStoreService(config *runtimev1alpha1.Module, key depinject.ModuleKey, app *AppBuilder)
+
+store.TransientStoreService {
+    storeKey := ProvideTransientStoreKey(config, key, app)
+
+return transientStoreService{
+    key: storeKey
+}
+}
+
+func ProvideEventService()
+
+event.Service {
+    return EventService{
+}
+}
+
+func ProvideCometInfoService()
+
+comet.BlockInfoService {
+    return cometInfoService{
+}
+}
+
+func ProvideHeaderInfoService(app *AppBuilder)
+
+header.Service {
+    return headerInfoService{
+}
+}
+
+func ProvideBasicManager(app *AppBuilder)
+
+module.BasicManager {
+    return app.app.basicManager
+}
+
+type (
+	// ValidatorAddressCodec is an alias for address.Codec for validator addresses.
+	ValidatorAddressCodec address.Codec
+
+	// ConsensusAddressCodec is an alias for address.Codec for validator consensus addresses.
+	ConsensusAddressCodec address.Codec
+)
+
+type AddressCodecInputs struct {
+    depinject.In
+
+	AuthConfig    *authmodulev1.Module    `optional:"true"`
+	StakingConfig *stakingmodulev1.Module `optional:"true"`
+
+	AddressCodecFactory          func()
+
+address.Codec         `optional:"true"`
+	ValidatorAddressCodecFactory func()
+
+ValidatorAddressCodec `optional:"true"`
+	ConsensusAddressCodecFactory func()
+
+ConsensusAddressCodec `optional:"true"`
+}
+
+// ProvideAddressCodec provides an address.Codec to the container for any
+// modules that want to do address string <> bytes conversion.
+func ProvideAddressCodec(in AddressCodecInputs) (address.Codec, ValidatorAddressCodec, ConsensusAddressCodec) {
+    if in.AddressCodecFactory != nil && in.ValidatorAddressCodecFactory != nil && in.ConsensusAddressCodecFactory != nil {
+    return in.AddressCodecFactory(), in.ValidatorAddressCodecFactory(), in.ConsensusAddressCodecFactory()
+}
+    if in.AuthConfig == nil || in.AuthConfig.Bech32Prefix == "" {
+    panic("auth config bech32 prefix cannot be empty if no custom address codec is provided")
+}
+    if in.StakingConfig == nil {
+    in.StakingConfig = &stakingmodulev1.Module{
+}
+	
+}
+    if in.StakingConfig.Bech32PrefixValidator == "" {
+    in.StakingConfig.Bech32PrefixValidator = fmt.Sprintf("%svaloper", in.AuthConfig.Bech32Prefix)
+}
+    if in.StakingConfig.Bech32PrefixConsensus == "" {
+    in.StakingConfig.Bech32PrefixConsensus = fmt.Sprintf("%svalcons", in.AuthConfig.Bech32Prefix)
+}
+
+return addresscodec.NewBech32Codec(in.AuthConfig.Bech32Prefix),
+		addresscodec.NewBech32Codec(in.StakingConfig.Bech32PrefixValidator),
+		addresscodec.NewBech32Codec(in.StakingConfig.Bech32PrefixConsensus)
+}
+```
+
+Additionally, runtime provides automatic registration of other essential (i.e., gRPC routes) services available to the App:
+
+* AutoCLI Query Service
+* Reflection Service
+* Custom module services
+
+```go expandable
+package runtime
+
+import (
+    
+	"encoding/json"
+    "io"
+
+	dbm "github.com/cosmos/cosmos-db"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/types/module"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AppBuilder is a type that is injected into a container by the runtime module
+// (as *AppBuilder)
+
+which can be used to create an app which is compatible with
+// the existing app.go initialization conventions.
+type AppBuilder struct {
+    app *App
+}
+
+// DefaultGenesis returns a default genesis from the registered AppModuleBasic's.
+func (a *AppBuilder)
+
+DefaultGenesis()
+
+map[string]json.RawMessage {
+    return a.app.DefaultGenesis()
+}
+
+// Build builds an *App instance.
+func (a *AppBuilder)
+
+Build(db dbm.DB, traceStore io.Writer, baseAppOptions ...func(*baseapp.BaseApp)) *App {
+    for _, option := range a.app.baseAppOptions {
+    baseAppOptions = append(baseAppOptions, option)
+}
+
+	// set routers first in case they get modified by other options
+	baseAppOptions = append(
+		[]func(*baseapp.BaseApp) {
+    func(bApp *baseapp.BaseApp) {
+    bApp.SetMsgServiceRouter(a.app.msgServiceRouter)
+
+bApp.SetGRPCQueryRouter(a.app.grpcQueryRouter)
+},
+},
+		baseAppOptions...,
+	)
+    bApp := baseapp.NewBaseApp(a.app.config.AppName, a.app.logger, db, nil, baseAppOptions...)
+
+bApp.SetCommitMultiStoreTracer(traceStore)
+
+bApp.SetVersion(version.Version)
+
+bApp.SetInterfaceRegistry(a.app.interfaceRegistry)
+
+bApp.MountStores(a.app.storeKeys...)
+
+a.app.BaseApp = bApp
+	a.app.configurator = module.NewConfigurator(a.app.cdc, a.app.MsgServiceRouter(), a.app.GRPCQueryRouter())
+    if err := a.app.ModuleManager.RegisterServices(a.app.configurator); err != nil {
+    panic(err)
+}
+
+return a.app
+}
+```
+
+### 4. Application Building
+
+The `AppBuilder` type provides a structured way to build applications:
+
+```go expandable
+package runtime
+
+import (
+    
+	"encoding/json"
+    "io"
+
+	dbm "github.com/cosmos/cosmos-db"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/types/module"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AppBuilder is a type that is injected into a container by the runtime module
+// (as *AppBuilder)
+
+which can be used to create an app which is compatible with
+// the existing app.go initialization conventions.
+type AppBuilder struct {
+    app *App
+}
+
+// DefaultGenesis returns a default genesis from the registered AppModuleBasic's.
+func (a *AppBuilder)
+
+DefaultGenesis()
+
+map[string]json.RawMessage {
+    return a.app.DefaultGenesis()
+}
+
+// Build builds an *App instance.
+func (a *AppBuilder)
+
+Build(db dbm.DB, traceStore io.Writer, baseAppOptions ...func(*baseapp.BaseApp)) *App {
+    for _, option := range a.app.baseAppOptions {
+    baseAppOptions = append(baseAppOptions, option)
+}
+
+	// set routers first in case they get modified by other options
+	baseAppOptions = append(
+		[]func(*baseapp.BaseApp) {
+    func(bApp *baseapp.BaseApp) {
+    bApp.SetMsgServiceRouter(a.app.msgServiceRouter)
+
+bApp.SetGRPCQueryRouter(a.app.grpcQueryRouter)
+},
+},
+		baseAppOptions...,
+	)
+    bApp := baseapp.NewBaseApp(a.app.config.AppName, a.app.logger, db, nil, baseAppOptions...)
+
+bApp.SetCommitMultiStoreTracer(traceStore)
+
+bApp.SetVersion(version.Version)
+
+bApp.SetInterfaceRegistry(a.app.interfaceRegistry)
+
+bApp.MountStores(a.app.storeKeys...)
+
+a.app.BaseApp = bApp
+	a.app.configurator = module.NewConfigurator(a.app.cdc, a.app.MsgServiceRouter(), a.app.GRPCQueryRouter())
+    if err := a.app.ModuleManager.RegisterServices(a.app.configurator); err != nil {
+    panic(err)
+}
+
+return a.app
+}
+```
+
+Key building steps:
+
+1. Configuration loading
+2. Module registration
+3. Service setup
+4. Store mounting
+5. Router configuration
+
+An application only needs to call `AppBuilder.Build` to create a fully configured application (`runtime.App`).
+
+```go expandable
+package runtime
+
+import (
+    
+	"encoding/json"
+    "io"
+
+	dbm "github.com/cosmos/cosmos-db"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/types/module"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AppBuilder is a type that is injected into a container by the runtime module
+// (as *AppBuilder)
+
+which can be used to create an app which is compatible with
+// the existing app.go initialization conventions.
+type AppBuilder struct {
+    app *App
+}
+
+// DefaultGenesis returns a default genesis from the registered AppModuleBasic's.
+func (a *AppBuilder)
+
+DefaultGenesis()
+
+map[string]json.RawMessage {
+    return a.app.DefaultGenesis()
+}
+
+// Build builds an *App instance.
+func (a *AppBuilder)
+
+Build(db dbm.DB, traceStore io.Writer, baseAppOptions ...func(*baseapp.BaseApp)) *App {
+    for _, option := range a.app.baseAppOptions {
+    baseAppOptions = append(baseAppOptions, option)
+}
+
+	// set routers first in case they get modified by other options
+	baseAppOptions = append(
+		[]func(*baseapp.BaseApp) {
+    func(bApp *baseapp.BaseApp) {
+    bApp.SetMsgServiceRouter(a.app.msgServiceRouter)
+
+bApp.SetGRPCQueryRouter(a.app.grpcQueryRouter)
+},
+},
+		baseAppOptions...,
+	)
+    bApp := baseapp.NewBaseApp(a.app.config.AppName, a.app.logger, db, nil, baseAppOptions...)
+
+bApp.SetCommitMultiStoreTracer(traceStore)
+
+bApp.SetVersion(version.Version)
+
+bApp.SetInterfaceRegistry(a.app.interfaceRegistry)
+
+bApp.MountStores(a.app.storeKeys...)
+
+a.app.BaseApp = bApp
+	a.app.configurator = module.NewConfigurator(a.app.cdc, a.app.MsgServiceRouter(), a.app.GRPCQueryRouter())
+    if err := a.app.ModuleManager.RegisterServices(a.app.configurator); err != nil {
+    panic(err)
+}
+
+return a.app
+}
+```
+
+More information on building applications can be found in the [next section](/docs/sdk/v0.53/02-app-building).
+
+## Best Practices
+
+1. **Module Order**: Carefully consider the order of modules in begin\_blockers, end\_blockers, and pre\_blockers.
+2. **Store Keys**: Use override\_store\_keys only when necessary to maintain clarity
+3. **Genesis Order**: Maintain correct initialization order in init\_genesis
+4. **Migration Management**: Use order\_migrations to control upgrade paths
+
+### Migration Considerations
+
+When upgrading between versions:
+
+1. Review the migration order specified in `order_migrations`
+2. Ensure all required modules are included in the configuration
+3. Validate store key configurations
+4. Test the upgrade path thoroughly

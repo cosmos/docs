@@ -7,9 +7,11 @@ Comprehensive migration tool that handles complex conversions, caching, and auto
 ## Scripts
 
 ### `migrate-docusaurus.js`
+
 Full repository migration with versioning support and navigation updates.
 
 **Usage:**
+
 ```bash
 # Interactive mode (with prompts)
 node migrate-docusaurus.js
@@ -23,6 +25,7 @@ node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
 ```
 
 **Parameters:**
+
 - `<source-repo>`: Path to Docusaurus repository (e.g., `~/repos/cosmos-sdk-docs`)
 - `<target-dir>`: Output directory for migrated files (e.g., `./tmp`)
 - `<product>`: **Required** - Product name for link resolution (e.g., `sdk`, `ibc`, `evm`, `cometbft`)
@@ -31,6 +34,7 @@ node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
 - `--update-nav`: Optional flag to update `docs.json` navigation
 
 **Features:**
+
 - **Content-based caching**: Processes identical content only once using SHA-256 checksums
 - **Intelligent processing**: Cache hits for duplicate content, full processing for unique content
 - **GitHub reference fetching**: Automatically fetches code from GitHub URLs in reference blocks
@@ -45,9 +49,11 @@ node migrate-docusaurus.js ~/repos/cosmos-sdk-docs ./tmp sdk --update-nav
 - Removes file extensions from internal links for Mintlify compatibility
 
 ### `migrate-single-file.js`
+
 Convert individual Docusaurus markdown files to Mintlify MDX.
 
 **Usage:**
+
 ```bash
 node migrate-single-file.js <input-file> <output-file>
 
@@ -60,11 +66,13 @@ node migrate-single-file.js ../cosmos-sdk-docs/docs/learn/events.md ../tmp/event
 ### Content Processing Pipeline
 
 1. **Content Checksumming**
+
    - SHA-256 hash calculated for each file's raw content
    - Duplicate detection across versions
    - Cache lookup for previously processed content
 
 2. **Transformation Steps** (for new content only)
+
    - Parse frontmatter and extract metadata
    - Convert HTML comments to JSX: `<!-- -->` → `{/* */}`
    - Process with AST for link fixing and code enhancement
@@ -74,12 +82,14 @@ node migrate-single-file.js ../cosmos-sdk-docs/docs/learn/events.md ../tmp/event
    - Generate Mintlify-compatible frontmatter
 
 3. **Caching System**
+
    - Transformation results cached by content checksum
    - Validation errors cached separately
    - Cache hits skip processing but still write output files
    - Statistics track unique content vs duplicates
 
 4. **GitHub Reference Fetching**
+
    - Detects `go reference` blocks with GitHub URLs
    - Automatically fetches actual code content
    - Falls back to comment if fetch fails
@@ -94,13 +104,16 @@ node migrate-single-file.js ../cosmos-sdk-docs/docs/learn/events.md ../tmp/event
 ## Conversions Applied
 
 ### Admonitions
+
 ```markdown
 # Docusaurus
+
 :::note Title
 Content
 :::
 
 # Mintlify
+
 <Note>
 **Title**
 Content
@@ -108,18 +121,21 @@ Content
 ```
 
 ### Code Blocks
+
 - Removes "reference" keyword from language specification
 - Adds `expandable` for blocks >10 lines
 - Auto-detects language (Go, JavaScript, Python, JSON, etc.)
 - Preserves reference URLs as comments
 
 ### Links & Paths
+
 - Fixes relative paths (`../file.md` → absolute path)
 - Removes file extensions from internal links (`.md` and `.mdx` removed)
 - Updates versioned links: `/docs/` → `/docs/<product>/<version>/`
 - Maintains external links unchanged
 
 ### MDX Compatibility
+
 - HTML comments → JSX comments (short ones only)
 - Long HTML comments (>10 lines) are removed entirely
 - `<details>` → `<Expandable>`
@@ -129,6 +145,7 @@ Content
 - Escapes underscores in table cells
 
 ### Frontmatter
+
 - Generates title from filename if missing (e.g., `adr-046-module-params` → "ADR 046 Module Params")
 - Extracts title from H1 heading if not in frontmatter
 - Preserves `sidebar_position` for navigation ordering
@@ -140,6 +157,7 @@ Content
 ## File Structure
 
 **Input (Docusaurus):**
+
 ```
 cosmos-sdk-docs/
 ├── docs/                    # Current/next version
@@ -150,6 +168,7 @@ cosmos-sdk-docs/
 ```
 
 **Output (Mintlify):**
+
 ```
 docs/
 └── sdk/
@@ -162,6 +181,7 @@ docs/
 ## Navigation
 
 When using `--update-nav`, the script updates `docs.json` with:
+
 - Proper dropdown structure for products
 - Version-specific navigation tabs
 - Files sorted by `sidebar_position`
@@ -183,6 +203,7 @@ When using `--update-nav`, the script updates `docs.json` with:
 ### Reports Generated
 
 **Per-version statistics:**
+
 ```
 Conversion stats for v0.50:
   - Total files: 150
@@ -191,6 +212,7 @@ Conversion stats for v0.50:
 ```
 
 **Final cache statistics:**
+
 ```
 📊 Migration Cache Statistics:
 ==================================================
@@ -202,6 +224,7 @@ Duplicate percentage: 25.0%
 ```
 
 **Migration report example:**
+
 ```
 📋 MIGRATION REPORT
 ================================================================================
@@ -242,6 +265,7 @@ Summary: 6 errors, 0 warnings, 2 removals
 The script generates a comprehensive report showing:
 
 1. **ERRORS**: Issues that require manual intervention
+
    - Unclosed JSX expressions
    - Mismatched tags
    - Syntax that couldn't be automatically fixed
@@ -255,18 +279,21 @@ The script generates a comprehensive report showing:
 ## Important Notes
 
 ### Product Parameter
+
 - **Required** for all migrations (interactive and non-interactive)
 - Determines internal link structure: `/docs/<product>/<version>/<path>`
 - Without correct product, internal documentation links will be broken
 - Common values: `sdk`, `ibc`, `evm`, `cometbft`
 
 ### Processing Behavior
+
 - Identical content across versions is processed only once
 - Each file still gets written to its appropriate version directory
 - Validation errors are reported for each file location
 - Cache system significantly improves performance for large repositories
 
 ### Recent Improvements (2025)
+
 - Content-based caching with SHA-256 checksums
 - Automatic GitHub code fetching for reference blocks
 - Title generation from filenames when missing
@@ -279,6 +306,7 @@ The script generates a comprehensive report showing:
 - Template variables and JSON in tables properly escaped
 
 ### Technical Details
+
 - Code content is preserved exactly - no arbitrary removal
 - Reference URLs are fetched or converted to comments
 - AST processing used where possible, regex as fallback

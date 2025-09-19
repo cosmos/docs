@@ -1,0 +1,304 @@
+---
+title: Introduction to Cosmos SDK Modules
+---
+
+<Note>
+**Synopsis**
+Modules define most of the logic of Cosmos SDK applications. Developers compose modules together using the Cosmos SDK to build their custom application-specific blockchains. This document outlines the basic concepts behind SDK modules and how to approach module management.
+</Note>
+
+<Note>
+**Pre-requisite Readings**
+
+* [Anatomy of a Cosmos SDK application](/docs/sdk/v0.53//learn/beginner/app-anatomy)
+* [Lifecycle of a Cosmos SDK transaction](/docs/sdk/v0.53//learn/beginner/tx-lifecycle)
+
+</Note>
+
+## Role of Modules in a Cosmos SDK Application
+
+The Cosmos SDK can be thought of as the Ruby-on-Rails of blockchain development. It comes with a core that provides the basic functionalities every blockchain application needs, like a [boilerplate implementation of the ABCI](/docs/sdk/v0.53//learn/advanced/baseapp) to communicate with the underlying consensus engine, a [`multistore`](/docs/sdk/v0.53//learn/advanced/store#multistore) to persist state, a [server](/docs/sdk/v0.53//learn/advanced/node) to form a full-node and [interfaces](/docs/sdk/v0.53/module-interfaces) to handle queries.
+
+On top of this core, the Cosmos SDK enables developers to build modules that implement the business logic of their application. In other words, SDK modules implement the bulk of the logic of applications, while the core does the wiring and enables modules to be composed together. The end goal is to build a robust ecosystem of open-source Cosmos SDK modules, making it increasingly easier to build complex blockchain applications.
+
+Cosmos SDK modules can be seen as little state-machines within the state-machine. They generally define a subset of the state using one or more `KVStore`s in the [main multistore](/docs/sdk/v0.53//learn/advanced/store), as well as a subset of [message types](/docs/sdk/v0.53/messages-and-queries#messages). These messages are routed by one of the main components of Cosmos SDK core, [`BaseApp`](/docs/sdk/v0.53//learn/advanced/baseapp), to a module Protobuf [`Msg` service](/docs/sdk/v0.53/msg-services) that defines them.
+
+```mermaid expandable
+flowchart TD
+    A[Transaction relayed from the full-node's consensus engine to the node's application via DeliverTx]
+    A --> B[APPLICATION]
+    B --> C["Using baseapp's methods: Decode the Tx, extract and route the message(s)"]
+    C --> D[Message routed to the correct module to be processed]
+    D --> E[AUTH MODULE]
+    D --> F[BANK MODULE]
+    D --> G[STAKING MODULE]
+    D --> H[GOV MODULE]
+    H --> I[Handles message, Updates state]
+    E --> I
+    F --> I
+    G --> I
+    I --> J["Return result to the underlying consensus engine (e.g. CometBFT) (0=Ok, 1=Err)"]
+```
+
+As a result of this architecture, building a Cosmos SDK application usually revolves around writing modules to implement the specialized logic of the application and composing them with existing modules to complete the application. Developers will generally work on modules that implement logic needed for their specific use case that do not exist yet, and will use existing modules for more generic functionalities like staking, accounts, or token management.
+
+### Modules as super-users
+
+Modules have the ability to perform actions that are not available to regular users. This is because modules are given sudo permissions by the state machine. Modules can reject another modules desire to execute a function but this logic must be explicit. Examples of this can be seen when modules create functions to modify parameters:
+
+```go expandable
+package keeper
+
+import (
+    
+	"context"
+    "github.com/hashicorp/go-metrics"
+
+	errorsmod "cosmossdk.io/errors"
+    "cosmossdk.io/x/bank/types"
+    "github.com/cosmos/cosmos-sdk/telemetry"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+)
+
+type msgServer struct {
+    Keeper
+}
+
+var _ types.MsgServer = msgServer{
+}
+
+// NewMsgServerImpl returns an implementation of the bank MsgServer interface
+// for the provided Keeper.
+func NewMsgServerImpl(keeper Keeper)
+
+types.MsgServer {
+    return &msgServer{
+    Keeper: keeper
+}
+}
+
+func (k msgServer)
+
+Send(ctx context.Context, msg *types.MsgSend) (*types.MsgSendResponse, error) {
+    var (
+		from, to []byte
+		err      error
+	)
+    if base, ok := k.Keeper.(BaseKeeper); ok {
+    from, err = base.ak.AddressCodec().StringToBytes(msg.FromAddress)
+    if err != nil {
+    return nil, sdkerrors.ErrInvalidAddress.Wrapf("invalid from address: %s", err)
+}
+
+to, err = base.ak.AddressCodec().StringToBytes(msg.ToAddress)
+    if err != nil {
+    return nil, sdkerrors.ErrInvalidAddress.Wrapf("invalid to address: %s", err)
+}
+	
+}
+
+else {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("invalid keeper type: %T", k.Keeper)
+}
+    if !msg.Amount.IsValid() {
+    return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, msg.Amount.String())
+}
+    if !msg.Amount.IsAllPositive() {
+    return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, msg.Amount.String())
+}
+    if err := k.IsSendEnabledCoins(ctx, msg.Amount...); err != nil {
+    return nil, err
+}
+    if k.BlockedAddr(to) {
+    return nil, errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "%s is not allowed to receive funds", msg.ToAddress)
+}
+
+err = k.SendCoins(ctx, from, to, msg.Amount)
+    if err != nil {
+    return nil, err
+}
+
+defer func() {
+    for _, a := range msg.Amount {
+    if a.Amount.IsInt64() {
+    telemetry.SetGaugeWithLabels(
+					[]string{"tx", "msg", "send"
+},
+					float32(a.Amount.Int64()),
+					[]metrics.Label{
+    telemetry.NewLabel("denom", a.Denom)
+},
+				)
+}
+	
+}
+	
+}()
+
+return &types.MsgSendResponse{
+}, nil
+}
+
+func (k msgServer)
+
+MultiSend(ctx context.Context, msg *types.MsgMultiSend) (*types.MsgMultiSendResponse, error) {
+    if len(msg.Inputs) == 0 {
+    return nil, types.ErrNoInputs
+}
+    if len(msg.Inputs) != 1 {
+    return nil, types.ErrMultipleSenders
+}
+    if len(msg.Outputs) == 0 {
+    return nil, types.ErrNoOutputs
+}
+    if err := types.ValidateInputOutputs(msg.Inputs[0], msg.Outputs); err != nil {
+    return nil, err
+}
+
+	// NOTE: totalIn == totalOut should already have been checked
+    for _, in := range msg.Inputs {
+    if err := k.IsSendEnabledCoins(ctx, in.Coins...); err != nil {
+    return nil, err
+}
+	
+}
+    for _, out := range msg.Outputs {
+    if base, ok := k.Keeper.(BaseKeeper); ok {
+    accAddr, err := base.ak.AddressCodec().StringToBytes(out.Address)
+    if err != nil {
+    return nil, err
+}
+    if k.BlockedAddr(accAddr) {
+    return nil, errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "%s is not allowed to receive funds", out.Address)
+}
+	
+}
+
+else {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("invalid keeper type: %T", k.Keeper)
+}
+	
+}
+    err := k.InputOutputCoins(ctx, msg.Inputs[0], msg.Outputs)
+    if err != nil {
+    return nil, err
+}
+
+return &types.MsgMultiSendResponse{
+}, nil
+}
+
+func (k msgServer)
+
+UpdateParams(ctx context.Context, req *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+    if k.GetAuthority() != req.Authority {
+    return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), req.Authority)
+}
+    if err := req.Params.Validate(); err != nil {
+    return nil, err
+}
+    if err := k.SetParams(ctx, req.Params); err != nil {
+    return nil, err
+}
+
+return &types.MsgUpdateParamsResponse{
+}, nil
+}
+
+func (k msgServer)
+
+SetSendEnabled(ctx context.Context, msg *types.MsgSetSendEnabled) (*types.MsgSetSendEnabledResponse, error) {
+    if k.GetAuthority() != msg.Authority {
+    return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), msg.Authority)
+}
+    seen := map[string]bool{
+}
+    for _, se := range msg.SendEnabled {
+    if _, alreadySeen := seen[se.Denom]; alreadySeen {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("duplicate denom entries found for %q", se.Denom)
+}
+
+seen[se.Denom] = true
+    if err := se.Validate(); err != nil {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("invalid SendEnabled denom %q: %s", se.Denom, err)
+}
+	
+}
+    for _, denom := range msg.UseDefaultFor {
+    if err := sdk.ValidateDenom(denom); err != nil {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("invalid UseDefaultFor denom %q: %s", denom, err)
+}
+	
+}
+    if len(msg.SendEnabled) > 0 {
+    k.SetAllSendEnabled(ctx, msg.SendEnabled)
+}
+    if len(msg.UseDefaultFor) > 0 {
+    k.DeleteSendEnabled(ctx, msg.UseDefaultFor...)
+}
+
+return &types.MsgSetSendEnabledResponse{
+}, nil
+}
+
+func (k msgServer)
+
+Burn(goCtx context.Context, msg *types.MsgBurn) (*types.MsgBurnResponse, error) {
+    var (
+		from []byte
+		err  error
+	)
+
+var coins sdk.Coins
+    for _, coin := range msg.Amount {
+    coins = coins.Add(sdk.NewCoin(coin.Denom, coin.Amount))
+}
+    if base, ok := k.Keeper.(BaseKeeper); ok {
+    from, err = base.ak.AddressCodec().StringToBytes(msg.FromAddress)
+    if err != nil {
+    return nil, sdkerrors.ErrInvalidAddress.Wrapf("invalid from address: %s", err)
+}
+	
+}
+
+else {
+    return nil, sdkerrors.ErrInvalidRequest.Wrapf("invalid keeper type: %T", k.Keeper)
+}
+    if !coins.IsValid() {
+    return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, coins.String())
+}
+    if !coins.IsAllPositive() {
+    return nil, errorsmod.Wrap(sdkerrors.ErrInvalidCoins, coins.String())
+}
+
+err = k.BurnCoins(goCtx, from, coins)
+    if err != nil {
+    return nil, err
+}
+
+return &types.MsgBurnResponse{
+}, nil
+}
+```
+
+## How to Approach Building Modules as a Developer
+
+While there are no definitive guidelines for writing modules, here are some important design principles developers should keep in mind when building them:
+
+* **Composability**: Cosmos SDK applications are almost always composed of multiple modules. This means developers need to carefully consider the integration of their module not only with the core of the Cosmos SDK, but also with other modules. The former is achieved by following standard design patterns outlined [here](#main-components-of-cosmos-sdk-modules), while the latter is achieved by properly exposing the store(s) of the module via the [`keeper`](/docs/sdk/v0.53/keeper).
+* **Specialization**: A direct consequence of the **composability** feature is that modules should be **specialized**. Developers should carefully establish the scope of their module and not batch multiple functionalities into the same module. This separation of concerns enables modules to be re-used in other projects and improves the upgradability of the application. **Specialization** also plays an important role in the [object-capabilities model](/docs/sdk/v0.53//learn/advanced/ocap) of the Cosmos SDK.
+* **Capabilities**: Most modules need to read and/or write to the store(s) of other modules. However, in an open-source environment, it is possible for some modules to be malicious. That is why module developers need to carefully think not only about how their module interacts with other modules, but also about how to give access to the module's store(s). The Cosmos SDK takes a capabilities-oriented approach to inter-module security. This means that each store defined by a module is accessed by a `key`, which is held by the module's [`keeper`](/docs/sdk/v0.53/keeper). This `keeper` defines how to access the store(s) and under what conditions. Access to the module's store(s) is done by passing a reference to the module's `keeper`.
+
+## Main Components of Cosmos SDK Modules
+
+Modules are by convention defined in the `./x/` subfolder (e.g. the `bank` module will be defined in the `./x/bank` folder). They generally share the same core components:
+
+* A [`keeper`](/docs/sdk/v0.53/keeper), used to access the module's store(s) and update the state.
+* A [`Msg` service](/docs/sdk/v0.53/messages-and-queries#messages), used to process messages when they are routed to the module by [`BaseApp`](/docs/sdk/v0.53//learn/advanced/baseapp#message-routing) and trigger state-transitions.
+* A [query service](/docs/sdk/v0.53/query-services), used to process user queries when they are routed to the module by [`BaseApp`](/docs/sdk/v0.53//learn/advanced/baseapp#query-routing).
+* Interfaces, for end users to query the subset of the state defined by the module and create `message`s of the custom types defined in the module.
+
+In addition to these components, modules implement the `AppModule` interface in order to be managed by the [`module manager`](/docs/sdk/v0.53/module-manager).
+
+Please refer to the [structure document](/docs/sdk/v0.53/structure) to learn about the recommended structure of a module's directory.

@@ -30,13 +30,13 @@ Uses version-specific tab `v0.5.0` with snapshot data.
 
 ## Tab Reference Format
 
-** Correct**: Use **sheet tab name** as identifier:
+**Correct**: Use **sheet tab name** as identifier:
 
 - `sheetTab="v0.4.x"`
 - `sheetTab="v0.5.0"`
 - `sheetTab="eip_compatibility_data"`
 
-** Incorrect**: GID numbers, indices, or other identifiers do not work.
+**Incorrect**: GID numbers, indices, or other identifiers do not work.
 
 ## API Setup Process
 

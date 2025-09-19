@@ -1,0 +1,3655 @@
+---
+title: '`x/feegrant`'
+description: >-
+  This document specifies the fee grant module. For the full ADR, please see Fee
+  Grant ADR-029.
+---
+
+## Abstract
+
+This document specifies the fee grant module. For the full ADR, please see [Fee Grant ADR-029](https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-029-fee-grant-module.md).
+
+This module allows accounts to grant fee allowances and to use fees from their accounts. Grantees can execute any transaction without the need to maintain sufficient fees.
+
+## Contents
+
+* [Concepts](#concepts)
+* [State](#state)
+  * [FeeAllowance](#feeallowance)
+  * [FeeAllowanceQueue](#feeallowancequeue)
+* [Messages](#messages)
+  * [Msg/GrantAllowance](#msggrantallowance)
+  * [Msg/RevokeAllowance](#msgrevokeallowance)
+* [Events](#events)
+* [Msg Server](#msg-server)
+  * [MsgGrantAllowance](#msggrantallowance-1)
+  * [MsgRevokeAllowance](#msgrevokeallowance-1)
+  * [Exec fee allowance](#exec-fee-allowance)
+* [Client](#client)
+  * [CLI](#cli)
+  * [gRPC](#grpc)
+
+## Concepts
+
+### Grant
+
+`Grant` is stored in the KVStore to record a grant with full context. Every grant will contain `granter`, `grantee` and what kind of `allowance` is granted. `granter` is an account address who is giving permission to `grantee` (the beneficiary account address) to pay for some or all of `grantee`'s transaction fees. `allowance` defines what kind of fee allowance (`BasicAllowance` or `PeriodicAllowance`, see below) is granted to `grantee`. `allowance` accepts an interface which implements `FeeAllowanceI`, encoded as `Any` type. There can be only one existing fee grant allowed for a `grantee` and `granter`, self grants are not allowed.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L83-L93
+```
+
+`FeeAllowanceI` looks like:
+
+```go expandable
+package feegrant
+
+import (
+    
+	"time"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+// FeeAllowance implementations are tied to a given fee delegator and delegatee,
+// and are used to enforce fee grant limits.
+type FeeAllowanceI interface {
+	// Accept can use fee payment requested as well as timestamp of the current block
+	// to determine whether or not to process this. This is checked in
+	// Keeper.UseGrantedFees and the return values should match how it is handled there.
+	//
+	// If it returns an error, the fee payment is rejected, otherwise it is accepted.
+	// The FeeAllowance implementation is expected to update it's internal state
+	// and will be saved again after an acceptance.
+	//
+	// If remove is true (regardless of the error), the FeeAllowance will be deleted from storage
+	// (eg. when it is used up). (See call to RevokeAllowance in Keeper.UseGrantedFees)
+
+Accept(ctx sdk.Context, fee sdk.Coins, msgs []sdk.Msg) (remove bool, err error)
+
+	// ValidateBasic should evaluate this FeeAllowance for internal consistency.
+	// Don't allow negative amounts, or negative periods for example.
+	ValidateBasic()
+
+error
+
+	// ExpiresAt returns the expiry time of the allowance.
+	ExpiresAt() (*time.Time, error)
+}
+```
+
+### Fee Allowance types
+
+There are two types of fee allowances present at the moment:
+
+* `BasicAllowance`
+* `PeriodicAllowance`
+* `AllowedMsgAllowance`
+
+### BasicAllowance
+
+`BasicAllowance` is permission for `grantee` to use fee from a `granter`'s account. If any of the `spend_limit` or `expiration` reaches its limit, the grant will be removed from the state.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L15-L28
+```
+
+* `spend_limit` is the limit of coins that are allowed to be used from the `granter` account. If it is empty, it assumes there's no spend limit, `grantee` can use any number of available coins from `granter` account address before the expiration.
+
+* `expiration` specifies an optional time when this allowance expires. If the value is left empty, there is no expiry for the grant.
+
+* When a grant is created with empty values for `spend_limit` and `expiration`, it is still a valid grant. It won't restrict the `grantee` to use any number of coins from `granter` and it won't have any expiration. The only way to restrict the `grantee` is by revoking the grant.
+
+### PeriodicAllowance
+
+`PeriodicAllowance` is a repeating fee allowance for the mentioned period, we can mention when the grant can expire as well as when a period can reset. We can also define the maximum number of coins that can be used in a mentioned period of time.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L34-L68
+```
+
+* `basic` is the instance of `BasicAllowance` which is optional for periodic fee allowance. If empty, the grant will have no `expiration` and no `spend_limit`.
+
+* `period` is the specific period of time, after each period passes, `period_can_spend` will be reset.
+
+* `period_spend_limit` specifies the maximum number of coins that can be spent in the period.
+
+* `period_can_spend` is the number of coins left to be spent before the period\_reset time.
+
+* `period_reset` keeps track of when a next period reset should happen.
+
+### AllowedMsgAllowance
+
+`AllowedMsgAllowance` is a fee allowance, it can be any of `BasicFeeAllowance`, `PeriodicAllowance` but restricted only to the allowed messages mentioned by the granter.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L70-L81
+```
+
+* `allowance` is either `BasicAllowance` or `PeriodicAllowance`.
+
+* `allowed_messages` is array of messages allowed to execute the given allowance.
+
+### FeeGranter flag
+
+`feegrant` module introduces a `FeeGranter` flag for CLI for the sake of executing transactions with fee granter. When this flag is set, `clientCtx` will append the granter account address for transactions generated through CLI.
+
+```go expandable
+package client
+
+import (
+    
+	"crypto/tls"
+    "fmt"
+    "strings"
+    "github.com/pkg/errors"
+    "github.com/spf13/cobra"
+    "github.com/spf13/pflag"
+    "github.com/tendermint/tendermint/libs/cli"
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials"
+    "google.golang.org/grpc/credentials/insecure"
+    "github.com/cosmos/cosmos-sdk/client/flags"
+    "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+// ClientContextKey defines the context key used to retrieve a client.Context from
+// a command's Context.
+const ClientContextKey = sdk.ContextKey("client.context")
+
+// SetCmdClientContextHandler is to be used in a command pre-hook execution to
+// read flags that populate a Context and sets that to the command's Context.
+func SetCmdClientContextHandler(clientCtx Context, cmd *cobra.Command) (err error) {
+    clientCtx, err = ReadPersistentCommandFlags(clientCtx, cmd.Flags())
+    if err != nil {
+    return err
+}
+
+return SetCmdClientContext(cmd, clientCtx)
+}
+
+// ValidateCmd returns unknown command error or Help display if help flag set
+func ValidateCmd(cmd *cobra.Command, args []string)
+
+error {
+    var unknownCmd string
+	var skipNext bool
+    for _, arg := range args {
+		// search for help flag
+    if arg == "--help" || arg == "-h" {
+    return cmd.Help()
+}
+
+		// check if the current arg is a flag
+    switch {
+    case len(arg) > 0 && (arg[0] == '-'):
+			// the next arg should be skipped if the current arg is a
+			// flag and does not use "=" to assign the flag's value
+    if !strings.Contains(arg, "=") {
+    skipNext = true
+}
+
+else {
+    skipNext = false
+}
+    case skipNext:
+			// skip current arg
+			skipNext = false
+    case unknownCmd == "":
+			// unknown command found
+			// continue searching for help flag
+			unknownCmd = arg
+}
+	
+}
+
+	// return the help screen if no unknown command is found
+    if unknownCmd != "" {
+    err := fmt.Sprintf("unknown command \"%s\" for \"%s\"", unknownCmd, cmd.CalledAs())
+
+		// build suggestions for unknown argument
+    if suggestions := cmd.SuggestionsFor(unknownCmd); len(suggestions) > 0 {
+    err += "\n\nDid you mean this?\n"
+    for _, s := range suggestions {
+    err += fmt.Sprintf("\t%v\n", s)
+}
+	
+}
+
+return errors.New(err)
+}
+
+return cmd.Help()
+}
+
+// ReadPersistentCommandFlags returns a Context with fields set for "persistent"
+// or common flags that do not necessarily change with context.
+//
+// Note, the provided clientCtx may have field pre-populated. The following order
+// of precedence occurs:
+//
+// - client.Context field not pre-populated & flag not set: uses default flag value
+// - client.Context field not pre-populated & flag set: uses set flag value
+// - client.Context field pre-populated & flag not set: uses pre-populated value
+// - client.Context field pre-populated & flag set: uses set flag value
+func ReadPersistentCommandFlags(clientCtx Context, flagSet *pflag.FlagSet) (Context, error) {
+    if clientCtx.OutputFormat == "" || flagSet.Changed(cli.OutputFlag) {
+    output, _ := flagSet.GetString(cli.OutputFlag)
+
+clientCtx = clientCtx.WithOutputFormat(output)
+}
+    if clientCtx.HomeDir == "" || flagSet.Changed(flags.FlagHome) {
+    homeDir, _ := flagSet.GetString(flags.FlagHome)
+
+clientCtx = clientCtx.WithHomeDir(homeDir)
+}
+    if !clientCtx.Simulate || flagSet.Changed(flags.FlagDryRun) {
+    dryRun, _ := flagSet.GetBool(flags.FlagDryRun)
+
+clientCtx = clientCtx.WithSimulation(dryRun)
+}
+    if clientCtx.KeyringDir == "" || flagSet.Changed(flags.FlagKeyringDir) {
+    keyringDir, _ := flagSet.GetString(flags.FlagKeyringDir)
+
+		// The keyring directory is optional and falls back to the home directory
+		// if omitted.
+    if keyringDir == "" {
+    keyringDir = clientCtx.HomeDir
+}
+
+clientCtx = clientCtx.WithKeyringDir(keyringDir)
+}
+    if clientCtx.ChainID == "" || flagSet.Changed(flags.FlagChainID) {
+    chainID, _ := flagSet.GetString(flags.FlagChainID)
+
+clientCtx = clientCtx.WithChainID(chainID)
+}
+    if clientCtx.Keyring == nil || flagSet.Changed(flags.FlagKeyringBackend) {
+    keyringBackend, _ := flagSet.GetString(flags.FlagKeyringBackend)
+    if keyringBackend != "" {
+    kr, err := NewKeyringFromBackend(clientCtx, keyringBackend)
+    if err != nil {
+    return clientCtx, err
+}
+
+clientCtx = clientCtx.WithKeyring(kr)
+}
+	
+}
+    if clientCtx.Client == nil || flagSet.Changed(flags.FlagNode) {
+    rpcURI, _ := flagSet.GetString(flags.FlagNode)
+    if rpcURI != "" {
+    clientCtx = clientCtx.WithNodeURI(rpcURI)
+
+client, err := NewClientFromNode(rpcURI)
+    if err != nil {
+    return clientCtx, err
+}
+
+clientCtx = clientCtx.WithClient(client)
+}
+	
+}
+    if clientCtx.GRPCClient == nil || flagSet.Changed(flags.FlagGRPC) {
+    grpcURI, _ := flagSet.GetString(flags.FlagGRPC)
+    if grpcURI != "" {
+    var dialOpts []grpc.DialOption
+
+			useInsecure, _ := flagSet.GetBool(flags.FlagGRPCInsecure)
+    if useInsecure {
+    dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+else {
+    dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+    MinVersion: tls.VersionTLS12,
+})))
+}
+
+grpcClient, err := grpc.Dial(grpcURI, dialOpts...)
+    if err != nil {
+    return Context{
+}, err
+}
+
+clientCtx = clientCtx.WithGRPCClient(grpcClient)
+}
+	
+}
+
+return clientCtx, nil
+}
+
+// readQueryCommandFlags returns an updated Context with fields set based on flags
+// defined in AddQueryFlagsToCmd. An error is returned if any flag query fails.
+//
+// Note, the provided clientCtx may have field pre-populated. The following order
+// of precedence occurs:
+//
+// - client.Context field not pre-populated & flag not set: uses default flag value
+// - client.Context field not pre-populated & flag set: uses set flag value
+// - client.Context field pre-populated & flag not set: uses pre-populated value
+// - client.Context field pre-populated & flag set: uses set flag value
+func readQueryCommandFlags(clientCtx Context, flagSet *pflag.FlagSet) (Context, error) {
+    if clientCtx.Height == 0 || flagSet.Changed(flags.FlagHeight) {
+    height, _ := flagSet.GetInt64(flags.FlagHeight)
+
+clientCtx = clientCtx.WithHeight(height)
+}
+    if !clientCtx.UseLedger || flagSet.Changed(flags.FlagUseLedger) {
+    useLedger, _ := flagSet.GetBool(flags.FlagUseLedger)
+
+clientCtx = clientCtx.WithUseLedger(useLedger)
+}
+
+return ReadPersistentCommandFlags(clientCtx, flagSet)
+}
+
+// readTxCommandFlags returns an updated Context with fields set based on flags
+// defined in AddTxFlagsToCmd. An error is returned if any flag query fails.
+//
+// Note, the provided clientCtx may have field pre-populated. The following order
+// of precedence occurs:
+//
+// - client.Context field not pre-populated & flag not set: uses default flag value
+// - client.Context field not pre-populated & flag set: uses set flag value
+// - client.Context field pre-populated & flag not set: uses pre-populated value
+// - client.Context field pre-populated & flag set: uses set flag value
+func readTxCommandFlags(clientCtx Context, flagSet *pflag.FlagSet) (Context, error) {
+    clientCtx, err := ReadPersistentCommandFlags(clientCtx, flagSet)
+    if err != nil {
+    return clientCtx, err
+}
+    if !clientCtx.GenerateOnly || flagSet.Changed(flags.FlagGenerateOnly) {
+    genOnly, _ := flagSet.GetBool(flags.FlagGenerateOnly)
+
+clientCtx = clientCtx.WithGenerateOnly(genOnly)
+}
+    if !clientCtx.Offline || flagSet.Changed(flags.FlagOffline) {
+    offline, _ := flagSet.GetBool(flags.FlagOffline)
+
+clientCtx = clientCtx.WithOffline(offline)
+}
+    if !clientCtx.UseLedger || flagSet.Changed(flags.FlagUseLedger) {
+    useLedger, _ := flagSet.GetBool(flags.FlagUseLedger)
+
+clientCtx = clientCtx.WithUseLedger(useLedger)
+}
+    if clientCtx.BroadcastMode == "" || flagSet.Changed(flags.FlagBroadcastMode) {
+    bMode, _ := flagSet.GetString(flags.FlagBroadcastMode)
+
+clientCtx = clientCtx.WithBroadcastMode(bMode)
+}
+    if !clientCtx.SkipConfirm || flagSet.Changed(flags.FlagSkipConfirmation) {
+    skipConfirm, _ := flagSet.GetBool(flags.FlagSkipConfirmation)
+
+clientCtx = clientCtx.WithSkipConfirmation(skipConfirm)
+}
+    if clientCtx.SignModeStr == "" || flagSet.Changed(flags.FlagSignMode) {
+    signModeStr, _ := flagSet.GetString(flags.FlagSignMode)
+
+clientCtx = clientCtx.WithSignModeStr(signModeStr)
+}
+    if clientCtx.FeePayer == nil || flagSet.Changed(flags.FlagFeePayer) {
+    payer, _ := flagSet.GetString(flags.FlagFeePayer)
+    if payer != "" {
+    payerAcc, err := sdk.AccAddressFromBech32(payer)
+    if err != nil {
+    return clientCtx, err
+}
+
+clientCtx = clientCtx.WithFeePayerAddress(payerAcc)
+}
+	
+}
+    if clientCtx.FeeGranter == nil || flagSet.Changed(flags.FlagFeeGranter) {
+    granter, _ := flagSet.GetString(flags.FlagFeeGranter)
+    if granter != "" {
+    granterAcc, err := sdk.AccAddressFromBech32(granter)
+    if err != nil {
+    return clientCtx, err
+}
+
+clientCtx = clientCtx.WithFeeGranterAddress(granterAcc)
+}
+	
+}
+    if clientCtx.From == "" || flagSet.Changed(flags.FlagFrom) {
+    from, _ := flagSet.GetString(flags.FlagFrom)
+
+fromAddr, fromName, keyType, err := GetFromFields(clientCtx, clientCtx.Keyring, from)
+    if err != nil {
+    return clientCtx, err
+}
+
+clientCtx = clientCtx.WithFrom(from).WithFromAddress(fromAddr).WithFromName(fromName)
+
+		// If the `from` signer account is a ledger key, we need to use
+		// SIGN_MODE_AMINO_JSON, because ledger doesn't support proto yet.
+		// ref: https://github.com/cosmos/cosmos-sdk/issues/8109
+    if keyType == keyring.TypeLedger && clientCtx.SignModeStr != flags.SignModeLegacyAminoJSON && !clientCtx.LedgerHasProtobuf {
+    fmt.Println("Default sign-mode 'direct' not supported by Ledger, using sign-mode 'amino-json'.")
+
+clientCtx = clientCtx.WithSignModeStr(flags.SignModeLegacyAminoJSON)
+}
+	
+}
+    if !clientCtx.IsAux || flagSet.Changed(flags.FlagAux) {
+    isAux, _ := flagSet.GetBool(flags.FlagAux)
+
+clientCtx = clientCtx.WithAux(isAux)
+    if isAux {
+			// If the user didn't explicitly set an --output flag, use JSON by
+			// default.
+    if clientCtx.OutputFormat == "" || !flagSet.Changed(cli.OutputFlag) {
+    clientCtx = clientCtx.WithOutputFormat("json")
+}
+
+			// If the user didn't explicitly set a --sign-mode flag, use
+			// DIRECT_AUX by default.
+    if clientCtx.SignModeStr == "" || !flagSet.Changed(flags.FlagSignMode) {
+    clientCtx = clientCtx.WithSignModeStr(flags.SignModeDirectAux)
+}
+	
+}
+	
+}
+
+return clientCtx, nil
+}
+
+// GetClientQueryContext returns a Context from a command with fields set based on flags
+// defined in AddQueryFlagsToCmd. An error is returned if any flag query fails.
+//
+// - client.Context field not pre-populated & flag not set: uses default flag value
+// - client.Context field not pre-populated & flag set: uses set flag value
+// - client.Context field pre-populated & flag not set: uses pre-populated value
+// - client.Context field pre-populated & flag set: uses set flag value
+func GetClientQueryContext(cmd *cobra.Command) (Context, error) {
+    ctx := GetClientContextFromCmd(cmd)
+
+return readQueryCommandFlags(ctx, cmd.Flags())
+}
+
+// GetClientTxContext returns a Context from a command with fields set based on flags
+// defined in AddTxFlagsToCmd. An error is returned if any flag query fails.
+//
+// - client.Context field not pre-populated & flag not set: uses default flag value
+// - client.Context field not pre-populated & flag set: uses set flag value
+// - client.Context field pre-populated & flag not set: uses pre-populated value
+// - client.Context field pre-populated & flag set: uses set flag value
+func GetClientTxContext(cmd *cobra.Command) (Context, error) {
+    ctx := GetClientContextFromCmd(cmd)
+
+return readTxCommandFlags(ctx, cmd.Flags())
+}
+
+// GetClientContextFromCmd returns a Context from a command or an empty Context
+// if it has not been set.
+func GetClientContextFromCmd(cmd *cobra.Command)
+
+Context {
+    if v := cmd.Context().Value(ClientContextKey); v != nil {
+    clientCtxPtr := v.(*Context)
+
+return *clientCtxPtr
+}
+
+return Context{
+}
+}
+
+// SetCmdClientContext sets a command's Context value to the provided argument.
+func SetCmdClientContext(cmd *cobra.Command, clientCtx Context)
+
+error {
+    v := cmd.Context().Value(ClientContextKey)
+    if v == nil {
+    return errors.New("client context not set")
+}
+    clientCtxPtr := v.(*Context)
+	*clientCtxPtr = clientCtx
+
+	return nil
+}
+```
+
+```go expandable
+package tx
+
+import (
+    
+	"bufio"
+    "context"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "os"
+
+	gogogrpc "github.com/cosmos/gogoproto/grpc"
+    "github.com/spf13/pflag"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/client/input"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+    "github.com/cosmos/cosmos-sdk/types/tx"
+    "github.com/cosmos/cosmos-sdk/types/tx/signing"
+	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
+)
+
+// GenerateOrBroadcastTxCLI will either generate and print and unsigned transaction
+// or sign it and broadcast it returning an error upon failure.
+func GenerateOrBroadcastTxCLI(clientCtx client.Context, flagSet *pflag.FlagSet, msgs ...sdk.Msg)
+
+error {
+    txf := NewFactoryCLI(clientCtx, flagSet)
+
+return GenerateOrBroadcastTxWithFactory(clientCtx, txf, msgs...)
+}
+
+// GenerateOrBroadcastTxWithFactory will either generate and print and unsigned transaction
+// or sign it and broadcast it returning an error upon failure.
+func GenerateOrBroadcastTxWithFactory(clientCtx client.Context, txf Factory, msgs ...sdk.Msg)
+
+error {
+	// Validate all msgs before generating or broadcasting the tx.
+	// We were calling ValidateBasic separately in each CLI handler before.
+	// Right now, we're factorizing that call inside this function.
+	// ref: https://github.com/cosmos/cosmos-sdk/pull/9236#discussion_r623803504
+    for _, msg := range msgs {
+    if err := msg.ValidateBasic(); err != nil {
+    return err
+}
+	
+}
+
+	// If the --aux flag is set, we simply generate and print the AuxSignerData.
+    if clientCtx.IsAux {
+    auxSignerData, err := makeAuxSignerData(clientCtx, txf, msgs...)
+    if err != nil {
+    return err
+}
+
+return clientCtx.PrintProto(&auxSignerData)
+}
+    if clientCtx.GenerateOnly {
+    return txf.PrintUnsignedTx(clientCtx, msgs...)
+}
+
+return BroadcastTx(clientCtx, txf, msgs...)
+}
+
+// BroadcastTx attempts to generate, sign and broadcast a transaction with the
+// given set of messages. It will also simulate gas requirements if necessary.
+// It will return an error upon failure.
+func BroadcastTx(clientCtx client.Context, txf Factory, msgs ...sdk.Msg)
+
+error {
+    txf, err := txf.Prepare(clientCtx)
+    if err != nil {
+    return err
+}
+    if txf.SimulateAndExecute() || clientCtx.Simulate {
+		_, adjusted, err := CalculateGas(clientCtx, txf, msgs...)
+    if err != nil {
+    return err
+}
+
+txf = txf.WithGas(adjusted)
+		_, _ = fmt.Fprintf(os.Stderr, "%s\n", GasEstimateResponse{
+    GasEstimate: txf.Gas()
+})
+}
+    if clientCtx.Simulate {
+    return nil
+}
+
+tx, err := txf.BuildUnsignedTx(msgs...)
+    if err != nil {
+    return err
+}
+    if !clientCtx.SkipConfirm {
+    txBytes, err := clientCtx.TxConfig.TxJSONEncoder()(tx.GetTx())
+    if err != nil {
+    return err
+}
+    if err := clientCtx.PrintRaw(json.RawMessage(txBytes)); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s\n", txBytes)
+}
+    buf := bufio.NewReader(os.Stdin)
+
+ok, err := input.GetConfirmation("confirm transaction before signing and broadcasting", buf, os.Stderr)
+    if err != nil || !ok {
+			_, _ = fmt.Fprintf(os.Stderr, "%s\n", "cancelled transaction")
+
+return err
+}
+	
+}
+
+err = Sign(txf, clientCtx.GetFromName(), tx, true)
+    if err != nil {
+    return err
+}
+
+txBytes, err := clientCtx.TxConfig.TxEncoder()(tx.GetTx())
+    if err != nil {
+    return err
+}
+
+	// broadcast to a Tendermint node
+	res, err := clientCtx.BroadcastTx(txBytes)
+    if err != nil {
+    return err
+}
+
+return clientCtx.PrintProto(res)
+}
+
+// CalculateGas simulates the execution of a transaction and returns the
+// simulation response obtained by the query and the adjusted gas amount.
+func CalculateGas(
+	clientCtx gogogrpc.ClientConn, txf Factory, msgs ...sdk.Msg,
+) (*tx.SimulateResponse, uint64, error) {
+    txBytes, err := txf.BuildSimTx(msgs...)
+    if err != nil {
+    return nil, 0, err
+}
+    txSvcClient := tx.NewServiceClient(clientCtx)
+
+simRes, err := txSvcClient.Simulate(context.Background(), &tx.SimulateRequest{
+    TxBytes: txBytes,
+})
+    if err != nil {
+    return nil, 0, err
+}
+
+return simRes, uint64(txf.GasAdjustment() * float64(simRes.GasInfo.GasUsed)), nil
+}
+
+// SignWithPrivKey signs a given tx with the given private key, and returns the
+// corresponding SignatureV2 if the signing is successful.
+func SignWithPrivKey(
+	signMode signing.SignMode, signerData authsigning.SignerData,
+	txBuilder client.TxBuilder, priv cryptotypes.PrivKey, txConfig client.TxConfig,
+	accSeq uint64,
+) (signing.SignatureV2, error) {
+    var sigV2 signing.SignatureV2
+
+	// Generate the bytes to be signed.
+	signBytes, err := txConfig.SignModeHandler().GetSignBytes(signMode, signerData, txBuilder.GetTx())
+    if err != nil {
+    return sigV2, err
+}
+
+	// Sign those bytes
+	signature, err := priv.Sign(signBytes)
+    if err != nil {
+    return sigV2, err
+}
+
+	// Construct the SignatureV2 struct
+    sigData := signing.SingleSignatureData{
+    SignMode:  signMode,
+    Signature: signature,
+}
+
+sigV2 = signing.SignatureV2{
+    PubKey:   priv.PubKey(),
+    Data:     &sigData,
+    Sequence: accSeq,
+}
+
+return sigV2, nil
+}
+
+// countDirectSigners counts the number of DIRECT signers in a signature data.
+func countDirectSigners(data signing.SignatureData)
+
+int {
+    switch data := data.(type) {
+    case *signing.SingleSignatureData:
+    if data.SignMode == signing.SignMode_SIGN_MODE_DIRECT {
+    return 1
+}
+
+return 0
+    case *signing.MultiSignatureData:
+    directSigners := 0
+    for _, d := range data.Signatures {
+    directSigners += countDirectSigners(d)
+}
+
+return directSigners
+	default:
+		panic("unreachable case")
+}
+}
+
+// checkMultipleSigners checks that there can be maximum one DIRECT signer in
+// a tx.
+func checkMultipleSigners(tx authsigning.Tx)
+
+error {
+    directSigners := 0
+	sigsV2, err := tx.GetSignaturesV2()
+    if err != nil {
+    return err
+}
+    for _, sig := range sigsV2 {
+    directSigners += countDirectSigners(sig.Data)
+    if directSigners > 1 {
+    return sdkerrors.ErrNotSupported.Wrap("txs signed with CLI can have maximum 1 DIRECT signer")
+}
+	
+}
+
+return nil
+}
+
+// Sign signs a given tx with a named key. The bytes signed over are canconical.
+// The resulting signature will be added to the transaction builder overwriting the previous
+// ones if overwrite=true (otherwise, the signature will be appended).
+// Signing a transaction with mutltiple signers in the DIRECT mode is not supprted and will
+// return an error.
+// An error is returned upon failure.
+func Sign(txf Factory, name string, txBuilder client.TxBuilder, overwriteSig bool)
+
+error {
+    if txf.keybase == nil {
+    return errors.New("keybase must be set prior to signing a transaction")
+}
+    signMode := txf.signMode
+    if signMode == signing.SignMode_SIGN_MODE_UNSPECIFIED {
+		// use the SignModeHandler's default mode if unspecified
+		signMode = txf.txConfig.SignModeHandler().DefaultMode()
+}
+
+k, err := txf.keybase.Key(name)
+    if err != nil {
+    return err
+}
+
+pubKey, err := k.GetPubKey()
+    if err != nil {
+    return err
+}
+    signerData := authsigning.SignerData{
+    ChainID:       txf.chainID,
+    AccountNumber: txf.accountNumber,
+    Sequence:      txf.sequence,
+    PubKey:        pubKey,
+    Address:       sdk.AccAddress(pubKey.Address()).String(),
+}
+
+	// For SIGN_MODE_DIRECT, calling SetSignatures calls setSignerInfos on
+	// TxBuilder under the hood, and SignerInfos is needed to generated the
+	// sign bytes. This is the reason for setting SetSignatures here, with a
+	// nil signature.
+	//
+	// Note: this line is not needed for SIGN_MODE_LEGACY_AMINO, but putting it
+	// also doesn't affect its generated sign bytes, so for code's simplicity
+	// sake, we put it here.
+    sigData := signing.SingleSignatureData{
+    SignMode:  signMode,
+    Signature: nil,
+}
+    sig := signing.SignatureV2{
+    PubKey:   pubKey,
+    Data:     &sigData,
+    Sequence: txf.Sequence(),
+}
+
+var prevSignatures []signing.SignatureV2
+    if !overwriteSig {
+    prevSignatures, err = txBuilder.GetTx().GetSignaturesV2()
+    if err != nil {
+    return err
+}
+	
+}
+	// Overwrite or append signer infos.
+	var sigs []signing.SignatureV2
+    if overwriteSig {
+    sigs = []signing.SignatureV2{
+    sig
+}
+	
+}
+
+else {
+    sigs = append(sigs, prevSignatures...)
+
+sigs = append(sigs, sig)
+}
+    if err := txBuilder.SetSignatures(sigs...); err != nil {
+    return err
+}
+    if err := checkMultipleSigners(txBuilder.GetTx()); err != nil {
+    return err
+}
+
+	// Generate the bytes to be signed.
+	bytesToSign, err := txf.txConfig.SignModeHandler().GetSignBytes(signMode, signerData, txBuilder.GetTx())
+    if err != nil {
+    return err
+}
+
+	// Sign those bytes
+	sigBytes, _, err := txf.keybase.Sign(name, bytesToSign)
+    if err != nil {
+    return err
+}
+
+	// Construct the SignatureV2 struct
+	sigData = signing.SingleSignatureData{
+    SignMode:  signMode,
+    Signature: sigBytes,
+}
+
+sig = signing.SignatureV2{
+    PubKey:   pubKey,
+    Data:     &sigData,
+    Sequence: txf.Sequence(),
+}
+    if overwriteSig {
+    err = txBuilder.SetSignatures(sig)
+}
+
+else {
+    prevSignatures = append(prevSignatures, sig)
+
+err = txBuilder.SetSignatures(prevSignatures...)
+}
+    if err != nil {
+    return fmt.Errorf("unable to set signatures on payload: %w", err)
+}
+
+	// Run optional preprocessing if specified. By default, this is unset
+	// and will return nil.
+	return txf.PreprocessTx(name, txBuilder)
+}
+
+// GasEstimateResponse defines a response definition for tx gas estimation.
+type GasEstimateResponse struct {
+    GasEstimate uint64 `json:"gas_estimate" yaml:"gas_estimate"`
+}
+
+func (gr GasEstimateResponse)
+
+String()
+
+string {
+    return fmt.Sprintf("gas estimate: %d", gr.GasEstimate)
+}
+
+// makeAuxSignerData generates an AuxSignerData from the client inputs.
+func makeAuxSignerData(clientCtx client.Context, f Factory, msgs ...sdk.Msg) (tx.AuxSignerData, error) {
+    b := NewAuxTxBuilder()
+
+fromAddress, name, _, err := client.GetFromFields(clientCtx, clientCtx.Keyring, clientCtx.From)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+b.SetAddress(fromAddress.String())
+    if clientCtx.Offline {
+    b.SetAccountNumber(f.accountNumber)
+
+b.SetSequence(f.sequence)
+}
+
+else {
+    accNum, seq, err := clientCtx.AccountRetriever.GetAccountNumberSequence(clientCtx, fromAddress)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+b.SetAccountNumber(accNum)
+
+b.SetSequence(seq)
+}
+
+err = b.SetMsgs(msgs...)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+    if f.tip != nil {
+    if _, err := sdk.AccAddressFromBech32(f.tip.Tipper); err != nil {
+    return tx.AuxSignerData{
+}, sdkerrors.ErrInvalidAddress.Wrap("tipper must be a bech32 address")
+}
+
+b.SetTip(f.tip)
+}
+
+err = b.SetSignMode(f.SignMode())
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+key, err := clientCtx.Keyring.Key(name)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+pub, err := key.GetPubKey()
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+err = b.SetPubKey(pub)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+b.SetChainID(clientCtx.ChainID)
+
+signBz, err := b.GetSignBytes()
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+sig, _, err := clientCtx.Keyring.Sign(name, signBz)
+    if err != nil {
+    return tx.AuxSignerData{
+}, err
+}
+
+b.SetSignature(sig)
+
+return b.GetAuxSignerData()
+}
+```
+
+```go expandable
+package tx
+
+import (
+    
+	"github.com/cosmos/gogoproto/proto"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+    "github.com/cosmos/cosmos-sdk/types/tx"
+    "github.com/cosmos/cosmos-sdk/types/tx/signing"
+    "github.com/cosmos/cosmos-sdk/x/auth/ante"
+	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
+)
+
+// wrapper is a wrapper around the tx.Tx proto.Message which retain the raw
+// body and auth_info bytes.
+type wrapper struct {
+    cdc codec.Codec
+
+	tx *tx.Tx
+
+	// bodyBz represents the protobuf encoding of TxBody. This should be encoding
+	// from the client using TxRaw if the tx was decoded from the wire
+	bodyBz []byte
+
+	// authInfoBz represents the protobuf encoding of TxBody. This should be encoding
+	// from the client using TxRaw if the tx was decoded from the wire
+	authInfoBz []byte
+
+	txBodyHasUnknownNonCriticals bool
+}
+
+var (
+	_ authsigning.Tx             = &wrapper{
+}
+	_ client.TxBuilder           = &wrapper{
+}
+	_ tx.TipTx                   = &wrapper{
+}
+	_ ante.HasExtensionOptionsTx = &wrapper{
+}
+	_ ExtensionOptionsTxBuilder  = &wrapper{
+}
+	_ tx.TipTx                   = &wrapper{
+}
+)
+
+// ExtensionOptionsTxBuilder defines a TxBuilder that can also set extensions.
+type ExtensionOptionsTxBuilder interface {
+    client.TxBuilder
+
+	SetExtensionOptions(...*codectypes.Any)
+
+SetNonCriticalExtensionOptions(...*codectypes.Any)
+}
+
+func newBuilder(cdc codec.Codec) *wrapper {
+    return &wrapper{
+    cdc: cdc,
+		tx: &tx.Tx{
+    Body: &tx.TxBody{
+},
+    AuthInfo: &tx.AuthInfo{
+    Fee: &tx.Fee{
+},
+},
+},
+}
+}
+
+func (w *wrapper)
+
+GetMsgs() []sdk.Msg {
+    return w.tx.GetMsgs()
+}
+
+func (w *wrapper)
+
+ValidateBasic()
+
+error {
+    return w.tx.ValidateBasic()
+}
+
+func (w *wrapper)
+
+getBodyBytes() []byte {
+    if len(w.bodyBz) == 0 {
+		// if bodyBz is empty, then marshal the body. bodyBz will generally
+		// be set to nil whenever SetBody is called so the result of calling
+		// this method should always return the correct bytes. Note that after
+		// decoding bodyBz is derived from TxRaw so that it matches what was
+		// transmitted over the wire
+		var err error
+		w.bodyBz, err = proto.Marshal(w.tx.Body)
+    if err != nil {
+    panic(err)
+}
+	
+}
+
+return w.bodyBz
+}
+
+func (w *wrapper)
+
+getAuthInfoBytes() []byte {
+    if len(w.authInfoBz) == 0 {
+		// if authInfoBz is empty, then marshal the body. authInfoBz will generally
+		// be set to nil whenever SetAuthInfo is called so the result of calling
+		// this method should always return the correct bytes. Note that after
+		// decoding authInfoBz is derived from TxRaw so that it matches what was
+		// transmitted over the wire
+		var err error
+		w.authInfoBz, err = proto.Marshal(w.tx.AuthInfo)
+    if err != nil {
+    panic(err)
+}
+	
+}
+
+return w.authInfoBz
+}
+
+func (w *wrapper)
+
+GetSigners() []sdk.AccAddress {
+    return w.tx.GetSigners()
+}
+
+func (w *wrapper)
+
+GetPubKeys() ([]cryptotypes.PubKey, error) {
+    signerInfos := w.tx.AuthInfo.SignerInfos
+    pks := make([]cryptotypes.PubKey, len(signerInfos))
+    for i, si := range signerInfos {
+		// NOTE: it is okay to leave this nil if there is no PubKey in the SignerInfo.
+		// PubKey's can be left unset in SignerInfo.
+    if si.PublicKey == nil {
+    continue
+}
+    pkAny := si.PublicKey.GetCachedValue()
+
+pk, ok := pkAny.(cryptotypes.PubKey)
+    if ok {
+    pks[i] = pk
+}
+
+else {
+    return nil, sdkerrors.Wrapf(sdkerrors.ErrLogic, "Expecting PubKey, got: %T", pkAny)
+}
+	
+}
+
+return pks, nil
+}
+
+func (w *wrapper)
+
+GetGas()
+
+uint64 {
+    return w.tx.AuthInfo.Fee.GasLimit
+}
+
+func (w *wrapper)
+
+GetFee()
+
+sdk.Coins {
+    return w.tx.AuthInfo.Fee.Amount
+}
+
+func (w *wrapper)
+
+FeePayer()
+
+sdk.AccAddress {
+    feePayer := w.tx.AuthInfo.Fee.Payer
+    if feePayer != "" {
+    return sdk.MustAccAddressFromBech32(feePayer)
+}
+	// use first signer as default if no payer specified
+	return w.GetSigners()[0]
+}
+
+func (w *wrapper)
+
+FeeGranter()
+
+sdk.AccAddress {
+    feePayer := w.tx.AuthInfo.Fee.Granter
+    if feePayer != "" {
+    return sdk.MustAccAddressFromBech32(feePayer)
+}
+
+return nil
+}
+
+func (w *wrapper)
+
+GetTip() *tx.Tip {
+    return w.tx.AuthInfo.Tip
+}
+
+func (w *wrapper)
+
+GetMemo()
+
+string {
+    return w.tx.Body.Memo
+}
+
+// GetTimeoutHeight returns the transaction's timeout height (if set).
+func (w *wrapper)
+
+GetTimeoutHeight()
+
+uint64 {
+    return w.tx.Body.TimeoutHeight
+}
+
+func (w *wrapper)
+
+GetSignaturesV2() ([]signing.SignatureV2, error) {
+    signerInfos := w.tx.AuthInfo.SignerInfos
+    sigs := w.tx.Signatures
+	pubKeys, err := w.GetPubKeys()
+    if err != nil {
+    return nil, err
+}
+    n := len(signerInfos)
+    res := make([]signing.SignatureV2, n)
+    for i, si := range signerInfos {
+		// handle nil signatures (in case of simulation)
+    if si.ModeInfo == nil {
+    res[i] = signing.SignatureV2{
+    PubKey: pubKeys[i],
+}
+	
+}
+
+else {
+    var err error
+			sigData, err := ModeInfoAndSigToSignatureData(si.ModeInfo, sigs[i])
+    if err != nil {
+    return nil, err
+}
+			// sequence number is functionally a transaction nonce and referred to as such in the SDK
+    nonce := si.GetSequence()
+
+res[i] = signing.SignatureV2{
+    PubKey:   pubKeys[i],
+    Data:     sigData,
+    Sequence: nonce,
+}
+
+	
+}
+	
+}
+
+return res, nil
+}
+
+func (w *wrapper)
+
+SetMsgs(msgs ...sdk.Msg)
+
+error {
+    anys, err := tx.SetMsgs(msgs)
+    if err != nil {
+    return err
+}
+
+w.tx.Body.Messages = anys
+
+	// set bodyBz to nil because the cached bodyBz no longer matches tx.Body
+	w.bodyBz = nil
+
+	return nil
+}
+
+// SetTimeoutHeight sets the transaction's height timeout.
+func (w *wrapper)
+
+SetTimeoutHeight(height uint64) {
+    w.tx.Body.TimeoutHeight = height
+
+	// set bodyBz to nil because the cached bodyBz no longer matches tx.Body
+	w.bodyBz = nil
+}
+
+func (w *wrapper)
+
+SetMemo(memo string) {
+    w.tx.Body.Memo = memo
+
+	// set bodyBz to nil because the cached bodyBz no longer matches tx.Body
+	w.bodyBz = nil
+}
+
+func (w *wrapper)
+
+SetGasLimit(limit uint64) {
+    if w.tx.AuthInfo.Fee == nil {
+    w.tx.AuthInfo.Fee = &tx.Fee{
+}
+	
+}
+
+w.tx.AuthInfo.Fee.GasLimit = limit
+
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+SetFeeAmount(coins sdk.Coins) {
+    if w.tx.AuthInfo.Fee == nil {
+    w.tx.AuthInfo.Fee = &tx.Fee{
+}
+	
+}
+
+w.tx.AuthInfo.Fee.Amount = coins
+
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+SetTip(tip *tx.Tip) {
+    w.tx.AuthInfo.Tip = tip
+
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+SetFeePayer(feePayer sdk.AccAddress) {
+    if w.tx.AuthInfo.Fee == nil {
+    w.tx.AuthInfo.Fee = &tx.Fee{
+}
+	
+}
+
+w.tx.AuthInfo.Fee.Payer = feePayer.String()
+
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+SetFeeGranter(feeGranter sdk.AccAddress) {
+    if w.tx.AuthInfo.Fee == nil {
+    w.tx.AuthInfo.Fee = &tx.Fee{
+}
+	
+}
+
+w.tx.AuthInfo.Fee.Granter = feeGranter.String()
+
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+SetSignatures(signatures ...signing.SignatureV2)
+
+error {
+    n := len(signatures)
+    signerInfos := make([]*tx.SignerInfo, n)
+    rawSigs := make([][]byte, n)
+    for i, sig := range signatures {
+    var modeInfo *tx.ModeInfo
+		modeInfo, rawSigs[i] = SignatureDataToModeInfoAndSig(sig.Data)
+
+any, err := codectypes.NewAnyWithValue(sig.PubKey)
+    if err != nil {
+    return err
+}
+
+signerInfos[i] = &tx.SignerInfo{
+    PublicKey: any,
+    ModeInfo:  modeInfo,
+    Sequence:  sig.Sequence,
+}
+	
+}
+
+w.setSignerInfos(signerInfos)
+
+w.setSignatures(rawSigs)
+
+return nil
+}
+
+func (w *wrapper)
+
+setSignerInfos(infos []*tx.SignerInfo) {
+    w.tx.AuthInfo.SignerInfos = infos
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+setSignerInfoAtIndex(index int, info *tx.SignerInfo) {
+    if w.tx.AuthInfo.SignerInfos == nil {
+    w.tx.AuthInfo.SignerInfos = make([]*tx.SignerInfo, len(w.GetSigners()))
+}
+
+w.tx.AuthInfo.SignerInfos[index] = info
+	// set authInfoBz to nil because the cached authInfoBz no longer matches tx.AuthInfo
+	w.authInfoBz = nil
+}
+
+func (w *wrapper)
+
+setSignatures(sigs [][]byte) {
+    w.tx.Signatures = sigs
+}
+
+func (w *wrapper)
+
+setSignatureAtIndex(index int, sig []byte) {
+    if w.tx.Signatures == nil {
+    w.tx.Signatures = make([][]byte, len(w.GetSigners()))
+}
+
+w.tx.Signatures[index] = sig
+}
+
+func (w *wrapper)
+
+GetTx()
+
+authsigning.Tx {
+    return w
+}
+
+func (w *wrapper)
+
+GetProtoTx() *tx.Tx {
+    return w.tx
+}
+
+// Deprecated: AsAny extracts proto Tx and wraps it into Any.
+// NOTE: You should probably use `GetProtoTx` if you want to serialize the transaction.
+func (w *wrapper)
+
+AsAny() *codectypes.Any {
+    return codectypes.UnsafePackAny(w.tx)
+}
+
+// WrapTx creates a TxBuilder wrapper around a tx.Tx proto message.
+func WrapTx(protoTx *tx.Tx)
+
+client.TxBuilder {
+    return &wrapper{
+    tx: protoTx,
+}
+}
+
+func (w *wrapper)
+
+GetExtensionOptions() []*codectypes.Any {
+    return w.tx.Body.ExtensionOptions
+}
+
+func (w *wrapper)
+
+GetNonCriticalExtensionOptions() []*codectypes.Any {
+    return w.tx.Body.NonCriticalExtensionOptions
+}
+
+func (w *wrapper)
+
+SetExtensionOptions(extOpts ...*codectypes.Any) {
+    w.tx.Body.ExtensionOptions = extOpts
+	w.bodyBz = nil
+}
+
+func (w *wrapper)
+
+SetNonCriticalExtensionOptions(extOpts ...*codectypes.Any) {
+    w.tx.Body.NonCriticalExtensionOptions = extOpts
+	w.bodyBz = nil
+}
+
+func (w *wrapper)
+
+AddAuxSignerData(data tx.AuxSignerData)
+
+error {
+    err := data.ValidateBasic()
+    if err != nil {
+    return err
+}
+
+w.bodyBz = data.SignDoc.BodyBytes
+
+	var body tx.TxBody
+	err = w.cdc.Unmarshal(w.bodyBz, &body)
+    if err != nil {
+    return err
+}
+    if w.tx.Body.Memo != "" && w.tx.Body.Memo != body.Memo {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has memo %s, got %s in AuxSignerData", w.tx.Body.Memo, body.Memo)
+}
+    if w.tx.Body.TimeoutHeight != 0 && w.tx.Body.TimeoutHeight != body.TimeoutHeight {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has timeout height %d, got %d in AuxSignerData", w.tx.Body.TimeoutHeight, body.TimeoutHeight)
+}
+    if len(w.tx.Body.ExtensionOptions) != 0 {
+    if len(w.tx.Body.ExtensionOptions) != len(body.ExtensionOptions) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has %d extension options, got %d in AuxSignerData", len(w.tx.Body.ExtensionOptions), len(body.ExtensionOptions))
+}
+    for i, o := range w.tx.Body.ExtensionOptions {
+    if !o.Equal(body.ExtensionOptions[i]) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has extension option %+v at index %d, got %+v in AuxSignerData", o, i, body.ExtensionOptions[i])
+}
+	
+}
+	
+}
+    if len(w.tx.Body.NonCriticalExtensionOptions) != 0 {
+    if len(w.tx.Body.NonCriticalExtensionOptions) != len(body.NonCriticalExtensionOptions) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has %d non-critical extension options, got %d in AuxSignerData", len(w.tx.Body.NonCriticalExtensionOptions), len(body.NonCriticalExtensionOptions))
+}
+    for i, o := range w.tx.Body.NonCriticalExtensionOptions {
+    if !o.Equal(body.NonCriticalExtensionOptions[i]) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has non-critical extension option %+v at index %d, got %+v in AuxSignerData", o, i, body.NonCriticalExtensionOptions[i])
+}
+	
+}
+	
+}
+    if len(w.tx.Body.Messages) != 0 {
+    if len(w.tx.Body.Messages) != len(body.Messages) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has %d Msgs, got %d in AuxSignerData", len(w.tx.Body.Messages), len(body.Messages))
+}
+    for i, o := range w.tx.Body.Messages {
+    if !o.Equal(body.Messages[i]) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has Msg %+v at index %d, got %+v in AuxSignerData", o, i, body.Messages[i])
+}
+	
+}
+	
+}
+    if w.tx.AuthInfo.Tip != nil && data.SignDoc.Tip != nil {
+    if !w.tx.AuthInfo.Tip.Amount.IsEqual(data.SignDoc.Tip.Amount) {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has tip %+v, got %+v in AuxSignerData", w.tx.AuthInfo.Tip.Amount, data.SignDoc.Tip.Amount)
+}
+    if w.tx.AuthInfo.Tip.Tipper != data.SignDoc.Tip.Tipper {
+    return sdkerrors.ErrInvalidRequest.Wrapf("TxBuilder has tipper %s, got %s in AuxSignerData", w.tx.AuthInfo.Tip.Tipper, data.SignDoc.Tip.Tipper)
+}
+	
+}
+
+w.SetMemo(body.Memo)
+
+w.SetTimeoutHeight(body.TimeoutHeight)
+
+w.SetExtensionOptions(body.ExtensionOptions...)
+
+w.SetNonCriticalExtensionOptions(body.NonCriticalExtensionOptions...)
+    msgs := make([]sdk.Msg, len(body.Messages))
+    for i, msgAny := range body.Messages {
+    msgs[i] = msgAny.GetCachedValue().(sdk.Msg)
+}
+
+w.SetMsgs(msgs...)
+
+w.SetTip(data.GetSignDoc().GetTip())
+
+	// Get the aux signer's index in GetSigners.
+    signerIndex := -1
+    for i, signer := range w.GetSigners() {
+    if signer.String() == data.Address {
+    signerIndex = i
+}
+	
+}
+    if signerIndex < 0 {
+    return sdkerrors.ErrLogic.Wrapf("address %s is not a signer", data.Address)
+}
+
+w.setSignerInfoAtIndex(signerIndex, &tx.SignerInfo{
+    PublicKey: data.SignDoc.PublicKey,
+    ModeInfo:  &tx.ModeInfo{
+    Sum: &tx.ModeInfo_Single_{
+    Single: &tx.ModeInfo_Single{
+    Mode: data.Mode
+}}},
+    Sequence:  data.SignDoc.Sequence,
+})
+
+w.setSignatureAtIndex(signerIndex, data.Sig)
+
+return nil
+}
+```
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/tx/v1beta1/tx.proto#L203-L224
+```
+
+Example cmd:
+
+```go
+./simd tx gov submit-proposal --title="Test Proposal" --description="My awesome proposal" --type="Text" --from validator-key --fee-granter=cosmos1xh44hxt7spr67hqaa7nyx5gnutrz5fraw6grxn --chain-id=testnet --fees="10stake"
+```
+
+### Granted Fee Deductions
+
+Fees are deducted from grants in the `x/auth` ante handler. To learn more about how ante handlers work, read the [Auth Module AnteHandlers Guide](/docs/sdk/v0.50/auth/README#antehandlers).
+
+### Gas
+
+In order to prevent DoS attacks, using a filtered `x/feegrant` incurs gas. The SDK must assure that the `grantee`'s transactions all conform to the filter set by the `granter`. The SDK does this by iterating over the allowed messages in the filter and charging 10 gas per filtered message. The SDK will then iterate over the messages being sent by the `grantee` to ensure the messages adhere to the filter, also charging 10 gas per message. The SDK will stop iterating and fail the transaction if it finds a message that does not conform to the filter.
+
+**WARNING**: The gas is charged against the granted allowance. Ensure your messages conform to the filter, if any, before sending transactions using your allowance.
+
+### Pruning
+
+A queue in the state maintained with the prefix of expiration of the grants and checks them on EndBlock with the current block time for every block to prune.
+
+## State
+
+### FeeAllowance
+
+Fee Allowances are identified by combining `Grantee` (the account address of fee allowance grantee) with the `Granter` (the account address of fee allowance granter).
+
+Fee allowance grants are stored in the state as follows:
+
+* Grant: `0x00 | grantee_addr_len (1 byte) | grantee_addr_bytes |  granter_addr_len (1 byte) | granter_addr_bytes -> ProtocolBuffer(Grant)`
+
+```go expandable
+// Code generated by protoc-gen-gogo. DO NOT EDIT.
+// source: cosmos/feegrant/v1beta1/feegrant.proto
+
+package feegrant
+
+import (
+    
+	fmt "fmt"
+	_ "github.com/cosmos/cosmos-proto"
+	types1 "github.com/cosmos/cosmos-sdk/codec/types"
+	github_com_cosmos_cosmos_sdk_types "github.com/cosmos/cosmos-sdk/types"
+	types "github.com/cosmos/cosmos-sdk/types"
+	_ "github.com/cosmos/cosmos-sdk/types/tx/amino"
+	_ "github.com/cosmos/gogoproto/gogoproto"
+	proto "github.com/cosmos/gogoproto/proto"
+	github_com_cosmos_gogoproto_types "github.com/cosmos/gogoproto/types"
+	_ "google.golang.org/protobuf/types/known/durationpb"
+	_ "google.golang.org/protobuf/types/known/timestamppb"
+	io "io"
+	math "math"
+	math_bits "math/bits"
+	time "time"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var _ = proto.Marshal
+var _ = fmt.Errorf
+var _ = math.Inf
+var _ = time.Kitchen
+
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the proto package it is being compiled against.
+// A compilation error at this line likely means your copy of the
+// proto package needs to be updated.
+const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
+
+// BasicAllowance implements Allowance with a one-time grant of coins
+// that optionally expires. The grantee can use up to SpendLimit to cover fees.
+type BasicAllowance struct {
+	// spend_limit specifies the maximum amount of coins that can be spent
+	// by this allowance and will be updated as coins are spent. If it is
+	// empty, there is no spend limit and any amount of coins can be spent.
+	SpendLimit github_com_cosmos_cosmos_sdk_types.Coins `protobuf:"bytes,1,rep,name=spend_limit,json=spendLimit,proto3,castrepeated=github.com/cosmos/cosmos-sdk/types.Coins" json:"spend_limit"`
+	// expiration specifies an optional time when this allowance expires
+	Expiration *time.Time `protobuf:"bytes,2,opt,name=expiration,proto3,stdtime" json:"expiration,omitempty"`
+}
+
+func (m *BasicAllowance)
+
+Reset() { *m = BasicAllowance{
+} 
+}
+
+func (m *BasicAllowance)
+
+String()
+
+string {
+    return proto.CompactTextString(m)
+}
+
+func (*BasicAllowance)
+
+ProtoMessage() {
+}
+
+func (*BasicAllowance)
+
+Descriptor() ([]byte, []int) {
+    return fileDescriptor_7279582900c30aea, []int{0
+}
+}
+
+func (m *BasicAllowance)
+
+XXX_Unmarshal(b []byte)
+
+error {
+    return m.Unmarshal(b)
+}
+
+func (m *BasicAllowance)
+
+XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+    if deterministic {
+    return xxx_messageInfo_BasicAllowance.Marshal(b, m, deterministic)
+}
+
+else {
+    b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+    if err != nil {
+    return nil, err
+}
+
+return b[:n], nil
+}
+}
+
+func (m *BasicAllowance)
+
+XXX_Merge(src proto.Message) {
+    xxx_messageInfo_BasicAllowance.Merge(m, src)
+}
+
+func (m *BasicAllowance)
+
+XXX_Size()
+
+int {
+    return m.Size()
+}
+
+func (m *BasicAllowance)
+
+XXX_DiscardUnknown() {
+    xxx_messageInfo_BasicAllowance.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_BasicAllowance proto.InternalMessageInfo
+
+func (m *BasicAllowance)
+
+GetSpendLimit()
+
+github_com_cosmos_cosmos_sdk_types.Coins {
+    if m != nil {
+    return m.SpendLimit
+}
+
+return nil
+}
+
+func (m *BasicAllowance)
+
+GetExpiration() *time.Time {
+    if m != nil {
+    return m.Expiration
+}
+
+return nil
+}
+
+// PeriodicAllowance extends Allowance to allow for both a maximum cap,
+// as well as a limit per time period.
+type PeriodicAllowance struct {
+	// basic specifies a struct of `BasicAllowance`
+	Basic BasicAllowance `protobuf:"bytes,1,opt,name=basic,proto3" json:"basic"`
+	// period specifies the time duration in which period_spend_limit coins can
+	// be spent before that allowance is reset
+	Period time.Duration `protobuf:"bytes,2,opt,name=period,proto3,stdduration" json:"period"`
+	// period_spend_limit specifies the maximum number of coins that can be spent
+	// in the period
+	PeriodSpendLimit github_com_cosmos_cosmos_sdk_types.Coins `protobuf:"bytes,3,rep,name=period_spend_limit,json=periodSpendLimit,proto3,castrepeated=github.com/cosmos/cosmos-sdk/types.Coins" json:"period_spend_limit"`
+	// period_can_spend is the number of coins left to be spent before the period_reset time
+	PeriodCanSpend github_com_cosmos_cosmos_sdk_types.Coins `protobuf:"bytes,4,rep,name=period_can_spend,json=periodCanSpend,proto3,castrepeated=github.com/cosmos/cosmos-sdk/types.Coins" json:"period_can_spend"`
+	// period_reset is the time at which this period resets and a new one begins,
+	// it is calculated from the start time of the first transaction after the
+	// last period ended
+	PeriodReset time.Time `protobuf:"bytes,5,opt,name=period_reset,json=periodReset,proto3,stdtime" json:"period_reset"`
+}
+
+func (m *PeriodicAllowance)
+
+Reset() { *m = PeriodicAllowance{
+} 
+}
+
+func (m *PeriodicAllowance)
+
+String()
+
+string {
+    return proto.CompactTextString(m)
+}
+
+func (*PeriodicAllowance)
+
+ProtoMessage() {
+}
+
+func (*PeriodicAllowance)
+
+Descriptor() ([]byte, []int) {
+    return fileDescriptor_7279582900c30aea, []int{1
+}
+}
+
+func (m *PeriodicAllowance)
+
+XXX_Unmarshal(b []byte)
+
+error {
+    return m.Unmarshal(b)
+}
+
+func (m *PeriodicAllowance)
+
+XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+    if deterministic {
+    return xxx_messageInfo_PeriodicAllowance.Marshal(b, m, deterministic)
+}
+
+else {
+    b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+    if err != nil {
+    return nil, err
+}
+
+return b[:n], nil
+}
+}
+
+func (m *PeriodicAllowance)
+
+XXX_Merge(src proto.Message) {
+    xxx_messageInfo_PeriodicAllowance.Merge(m, src)
+}
+
+func (m *PeriodicAllowance)
+
+XXX_Size()
+
+int {
+    return m.Size()
+}
+
+func (m *PeriodicAllowance)
+
+XXX_DiscardUnknown() {
+    xxx_messageInfo_PeriodicAllowance.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PeriodicAllowance proto.InternalMessageInfo
+
+func (m *PeriodicAllowance)
+
+GetBasic()
+
+BasicAllowance {
+    if m != nil {
+    return m.Basic
+}
+
+return BasicAllowance{
+}
+}
+
+func (m *PeriodicAllowance)
+
+GetPeriod()
+
+time.Duration {
+    if m != nil {
+    return m.Period
+}
+
+return 0
+}
+
+func (m *PeriodicAllowance)
+
+GetPeriodSpendLimit()
+
+github_com_cosmos_cosmos_sdk_types.Coins {
+    if m != nil {
+    return m.PeriodSpendLimit
+}
+
+return nil
+}
+
+func (m *PeriodicAllowance)
+
+GetPeriodCanSpend()
+
+github_com_cosmos_cosmos_sdk_types.Coins {
+    if m != nil {
+    return m.PeriodCanSpend
+}
+
+return nil
+}
+
+func (m *PeriodicAllowance)
+
+GetPeriodReset()
+
+time.Time {
+    if m != nil {
+    return m.PeriodReset
+}
+
+return time.Time{
+}
+}
+
+// AllowedMsgAllowance creates allowance only for specified message types.
+type AllowedMsgAllowance struct {
+	// allowance can be any of basic and periodic fee allowance.
+	Allowance *types1.Any `protobuf:"bytes,1,opt,name=allowance,proto3" json:"allowance,omitempty"`
+	// allowed_messages are the messages for which the grantee has the access.
+	AllowedMessages []string `protobuf:"bytes,2,rep,name=allowed_messages,json=allowedMessages,proto3" json:"allowed_messages,omitempty"`
+}
+
+func (m *AllowedMsgAllowance)
+
+Reset() { *m = AllowedMsgAllowance{
+} 
+}
+
+func (m *AllowedMsgAllowance)
+
+String()
+
+string {
+    return proto.CompactTextString(m)
+}
+
+func (*AllowedMsgAllowance)
+
+ProtoMessage() {
+}
+
+func (*AllowedMsgAllowance)
+
+Descriptor() ([]byte, []int) {
+    return fileDescriptor_7279582900c30aea, []int{2
+}
+}
+
+func (m *AllowedMsgAllowance)
+
+XXX_Unmarshal(b []byte)
+
+error {
+    return m.Unmarshal(b)
+}
+
+func (m *AllowedMsgAllowance)
+
+XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+    if deterministic {
+    return xxx_messageInfo_AllowedMsgAllowance.Marshal(b, m, deterministic)
+}
+
+else {
+    b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+    if err != nil {
+    return nil, err
+}
+
+return b[:n], nil
+}
+}
+
+func (m *AllowedMsgAllowance)
+
+XXX_Merge(src proto.Message) {
+    xxx_messageInfo_AllowedMsgAllowance.Merge(m, src)
+}
+
+func (m *AllowedMsgAllowance)
+
+XXX_Size()
+
+int {
+    return m.Size()
+}
+
+func (m *AllowedMsgAllowance)
+
+XXX_DiscardUnknown() {
+    xxx_messageInfo_AllowedMsgAllowance.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_AllowedMsgAllowance proto.InternalMessageInfo
+
+// Grant is stored in the KVStore to record a grant with full context
+type Grant struct {
+	// granter is the address of the user granting an allowance of their funds.
+	Granter string `protobuf:"bytes,1,opt,name=granter,proto3" json:"granter,omitempty"`
+	// grantee is the address of the user being granted an allowance of another user's funds.
+	Grantee string `protobuf:"bytes,2,opt,name=grantee,proto3" json:"grantee,omitempty"`
+	// allowance can be any of basic, periodic, allowed fee allowance.
+	Allowance *types1.Any `protobuf:"bytes,3,opt,name=allowance,proto3" json:"allowance,omitempty"`
+}
+
+func (m *Grant)
+
+Reset() { *m = Grant{
+} 
+}
+
+func (m *Grant)
+
+String()
+
+string {
+    return proto.CompactTextString(m)
+}
+
+func (*Grant)
+
+ProtoMessage() {
+}
+
+func (*Grant)
+
+Descriptor() ([]byte, []int) {
+    return fileDescriptor_7279582900c30aea, []int{3
+}
+}
+
+func (m *Grant)
+
+XXX_Unmarshal(b []byte)
+
+error {
+    return m.Unmarshal(b)
+}
+
+func (m *Grant)
+
+XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+    if deterministic {
+    return xxx_messageInfo_Grant.Marshal(b, m, deterministic)
+}
+
+else {
+    b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+    if err != nil {
+    return nil, err
+}
+
+return b[:n], nil
+}
+}
+
+func (m *Grant)
+
+XXX_Merge(src proto.Message) {
+    xxx_messageInfo_Grant.Merge(m, src)
+}
+
+func (m *Grant)
+
+XXX_Size()
+
+int {
+    return m.Size()
+}
+
+func (m *Grant)
+
+XXX_DiscardUnknown() {
+    xxx_messageInfo_Grant.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Grant proto.InternalMessageInfo
+
+func (m *Grant)
+
+GetGranter()
+
+string {
+    if m != nil {
+    return m.Granter
+}
+
+return ""
+}
+
+func (m *Grant)
+
+GetGrantee()
+
+string {
+    if m != nil {
+    return m.Grantee
+}
+
+return ""
+}
+
+func (m *Grant)
+
+GetAllowance() *types1.Any {
+    if m != nil {
+    return m.Allowance
+}
+
+return nil
+}
+
+func init() {
+    proto.RegisterType((*BasicAllowance)(nil), "cosmos.feegrant.v1beta1.BasicAllowance")
+
+proto.RegisterType((*PeriodicAllowance)(nil), "cosmos.feegrant.v1beta1.PeriodicAllowance")
+
+proto.RegisterType((*AllowedMsgAllowance)(nil), "cosmos.feegrant.v1beta1.AllowedMsgAllowance")
+
+proto.RegisterType((*Grant)(nil), "cosmos.feegrant.v1beta1.Grant")
+}
+
+func init() {
+    proto.RegisterFile("cosmos/feegrant/v1beta1/feegrant.proto", fileDescriptor_7279582900c30aea)
+}
+
+var fileDescriptor_7279582900c30aea = []byte{
+	// 639 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x55, 0x3f, 0x6f, 0xd3, 0x40,
+	0x14, 0x8f, 0x9b, 0xb6, 0x28, 0x17, 0x28, 0xad, 0xa9, 0x84, 0x53, 0x21, 0xbb, 0x8a, 0x04, 0x4d,
+	0x2b, 0xd5, 0x56, 0x8b, 0x58, 0x3a, 0x35, 0x2e, 0xa2, 0x80, 0x5a, 0xa9, 0x72, 0x99, 0x90, 0x50,
+	0x74, 0xb6, 0xaf, 0xe6, 0x44, 0xec, 0x33, 0x3e, 0x17, 0x1a, 0x06, 0x66, 0xc4, 0x80, 0x32, 0x32,
+	0x32, 0x22, 0xa6, 0x0e, 0xe5, 0x3b, 0x54, 0x0c, 0xa8, 0x62, 0x62, 0x22, 0x28, 0x19, 0x3a, 0xf3,
+	0x0d, 0x90, 0xef, 0xce, 0x8e, 0x9b, 0x50, 0x68, 0x25, 0xba, 0x24, 0x77, 0xef, 0xde, 0xfb, 0xfd,
+	0x79, 0xef, 0x45, 0x01, 0xb7, 0x1c, 0x42, 0x7d, 0x42, 0x8d, 0x1d, 0x84, 0xbc, 0x08, 0x06, 0xb1,
+	0xf1, 0x62, 0xc9, 0x46, 0x31, 0x5c, 0xca, 0x02, 0x7a, 0x18, 0x91, 0x98, 0xc8, 0xd7, 0x79, 0x9e,
+	0x9e, 0x85, 0x45, 0xde, 0xcc, 0xb4, 0x47, 0x3c, 0xc2, 0x72, 0x8c, 0xe4, 0xc4, 0xd3, 0x67, 0x2a,
+	0x1e, 0x21, 0x5e, 0x13, 0x19, 0xec, 0x66, 0xef, 0xee, 0x18, 0x30, 0x68, 0xa5, 0x4f, 0x1c, 0xa9,
+	0xc1, 0x6b, 0x04, 0x2c, 0x7f, 0x52, 0x85, 0x18, 0x1b, 0x52, 0x94, 0x09, 0x71, 0x08, 0x0e, 0xc4,
+	0xfb, 0x14, 0xf4, 0x71, 0x40, 0x0c, 0xf6, 0x29, 0x42, 0xda, 0x20, 0x51, 0x8c, 0x7d, 0x44, 0x63,
+	0xe8, 0x87, 0x29, 0xe6, 0x60, 0x82, 0xbb, 0x1b, 0xc1, 0x18, 0x13, 0x81, 0x59, 0x7d, 0x37, 0x02,
+	0x26, 0x4c, 0x48, 0xb1, 0x53, 0x6f, 0x36, 0xc9, 0x4b, 0x18, 0x38, 0x48, 0x7e, 0x0e, 0xca, 0x34,
+	0x44, 0x81, 0xdb, 0x68, 0x62, 0x1f, 0xc7, 0x8a, 0x34, 0x5b, 0xac, 0x95, 0x97, 0x2b, 0xba, 0x90,
+	0x9a, 0x88, 0x4b, 0xdd, 0xeb, 0x6b, 0x04, 0x07, 0xe6, 0x9d, 0xc3, 0x1f, 0x5a, 0xe1, 0x53, 0x47,
+	0xab, 0x79, 0x38, 0x7e, 0xba, 0x6b, 0xeb, 0x0e, 0xf1, 0x85, 0x2f, 0xf1, 0xb5, 0x48, 0xdd, 0x67,
+	0x46, 0xdc, 0x0a, 0x11, 0x65, 0x05, 0xf4, 0xe3, 0xf1, 0xfe, 0x82, 0x64, 0x01, 0x46, 0xb2, 0x91,
+	0x70, 0xc8, 0xab, 0x00, 0xa0, 0xbd, 0x10, 0x73, 0x65, 0xca, 0xc8, 0xac, 0x54, 0x2b, 0x2f, 0xcf,
+	0xe8, 0x5c, 0xba, 0x9e, 0x4a, 0xd7, 0x1f, 0xa5, 0xde, 0xcc, 0xd1, 0x76, 0x47, 0x93, 0xac, 0x5c,
+	0xcd, 0xca, 0xfa, 0x97, 0x83, 0xc5, 0x9b, 0xa7, 0x0c, 0x49, 0xbf, 0x87, 0x50, 0x66, 0xef, 0xc1,
+	0xdb, 0xe3, 0xfd, 0x85, 0x4a, 0x4e, 0xd8, 0x49, 0xf7, 0xd5, 0xcf, 0xa3, 0x60, 0x6a, 0x0b, 0x45,
+	0x98, 0xb8, 0xf9, 0x9e, 0xdc, 0x07, 0x63, 0x76, 0x92, 0xa7, 0x48, 0x4c, 0xdb, 0x9c, 0x7e, 0x1a,
+	0xd5, 0x49, 0x34, 0xb3, 0x94, 0xf4, 0x86, 0xfb, 0xe5, 0x00, 0xf2, 0x2a, 0x18, 0x0f, 0x19, 0xbc,
+	0xb0, 0x59, 0x19, 0xb2, 0x79, 0x57, 0x4c, 0xc8, 0xbc, 0x92, 0x14, 0xbf, 0xef, 0x68, 0x12, 0x07,
+	0x10, 0x75, 0xf2, 0x6b, 0x20, 0xf3, 0x53, 0x23, 0x3f, 0xa6, 0xe2, 0x05, 0x8d, 0x69, 0x92, 0x73,
+	0x6d, 0xf7, 0x87, 0xf5, 0x0a, 0x88, 0x58, 0xc3, 0x81, 0x01, 0xd7, 0xa0, 0x8c, 0x5e, 0x10, 0xfb,
+	0x04, 0x67, 0x5a, 0x83, 0x01, 0x13, 0x20, 0x6f, 0x80, 0xcb, 0x82, 0x3b, 0x42, 0x14, 0xc5, 0xca,
+	0xd8, 0x3f, 0x57, 0x85, 0x35, 0xb1, 0x9d, 0x35, 0xb1, 0xcc, 0xcb, 0xad, 0xa4, 0x7a, 0xe5, 0xe1,
+	0xb9, 0x96, 0xe6, 0x46, 0x4e, 0xe8, 0xd0, 0x86, 0x54, 0x7f, 0x49, 0xe0, 0x1a, 0xbb, 0x21, 0x77,
+	0x93, 0x7a, 0xfd, 0xcd, 0x79, 0x02, 0x4a, 0x30, 0xbd, 0x88, 0xed, 0x99, 0x1e, 0x92, 0x5b, 0x0f,
+	0x5a, 0xe6, 0xfc, 0x99, 0xc5, 0x58, 0x7d, 0x44, 0x79, 0x1e, 0x4c, 0x42, 0xce, 0xda, 0xf0, 0x11,
+	0xa5, 0xd0, 0x43, 0x54, 0x19, 0x99, 0x2d, 0xd6, 0x4a, 0xd6, 0x55, 0x11, 0xdf, 0x14, 0xe1, 0x95,
+	0xad, 0x37, 0x1f, 0xb4, 0xc2, 0xb9, 0x1c, 0xab, 0x39, 0xc7, 0x7f, 0xf0, 0x56, 0xfd, 0x2a, 0x81,
+	0xb1, 0xf5, 0x04, 0x42, 0x5e, 0x06, 0x97, 0x18, 0x16, 0x8a, 0x98, 0xc7, 0x92, 0xa9, 0x7c, 0x3b,
+	0x58, 0x9c, 0x16, 0x44, 0x75, 0xd7, 0x8d, 0x10, 0xa5, 0xdb, 0x71, 0x84, 0x03, 0xcf, 0x4a, 0x13,
+	0xfb, 0x35, 0x88, 0xfd, 0x14, 0xce, 0x50, 0x33, 0xd0, 0xcd, 0xe2, 0xff, 0xee, 0xa6, 0x59, 0x3f,
+	0xec, 0xaa, 0xd2, 0x51, 0x57, 0x95, 0x7e, 0x76, 0x55, 0xa9, 0xdd, 0x53, 0x0b, 0x47, 0x3d, 0xb5,
+	0xf0, 0xbd, 0xa7, 0x16, 0x1e, 0xcf, 0xfd, 0x75, 0x6f, 0xf7, 0xb2, 0xff, 0x0b, 0x7b, 0x9c, 0xc9,
+	0xb8, 0xfd, 0x3b, 0x00, 0x00, 0xff, 0xff, 0xe4, 0x3d, 0x09, 0x1d, 0x5a, 0x06, 0x00, 0x00,
+}
+
+func (m *BasicAllowance)
+
+Marshal() (dAtA []byte, err error) {
+    size := m.Size()
+
+dAtA = make([]byte, size)
+
+n, err := m.MarshalToSizedBuffer(dAtA[:size])
+    if err != nil {
+    return nil, err
+}
+
+return dAtA[:n], nil
+}
+
+func (m *BasicAllowance)
+
+MarshalTo(dAtA []byte) (int, error) {
+    size := m.Size()
+
+return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *BasicAllowance)
+
+MarshalToSizedBuffer(dAtA []byte) (int, error) {
+    i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+    if m.Expiration != nil {
+    n1, err1 := github_com_cosmos_gogoproto_types.StdTimeMarshalTo(*m.Expiration, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdTime(*m.Expiration):])
+    if err1 != nil {
+    return 0, err1
+}
+
+i -= n1
+		i = encodeVarintFeegrant(dAtA, i, uint64(n1))
+
+i--
+		dAtA[i] = 0x12
+}
+    if len(m.SpendLimit) > 0 {
+    for iNdEx := len(m.SpendLimit) - 1; iNdEx >= 0; iNdEx-- {
+			{
+    size, err := m.SpendLimit[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+				i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+			dAtA[i] = 0xa
+}
+	
+}
+
+return len(dAtA) - i, nil
+}
+
+func (m *PeriodicAllowance)
+
+Marshal() (dAtA []byte, err error) {
+    size := m.Size()
+
+dAtA = make([]byte, size)
+
+n, err := m.MarshalToSizedBuffer(dAtA[:size])
+    if err != nil {
+    return nil, err
+}
+
+return dAtA[:n], nil
+}
+
+func (m *PeriodicAllowance)
+
+MarshalTo(dAtA []byte) (int, error) {
+    size := m.Size()
+
+return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PeriodicAllowance)
+
+MarshalToSizedBuffer(dAtA []byte) (int, error) {
+    i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	n2, err2 := github_com_cosmos_gogoproto_types.StdTimeMarshalTo(m.PeriodReset, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdTime(m.PeriodReset):])
+    if err2 != nil {
+    return 0, err2
+}
+
+i -= n2
+	i = encodeVarintFeegrant(dAtA, i, uint64(n2))
+
+i--
+	dAtA[i] = 0x2a
+    if len(m.PeriodCanSpend) > 0 {
+    for iNdEx := len(m.PeriodCanSpend) - 1; iNdEx >= 0; iNdEx-- {
+			{
+    size, err := m.PeriodCanSpend[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+				i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+			dAtA[i] = 0x22
+}
+	
+}
+    if len(m.PeriodSpendLimit) > 0 {
+    for iNdEx := len(m.PeriodSpendLimit) - 1; iNdEx >= 0; iNdEx-- {
+			{
+    size, err := m.PeriodSpendLimit[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+				i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+			dAtA[i] = 0x1a
+}
+	
+}
+
+n3, err3 := github_com_cosmos_gogoproto_types.StdDurationMarshalTo(m.Period, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdDuration(m.Period):])
+    if err3 != nil {
+    return 0, err3
+}
+
+i -= n3
+	i = encodeVarintFeegrant(dAtA, i, uint64(n3))
+
+i--
+	dAtA[i] = 0x12
+	{
+    size, err := m.Basic.MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+		i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *AllowedMsgAllowance)
+
+Marshal() (dAtA []byte, err error) {
+    size := m.Size()
+
+dAtA = make([]byte, size)
+
+n, err := m.MarshalToSizedBuffer(dAtA[:size])
+    if err != nil {
+    return nil, err
+}
+
+return dAtA[:n], nil
+}
+
+func (m *AllowedMsgAllowance)
+
+MarshalTo(dAtA []byte) (int, error) {
+    size := m.Size()
+
+return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *AllowedMsgAllowance)
+
+MarshalToSizedBuffer(dAtA []byte) (int, error) {
+    i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+    if len(m.AllowedMessages) > 0 {
+    for iNdEx := len(m.AllowedMessages) - 1; iNdEx >= 0; iNdEx-- {
+    i -= len(m.AllowedMessages[iNdEx])
+
+copy(dAtA[i:], m.AllowedMessages[iNdEx])
+
+i = encodeVarintFeegrant(dAtA, i, uint64(len(m.AllowedMessages[iNdEx])))
+
+i--
+			dAtA[i] = 0x12
+}
+	
+}
+    if m.Allowance != nil {
+		{
+    size, err := m.Allowance.MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+			i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+		dAtA[i] = 0xa
+}
+
+return len(dAtA) - i, nil
+}
+
+func (m *Grant)
+
+Marshal() (dAtA []byte, err error) {
+    size := m.Size()
+
+dAtA = make([]byte, size)
+
+n, err := m.MarshalToSizedBuffer(dAtA[:size])
+    if err != nil {
+    return nil, err
+}
+
+return dAtA[:n], nil
+}
+
+func (m *Grant)
+
+MarshalTo(dAtA []byte) (int, error) {
+    size := m.Size()
+
+return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Grant)
+
+MarshalToSizedBuffer(dAtA []byte) (int, error) {
+    i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+    if m.Allowance != nil {
+		{
+    size, err := m.Allowance.MarshalToSizedBuffer(dAtA[:i])
+    if err != nil {
+    return 0, err
+}
+
+i -= size
+			i = encodeVarintFeegrant(dAtA, i, uint64(size))
+}
+
+i--
+		dAtA[i] = 0x1a
+}
+    if len(m.Grantee) > 0 {
+    i -= len(m.Grantee)
+
+copy(dAtA[i:], m.Grantee)
+
+i = encodeVarintFeegrant(dAtA, i, uint64(len(m.Grantee)))
+
+i--
+		dAtA[i] = 0x12
+}
+    if len(m.Granter) > 0 {
+    i -= len(m.Granter)
+
+copy(dAtA[i:], m.Granter)
+
+i = encodeVarintFeegrant(dAtA, i, uint64(len(m.Granter)))
+
+i--
+		dAtA[i] = 0xa
+}
+
+return len(dAtA) - i, nil
+}
+
+func encodeVarintFeegrant(dAtA []byte, offset int, v uint64)
+
+int {
+    offset -= sovFeegrant(v)
+    base := offset
+    for v >= 1<<7 {
+    dAtA[offset] = uint8(v&0x7f | 0x80)
+
+v >>= 7
+		offset++
+}
+
+dAtA[offset] = uint8(v)
+
+return base
+}
+
+func (m *BasicAllowance)
+
+Size() (n int) {
+    if m == nil {
+    return 0
+}
+
+var l int
+	_ = l
+    if len(m.SpendLimit) > 0 {
+    for _, e := range m.SpendLimit {
+    l = e.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+	
+}
+    if m.Expiration != nil {
+    l = github_com_cosmos_gogoproto_types.SizeOfStdTime(*m.Expiration)
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+
+return n
+}
+
+func (m *PeriodicAllowance)
+
+Size() (n int) {
+    if m == nil {
+    return 0
+}
+
+var l int
+	_ = l
+	l = m.Basic.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+
+l = github_com_cosmos_gogoproto_types.SizeOfStdDuration(m.Period)
+
+n += 1 + l + sovFeegrant(uint64(l))
+    if len(m.PeriodSpendLimit) > 0 {
+    for _, e := range m.PeriodSpendLimit {
+    l = e.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+	
+}
+    if len(m.PeriodCanSpend) > 0 {
+    for _, e := range m.PeriodCanSpend {
+    l = e.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+	
+}
+
+l = github_com_cosmos_gogoproto_types.SizeOfStdTime(m.PeriodReset)
+
+n += 1 + l + sovFeegrant(uint64(l))
+
+return n
+}
+
+func (m *AllowedMsgAllowance)
+
+Size() (n int) {
+    if m == nil {
+    return 0
+}
+
+var l int
+	_ = l
+    if m.Allowance != nil {
+    l = m.Allowance.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+    if len(m.AllowedMessages) > 0 {
+    for _, s := range m.AllowedMessages {
+    l = len(s)
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+	
+}
+
+return n
+}
+
+func (m *Grant)
+
+Size() (n int) {
+    if m == nil {
+    return 0
+}
+
+var l int
+	_ = l
+	l = len(m.Granter)
+    if l > 0 {
+    n += 1 + l + sovFeegrant(uint64(l))
+}
+
+l = len(m.Grantee)
+    if l > 0 {
+    n += 1 + l + sovFeegrant(uint64(l))
+}
+    if m.Allowance != nil {
+    l = m.Allowance.Size()
+
+n += 1 + l + sovFeegrant(uint64(l))
+}
+
+return n
+}
+
+func sovFeegrant(x uint64) (n int) {
+    return (math_bits.Len64(x|1) + 6) / 7
+}
+
+func sozFeegrant(x uint64) (n int) {
+    return sovFeegrant(uint64((x << 1) ^ uint64((int64(x) >> 63))))
+}
+
+func (m *BasicAllowance)
+
+Unmarshal(dAtA []byte)
+
+error {
+    l := len(dAtA)
+    iNdEx := 0
+    for iNdEx < l {
+    preIndex := iNdEx
+		var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    fieldNum := int32(wire >> 3)
+    wireType := int(wire & 0x7)
+    if wireType == 4 {
+    return fmt.Errorf("proto: BasicAllowance: wiretype end group for non-group")
+}
+    if fieldNum <= 0 {
+    return fmt.Errorf("proto: BasicAllowance: illegal tag %d (wire type %d)", fieldNum, wire)
+}
+    switch fieldNum {
+    case 1:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field SpendLimit", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.SpendLimit = append(m.SpendLimit, types.Coin{
+})
+    if err := m.SpendLimit[len(m.SpendLimit)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 2:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Expiration", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if m.Expiration == nil {
+    m.Expiration = new(time.Time)
+}
+    if err := github_com_cosmos_gogoproto_types.StdTimeUnmarshal(m.Expiration, dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipFeegrant(dAtA[iNdEx:])
+    if err != nil {
+    return err
+}
+    if (skippy < 0) || (iNdEx+skippy) < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if (iNdEx + skippy) > l {
+    return io.ErrUnexpectedEOF
+}
+
+iNdEx += skippy
+}
+	
+}
+    if iNdEx > l {
+    return io.ErrUnexpectedEOF
+}
+
+return nil
+}
+
+func (m *PeriodicAllowance)
+
+Unmarshal(dAtA []byte)
+
+error {
+    l := len(dAtA)
+    iNdEx := 0
+    for iNdEx < l {
+    preIndex := iNdEx
+		var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    fieldNum := int32(wire >> 3)
+    wireType := int(wire & 0x7)
+    if wireType == 4 {
+    return fmt.Errorf("proto: PeriodicAllowance: wiretype end group for non-group")
+}
+    if fieldNum <= 0 {
+    return fmt.Errorf("proto: PeriodicAllowance: illegal tag %d (wire type %d)", fieldNum, wire)
+}
+    switch fieldNum {
+    case 1:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Basic", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if err := m.Basic.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 2:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Period", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if err := github_com_cosmos_gogoproto_types.StdDurationUnmarshal(&m.Period, dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 3:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field PeriodSpendLimit", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.PeriodSpendLimit = append(m.PeriodSpendLimit, types.Coin{
+})
+    if err := m.PeriodSpendLimit[len(m.PeriodSpendLimit)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 4:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field PeriodCanSpend", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.PeriodCanSpend = append(m.PeriodCanSpend, types.Coin{
+})
+    if err := m.PeriodCanSpend[len(m.PeriodCanSpend)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 5:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field PeriodReset", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if err := github_com_cosmos_gogoproto_types.StdTimeUnmarshal(&m.PeriodReset, dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipFeegrant(dAtA[iNdEx:])
+    if err != nil {
+    return err
+}
+    if (skippy < 0) || (iNdEx+skippy) < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if (iNdEx + skippy) > l {
+    return io.ErrUnexpectedEOF
+}
+
+iNdEx += skippy
+}
+	
+}
+    if iNdEx > l {
+    return io.ErrUnexpectedEOF
+}
+
+return nil
+}
+
+func (m *AllowedMsgAllowance)
+
+Unmarshal(dAtA []byte)
+
+error {
+    l := len(dAtA)
+    iNdEx := 0
+    for iNdEx < l {
+    preIndex := iNdEx
+		var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    fieldNum := int32(wire >> 3)
+    wireType := int(wire & 0x7)
+    if wireType == 4 {
+    return fmt.Errorf("proto: AllowedMsgAllowance: wiretype end group for non-group")
+}
+    if fieldNum <= 0 {
+    return fmt.Errorf("proto: AllowedMsgAllowance: illegal tag %d (wire type %d)", fieldNum, wire)
+}
+    switch fieldNum {
+    case 1:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Allowance", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if m.Allowance == nil {
+    m.Allowance = &types1.Any{
+}
+	
+}
+    if err := m.Allowance.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+    case 2:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field AllowedMessages", wireType)
+}
+
+var stringLen uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    intStringLen := int(stringLen)
+    if intStringLen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + intStringLen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.AllowedMessages = append(m.AllowedMessages, string(dAtA[iNdEx:postIndex]))
+
+iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipFeegrant(dAtA[iNdEx:])
+    if err != nil {
+    return err
+}
+    if (skippy < 0) || (iNdEx+skippy) < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if (iNdEx + skippy) > l {
+    return io.ErrUnexpectedEOF
+}
+
+iNdEx += skippy
+}
+	
+}
+    if iNdEx > l {
+    return io.ErrUnexpectedEOF
+}
+
+return nil
+}
+
+func (m *Grant)
+
+Unmarshal(dAtA []byte)
+
+error {
+    l := len(dAtA)
+    iNdEx := 0
+    for iNdEx < l {
+    preIndex := iNdEx
+		var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    fieldNum := int32(wire >> 3)
+    wireType := int(wire & 0x7)
+    if wireType == 4 {
+    return fmt.Errorf("proto: Grant: wiretype end group for non-group")
+}
+    if fieldNum <= 0 {
+    return fmt.Errorf("proto: Grant: illegal tag %d (wire type %d)", fieldNum, wire)
+}
+    switch fieldNum {
+    case 1:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Granter", wireType)
+}
+
+var stringLen uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    intStringLen := int(stringLen)
+    if intStringLen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + intStringLen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.Granter = string(dAtA[iNdEx:postIndex])
+
+iNdEx = postIndex
+    case 2:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Grantee", wireType)
+}
+
+var stringLen uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    intStringLen := int(stringLen)
+    if intStringLen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + intStringLen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+
+m.Grantee = string(dAtA[iNdEx:postIndex])
+
+iNdEx = postIndex
+    case 3:
+    if wireType != 2 {
+    return fmt.Errorf("proto: wrong wireType = %d for field Allowance", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if postIndex > l {
+    return io.ErrUnexpectedEOF
+}
+    if m.Allowance == nil {
+    m.Allowance = &types1.Any{
+}
+	
+}
+    if err := m.Allowance.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+    return err
+}
+
+iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipFeegrant(dAtA[iNdEx:])
+    if err != nil {
+    return err
+}
+    if (skippy < 0) || (iNdEx+skippy) < 0 {
+    return ErrInvalidLengthFeegrant
+}
+    if (iNdEx + skippy) > l {
+    return io.ErrUnexpectedEOF
+}
+
+iNdEx += skippy
+}
+	
+}
+    if iNdEx > l {
+    return io.ErrUnexpectedEOF
+}
+
+return nil
+}
+
+func skipFeegrant(dAtA []byte) (n int, err error) {
+    l := len(dAtA)
+    iNdEx := 0
+    depth := 0
+    for iNdEx < l {
+    var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return 0, ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return 0, io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    wireType := int(wire & 0x7)
+    switch wireType {
+    case 0:
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return 0, ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return 0, io.ErrUnexpectedEOF
+}
+
+iNdEx++
+    if dAtA[iNdEx-1] < 0x80 {
+    break
+}
+	
+}
+    case 1:
+			iNdEx += 8
+    case 2:
+			var length int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return 0, ErrIntOverflowFeegrant
+}
+    if iNdEx >= l {
+    return 0, io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				length |= (int(b) & 0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if length < 0 {
+    return 0, ErrInvalidLengthFeegrant
+}
+
+iNdEx += length
+    case 3:
+			depth++
+    case 4:
+    if depth == 0 {
+    return 0, ErrUnexpectedEndOfGroupFeegrant
+}
+
+depth--
+    case 5:
+			iNdEx += 4
+		default:
+			return 0, fmt.Errorf("proto: illegal wireType %d", wireType)
+}
+    if iNdEx < 0 {
+    return 0, ErrInvalidLengthFeegrant
+}
+    if depth == 0 {
+    return iNdEx, nil
+}
+	
+}
+
+return 0, io.ErrUnexpectedEOF
+}
+
+var (
+	ErrInvalidLengthFeegrant        = fmt.Errorf("proto: negative length found during unmarshaling")
+
+ErrIntOverflowFeegrant          = fmt.Errorf("proto: integer overflow")
+
+ErrUnexpectedEndOfGroupFeegrant = fmt.Errorf("proto: unexpected end of group")
+)
+```
+
+### FeeAllowanceQueue
+
+Fee Allowances queue items are identified by combining the `FeeAllowancePrefixQueue` (i.e., 0x01), `expiration`, `grantee` (the account address of fee allowance grantee), `granter` (the account address of fee allowance granter). Endblocker checks `FeeAllowanceQueue` state for the expired grants and prunes them from  `FeeAllowance` if there are any found.
+
+Fee allowance queue keys are stored in the state as follows:
+
+* Grant: `0x01 | expiration_bytes | grantee_addr_len (1 byte) | grantee_addr_bytes |  granter_addr_len (1 byte) | granter_addr_bytes -> EmptyBytes`
+
+## Messages
+
+### Msg/GrantAllowance
+
+A fee allowance grant will be created with the `MsgGrantAllowance` message.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/tx.proto#L25-L39
+```
+
+### Msg/RevokeAllowance
+
+An allowed grant fee allowance can be removed with the `MsgRevokeAllowance` message.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/tx.proto#L41-L54
+```
+
+## Events
+
+The feegrant module emits the following events:
+
+## Msg Server
+
+### MsgGrantAllowance
+
+| Type    | Attribute Key | Attribute Value  |
+| ------- | ------------- | ---------------- |
+| message | action        | set\_feegrant    |
+| message | granter       | `{granterAddress}` |
+| message | grantee       | `{granteeAddress}` |
+
+### MsgRevokeAllowance
+
+| Type    | Attribute Key | Attribute Value  |
+| ------- | ------------- | ---------------- |
+| message | action        | revoke\_feegrant |
+| message | granter       | `{granterAddress}` |
+| message | grantee       | `{granteeAddress}` |
+
+### Exec fee allowance
+
+| Type    | Attribute Key | Attribute Value  |
+| ------- | ------------- | ---------------- |
+| message | action        | use\_feegrant    |
+| message | granter       | `{granterAddress}` |
+| message | grantee       | `{granteeAddress}` |
+
+### Prune fee allowances
+
+| Type    | Attribute Key | Attribute Value |
+| ------- | ------------- | --------------- |
+| message | action        | prune\_feegrant |
+| message | pruner        | `{prunerAddress}` |
+
+## Client
+
+### CLI
+
+A user can query and interact with the `feegrant` module using the CLI.
+
+#### Query
+
+The `query` commands allow users to query `feegrant` state.
+
+```shell
+simd query feegrant --help
+```
+
+##### grant
+
+The `grant` command allows users to query a grant for a given granter-grantee pair.
+
+```shell
+simd query feegrant grant [granter] [grantee] [flags]
+```
+
+Example:
+
+```shell
+simd query feegrant grant cosmos1.. cosmos1..
+```
+
+Example Output:
+
+```yml
+allowance:
+  '@type': /cosmos.feegrant.v1beta1.BasicAllowance
+  expiration: null
+  spend_limit:
+  - amount: "100"
+    denom: stake
+grantee: cosmos1..
+granter: cosmos1..
+```
+
+##### grants
+
+The `grants` command allows users to query all grants for a given grantee.
+
+```shell
+simd query feegrant grants [grantee] [flags]
+```
+
+Example:
+
+```shell
+simd query feegrant grants cosmos1..
+```
+
+Example Output:
+
+```yml expandable
+allowances:
+- allowance:
+    '@type': /cosmos.feegrant.v1beta1.BasicAllowance
+    expiration: null
+    spend_limit:
+    - amount: "100"
+      denom: stake
+  grantee: cosmos1..
+  granter: cosmos1..
+pagination:
+  next_key: null
+  total: "0"
+```
+
+#### Transactions
+
+The `tx` commands allow users to interact with the `feegrant` module.
+
+```shell
+simd tx feegrant --help
+```
+
+##### grant
+
+The `grant` command allows users to grant fee allowances to another account. The fee allowance can have an expiration date, a total spend limit, and/or a periodic spend limit.
+
+```shell
+simd tx feegrant grant [granter] [grantee] [flags]
+```
+
+Example (one-time spend limit):
+
+```shell
+simd tx feegrant grant cosmos1.. cosmos1.. --spend-limit 100stake
+```
+
+Example (periodic spend limit):
+
+```shell
+simd tx feegrant grant cosmos1.. cosmos1.. --period 3600 --period-limit 10stake
+```
+
+##### revoke
+
+The `revoke` command allows users to revoke a granted fee allowance.
+
+```shell
+simd tx feegrant revoke [granter] [grantee] [flags]
+```
+
+Example:
+
+```shell
+simd tx feegrant revoke cosmos1.. cosmos1..
+```
+
+### gRPC
+
+A user can query the `feegrant` module using gRPC endpoints.
+
+#### Allowance
+
+The `Allowance` endpoint allows users to query a granted fee allowance.
+
+```shell
+cosmos.feegrant.v1beta1.Query/Allowance
+```
+
+Example:
+
+```shell
+grpcurl -plaintext \
+    -d '{"grantee":"cosmos1..","granter":"cosmos1.."}' \
+    localhost:9090 \
+    cosmos.feegrant.v1beta1.Query/Allowance
+```
+
+Example Output:
+
+```json
+{
+  "allowance": {
+    "granter": "cosmos1..",
+    "grantee": "cosmos1..",
+    "allowance": {
+      "@type": "/cosmos.feegrant.v1beta1.BasicAllowance",
+      "spendLimit": [
+        {
+          "denom": "stake",
+          "amount": "100"
+        }
+      ]
+    }
+  }
+}
+```
+
+#### Allowances
+
+The `Allowances` endpoint allows users to query all granted fee allowances for a given grantee.
+
+```shell
+cosmos.feegrant.v1beta1.Query/Allowances
+```
+
+Example:
+
+```shell
+grpcurl -plaintext \
+    -d '{"address":"cosmos1.."}' \
+    localhost:9090 \
+    cosmos.feegrant.v1beta1.Query/Allowances
+```
+
+Example Output:
+
+```json expandable
+{
+  "allowances": [
+    {
+      "granter": "cosmos1..",
+      "grantee": "cosmos1..",
+      "allowance": {
+        "@type": "/cosmos.feegrant.v1beta1.BasicAllowance",
+        "spendLimit": [
+          {
+            "denom": "stake",
+            "amount": "100"
+          }
+        ]
+      }
+    }
+  ],
+  "pagination": {
+    "total": "1"
+  }
+}
+```

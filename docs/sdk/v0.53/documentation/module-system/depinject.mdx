@@ -1,0 +1,3495 @@
+---
+title: Modules depinject-ready
+---
+
+<Note>
+**Pre-requisite Readings**
+
+* [Depinject Documentation](/docs/sdk/v0.53/packages/depinject)
+
+</Note>
+
+[`depinject`](/docs/sdk/v0.53/packages/depinject) is used to wire any module in `app.go`.
+All core modules are already configured to support dependency injection.
+
+To work with `depinject` a module must define its configuration and requirements so that `depinject` can provide the right dependencies.
+
+In brief, as a module developer, the following steps are required:
+
+1. Define the module configuration using Protobuf
+2. Define the module dependencies in `x/{moduleName}/module.go`
+
+A chain developer can then use the module by following these two steps:
+
+1. Configure the module in `app_config.go` or `app.yaml`
+2. Inject the module in `app.go`
+
+## Module Configuration
+
+The module available configuration is defined in a Protobuf file, located at `{moduleName}/module/v1/module.proto`.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/group/module/v1/module.proto
+```
+
+* `go_import` must point to the Go package of the custom module.
+* Message fields define the module configuration.
+  That configuration can be set in the `app_config.go` / `app.yaml` file for a chain developer to configure the module.\
+  Taking `group` as example, a chain developer is able to decide, thanks to `uint64 max_metadata_len`, what the maximum metadata length allowed for a group proposal is.
+
+  ```go expandable
+  package simapp
+
+  import (
+      
+  	"time"
+      "google.golang.org/protobuf/types/known/durationpb"
+
+  	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
+  	appv1alpha1 "cosmossdk.io/api/cosmos/app/v1alpha1"
+  	authmodulev1 "cosmossdk.io/api/cosmos/auth/module/v1"
+  	authzmodulev1 "cosmossdk.io/api/cosmos/authz/module/v1"
+  	bankmodulev1 "cosmossdk.io/api/cosmos/bank/module/v1"
+  	circuitmodulev1 "cosmossdk.io/api/cosmos/circuit/module/v1"
+  	consensusmodulev1 "cosmossdk.io/api/cosmos/consensus/module/v1"
+  	crisismodulev1 "cosmossdk.io/api/cosmos/crisis/module/v1"
+  	distrmodulev1 "cosmossdk.io/api/cosmos/distribution/module/v1"
+  	evidencemodulev1 "cosmossdk.io/api/cosmos/evidence/module/v1"
+  	feegrantmodulev1 "cosmossdk.io/api/cosmos/feegrant/module/v1"
+  	genutilmodulev1 "cosmossdk.io/api/cosmos/genutil/module/v1"
+  	govmodulev1 "cosmossdk.io/api/cosmos/gov/module/v1"
+  	groupmodulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+  	mintmodulev1 "cosmossdk.io/api/cosmos/mint/module/v1"
+  	nftmodulev1 "cosmossdk.io/api/cosmos/nft/module/v1"
+  	paramsmodulev1 "cosmossdk.io/api/cosmos/params/module/v1"
+  	slashingmodulev1 "cosmossdk.io/api/cosmos/slashing/module/v1"
+  	stakingmodulev1 "cosmossdk.io/api/cosmos/staking/module/v1"
+  	txconfigv1 "cosmossdk.io/api/cosmos/tx/config/v1"
+  	upgrademodulev1 "cosmossdk.io/api/cosmos/upgrade/module/v1"
+  	vestingmodulev1 "cosmossdk.io/api/cosmos/vesting/module/v1"
+      "cosmossdk.io/depinject"
+
+  	_ "cosmossdk.io/x/circuit"                        // import for side-effects
+  	_ "cosmossdk.io/x/evidence"                       // import for side-effects
+  	_ "cosmossdk.io/x/feegrant/module"                // import for side-effects
+  	_ "cosmossdk.io/x/nft/module"                     // import for side-effects
+  	_ "cosmossdk.io/x/upgrade"                        // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config" // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/auth/vesting"   // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/authz/module"   // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/bank"           // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/consensus"      // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/crisis"         // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/distribution"   // import for side-effects
+  	"github.com/cosmos/cosmos-sdk/x/genutil"
+      "github.com/cosmos/cosmos-sdk/x/gov"
+  	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/params"       // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/slashing"     // import for side-effects
+  	_ "github.com/cosmos/cosmos-sdk/x/staking"      // import for side-effects
+
+  	"cosmossdk.io/core/appconfig"
+  	circuittypes "cosmossdk.io/x/circuit/types"
+  	evidencetypes "cosmossdk.io/x/evidence/types"
+      "cosmossdk.io/x/feegrant"
+      "cosmossdk.io/x/nft"
+  	upgradetypes "cosmossdk.io/x/upgrade/types"
+      "github.com/cosmos/cosmos-sdk/runtime"
+      "github.com/cosmos/cosmos-sdk/types/module"
+  	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+  	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+      "github.com/cosmos/cosmos-sdk/x/authz"
+  	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+  	consensustypes "github.com/cosmos/cosmos-sdk/x/consensus/types"
+  	crisistypes "github.com/cosmos/cosmos-sdk/x/crisis/types"
+  	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+  	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+  	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
+  	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+      "github.com/cosmos/cosmos-sdk/x/group"
+  	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+  	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
+  	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
+  	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
+  	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+  )
+
+  var (
+  	// module account permissions
+  	moduleAccPerms = []*authmodulev1.ModuleAccountPermission{
+  		{
+      Account: authtypes.FeeCollectorName
+  },
+  		{
+      Account: distrtypes.ModuleName
+  },
+  		{
+      Account: minttypes.ModuleName,
+      Permissions: []string{
+      authtypes.Minter
+  }},
+  		{
+      Account: stakingtypes.BondedPoolName,
+      Permissions: []string{
+      authtypes.Burner, stakingtypes.ModuleName
+  }},
+  		{
+      Account: stakingtypes.NotBondedPoolName,
+      Permissions: []string{
+      authtypes.Burner, stakingtypes.ModuleName
+  }},
+  		{
+      Account: govtypes.ModuleName,
+      Permissions: []string{
+      authtypes.Burner
+  }},
+  		{
+      Account: nft.ModuleName
+  },
+  }
+
+  	// blocked account addresses
+  	blockAccAddrs = []string{
+      authtypes.FeeCollectorName,
+  		distrtypes.ModuleName,
+  		minttypes.ModuleName,
+  		stakingtypes.BondedPoolName,
+  		stakingtypes.NotBondedPoolName,
+  		nft.ModuleName,
+  		// We allow the following module accounts to receive funds:
+  		// govtypes.ModuleName
+  }
+
+  	// application configuration (used by depinject)
+
+  AppConfig = depinject.Configs(appconfig.Compose(&appv1alpha1.Config{
+      Modules: []*appv1alpha1.ModuleConfig{
+  			{
+      Name: runtime.ModuleName,
+      Config: appconfig.WrapAny(&runtimev1alpha1.Module{
+      AppName: "SimApp",
+  					// During begin block slashing happens after distr.BeginBlocker so that
+  					// there is nothing left over in the validator fee pool, so as to keep the
+  					// CanWithdrawInvariant invariant.
+  					// NOTE: staking module is required if HistoricalEntries param > 0
+  					BeginBlockers: []string{
+      upgradetypes.ModuleName,
+  						minttypes.ModuleName,
+  						distrtypes.ModuleName,
+  						slashingtypes.ModuleName,
+  						evidencetypes.ModuleName,
+  						stakingtypes.ModuleName,
+  						genutiltypes.ModuleName,
+  						authz.ModuleName,
+  },
+      EndBlockers: []string{
+      crisistypes.ModuleName,
+  						govtypes.ModuleName,
+  						stakingtypes.ModuleName,
+  						genutiltypes.ModuleName,
+  						feegrant.ModuleName,
+  						group.ModuleName,
+  },
+      OverrideStoreKeys: []*runtimev1alpha1.StoreKeyConfig{
+  						{
+      ModuleName: authtypes.ModuleName,
+      KvStoreKey: "acc",
+  },
+  },
+  					// NOTE: The genutils module must occur after staking so that pools are
+  					// properly initialized with tokens from genesis accounts.
+  					// NOTE: The genutils module must also occur after auth so that it can access the params from auth.
+  					InitGenesis: []string{
+      authtypes.ModuleName,
+  						banktypes.ModuleName,
+  						distrtypes.ModuleName,
+  						stakingtypes.ModuleName,
+  						slashingtypes.ModuleName,
+  						govtypes.ModuleName,
+  						minttypes.ModuleName,
+  						crisistypes.ModuleName,
+  						genutiltypes.ModuleName,
+  						evidencetypes.ModuleName,
+  						authz.ModuleName,
+  						feegrant.ModuleName,
+  						nft.ModuleName,
+  						group.ModuleName,
+  						paramstypes.ModuleName,
+  						upgradetypes.ModuleName,
+  						vestingtypes.ModuleName,
+  						consensustypes.ModuleName,
+  						circuittypes.ModuleName,
+  },
+  					// When ExportGenesis is not specified, the export genesis module order
+  					// is equal to the init genesis order
+  					// ExportGenesis: []string{
+  },
+  					// Uncomment if you want to set a custom migration order here.
+  					// OrderMigrations: []string{
+  },
+  }),
+  },
+  			{
+      Name: authtypes.ModuleName,
+      Config: appconfig.WrapAny(&authmodulev1.Module{
+      Bech32Prefix:             "cosmos",
+      ModuleAccountPermissions: moduleAccPerms,
+  					// By default modules authority is the governance module. This is configurable with the following:
+  					// Authority: "group", // A custom module authority can be set using a module name
+  					// Authority: "cosmos1cwwv22j5ca08ggdv9c2uky355k908694z577tv", // or a specific address
+  }),
+  },
+  			{
+      Name:   vestingtypes.ModuleName,
+      Config: appconfig.WrapAny(&vestingmodulev1.Module{
+  }),
+  },
+  			{
+      Name: banktypes.ModuleName,
+      Config: appconfig.WrapAny(&bankmodulev1.Module{
+      BlockedModuleAccountsOverride: blockAccAddrs,
+  }),
+  },
+  			{
+      Name:   stakingtypes.ModuleName,
+      Config: appconfig.WrapAny(&stakingmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   slashingtypes.ModuleName,
+      Config: appconfig.WrapAny(&slashingmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   paramstypes.ModuleName,
+      Config: appconfig.WrapAny(&paramsmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   "tx",
+      Config: appconfig.WrapAny(&txconfigv1.Config{
+  }),
+  },
+  			{
+      Name:   genutiltypes.ModuleName,
+      Config: appconfig.WrapAny(&genutilmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   authz.ModuleName,
+      Config: appconfig.WrapAny(&authzmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   upgradetypes.ModuleName,
+      Config: appconfig.WrapAny(&upgrademodulev1.Module{
+  }),
+  },
+  			{
+      Name:   distrtypes.ModuleName,
+      Config: appconfig.WrapAny(&distrmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   evidencetypes.ModuleName,
+      Config: appconfig.WrapAny(&evidencemodulev1.Module{
+  }),
+  },
+  			{
+      Name:   minttypes.ModuleName,
+      Config: appconfig.WrapAny(&mintmodulev1.Module{
+  }),
+  },
+  			{
+      Name: group.ModuleName,
+      Config: appconfig.WrapAny(&groupmodulev1.Module{
+      MaxExecutionPeriod: durationpb.New(time.Second * 1209600),
+      MaxMetadataLen:     255,
+  }),
+  },
+  			{
+      Name:   nft.ModuleName,
+      Config: appconfig.WrapAny(&nftmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   feegrant.ModuleName,
+      Config: appconfig.WrapAny(&feegrantmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   govtypes.ModuleName,
+      Config: appconfig.WrapAny(&govmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   crisistypes.ModuleName,
+      Config: appconfig.WrapAny(&crisismodulev1.Module{
+  }),
+  },
+  			{
+      Name:   consensustypes.ModuleName,
+      Config: appconfig.WrapAny(&consensusmodulev1.Module{
+  }),
+  },
+  			{
+      Name:   circuittypes.ModuleName,
+      Config: appconfig.WrapAny(&circuitmodulev1.Module{
+  }),
+  },
+  },
+  }),
+  		depinject.Supply(
+  			// supply custom module basics
+  			map[string]module.AppModuleBasic{
+      genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
+  				govtypes.ModuleName: gov.NewAppModuleBasic(
+  					[]govclient.ProposalHandler{
+      paramsclient.ProposalHandler,
+  },
+  				),
+  },
+  		))
+  )
+  ```
+
+That message is generated using [`pulsar`](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/scripts/protocgen-pulsar.sh) (by running `make proto-gen`).
+In the case of the `group` module, this file is generated here: [Link](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/api/cosmos/group/module/v1/module.pulsar.go).
+
+The part that is relevant for the module configuration is:
+
+```go expandable
+// Code generated by protoc-gen-go-pulsar. DO NOT EDIT.
+package modulev1
+
+import (
+    
+	_ "cosmossdk.io/api/amino"
+	_ "cosmossdk.io/api/cosmos/app/v1alpha1"
+	fmt "fmt"
+	runtime "github.com/cosmos/cosmos-proto/runtime"
+	_ "github.com/cosmos/gogoproto/gogoproto"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoiface "google.golang.org/protobuf/runtime/protoiface"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	io "io"
+	reflect "reflect"
+	sync "sync"
+)
+
+var (
+	md_Module                      protoreflect.MessageDescriptor
+	fd_Module_max_execution_period protoreflect.FieldDescriptor
+	fd_Module_max_metadata_len     protoreflect.FieldDescriptor
+)
+
+func init() {
+    file_cosmos_group_module_v1_module_proto_init()
+
+md_Module = File_cosmos_group_module_v1_module_proto.Messages().ByName("Module")
+
+fd_Module_max_execution_period = md_Module.Fields().ByName("max_execution_period")
+
+fd_Module_max_metadata_len = md_Module.Fields().ByName("max_metadata_len")
+}
+
+var _ protoreflect.Message = (*fastReflection_Module)(nil)
+
+type fastReflection_Module Module
+
+func (x *Module)
+
+ProtoReflect()
+
+protoreflect.Message {
+    return (*fastReflection_Module)(x)
+}
+
+func (x *Module)
+
+slowProtoReflect()
+
+protoreflect.Message {
+    mi := &file_cosmos_group_module_v1_module_proto_msgTypes[0]
+    if protoimpl.UnsafeEnabled && x != nil {
+    ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+    if ms.LoadMessageInfo() == nil {
+    ms.StoreMessageInfo(mi)
+}
+
+return ms
+}
+
+return mi.MessageOf(x)
+}
+
+var _fastReflection_Module_messageType fastReflection_Module_messageType
+var _ protoreflect.MessageType = fastReflection_Module_messageType{
+}
+
+type fastReflection_Module_messageType struct{
+}
+
+func (x fastReflection_Module_messageType)
+
+Zero()
+
+protoreflect.Message {
+    return (*fastReflection_Module)(nil)
+}
+
+func (x fastReflection_Module_messageType)
+
+New()
+
+protoreflect.Message {
+    return new(fastReflection_Module)
+}
+
+func (x fastReflection_Module_messageType)
+
+Descriptor()
+
+protoreflect.MessageDescriptor {
+    return md_Module
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_Module)
+
+Descriptor()
+
+protoreflect.MessageDescriptor {
+    return md_Module
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_Module)
+
+Type()
+
+protoreflect.MessageType {
+    return _fastReflection_Module_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_Module)
+
+New()
+
+protoreflect.Message {
+    return new(fastReflection_Module)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_Module)
+
+Interface()
+
+protoreflect.ProtoMessage {
+    return (*Module)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_Module)
+
+Range(f func(protoreflect.FieldDescriptor, protoreflect.Value)
+
+bool) {
+    if x.MaxExecutionPeriod != nil {
+    value := protoreflect.ValueOfMessage(x.MaxExecutionPeriod.ProtoReflect())
+    if !f(fd_Module_max_execution_period, value) {
+    return
+}
+	
+}
+    if x.MaxMetadataLen != uint64(0) {
+    value := protoreflect.ValueOfUint64(x.MaxMetadataLen)
+    if !f(fd_Module_max_metadata_len, value) {
+    return
+}
+	
+}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_Module)
+
+Has(fd protoreflect.FieldDescriptor)
+
+bool {
+    switch fd.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+		return x.MaxExecutionPeriod != nil
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+		return x.MaxMetadataLen != uint64(0)
+
+default:
+    if fd.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", fd.FullName()))
+}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Module)
+
+Clear(fd protoreflect.FieldDescriptor) {
+    switch fd.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+		x.MaxExecutionPeriod = nil
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+		x.MaxMetadataLen = uint64(0)
+
+default:
+    if fd.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", fd.FullName()))
+}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_Module)
+
+Get(descriptor protoreflect.FieldDescriptor)
+
+protoreflect.Value {
+    switch descriptor.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+    value := x.MaxExecutionPeriod
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+    value := x.MaxMetadataLen
+		return protoreflect.ValueOfUint64(value)
+
+default:
+    if descriptor.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", descriptor.FullName()))
+}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Module)
+
+Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+    switch fd.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+		x.MaxExecutionPeriod = value.Message().Interface().(*durationpb.Duration)
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+		x.MaxMetadataLen = value.Uint()
+
+default:
+    if fd.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", fd.FullName()))
+}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Module)
+
+Mutable(fd protoreflect.FieldDescriptor)
+
+protoreflect.Value {
+    switch fd.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+    if x.MaxExecutionPeriod == nil {
+    x.MaxExecutionPeriod = new(durationpb.Duration)
+}
+
+return protoreflect.ValueOfMessage(x.MaxExecutionPeriod.ProtoReflect())
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+		panic(fmt.Errorf("field max_metadata_len of message cosmos.group.module.v1.Module is not mutable"))
+
+default:
+    if fd.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", fd.FullName()))
+}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_Module)
+
+NewField(fd protoreflect.FieldDescriptor)
+
+protoreflect.Value {
+    switch fd.FullName() {
+    case "cosmos.group.module.v1.Module.max_execution_period":
+    m := new(durationpb.Duration)
+
+return protoreflect.ValueOfMessage(m.ProtoReflect())
+    case "cosmos.group.module.v1.Module.max_metadata_len":
+		return protoreflect.ValueOfUint64(uint64(0))
+
+default:
+    if fd.IsExtension() {
+    panic(fmt.Errorf("proto3 declared messages do not support extensions: cosmos.group.module.v1.Module"))
+}
+
+panic(fmt.Errorf("message cosmos.group.module.v1.Module does not contain field %s", fd.FullName()))
+}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_Module)
+
+WhichOneof(d protoreflect.OneofDescriptor)
+
+protoreflect.FieldDescriptor {
+    switch d.FullName() {
+    default:
+		panic(fmt.Errorf("%s is not a oneof field in cosmos.group.module.v1.Module", d.FullName()))
+}
+
+panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_Module)
+
+GetUnknown()
+
+protoreflect.RawFields {
+    return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Module)
+
+SetUnknown(fields protoreflect.RawFields) {
+    x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_Module)
+
+IsValid()
+
+bool {
+    return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_Module)
+
+ProtoMethods() *protoiface.Methods {
+    size := func(input protoiface.SizeInput)
+
+protoiface.SizeOutput {
+    x := input.Message.Interface().(*Module)
+    if x == nil {
+    return protoiface.SizeOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Size:              0,
+}
+	
+}
+    options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+    if x.MaxExecutionPeriod != nil {
+    l = options.Size(x.MaxExecutionPeriod)
+
+n += 1 + l + runtime.Sov(uint64(l))
+}
+    if x.MaxMetadataLen != 0 {
+    n += 1 + runtime.Sov(uint64(x.MaxMetadataLen))
+}
+    if x.unknownFields != nil {
+    n += len(x.unknownFields)
+}
+
+return protoiface.SizeOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Size:              n,
+}
+	
+}
+    marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+    x := input.Message.Interface().(*Module)
+    if x == nil {
+    return protoiface.MarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Buf:               input.Buf,
+}, nil
+}
+    options := runtime.MarshalInputToOptions(input)
+		_ = options
+    size := options.Size(x)
+    dAtA := make([]byte, size)
+    i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+    if x.unknownFields != nil {
+    i -= len(x.unknownFields)
+
+copy(dAtA[i:], x.unknownFields)
+}
+    if x.MaxMetadataLen != 0 {
+    i = runtime.EncodeVarint(dAtA, i, uint64(x.MaxMetadataLen))
+
+i--
+			dAtA[i] = 0x10
+}
+    if x.MaxExecutionPeriod != nil {
+    encoded, err := options.Marshal(x.MaxExecutionPeriod)
+    if err != nil {
+    return protoiface.MarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Buf:               input.Buf,
+}, err
+}
+
+i -= len(encoded)
+
+copy(dAtA[i:], encoded)
+
+i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+
+i--
+			dAtA[i] = 0xa
+}
+    if input.Buf != nil {
+    input.Buf = append(input.Buf, dAtA...)
+}
+
+else {
+    input.Buf = dAtA
+}
+
+return protoiface.MarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Buf:               input.Buf,
+}, nil
+}
+    unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+    x := input.Message.Interface().(*Module)
+    if x == nil {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags:             input.Flags,
+}, nil
+}
+    options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+    dAtA := input.Buf
+    l := len(dAtA)
+    iNdEx := 0
+    for iNdEx < l {
+    preIndex := iNdEx
+			var wire uint64
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrIntOverflow
+}
+    if iNdEx >= l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    fieldNum := int32(wire >> 3)
+    wireType := int(wire & 0x7)
+    if wireType == 4 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, fmt.Errorf("proto: Module: wiretype end group for non-group")
+}
+    if fieldNum <= 0 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, fmt.Errorf("proto: Module: illegal tag %d (wire type %d)", fieldNum, wire)
+}
+    switch fieldNum {
+    case 1:
+    if wireType != 2 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, fmt.Errorf("proto: wrong wireType = %d for field MaxExecutionPeriod", wireType)
+}
+
+var msglen int
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrIntOverflow
+}
+    if iNdEx >= l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+    if msglen < 0 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrInvalidLength
+}
+    postIndex := iNdEx + msglen
+    if postIndex < 0 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrInvalidLength
+}
+    if postIndex > l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+    if x.MaxExecutionPeriod == nil {
+    x.MaxExecutionPeriod = &durationpb.Duration{
+}
+	
+}
+    if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MaxExecutionPeriod); err != nil {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, err
+}
+
+iNdEx = postIndex
+    case 2:
+    if wireType != 0 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, fmt.Errorf("proto: wrong wireType = %d for field MaxMetadataLen", wireType)
+}
+
+x.MaxMetadataLen = 0
+    for shift := uint(0); ; shift += 7 {
+    if shift >= 64 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrIntOverflow
+}
+    if iNdEx >= l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+    b := dAtA[iNdEx]
+					iNdEx++
+					x.MaxMetadataLen |= uint64(b&0x7F) << shift
+    if b < 0x80 {
+    break
+}
+	
+}
+
+default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+    if err != nil {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, err
+}
+    if (skippy < 0) || (iNdEx+skippy) < 0 {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, runtime.ErrInvalidLength
+}
+    if (iNdEx + skippy) > l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+    if !options.DiscardUnknown {
+    x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+}
+
+iNdEx += skippy
+}
+	
+}
+    if iNdEx > l {
+    return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, io.ErrUnexpectedEOF
+}
+
+return protoiface.UnmarshalOutput{
+    NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+    Flags: input.Flags
+}, nil
+}
+
+return &protoiface.Methods{
+    NoUnkeyedLiterals: struct{
+}{
+},
+    Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+    Size:              size,
+    Marshal:           marshal,
+    Unmarshal:         unmarshal,
+    Merge:             nil,
+    CheckInitialized:  nil,
+}
+}
+
+// Code generated by protoc-gen-go. DO NOT EDIT.
+// versions:
+// 	protoc-gen-go v1.27.0
+// 	protoc        (unknown)
+// source: cosmos/group/module/v1/module.proto
+
+const (
+	// Verify that this generated code is sufficiently up-to-date.
+	_ = protoimpl.EnforceVersion(20 - protoimpl.MinVersion)
+	// Verify that runtime/protoimpl is sufficiently up-to-date.
+	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
+)
+
+// Module is the config object of the group module.
+type Module struct {
+    state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// max_execution_period defines the max duration after a proposal's voting period ends that members can send a MsgExec
+	// to execute the proposal.
+	MaxExecutionPeriod *durationpb.Duration `protobuf:"bytes,1,opt,name=max_execution_period,json=maxExecutionPeriod,proto3" json:"max_execution_period,omitempty"`
+	// max_metadata_len defines the max length of the metadata bytes field for various entities within the group module.
+	// Defaults to 255 if not explicitly set.
+	MaxMetadataLen uint64 `protobuf:"varint,2,opt,name=max_metadata_len,json=maxMetadataLen,proto3" json:"max_metadata_len,omitempty"`
+}
+
+func (x *Module)
+
+Reset() {
+	*x = Module{
+}
+    if protoimpl.UnsafeEnabled {
+    mi := &file_cosmos_group_module_v1_module_proto_msgTypes[0]
+    ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+
+ms.StoreMessageInfo(mi)
+}
+}
+
+func (x *Module)
+
+String()
+
+string {
+    return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Module)
+
+ProtoMessage() {
+}
+
+// Deprecated: Use Module.ProtoReflect.Descriptor instead.
+func (*Module)
+
+Descriptor() ([]byte, []int) {
+    return file_cosmos_group_module_v1_module_proto_rawDescGZIP(), []int{0
+}
+}
+
+func (x *Module)
+
+GetMaxExecutionPeriod() *durationpb.Duration {
+    if x != nil {
+    return x.MaxExecutionPeriod
+}
+
+return nil
+}
+
+func (x *Module)
+
+GetMaxMetadataLen()
+
+uint64 {
+    if x != nil {
+    return x.MaxMetadataLen
+}
+
+return 0
+}
+
+var File_cosmos_group_module_v1_module_proto protoreflect.FileDescriptor
+
+var file_cosmos_group_module_v1_module_proto_rawDesc = []byte{
+	0x0a, 0x23, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x2f, 0x6d,
+	0x6f, 0x64, 0x75, 0x6c, 0x65, 0x2f, 0x76, 0x31, 0x2f, 0x6d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x2e,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x16, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x67, 0x72,
+	0x6f, 0x75, 0x70, 0x2e, 0x6d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x1a, 0x20, 0x63,
+	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x61, 0x70, 0x70, 0x2f, 0x76, 0x31, 0x61, 0x6c, 0x70, 0x68,
+	0x61, 0x31, 0x2f, 0x6d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a,
+	0x14, 0x67, 0x6f, 0x67, 0x6f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x1e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2f, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2f, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2e,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x11, 0x61, 0x6d, 0x69, 0x6e, 0x6f, 0x2f, 0x61, 0x6d, 0x69,
+	0x6e, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xbc, 0x01, 0x0a, 0x06, 0x4d, 0x6f, 0x64,
+	0x75, 0x6c, 0x65, 0x12, 0x5a, 0x0a, 0x14, 0x6d, 0x61, 0x78, 0x5f, 0x65, 0x78, 0x65, 0x63, 0x75,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x19, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x62, 0x75, 0x66, 0x2e, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x42, 0x0d, 0xc8, 0xde,
+	0x1f, 0x00, 0x98, 0xdf, 0x1f, 0x01, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x12, 0x6d, 0x61, 0x78,
+	0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x12,
+	0x28, 0x0a, 0x10, 0x6d, 0x61, 0x78, 0x5f, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x5f,
+	0x6c, 0x65, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x6d, 0x61, 0x78, 0x4d, 0x65,
+	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x4c, 0x65, 0x6e, 0x3a, 0x2c, 0xba, 0xc0, 0x96, 0xda, 0x01,
+	0x26, 0x0a, 0x24, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x63, 0x6f,
+	0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2d, 0x73, 0x64, 0x6b, 0x2f,
+	0x78, 0x2f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x42, 0xd6, 0x01, 0x0a, 0x1a, 0x63, 0x6f, 0x6d, 0x2e,
+	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x2e, 0x6d, 0x6f, 0x64,
+	0x75, 0x6c, 0x65, 0x2e, 0x76, 0x31, 0x42, 0x0b, 0x4d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x30, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
+	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x67,
+	0x72, 0x6f, 0x75, 0x70, 0x2f, 0x6d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x2f, 0x76, 0x31, 0x3b, 0x6d,
+	0x6f, 0x64, 0x75, 0x6c, 0x65, 0x76, 0x31, 0xa2, 0x02, 0x03, 0x43, 0x47, 0x4d, 0xaa, 0x02, 0x16,
+	0x43, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x2e, 0x4d, 0x6f, 0x64,
+	0x75, 0x6c, 0x65, 0x2e, 0x56, 0x31, 0xca, 0x02, 0x16, 0x43, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x5c,
+	0x47, 0x72, 0x6f, 0x75, 0x70, 0x5c, 0x4d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x5c, 0x56, 0x31, 0xe2,
+	0x02, 0x22, 0x43, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x5c, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x5c, 0x4d,
+	0x6f, 0x64, 0x75, 0x6c, 0x65, 0x5c, 0x56, 0x31, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
+	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x19, 0x43, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x3a, 0x3a, 0x47,
+	0x72, 0x6f, 0x75, 0x70, 0x3a, 0x3a, 0x4d, 0x6f, 0x64, 0x75, 0x6c, 0x65, 0x3a, 0x3a, 0x56, 0x31,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+}
+
+var (
+	file_cosmos_group_module_v1_module_proto_rawDescOnce sync.Once
+	file_cosmos_group_module_v1_module_proto_rawDescData = file_cosmos_group_module_v1_module_proto_rawDesc
+)
+
+func file_cosmos_group_module_v1_module_proto_rawDescGZIP() []byte {
+    file_cosmos_group_module_v1_module_proto_rawDescOnce.Do(func() {
+    file_cosmos_group_module_v1_module_proto_rawDescData = protoimpl.X.CompressGZIP(file_cosmos_group_module_v1_module_proto_rawDescData)
+})
+
+return file_cosmos_group_module_v1_module_proto_rawDescData
+}
+
+var file_cosmos_group_module_v1_module_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+
+var file_cosmos_group_module_v1_module_proto_goTypes = []interface{
+}{
+	(*Module)(nil),              // 0: cosmos.group.module.v1.Module
+	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
+}
+
+var file_cosmos_group_module_v1_module_proto_depIdxs = []int32{
+	1, // 0: cosmos.group.module.v1.Module.max_execution_period:type_name -> google.protobuf.Duration
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
+}
+
+func init() {
+    file_cosmos_group_module_v1_module_proto_init()
+}
+
+func file_cosmos_group_module_v1_module_proto_init() {
+    if File_cosmos_group_module_v1_module_proto != nil {
+    return
+}
+    if !protoimpl.UnsafeEnabled {
+    file_cosmos_group_module_v1_module_proto_msgTypes[0].Exporter = func(v interface{
+}, i int)
+
+interface{
+} {
+    switch v := v.(*Module); i {
+    case 0:
+				return &v.state
+    case 1:
+				return &v.sizeCache
+    case 2:
+				return &v.unknownFields
+			default:
+				return nil
+}
+	
+}
+	
+}
+
+type x struct{
+}
+    out := protoimpl.TypeBuilder{
+    File: protoimpl.DescBuilder{
+    GoPackagePath: reflect.TypeOf(x{
+}).PkgPath(),
+    RawDescriptor: file_cosmos_group_module_v1_module_proto_rawDesc,
+    NumEnums:      0,
+    NumMessages:   1,
+    NumExtensions: 0,
+    NumServices:   0,
+},
+    GoTypes:           file_cosmos_group_module_v1_module_proto_goTypes,
+    DependencyIndexes: file_cosmos_group_module_v1_module_proto_depIdxs,
+    MessageInfos:      file_cosmos_group_module_v1_module_proto_msgTypes,
+}.Build()
+
+File_cosmos_group_module_v1_module_proto = out.File
+	file_cosmos_group_module_v1_module_proto_rawDesc = nil
+	file_cosmos_group_module_v1_module_proto_goTypes = nil
+	file_cosmos_group_module_v1_module_proto_depIdxs = nil
+}
+```
+
+<Note>
+Pulsar is optional. The official [`protoc-gen-go`](https://developers.google.com/protocol-buffers/docs/reference/go-generated) can be used as well.
+</Note>
+
+## Dependency Definition
+
+Once the configuration proto is defined, the module's `module.go` must define what dependencies are required by the module.
+The boilerplate is similar for all modules.
+
+<Warning>
+All methods, structs and their fields must be public for `depinject`.
+</Warning>
+
+1. Import the module configuration generated package:
+
+   ```go expandable
+   package module
+
+   import (
+       
+   	"context"
+       "encoding/json"
+       "fmt"
+
+   	abci "github.com/cometbft/cometbft/abci/types"
+   	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+       "github.com/spf13/cobra"
+
+   	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+       "cosmossdk.io/core/address"
+       "cosmossdk.io/core/appmodule"
+       "cosmossdk.io/depinject"
+
+   	store "cosmossdk.io/store/types"
+       "github.com/cosmos/cosmos-sdk/baseapp"
+   	sdkclient "github.com/cosmos/cosmos-sdk/client"
+       "github.com/cosmos/cosmos-sdk/codec"
+   	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+   	sdk "github.com/cosmos/cosmos-sdk/types"
+       "github.com/cosmos/cosmos-sdk/types/module"
+   	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+       "github.com/cosmos/cosmos-sdk/x/group"
+       "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+       "github.com/cosmos/cosmos-sdk/x/group/keeper"
+       "github.com/cosmos/cosmos-sdk/x/group/simulation"
+   )
+
+   // ConsensusVersion defines the current x/group module consensus version.
+   const ConsensusVersion = 2
+
+   var (
+   	_ module.AppModuleBasic      = AppModuleBasic{
+   }
+   	_ module.AppModuleSimulation = AppModule{
+   }
+   )
+
+   type AppModule struct {
+       AppModuleBasic
+   	keeper     keeper.Keeper
+   	bankKeeper group.BankKeeper
+   	accKeeper  group.AccountKeeper
+   	registry   cdctypes.InterfaceRegistry
+   }
+
+   // NewAppModule creates a new AppModule object
+   func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+   AppModule {
+       return AppModule{
+       AppModuleBasic: AppModuleBasic{
+       cdc: cdc, ac: ak.AddressCodec()
+   },
+   		keeper:         keeper,
+   		bankKeeper:     bk,
+   		accKeeper:      ak,
+   		registry:       registry,
+   }
+   }
+
+   var (
+   	_ appmodule.AppModule     = AppModule{
+   }
+   	_ appmodule.HasEndBlocker = AppModule{
+   }
+   )
+
+   // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+   func (am AppModule)
+
+   IsOnePerModuleType() {
+   }
+
+   // IsAppModule implements the appmodule.AppModule interface.
+   func (am AppModule)
+
+   IsAppModule() {
+   }
+
+   type AppModuleBasic struct {
+       cdc codec.Codec
+   	ac  address.Codec
+   }
+
+   // Name returns the group module's name.
+   func (AppModuleBasic)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // DefaultGenesis returns default genesis state as raw bytes for the group
+   // module.
+   func (AppModuleBasic)
+
+   DefaultGenesis(cdc codec.JSONCodec)
+
+   json.RawMessage {
+       return cdc.MustMarshalJSON(group.NewGenesisState())
+   }
+
+   // ValidateGenesis performs genesis state validation for the group module.
+   func (AppModuleBasic)
+
+   ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+   error {
+       var data group.GenesisState
+       if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+       return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+   }
+
+   return data.Validate()
+   }
+
+   // GetQueryCmd returns the cli query commands for the group module
+   func (a AppModuleBasic)
+
+   GetQueryCmd() *cobra.Command {
+       return cli.QueryCmd(a.Name())
+   }
+
+   // GetTxCmd returns the transaction commands for the group module
+   func (a AppModuleBasic)
+
+   GetTxCmd() *cobra.Command {
+       return cli.TxCmd(a.Name(), a.ac)
+   }
+
+   // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+   func (a AppModuleBasic)
+
+   RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+       if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+       panic(err)
+   }
+   }
+
+   // RegisterInterfaces registers the group module's interface types
+   func (AppModuleBasic)
+
+   RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+       group.RegisterInterfaces(registry)
+   }
+
+   // RegisterLegacyAminoCodec registers the group module's types for the given codec.
+   func (AppModuleBasic)
+
+   RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+       group.RegisterLegacyAminoCodec(cdc)
+   }
+
+   // Name returns the group module's name.
+   func (AppModule)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // RegisterInvariants does nothing, there are no invariants to enforce
+   func (am AppModule)
+
+   RegisterInvariants(ir sdk.InvariantRegistry) {
+       keeper.RegisterInvariants(ir, am.keeper)
+   }
+
+   // InitGenesis performs genesis initialization for the group module. It returns
+   // no validator updates.
+   func (am AppModule)
+
+   InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+       am.keeper.InitGenesis(ctx, cdc, data)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ExportGenesis returns the exported genesis state as raw bytes for the group
+   // module.
+   func (am AppModule)
+
+   ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+   json.RawMessage {
+       gs := am.keeper.ExportGenesis(ctx, cdc)
+
+   return cdc.MustMarshalJSON(gs)
+   }
+
+   // RegisterServices registers a gRPC query service to respond to the
+   // module-specific gRPC queries.
+   func (am AppModule)
+
+   RegisterServices(cfg module.Configurator) {
+       group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+   group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+       m := keeper.NewMigrator(am.keeper)
+       if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+   }
+   }
+
+   // ConsensusVersion implements AppModule/ConsensusVersion.
+   func (AppModule)
+
+   ConsensusVersion()
+
+   uint64 {
+       return ConsensusVersion
+   }
+
+   // EndBlock implements the group module's EndBlock.
+   func (am AppModule)
+
+   EndBlock(ctx context.Context)
+
+   error {
+       c := sdk.UnwrapSDKContext(ctx)
+
+   return EndBlocker(c, am.keeper)
+   }
+
+   // ____________________________________________________________________________
+
+   // AppModuleSimulation functions
+
+   // GenerateGenesisState creates a randomized GenState of the group module.
+   func (AppModule)
+
+   GenerateGenesisState(simState *module.SimulationState) {
+       simulation.RandomizedGenState(simState)
+   }
+
+   // RegisterStoreDecoder registers a decoder for group module's types
+   func (am AppModule)
+
+   RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+       sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+   }
+
+   // WeightedOperations returns the all the gov module operations with their respective weights.
+   func (am AppModule)
+
+   WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+       return simulation.WeightedOperations(
+   		am.registry,
+   		simState.AppParams, simState.Cdc, simState.TxConfig,
+   		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+   	)
+   }
+
+   //
+   // App Wiring Setup
+   //
+
+   func init() {
+       appmodule.Register(
+   		&modulev1.Module{
+   },
+   		appmodule.Provide(ProvideModule),
+   	)
+   }
+
+   type GroupInputs struct {
+       depinject.In
+
+   	Config           *modulev1.Module
+   	Key              *store.KVStoreKey
+   	Cdc              codec.Codec
+   	AccountKeeper    group.AccountKeeper
+   	BankKeeper       group.BankKeeper
+   	Registry         cdctypes.InterfaceRegistry
+   	MsgServiceRouter baseapp.MessageRouter
+   }
+
+   type GroupOutputs struct {
+       depinject.Out
+
+   	GroupKeeper keeper.Keeper
+   	Module      appmodule.AppModule
+   }
+
+   func ProvideModule(in GroupInputs)
+
+   GroupOutputs {
+   	/*
+   		Example of setting group params:
+   		in.Config.MaxMetadataLen = 1000
+   		in.Config.MaxExecutionPeriod = "1209600s"
+   	*/
+       k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+       MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+       MaxMetadataLen: in.Config.MaxMetadataLen
+   })
+       m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+   return GroupOutputs{
+       GroupKeeper: k,
+       Module: m
+   }
+   }
+   ```
+
+   Define an `init()` function for defining the `providers` of the module configuration:\
+   This registers the module configuration message and the wiring of the module.
+
+   ```go expandable
+   package module
+
+   import (
+       
+   	"context"
+       "encoding/json"
+       "fmt"
+
+   	abci "github.com/cometbft/cometbft/abci/types"
+   	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+       "github.com/spf13/cobra"
+
+   	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+       "cosmossdk.io/core/address"
+       "cosmossdk.io/core/appmodule"
+       "cosmossdk.io/depinject"
+
+   	store "cosmossdk.io/store/types"
+       "github.com/cosmos/cosmos-sdk/baseapp"
+   	sdkclient "github.com/cosmos/cosmos-sdk/client"
+       "github.com/cosmos/cosmos-sdk/codec"
+   	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+   	sdk "github.com/cosmos/cosmos-sdk/types"
+       "github.com/cosmos/cosmos-sdk/types/module"
+   	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+       "github.com/cosmos/cosmos-sdk/x/group"
+       "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+       "github.com/cosmos/cosmos-sdk/x/group/keeper"
+       "github.com/cosmos/cosmos-sdk/x/group/simulation"
+   )
+
+   // ConsensusVersion defines the current x/group module consensus version.
+   const ConsensusVersion = 2
+
+   var (
+   	_ module.AppModuleBasic      = AppModuleBasic{
+   }
+   	_ module.AppModuleSimulation = AppModule{
+   }
+   )
+
+   type AppModule struct {
+       AppModuleBasic
+   	keeper     keeper.Keeper
+   	bankKeeper group.BankKeeper
+   	accKeeper  group.AccountKeeper
+   	registry   cdctypes.InterfaceRegistry
+   }
+
+   // NewAppModule creates a new AppModule object
+   func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+   AppModule {
+       return AppModule{
+       AppModuleBasic: AppModuleBasic{
+       cdc: cdc, ac: ak.AddressCodec()
+   },
+   		keeper:         keeper,
+   		bankKeeper:     bk,
+   		accKeeper:      ak,
+   		registry:       registry,
+   }
+   }
+
+   var (
+   	_ appmodule.AppModule     = AppModule{
+   }
+   	_ appmodule.HasEndBlocker = AppModule{
+   }
+   )
+
+   // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+   func (am AppModule)
+
+   IsOnePerModuleType() {
+   }
+
+   // IsAppModule implements the appmodule.AppModule interface.
+   func (am AppModule)
+
+   IsAppModule() {
+   }
+
+   type AppModuleBasic struct {
+       cdc codec.Codec
+   	ac  address.Codec
+   }
+
+   // Name returns the group module's name.
+   func (AppModuleBasic)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // DefaultGenesis returns default genesis state as raw bytes for the group
+   // module.
+   func (AppModuleBasic)
+
+   DefaultGenesis(cdc codec.JSONCodec)
+
+   json.RawMessage {
+       return cdc.MustMarshalJSON(group.NewGenesisState())
+   }
+
+   // ValidateGenesis performs genesis state validation for the group module.
+   func (AppModuleBasic)
+
+   ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+   error {
+       var data group.GenesisState
+       if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+       return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+   }
+
+   return data.Validate()
+   }
+
+   // GetQueryCmd returns the cli query commands for the group module
+   func (a AppModuleBasic)
+
+   GetQueryCmd() *cobra.Command {
+       return cli.QueryCmd(a.Name())
+   }
+
+   // GetTxCmd returns the transaction commands for the group module
+   func (a AppModuleBasic)
+
+   GetTxCmd() *cobra.Command {
+       return cli.TxCmd(a.Name(), a.ac)
+   }
+
+   // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+   func (a AppModuleBasic)
+
+   RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+       if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+       panic(err)
+   }
+   }
+
+   // RegisterInterfaces registers the group module's interface types
+   func (AppModuleBasic)
+
+   RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+       group.RegisterInterfaces(registry)
+   }
+
+   // RegisterLegacyAminoCodec registers the group module's types for the given codec.
+   func (AppModuleBasic)
+
+   RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+       group.RegisterLegacyAminoCodec(cdc)
+   }
+
+   // Name returns the group module's name.
+   func (AppModule)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // RegisterInvariants does nothing, there are no invariants to enforce
+   func (am AppModule)
+
+   RegisterInvariants(ir sdk.InvariantRegistry) {
+       keeper.RegisterInvariants(ir, am.keeper)
+   }
+
+   // InitGenesis performs genesis initialization for the group module. It returns
+   // no validator updates.
+   func (am AppModule)
+
+   InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+       am.keeper.InitGenesis(ctx, cdc, data)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ExportGenesis returns the exported genesis state as raw bytes for the group
+   // module.
+   func (am AppModule)
+
+   ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+   json.RawMessage {
+       gs := am.keeper.ExportGenesis(ctx, cdc)
+
+   return cdc.MustMarshalJSON(gs)
+   }
+
+   // RegisterServices registers a gRPC query service to respond to the
+   // module-specific gRPC queries.
+   func (am AppModule)
+
+   RegisterServices(cfg module.Configurator) {
+       group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+   group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+       m := keeper.NewMigrator(am.keeper)
+       if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+   }
+   }
+
+   // ConsensusVersion implements AppModule/ConsensusVersion.
+   func (AppModule)
+
+   ConsensusVersion()
+
+   uint64 {
+       return ConsensusVersion
+   }
+
+   // EndBlock implements the group module's EndBlock.
+   func (am AppModule)
+
+   EndBlock(ctx context.Context)
+
+   error {
+       c := sdk.UnwrapSDKContext(ctx)
+
+   return EndBlocker(c, am.keeper)
+   }
+
+   // ____________________________________________________________________________
+
+   // AppModuleSimulation functions
+
+   // GenerateGenesisState creates a randomized GenState of the group module.
+   func (AppModule)
+
+   GenerateGenesisState(simState *module.SimulationState) {
+       simulation.RandomizedGenState(simState)
+   }
+
+   // RegisterStoreDecoder registers a decoder for group module's types
+   func (am AppModule)
+
+   RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+       sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+   }
+
+   // WeightedOperations returns the all the gov module operations with their respective weights.
+   func (am AppModule)
+
+   WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+       return simulation.WeightedOperations(
+   		am.registry,
+   		simState.AppParams, simState.Cdc, simState.TxConfig,
+   		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+   	)
+   }
+
+   //
+   // App Wiring Setup
+   //
+
+   func init() {
+       appmodule.Register(
+   		&modulev1.Module{
+   },
+   		appmodule.Provide(ProvideModule),
+   	)
+   }
+
+   type GroupInputs struct {
+       depinject.In
+
+   	Config           *modulev1.Module
+   	Key              *store.KVStoreKey
+   	Cdc              codec.Codec
+   	AccountKeeper    group.AccountKeeper
+   	BankKeeper       group.BankKeeper
+   	Registry         cdctypes.InterfaceRegistry
+   	MsgServiceRouter baseapp.MessageRouter
+   }
+
+   type GroupOutputs struct {
+       depinject.Out
+
+   	GroupKeeper keeper.Keeper
+   	Module      appmodule.AppModule
+   }
+
+   func ProvideModule(in GroupInputs)
+
+   GroupOutputs {
+   	/*
+   		Example of setting group params:
+   		in.Config.MaxMetadataLen = 1000
+   		in.Config.MaxExecutionPeriod = "1209600s"
+   	*/
+       k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+       MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+       MaxMetadataLen: in.Config.MaxMetadataLen
+   })
+       m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+   return GroupOutputs{
+       GroupKeeper: k,
+       Module: m
+   }
+   }
+   ```
+
+2. Ensure that the module implements the `appmodule.AppModule` interface:
+
+   ```go expandable
+   package module
+
+   import (
+       
+   	"context"
+       "encoding/json"
+       "fmt"
+
+   	abci "github.com/cometbft/cometbft/abci/types"
+   	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+       "github.com/spf13/cobra"
+
+   	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+       "cosmossdk.io/core/appmodule"
+       "cosmossdk.io/depinject"
+       "github.com/cosmos/cosmos-sdk/baseapp"
+   	sdkclient "github.com/cosmos/cosmos-sdk/client"
+       "github.com/cosmos/cosmos-sdk/codec"
+   	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+   	store "github.com/cosmos/cosmos-sdk/store/types"
+   	sdk "github.com/cosmos/cosmos-sdk/types"
+       "github.com/cosmos/cosmos-sdk/types/module"
+   	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+       "github.com/cosmos/cosmos-sdk/x/group"
+       "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+       "github.com/cosmos/cosmos-sdk/x/group/keeper"
+       "github.com/cosmos/cosmos-sdk/x/group/simulation"
+   )
+
+   // ConsensusVersion defines the current x/group module consensus version.
+   const ConsensusVersion = 2
+
+   var (
+   	_ module.EndBlockAppModule   = AppModule{
+   }
+   	_ module.AppModuleBasic      = AppModuleBasic{
+   }
+   	_ module.AppModuleSimulation = AppModule{
+   }
+   )
+
+   type AppModule struct {
+       AppModuleBasic
+   	keeper     keeper.Keeper
+   	bankKeeper group.BankKeeper
+   	accKeeper  group.AccountKeeper
+   	registry   cdctypes.InterfaceRegistry
+   }
+
+   // NewAppModule creates a new AppModule object
+   func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+   AppModule {
+       return AppModule{
+       AppModuleBasic: AppModuleBasic{
+       cdc: cdc
+   },
+   		keeper:         keeper,
+   		bankKeeper:     bk,
+   		accKeeper:      ak,
+   		registry:       registry,
+   }
+   }
+
+   var _ appmodule.AppModule = AppModule{
+   }
+
+   // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+   func (am AppModule)
+
+   IsOnePerModuleType() {
+   }
+
+   // IsAppModule implements the appmodule.AppModule interface.
+   func (am AppModule)
+
+   IsAppModule() {
+   }
+
+   type AppModuleBasic struct {
+       cdc codec.Codec
+   }
+
+   // Name returns the group module's name.
+   func (AppModuleBasic)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // DefaultGenesis returns default genesis state as raw bytes for the group
+   // module.
+   func (AppModuleBasic)
+
+   DefaultGenesis(cdc codec.JSONCodec)
+
+   json.RawMessage {
+       return cdc.MustMarshalJSON(group.NewGenesisState())
+   }
+
+   // ValidateGenesis performs genesis state validation for the group module.
+   func (AppModuleBasic)
+
+   ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+   error {
+       var data group.GenesisState
+       if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+       return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+   }
+
+   return data.Validate()
+   }
+
+   // GetQueryCmd returns the cli query commands for the group module
+   func (a AppModuleBasic)
+
+   GetQueryCmd() *cobra.Command {
+       return cli.QueryCmd(a.Name())
+   }
+
+   // GetTxCmd returns the transaction commands for the group module
+   func (a AppModuleBasic)
+
+   GetTxCmd() *cobra.Command {
+       return cli.TxCmd(a.Name())
+   }
+
+   // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+   func (a AppModuleBasic)
+
+   RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+       if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+       panic(err)
+   }
+   }
+
+   // RegisterInterfaces registers the group module's interface types
+   func (AppModuleBasic)
+
+   RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+       group.RegisterInterfaces(registry)
+   }
+
+   // RegisterLegacyAminoCodec registers the group module's types for the given codec.
+   func (AppModuleBasic)
+
+   RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+       group.RegisterLegacyAminoCodec(cdc)
+   }
+
+   // Name returns the group module's name.
+   func (AppModule)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // RegisterInvariants does nothing, there are no invariants to enforce
+   func (am AppModule)
+
+   RegisterInvariants(ir sdk.InvariantRegistry) {
+       keeper.RegisterInvariants(ir, am.keeper)
+   }
+
+   func (am AppModule)
+
+   NewHandler()
+
+   sdk.Handler {
+       return nil
+   }
+
+   // InitGenesis performs genesis initialization for the group module. It returns
+   // no validator updates.
+   func (am AppModule)
+
+   InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+       am.keeper.InitGenesis(ctx, cdc, data)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ExportGenesis returns the exported genesis state as raw bytes for the group
+   // module.
+   func (am AppModule)
+
+   ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+   json.RawMessage {
+       gs := am.keeper.ExportGenesis(ctx, cdc)
+
+   return cdc.MustMarshalJSON(gs)
+   }
+
+   // RegisterServices registers a gRPC query service to respond to the
+   // module-specific gRPC queries.
+   func (am AppModule)
+
+   RegisterServices(cfg module.Configurator) {
+       group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+   group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+       m := keeper.NewMigrator(am.keeper)
+       if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+   }
+   }
+
+   // ConsensusVersion implements AppModule/ConsensusVersion.
+   func (AppModule)
+
+   ConsensusVersion()
+
+   uint64 {
+       return ConsensusVersion
+   }
+
+   // EndBlock implements the group module's EndBlock.
+   func (am AppModule)
+
+   EndBlock(ctx sdk.Context, _ abci.RequestEndBlock) []abci.ValidatorUpdate {
+       EndBlocker(ctx, am.keeper)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ____________________________________________________________________________
+
+   // AppModuleSimulation functions
+
+   // GenerateGenesisState creates a randomized GenState of the group module.
+   func (AppModule)
+
+   GenerateGenesisState(simState *module.SimulationState) {
+       simulation.RandomizedGenState(simState)
+   }
+
+   // RegisterStoreDecoder registers a decoder for group module's types
+   func (am AppModule)
+
+   RegisterStoreDecoder(sdr sdk.StoreDecoderRegistry) {
+       sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+   }
+
+   // WeightedOperations returns the all the gov module operations with their respective weights.
+   func (am AppModule)
+
+   WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+       return simulation.WeightedOperations(
+   		am.registry,
+   		simState.AppParams, simState.Cdc,
+   		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+   	)
+   }
+
+   //
+   // App Wiring Setup
+   //
+
+   func init() {
+       appmodule.Register(
+   		&modulev1.Module{
+   },
+   		appmodule.Provide(ProvideModule),
+   	)
+   }
+
+   type GroupInputs struct {
+       depinject.In
+
+   	Config           *modulev1.Module
+   	Key              *store.KVStoreKey
+   	Cdc              codec.Codec
+   	AccountKeeper    group.AccountKeeper
+   	BankKeeper       group.BankKeeper
+   	Registry         cdctypes.InterfaceRegistry
+   	MsgServiceRouter *baseapp.MsgServiceRouter
+   }
+
+   type GroupOutputs struct {
+       depinject.Out
+
+   	GroupKeeper keeper.Keeper
+   	Module      appmodule.AppModule
+   }
+
+   func ProvideModule(in GroupInputs)
+
+   GroupOutputs {
+   	/*
+   		Example of setting group params:
+   		in.Config.MaxMetadataLen = 1000
+   		in.Config.MaxExecutionPeriod = "1209600s"
+   	*/
+       k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+       MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+       MaxMetadataLen: in.Config.MaxMetadataLen
+   })
+       m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+   return GroupOutputs{
+       GroupKeeper: k,
+       Module: m
+   }
+   }
+   ```
+
+3. Define a struct that inherits `depinject.In` and define the module inputs (i.e. module dependencies):
+
+   * `depinject` provides the right dependencies to the module.
+   * `depinject` also checks that all dependencies are provided.
+
+   :::tip
+   For making a dependency optional, add the `optional:"true"` struct tag.\
+
+   ```go expandable
+   package module
+
+   import (
+       
+   	"context"
+       "encoding/json"
+       "fmt"
+
+   	abci "github.com/cometbft/cometbft/abci/types"
+   	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+       "github.com/spf13/cobra"
+
+   	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+       "cosmossdk.io/core/address"
+       "cosmossdk.io/core/appmodule"
+       "cosmossdk.io/depinject"
+
+   	store "cosmossdk.io/store/types"
+       "github.com/cosmos/cosmos-sdk/baseapp"
+   	sdkclient "github.com/cosmos/cosmos-sdk/client"
+       "github.com/cosmos/cosmos-sdk/codec"
+   	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+   	sdk "github.com/cosmos/cosmos-sdk/types"
+       "github.com/cosmos/cosmos-sdk/types/module"
+   	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+       "github.com/cosmos/cosmos-sdk/x/group"
+       "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+       "github.com/cosmos/cosmos-sdk/x/group/keeper"
+       "github.com/cosmos/cosmos-sdk/x/group/simulation"
+   )
+
+   // ConsensusVersion defines the current x/group module consensus version.
+   const ConsensusVersion = 2
+
+   var (
+   	_ module.AppModuleBasic      = AppModuleBasic{
+   }
+   	_ module.AppModuleSimulation = AppModule{
+   }
+   )
+
+   type AppModule struct {
+       AppModuleBasic
+   	keeper     keeper.Keeper
+   	bankKeeper group.BankKeeper
+   	accKeeper  group.AccountKeeper
+   	registry   cdctypes.InterfaceRegistry
+   }
+
+   // NewAppModule creates a new AppModule object
+   func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+   AppModule {
+       return AppModule{
+       AppModuleBasic: AppModuleBasic{
+       cdc: cdc, ac: ak.AddressCodec()
+   },
+   		keeper:         keeper,
+   		bankKeeper:     bk,
+   		accKeeper:      ak,
+   		registry:       registry,
+   }
+   }
+
+   var (
+   	_ appmodule.AppModule     = AppModule{
+   }
+   	_ appmodule.HasEndBlocker = AppModule{
+   }
+   )
+
+   // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+   func (am AppModule)
+
+   IsOnePerModuleType() {
+   }
+
+   // IsAppModule implements the appmodule.AppModule interface.
+   func (am AppModule)
+
+   IsAppModule() {
+   }
+
+   type AppModuleBasic struct {
+       cdc codec.Codec
+   	ac  address.Codec
+   }
+
+   // Name returns the group module's name.
+   func (AppModuleBasic)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // DefaultGenesis returns default genesis state as raw bytes for the group
+   // module.
+   func (AppModuleBasic)
+
+   DefaultGenesis(cdc codec.JSONCodec)
+
+   json.RawMessage {
+       return cdc.MustMarshalJSON(group.NewGenesisState())
+   }
+
+   // ValidateGenesis performs genesis state validation for the group module.
+   func (AppModuleBasic)
+
+   ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+   error {
+       var data group.GenesisState
+       if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+       return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+   }
+
+   return data.Validate()
+   }
+
+   // GetQueryCmd returns the cli query commands for the group module
+   func (a AppModuleBasic)
+
+   GetQueryCmd() *cobra.Command {
+       return cli.QueryCmd(a.Name())
+   }
+
+   // GetTxCmd returns the transaction commands for the group module
+   func (a AppModuleBasic)
+
+   GetTxCmd() *cobra.Command {
+       return cli.TxCmd(a.Name(), a.ac)
+   }
+
+   // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+   func (a AppModuleBasic)
+
+   RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+       if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+       panic(err)
+   }
+   }
+
+   // RegisterInterfaces registers the group module's interface types
+   func (AppModuleBasic)
+
+   RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+       group.RegisterInterfaces(registry)
+   }
+
+   // RegisterLegacyAminoCodec registers the group module's types for the given codec.
+   func (AppModuleBasic)
+
+   RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+       group.RegisterLegacyAminoCodec(cdc)
+   }
+
+   // Name returns the group module's name.
+   func (AppModule)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // RegisterInvariants does nothing, there are no invariants to enforce
+   func (am AppModule)
+
+   RegisterInvariants(ir sdk.InvariantRegistry) {
+       keeper.RegisterInvariants(ir, am.keeper)
+   }
+
+   // InitGenesis performs genesis initialization for the group module. It returns
+   // no validator updates.
+   func (am AppModule)
+
+   InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+       am.keeper.InitGenesis(ctx, cdc, data)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ExportGenesis returns the exported genesis state as raw bytes for the group
+   // module.
+   func (am AppModule)
+
+   ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+   json.RawMessage {
+       gs := am.keeper.ExportGenesis(ctx, cdc)
+
+   return cdc.MustMarshalJSON(gs)
+   }
+
+   // RegisterServices registers a gRPC query service to respond to the
+   // module-specific gRPC queries.
+   func (am AppModule)
+
+   RegisterServices(cfg module.Configurator) {
+       group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+   group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+       m := keeper.NewMigrator(am.keeper)
+       if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+   }
+   }
+
+   // ConsensusVersion implements AppModule/ConsensusVersion.
+   func (AppModule)
+
+   ConsensusVersion()
+
+   uint64 {
+       return ConsensusVersion
+   }
+
+   // EndBlock implements the group module's EndBlock.
+   func (am AppModule)
+
+   EndBlock(ctx context.Context)
+
+   error {
+       c := sdk.UnwrapSDKContext(ctx)
+
+   return EndBlocker(c, am.keeper)
+   }
+
+   // ____________________________________________________________________________
+
+   // AppModuleSimulation functions
+
+   // GenerateGenesisState creates a randomized GenState of the group module.
+   func (AppModule)
+
+   GenerateGenesisState(simState *module.SimulationState) {
+       simulation.RandomizedGenState(simState)
+   }
+
+   // RegisterStoreDecoder registers a decoder for group module's types
+   func (am AppModule)
+
+   RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+       sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+   }
+
+   // WeightedOperations returns the all the gov module operations with their respective weights.
+   func (am AppModule)
+
+   WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+       return simulation.WeightedOperations(
+   		am.registry,
+   		simState.AppParams, simState.Cdc, simState.TxConfig,
+   		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+   	)
+   }
+
+   //
+   // App Wiring Setup
+   //
+
+   func init() {
+       appmodule.Register(
+   		&modulev1.Module{
+   },
+   		appmodule.Provide(ProvideModule),
+   	)
+   }
+
+   type GroupInputs struct {
+       depinject.In
+
+   	Config           *modulev1.Module
+   	Key              *store.KVStoreKey
+   	Cdc              codec.Codec
+   	AccountKeeper    group.AccountKeeper
+   	BankKeeper       group.BankKeeper
+   	Registry         cdctypes.InterfaceRegistry
+   	MsgServiceRouter baseapp.MessageRouter
+   }
+
+   type GroupOutputs struct {
+       depinject.Out
+
+   	GroupKeeper keeper.Keeper
+   	Module      appmodule.AppModule
+   }
+
+   func ProvideModule(in GroupInputs)
+
+   GroupOutputs {
+   	/*
+   		Example of setting group params:
+   		in.Config.MaxMetadataLen = 1000
+   		in.Config.MaxExecutionPeriod = "1209600s"
+   	*/
+       k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+       MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+       MaxMetadataLen: in.Config.MaxMetadataLen
+   })
+       m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+   return GroupOutputs{
+       GroupKeeper: k,
+       Module: m
+   }
+   }
+   ```
+
+4. Define the module outputs with a public struct that inherits `depinject.Out`:
+   The module outputs are the dependencies that the module provides to other modules. It is usually the module itself and its keeper.
+
+   ```go expandable
+   package module
+
+   import (
+       
+   	"context"
+       "encoding/json"
+       "fmt"
+
+   	abci "github.com/cometbft/cometbft/abci/types"
+   	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+       "github.com/spf13/cobra"
+
+   	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+       "cosmossdk.io/core/address"
+       "cosmossdk.io/core/appmodule"
+       "cosmossdk.io/depinject"
+
+   	store "cosmossdk.io/store/types"
+       "github.com/cosmos/cosmos-sdk/baseapp"
+   	sdkclient "github.com/cosmos/cosmos-sdk/client"
+       "github.com/cosmos/cosmos-sdk/codec"
+   	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+   	sdk "github.com/cosmos/cosmos-sdk/types"
+       "github.com/cosmos/cosmos-sdk/types/module"
+   	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+       "github.com/cosmos/cosmos-sdk/x/group"
+       "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+       "github.com/cosmos/cosmos-sdk/x/group/keeper"
+       "github.com/cosmos/cosmos-sdk/x/group/simulation"
+   )
+
+   // ConsensusVersion defines the current x/group module consensus version.
+   const ConsensusVersion = 2
+
+   var (
+   	_ module.AppModuleBasic      = AppModuleBasic{
+   }
+   	_ module.AppModuleSimulation = AppModule{
+   }
+   )
+
+   type AppModule struct {
+       AppModuleBasic
+   	keeper     keeper.Keeper
+   	bankKeeper group.BankKeeper
+   	accKeeper  group.AccountKeeper
+   	registry   cdctypes.InterfaceRegistry
+   }
+
+   // NewAppModule creates a new AppModule object
+   func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+   AppModule {
+       return AppModule{
+       AppModuleBasic: AppModuleBasic{
+       cdc: cdc, ac: ak.AddressCodec()
+   },
+   		keeper:         keeper,
+   		bankKeeper:     bk,
+   		accKeeper:      ak,
+   		registry:       registry,
+   }
+   }
+
+   var (
+   	_ appmodule.AppModule     = AppModule{
+   }
+   	_ appmodule.HasEndBlocker = AppModule{
+   }
+   )
+
+   // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+   func (am AppModule)
+
+   IsOnePerModuleType() {
+   }
+
+   // IsAppModule implements the appmodule.AppModule interface.
+   func (am AppModule)
+
+   IsAppModule() {
+   }
+
+   type AppModuleBasic struct {
+       cdc codec.Codec
+   	ac  address.Codec
+   }
+
+   // Name returns the group module's name.
+   func (AppModuleBasic)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // DefaultGenesis returns default genesis state as raw bytes for the group
+   // module.
+   func (AppModuleBasic)
+
+   DefaultGenesis(cdc codec.JSONCodec)
+
+   json.RawMessage {
+       return cdc.MustMarshalJSON(group.NewGenesisState())
+   }
+
+   // ValidateGenesis performs genesis state validation for the group module.
+   func (AppModuleBasic)
+
+   ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+   error {
+       var data group.GenesisState
+       if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+       return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+   }
+
+   return data.Validate()
+   }
+
+   // GetQueryCmd returns the cli query commands for the group module
+   func (a AppModuleBasic)
+
+   GetQueryCmd() *cobra.Command {
+       return cli.QueryCmd(a.Name())
+   }
+
+   // GetTxCmd returns the transaction commands for the group module
+   func (a AppModuleBasic)
+
+   GetTxCmd() *cobra.Command {
+       return cli.TxCmd(a.Name(), a.ac)
+   }
+
+   // RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+   func (a AppModuleBasic)
+
+   RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+       if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+       panic(err)
+   }
+   }
+
+   // RegisterInterfaces registers the group module's interface types
+   func (AppModuleBasic)
+
+   RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+       group.RegisterInterfaces(registry)
+   }
+
+   // RegisterLegacyAminoCodec registers the group module's types for the given codec.
+   func (AppModuleBasic)
+
+   RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+       group.RegisterLegacyAminoCodec(cdc)
+   }
+
+   // Name returns the group module's name.
+   func (AppModule)
+
+   Name()
+
+   string {
+       return group.ModuleName
+   }
+
+   // RegisterInvariants does nothing, there are no invariants to enforce
+   func (am AppModule)
+
+   RegisterInvariants(ir sdk.InvariantRegistry) {
+       keeper.RegisterInvariants(ir, am.keeper)
+   }
+
+   // InitGenesis performs genesis initialization for the group module. It returns
+   // no validator updates.
+   func (am AppModule)
+
+   InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+       am.keeper.InitGenesis(ctx, cdc, data)
+
+   return []abci.ValidatorUpdate{
+   }
+   }
+
+   // ExportGenesis returns the exported genesis state as raw bytes for the group
+   // module.
+   func (am AppModule)
+
+   ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+   json.RawMessage {
+       gs := am.keeper.ExportGenesis(ctx, cdc)
+
+   return cdc.MustMarshalJSON(gs)
+   }
+
+   // RegisterServices registers a gRPC query service to respond to the
+   // module-specific gRPC queries.
+   func (am AppModule)
+
+   RegisterServices(cfg module.Configurator) {
+       group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+   group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+       m := keeper.NewMigrator(am.keeper)
+       if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+   }
+   }
+
+   // ConsensusVersion implements AppModule/ConsensusVersion.
+   func (AppModule)
+
+   ConsensusVersion()
+
+   uint64 {
+       return ConsensusVersion
+   }
+
+   // EndBlock implements the group module's EndBlock.
+   func (am AppModule)
+
+   EndBlock(ctx context.Context)
+
+   error {
+       c := sdk.UnwrapSDKContext(ctx)
+
+   return EndBlocker(c, am.keeper)
+   }
+
+   // ____________________________________________________________________________
+
+   // AppModuleSimulation functions
+
+   // GenerateGenesisState creates a randomized GenState of the group module.
+   func (AppModule)
+
+   GenerateGenesisState(simState *module.SimulationState) {
+       simulation.RandomizedGenState(simState)
+   }
+
+   // RegisterStoreDecoder registers a decoder for group module's types
+   func (am AppModule)
+
+   RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+       sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+   }
+
+   // WeightedOperations returns the all the gov module operations with their respective weights.
+   func (am AppModule)
+
+   WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+       return simulation.WeightedOperations(
+   		am.registry,
+   		simState.AppParams, simState.Cdc, simState.TxConfig,
+   		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+   	)
+   }
+
+   //
+   // App Wiring Setup
+   //
+
+   func init() {
+       appmodule.Register(
+   		&modulev1.Module{
+   },
+   		appmodule.Provide(ProvideModule),
+   	)
+   }
+
+   type GroupInputs struct {
+       depinject.In
+
+   	Config           *modulev1.Module
+   	Key              *store.KVStoreKey
+   	Cdc              codec.Codec
+   	AccountKeeper    group.AccountKeeper
+   	BankKeeper       group.BankKeeper
+   	Registry         cdctypes.InterfaceRegistry
+   	MsgServiceRouter baseapp.MessageRouter
+   }
+
+   type GroupOutputs struct {
+       depinject.Out
+
+   	GroupKeeper keeper.Keeper
+   	Module      appmodule.AppModule
+   }
+
+   func ProvideModule(in GroupInputs)
+
+   GroupOutputs {
+   	/*
+   		Example of setting group params:
+   		in.Config.MaxMetadataLen = 1000
+   		in.Config.MaxExecutionPeriod = "1209600s"
+   	*/
+       k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+       MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+       MaxMetadataLen: in.Config.MaxMetadataLen
+   })
+       m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+   return GroupOutputs{
+       GroupKeeper: k,
+       Module: m
+   }
+   }
+   ```
+
+5. Create a function named `ProvideModule` (as called in 1.) and use the inputs for instantiating the module outputs.
+
+```go expandable
+package module
+
+import (
+    
+	"context"
+    "encoding/json"
+    "fmt"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+    "github.com/spf13/cobra"
+
+	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+    "cosmossdk.io/core/address"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/depinject"
+
+	store "cosmossdk.io/store/types"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+    "github.com/cosmos/cosmos-sdk/x/group"
+    "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+    "github.com/cosmos/cosmos-sdk/x/group/keeper"
+    "github.com/cosmos/cosmos-sdk/x/group/simulation"
+)
+
+// ConsensusVersion defines the current x/group module consensus version.
+const ConsensusVersion = 2
+
+var (
+	_ module.AppModuleBasic      = AppModuleBasic{
+}
+	_ module.AppModuleSimulation = AppModule{
+}
+)
+
+type AppModule struct {
+    AppModuleBasic
+	keeper     keeper.Keeper
+	bankKeeper group.BankKeeper
+	accKeeper  group.AccountKeeper
+	registry   cdctypes.InterfaceRegistry
+}
+
+// NewAppModule creates a new AppModule object
+func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+AppModule {
+    return AppModule{
+    AppModuleBasic: AppModuleBasic{
+    cdc: cdc, ac: ak.AddressCodec()
+},
+		keeper:         keeper,
+		bankKeeper:     bk,
+		accKeeper:      ak,
+		registry:       registry,
+}
+}
+
+var (
+	_ appmodule.AppModule     = AppModule{
+}
+	_ appmodule.HasEndBlocker = AppModule{
+}
+)
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule)
+
+IsOnePerModuleType() {
+}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule)
+
+IsAppModule() {
+}
+
+type AppModuleBasic struct {
+    cdc codec.Codec
+	ac  address.Codec
+}
+
+// Name returns the group module's name.
+func (AppModuleBasic)
+
+Name()
+
+string {
+    return group.ModuleName
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the group
+// module.
+func (AppModuleBasic)
+
+DefaultGenesis(cdc codec.JSONCodec)
+
+json.RawMessage {
+    return cdc.MustMarshalJSON(group.NewGenesisState())
+}
+
+// ValidateGenesis performs genesis state validation for the group module.
+func (AppModuleBasic)
+
+ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+error {
+    var data group.GenesisState
+    if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+    return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+}
+
+return data.Validate()
+}
+
+// GetQueryCmd returns the cli query commands for the group module
+func (a AppModuleBasic)
+
+GetQueryCmd() *cobra.Command {
+    return cli.QueryCmd(a.Name())
+}
+
+// GetTxCmd returns the transaction commands for the group module
+func (a AppModuleBasic)
+
+GetTxCmd() *cobra.Command {
+    return cli.TxCmd(a.Name(), a.ac)
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+func (a AppModuleBasic)
+
+RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+    if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+    panic(err)
+}
+}
+
+// RegisterInterfaces registers the group module's interface types
+func (AppModuleBasic)
+
+RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+    group.RegisterInterfaces(registry)
+}
+
+// RegisterLegacyAminoCodec registers the group module's types for the given codec.
+func (AppModuleBasic)
+
+RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    group.RegisterLegacyAminoCodec(cdc)
+}
+
+// Name returns the group module's name.
+func (AppModule)
+
+Name()
+
+string {
+    return group.ModuleName
+}
+
+// RegisterInvariants does nothing, there are no invariants to enforce
+func (am AppModule)
+
+RegisterInvariants(ir sdk.InvariantRegistry) {
+    keeper.RegisterInvariants(ir, am.keeper)
+}
+
+// InitGenesis performs genesis initialization for the group module. It returns
+// no validator updates.
+func (am AppModule)
+
+InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+    am.keeper.InitGenesis(ctx, cdc, data)
+
+return []abci.ValidatorUpdate{
+}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the group
+// module.
+func (am AppModule)
+
+ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+json.RawMessage {
+    gs := am.keeper.ExportGenesis(ctx, cdc)
+
+return cdc.MustMarshalJSON(gs)
+}
+
+// RegisterServices registers a gRPC query service to respond to the
+// module-specific gRPC queries.
+func (am AppModule)
+
+RegisterServices(cfg module.Configurator) {
+    group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+    m := keeper.NewMigrator(am.keeper)
+    if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+}
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule)
+
+ConsensusVersion()
+
+uint64 {
+    return ConsensusVersion
+}
+
+// EndBlock implements the group module's EndBlock.
+func (am AppModule)
+
+EndBlock(ctx context.Context)
+
+error {
+    c := sdk.UnwrapSDKContext(ctx)
+
+return EndBlocker(c, am.keeper)
+}
+
+// ____________________________________________________________________________
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the group module.
+func (AppModule)
+
+GenerateGenesisState(simState *module.SimulationState) {
+    simulation.RandomizedGenState(simState)
+}
+
+// RegisterStoreDecoder registers a decoder for group module's types
+func (am AppModule)
+
+RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+    sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+}
+
+// WeightedOperations returns the all the gov module operations with their respective weights.
+func (am AppModule)
+
+WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+    return simulation.WeightedOperations(
+		am.registry,
+		simState.AppParams, simState.Cdc, simState.TxConfig,
+		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+	)
+}
+
+//
+// App Wiring Setup
+//
+
+func init() {
+    appmodule.Register(
+		&modulev1.Module{
+},
+		appmodule.Provide(ProvideModule),
+	)
+}
+
+type GroupInputs struct {
+    depinject.In
+
+	Config           *modulev1.Module
+	Key              *store.KVStoreKey
+	Cdc              codec.Codec
+	AccountKeeper    group.AccountKeeper
+	BankKeeper       group.BankKeeper
+	Registry         cdctypes.InterfaceRegistry
+	MsgServiceRouter baseapp.MessageRouter
+}
+
+type GroupOutputs struct {
+    depinject.Out
+
+	GroupKeeper keeper.Keeper
+	Module      appmodule.AppModule
+}
+
+func ProvideModule(in GroupInputs)
+
+GroupOutputs {
+	/*
+		Example of setting group params:
+		in.Config.MaxMetadataLen = 1000
+		in.Config.MaxExecutionPeriod = "1209600s"
+	*/
+    k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+    MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+    MaxMetadataLen: in.Config.MaxMetadataLen
+})
+    m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+return GroupOutputs{
+    GroupKeeper: k,
+    Module: m
+}
+}
+```
+
+The `ProvideModule` function should return an instance of `cosmossdk.io/core/appmodule.AppModule` which implements
+one or more app module extension interfaces for initializing the module.
+
+Following is the complete app wiring configuration for `group`:
+
+```go expandable
+package module
+
+import (
+    
+	"context"
+    "encoding/json"
+    "fmt"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+    "github.com/spf13/cobra"
+
+	modulev1 "cosmossdk.io/api/cosmos/group/module/v1"
+    "cosmossdk.io/core/address"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/depinject"
+
+	store "cosmossdk.io/store/types"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+    "github.com/cosmos/cosmos-sdk/x/group"
+    "github.com/cosmos/cosmos-sdk/x/group/client/cli"
+    "github.com/cosmos/cosmos-sdk/x/group/keeper"
+    "github.com/cosmos/cosmos-sdk/x/group/simulation"
+)
+
+// ConsensusVersion defines the current x/group module consensus version.
+const ConsensusVersion = 2
+
+var (
+	_ module.AppModuleBasic      = AppModuleBasic{
+}
+	_ module.AppModuleSimulation = AppModule{
+}
+)
+
+type AppModule struct {
+    AppModuleBasic
+	keeper     keeper.Keeper
+	bankKeeper group.BankKeeper
+	accKeeper  group.AccountKeeper
+	registry   cdctypes.InterfaceRegistry
+}
+
+// NewAppModule creates a new AppModule object
+func NewAppModule(cdc codec.Codec, keeper keeper.Keeper, ak group.AccountKeeper, bk group.BankKeeper, registry cdctypes.InterfaceRegistry)
+
+AppModule {
+    return AppModule{
+    AppModuleBasic: AppModuleBasic{
+    cdc: cdc, ac: ak.AddressCodec()
+},
+		keeper:         keeper,
+		bankKeeper:     bk,
+		accKeeper:      ak,
+		registry:       registry,
+}
+}
+
+var (
+	_ appmodule.AppModule     = AppModule{
+}
+	_ appmodule.HasEndBlocker = AppModule{
+}
+)
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule)
+
+IsOnePerModuleType() {
+}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule)
+
+IsAppModule() {
+}
+
+type AppModuleBasic struct {
+    cdc codec.Codec
+	ac  address.Codec
+}
+
+// Name returns the group module's name.
+func (AppModuleBasic)
+
+Name()
+
+string {
+    return group.ModuleName
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the group
+// module.
+func (AppModuleBasic)
+
+DefaultGenesis(cdc codec.JSONCodec)
+
+json.RawMessage {
+    return cdc.MustMarshalJSON(group.NewGenesisState())
+}
+
+// ValidateGenesis performs genesis state validation for the group module.
+func (AppModuleBasic)
+
+ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+error {
+    var data group.GenesisState
+    if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+    return fmt.Errorf("failed to unmarshal %s genesis state: %w", group.ModuleName, err)
+}
+
+return data.Validate()
+}
+
+// GetQueryCmd returns the cli query commands for the group module
+func (a AppModuleBasic)
+
+GetQueryCmd() *cobra.Command {
+    return cli.QueryCmd(a.Name())
+}
+
+// GetTxCmd returns the transaction commands for the group module
+func (a AppModuleBasic)
+
+GetTxCmd() *cobra.Command {
+    return cli.TxCmd(a.Name(), a.ac)
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the group module.
+func (a AppModuleBasic)
+
+RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+    if err := group.RegisterQueryHandlerClient(context.Background(), mux, group.NewQueryClient(clientCtx)); err != nil {
+    panic(err)
+}
+}
+
+// RegisterInterfaces registers the group module's interface types
+func (AppModuleBasic)
+
+RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+    group.RegisterInterfaces(registry)
+}
+
+// RegisterLegacyAminoCodec registers the group module's types for the given codec.
+func (AppModuleBasic)
+
+RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    group.RegisterLegacyAminoCodec(cdc)
+}
+
+// Name returns the group module's name.
+func (AppModule)
+
+Name()
+
+string {
+    return group.ModuleName
+}
+
+// RegisterInvariants does nothing, there are no invariants to enforce
+func (am AppModule)
+
+RegisterInvariants(ir sdk.InvariantRegistry) {
+    keeper.RegisterInvariants(ir, am.keeper)
+}
+
+// InitGenesis performs genesis initialization for the group module. It returns
+// no validator updates.
+func (am AppModule)
+
+InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+    am.keeper.InitGenesis(ctx, cdc, data)
+
+return []abci.ValidatorUpdate{
+}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the group
+// module.
+func (am AppModule)
+
+ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+json.RawMessage {
+    gs := am.keeper.ExportGenesis(ctx, cdc)
+
+return cdc.MustMarshalJSON(gs)
+}
+
+// RegisterServices registers a gRPC query service to respond to the
+// module-specific gRPC queries.
+func (am AppModule)
+
+RegisterServices(cfg module.Configurator) {
+    group.RegisterMsgServer(cfg.MsgServer(), am.keeper)
+
+group.RegisterQueryServer(cfg.QueryServer(), am.keeper)
+    m := keeper.NewMigrator(am.keeper)
+    if err := cfg.RegisterMigration(group.ModuleName, 1, m.Migrate1to2); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", group.ModuleName, err))
+}
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule)
+
+ConsensusVersion()
+
+uint64 {
+    return ConsensusVersion
+}
+
+// EndBlock implements the group module's EndBlock.
+func (am AppModule)
+
+EndBlock(ctx context.Context)
+
+error {
+    c := sdk.UnwrapSDKContext(ctx)
+
+return EndBlocker(c, am.keeper)
+}
+
+// ____________________________________________________________________________
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the group module.
+func (AppModule)
+
+GenerateGenesisState(simState *module.SimulationState) {
+    simulation.RandomizedGenState(simState)
+}
+
+// RegisterStoreDecoder registers a decoder for group module's types
+func (am AppModule)
+
+RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+    sdr[group.StoreKey] = simulation.NewDecodeStore(am.cdc)
+}
+
+// WeightedOperations returns the all the gov module operations with their respective weights.
+func (am AppModule)
+
+WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+    return simulation.WeightedOperations(
+		am.registry,
+		simState.AppParams, simState.Cdc, simState.TxConfig,
+		am.accKeeper, am.bankKeeper, am.keeper, am.cdc,
+	)
+}
+
+//
+// App Wiring Setup
+//
+
+func init() {
+    appmodule.Register(
+		&modulev1.Module{
+},
+		appmodule.Provide(ProvideModule),
+	)
+}
+
+type GroupInputs struct {
+    depinject.In
+
+	Config           *modulev1.Module
+	Key              *store.KVStoreKey
+	Cdc              codec.Codec
+	AccountKeeper    group.AccountKeeper
+	BankKeeper       group.BankKeeper
+	Registry         cdctypes.InterfaceRegistry
+	MsgServiceRouter baseapp.MessageRouter
+}
+
+type GroupOutputs struct {
+    depinject.Out
+
+	GroupKeeper keeper.Keeper
+	Module      appmodule.AppModule
+}
+
+func ProvideModule(in GroupInputs)
+
+GroupOutputs {
+	/*
+		Example of setting group params:
+		in.Config.MaxMetadataLen = 1000
+		in.Config.MaxExecutionPeriod = "1209600s"
+	*/
+    k := keeper.NewKeeper(in.Key, in.Cdc, in.MsgServiceRouter, in.AccountKeeper, group.Config{
+    MaxExecutionPeriod: in.Config.MaxExecutionPeriod.AsDuration(),
+    MaxMetadataLen: in.Config.MaxMetadataLen
+})
+    m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.Registry)
+
+return GroupOutputs{
+    GroupKeeper: k,
+    Module: m
+}
+}
+```
+
+The module is now ready to be used with `depinject` by a chain developer.
+
+## Integrate in an application
+
+The App Wiring is done in `app_config.go` / `app.yaml` and `app_di.go` and is explained in detail in the [overview of `app_di.go`](/docs/sdk/v0.53/building-apps/app-go-di).

@@ -15,7 +15,7 @@ The versioning system provides:
 
 ### Version Structure
 
-```
+```sh
 docs/
 ├── evm/
 │   ├── next/                  # Active development (EVM)
@@ -47,14 +47,29 @@ Docs now use product-specific dropdowns with per-product versions:
       {
         "dropdown": "EVM",
         "versions": [
-          { "version": "next", "tabs": [/* docs/evm/next/... */] },
-          { "version": "v0.4.x", "tabs": [/* docs/evm/v0.4.x/... */] }
+          {
+            "version": "next",
+            "tabs": [
+              /* docs/evm/next/... */
+            ]
+          },
+          {
+            "version": "v0.4.x",
+            "tabs": [
+              /* docs/evm/v0.4.x/... */
+            ]
+          }
         ]
       },
       {
         "dropdown": "SDK",
         "versions": [
-          { "version": "v0.53", "tabs": [/* docs/sdk/v0.53/... */] }
+          {
+            "version": "v0.53",
+            "tabs": [
+              /* docs/sdk/v0.53/... */
+            ]
+          }
         ]
       }
     ]
@@ -89,6 +104,7 @@ Each product can be versioned independently. The version manager auto-detects th
 ### Prerequisites
 
 1. **Google Sheets API Access**
+
    - Service account key saved as `service-account-key.json`
    - See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/GSHEET-SETUP.md) for detailed setup
 
@@ -265,16 +281,19 @@ Active development uses it without props (defaults to main sheet):
 ### Version Freeze Process
 
 1. **Preparation Phase**
+
    - Pick product subdirectory (`evm`, `sdk`, `ibc`)
    - Determine current version to freeze from `versions.json` for that product (or prompt)
    - Prompt for new development version
    - Check/update release notes (auto‑fetch when missing)
 
 2. **Freeze Phase**
+
    - Copy `docs/<subdir>/next/` to version directory (e.g., `docs/evm/v0.4.x/`)
    - (EVM only) Create Google Sheets tab with version name and copy EIP data
 
 3. **Update Phase**
+
    - (EVM only) Generate MDX with sheet tab reference
    - Update internal links (`/docs/<subdir>/next/` → `/docs/<subdir>/<version>/`)
    - Keep snippet imports unchanged (`/snippets/`)
@@ -291,10 +310,12 @@ Active development uses it without props (defaults to main sheet):
 The system handles three types of paths:
 
 1. **Document paths**: Updated to version-specific
+
    - Before: `/docs/evm/next/documentation/concepts/accounts`
    - After: `/docs/evm/v0.4.x/documentation/concepts/accounts`
 
 2. **Snippet imports**: Remain unchanged (shared)
+
    - Always: `/snippets/icons.mdx`
 
 3. **External links**: Remain unchanged

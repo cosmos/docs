@@ -1,0 +1,2922 @@
+---
+title: Testing
+---
+
+The Cosmos SDK contains different types of [tests](https://martinfowler.com/articles/practical-test-pyramid.html).
+These tests have different goals and are used at different stages of the development cycle.
+We advice, as a general rule, to use tests at all stages of the development cycle.
+It is adviced, as a chain developer, to test your application and modules in a similar way than the SDK.
+
+The rationale behind testing can be found in [ADR-59](https://docs.cosmos.network/main/build/architecture/adr-059-test-scopes).
+
+## Unit Tests
+
+Unit tests are the lowest test category of the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html).
+All packages and modules should have unit test coverage. Modules should have their dependencies mocked: this means mocking keepers.
+
+The SDK uses `mockgen` to generate mocks for keepers:
+
+```go expandable
+#!/usr/bin/env bash
+
+mockgen_cmd="mockgen"
+$mockgen_cmd -source=baseapp/abci_utils.go -package mock -destination baseapp/testutil/mock/mocks.go
+$mockgen_cmd -source=client/account_retriever.go -package mock -destination testutil/mock/account_retriever.go
+$mockgen_cmd -package mock -destination store/mock/cosmos_cosmos_db_DB.go github.com/cosmos/cosmos-db DB
+$mockgen_cmd -source=types/module/module.go -package mock -destination testutil/mock/types_module_module.go
+$mockgen_cmd -source=types/module/mock_appmodule_test.go -package mock -destination testutil/mock/types_mock_appmodule.go
+$mockgen_cmd -source=types/invariant.go -package mock -destination testutil/mock/types_invariant.go
+$mockgen_cmd -package mock -destination testutil/mock/grpc_server.go github.com/cosmos/gogoproto/grpc Server
+$mockgen_cmd -package mock -destination testutil/mock/logger.go cosmossdk.io/log Logger
+$mockgen_cmd -source=x/nft/expected_keepers.go -package testutil -destination x/nft/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/feegrant/expected_keepers.go -package testutil -destination x/feegrant/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/mint/types/expected_keepers.go -package testutil -destination x/mint/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/params/proposal_handler_test.go -package testutil -destination x/params/testutil/staking_keeper_mock.go
+$mockgen_cmd -source=x/auth/tx/config/expected_keepers.go -package testutil -destination x/auth/tx/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/auth/types/expected_keepers.go -package testutil -destination x/auth/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/auth/ante/expected_keepers.go -package testutil -destination x/auth/ante/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/authz/expected_keepers.go -package testutil -destination x/authz/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/bank/types/expected_keepers.go -package testutil -destination x/bank/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/group/testutil/expected_keepers.go -package testutil -destination x/group/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/evidence/types/expected_keepers.go -package testutil -destination x/evidence/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/distribution/types/expected_keepers.go -package testutil -destination x/distribution/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/slashing/types/expected_keepers.go -package testutil -destination x/slashing/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/genutil/types/expected_keepers.go -package testutil -destination x/genutil/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/gov/testutil/expected_keepers.go -package testutil -destination x/gov/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/staking/types/expected_keepers.go -package testutil -destination x/staking/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/auth/vesting/types/expected_keepers.go -package testutil -destination x/auth/vesting/testutil/expected_keepers_mocks.go
+$mockgen_cmd -source=x/protocolpool/types/expected_keepers.go -package testutil -destination x/protocolpool/testutil/expected_keepers_mocks.go
+```
+
+You can read more about mockgen [here](https://go.uber.org/mock).
+
+### Example
+
+As an example, we will walkthrough the [keeper tests](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/x/gov/keeper/keeper_test.go) of the `x/gov` module.
+
+The `x/gov` module has a `Keeper` type, which requires a few external dependencies (ie. imports outside `x/gov` to work properly).
+
+```go expandable
+package keeper
+
+import (
+    
+	"context"
+    "fmt"
+    "time"
+    "cosmossdk.io/collections"
+	corestoretypes "cosmossdk.io/core/store"
+    "cosmossdk.io/log"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+)
+
+// Keeper defines the governance module Keeper
+type Keeper struct {
+    authKeeper  types.AccountKeeper
+	bankKeeper  types.BankKeeper
+	distrKeeper types.DistributionKeeper
+
+	// The reference to the DelegationSet and ValidatorSet to get information about validators and delegators
+	sk types.StakingKeeper
+
+	// GovHooks
+	hooks types.GovHooks
+
+	// The (unexposed)
+
+keys used to access the stores from the Context.
+	storeService corestoretypes.KVStoreService
+
+	// The codec for binary encoding/decoding.
+	cdc codec.Codec
+
+	// Legacy Proposal router
+	legacyRouter v1beta1.Router
+
+	// Msg server router
+	router baseapp.MessageRouter
+
+	config types.Config
+
+	calculateVoteResultsAndVotingPowerFn CalculateVoteResultsAndVotingPowerFn
+
+	// the address capable of executing a MsgUpdateParams message. Typically, this
+	// should be the x/gov module account.
+	authority string
+
+	Schema                 collections.Schema
+	Constitution           collections.Item[string]
+	Params                 collections.Item[v1.Params]
+	Deposits               collections.Map[collections.Pair[uint64, sdk.AccAddress], v1.Deposit]
+	Votes                  collections.Map[collections.Pair[uint64, sdk.AccAddress], v1.Vote]
+	ProposalID             collections.Sequence
+	Proposals              collections.Map[uint64, v1.Proposal]
+	ActiveProposalsQueue   collections.Map[collections.Pair[time.Time, uint64], uint64] // TODO(tip): this should be simplified and go into an index.
+	InactiveProposalsQueue collections.Map[collections.Pair[time.Time, uint64], uint64] // TODO(tip): this should be simplified and go into an index.
+	VotingPeriodProposals  collections.Map[uint64, []byte]                              // TODO(tip): this could be a keyset or index.
+}
+
+type InitOption func(*Keeper)
+
+// WithCustomCalculateVoteResultsAndVotingPowerFn is an optional input to set a custom CalculateVoteResultsAndVotingPowerFn.
+// If this function is not provided, the default function is used.
+func WithCustomCalculateVoteResultsAndVotingPowerFn(calculateVoteResultsAndVotingPowerFn CalculateVoteResultsAndVotingPowerFn)
+
+InitOption {
+    return func(k *Keeper) {
+    if calculateVoteResultsAndVotingPowerFn == nil {
+    panic("calculateVoteResultsAndVotingPowerFn cannot be nil")
+}
+
+k.calculateVoteResultsAndVotingPowerFn = calculateVoteResultsAndVotingPowerFn
+}
+}
+
+// GetAuthority returns the x/gov module's authority.
+func (k Keeper)
+
+GetAuthority()
+
+string {
+    return k.authority
+}
+
+// NewKeeper returns a governance keeper. It handles:
+// - submitting governance proposals
+// - depositing funds into proposals, and activating upon sufficient funds being deposited
+// - users voting on proposals, with weight proportional to stake in the system
+// - and tallying the result of the vote.
+//
+// CONTRACT: the parameter Subspace must have the param key table already initialized
+func NewKeeper(
+	cdc codec.Codec, storeService corestoretypes.KVStoreService, authKeeper types.AccountKeeper,
+	bankKeeper types.BankKeeper, sk types.StakingKeeper, distrKeeper types.DistributionKeeper,
+	router baseapp.MessageRouter, config types.Config, authority string, initOptions ...InitOption,
+) *Keeper {
+	// ensure governance module account is set
+    if addr := authKeeper.GetModuleAddress(types.ModuleName); addr == nil {
+    panic(fmt.Sprintf("%s module account has not been set", types.ModuleName))
+}
+    if _, err := authKeeper.AddressCodec().StringToBytes(authority); err != nil {
+    panic(fmt.Sprintf("invalid authority address: %s", authority))
+}
+
+	// If MaxMetadataLen not set by app developer, set to default value.
+    if config.MaxMetadataLen == 0 {
+    config.MaxMetadataLen = types.DefaultConfig().MaxMetadataLen
+}
+    sb := collections.NewSchemaBuilder(storeService)
+    k := &Keeper{
+    storeService:                         storeService,
+		authKeeper:                           authKeeper,
+		bankKeeper:                           bankKeeper,
+		distrKeeper:                          distrKeeper,
+		sk:                                   sk,
+		cdc:                                  cdc,
+		router:                               router,
+		config:                               config,
+		calculateVoteResultsAndVotingPowerFn: defaultCalculateVoteResultsAndVotingPower,
+		authority:                            authority,
+    Constitution:                         collections.NewItem(sb, types.ConstitutionKey, "constitution", collections.StringValue),
+    Params:                               collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[v1.Params](cdc)),
+    Deposits:                             collections.NewMap(sb, types.DepositsKeyPrefix, "deposits", collections.PairKeyCodec(collections.Uint64Key, sdk.LengthPrefixedAddressKey(sdk.AccAddressKey)), codec.CollValue[v1.Deposit](cdc)), // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+		Votes:                                collections.NewMap(sb, types.VotesKeyPrefix, "votes", collections.PairKeyCodec(collections.Uint64Key, sdk.LengthPrefixedAddressKey(sdk.AccAddressKey)), codec.CollValue[v1.Vote](cdc)),          // nolint: staticcheck // sdk.LengthPrefixedAddressKey is needed to retain state compatibility
+		ProposalID:                           collections.NewSequence(sb, types.ProposalIDKey, "proposal_id"),
+    Proposals:                            collections.NewMap(sb, types.ProposalsKeyPrefix, "proposals", collections.Uint64Key, codec.CollValue[v1.Proposal](cdc)),
+    ActiveProposalsQueue:                 collections.NewMap(sb, types.ActiveProposalQueuePrefix, "active_proposals_queue", collections.PairKeyCodec(sdk.TimeKey, collections.Uint64Key), collections.Uint64Value),     // sdk.TimeKey is needed to retain state compatibility
+		InactiveProposalsQueue:               collections.NewMap(sb, types.InactiveProposalQueuePrefix, "inactive_proposals_queue", collections.PairKeyCodec(sdk.TimeKey, collections.Uint64Key), collections.Uint64Value), // sdk.TimeKey is needed to retain state compatibility
+		VotingPeriodProposals:                collections.NewMap(sb, types.VotingPeriodProposalKeyPrefix, "voting_period_proposals", collections.Uint64Key, collections.BytesValue),
+}
+    for _, opt := range initOptions {
+    opt(k)
+}
+
+schema, err := sb.Build()
+    if err != nil {
+    panic(err)
+}
+
+k.Schema = schema
+	return k
+}
+
+// Hooks gets the hooks for governance *Keeper {
+    func (k *Keeper)
+
+Hooks()
+
+types.GovHooks {
+    if k.hooks == nil {
+		// return a no-op implementation if no hooks are set
+		return types.MultiGovHooks{
+}
+	
+}
+
+return k.hooks
+}
+
+// SetHooks sets the hooks for governance
+func (k *Keeper)
+
+SetHooks(gh types.GovHooks) *Keeper {
+    if k.hooks != nil {
+    panic("cannot set governance hooks twice")
+}
+
+k.hooks = gh
+
+	return k
+}
+
+// SetLegacyRouter sets the legacy router for governance
+func (k *Keeper)
+
+SetLegacyRouter(router v1beta1.Router) {
+	// It is vital to seal the governance proposal router here as to not allow
+	// further handlers to be registered after the keeper is created since this
+	// could create invalid or non-deterministic behavior.
+	router.Seal()
+
+k.legacyRouter = router
+}
+
+// Logger returns a module-specific logger.
+func (k Keeper)
+
+Logger(ctx context.Context)
+
+log.Logger {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+return sdkCtx.Logger().With("module", "x/"+types.ModuleName)
+}
+
+// Router returns the gov keeper's router
+func (k Keeper)
+
+Router()
+
+baseapp.MessageRouter {
+    return k.router
+}
+
+// LegacyRouter returns the gov keeper's legacy router
+func (k Keeper)
+
+LegacyRouter()
+
+v1beta1.Router {
+    return k.legacyRouter
+}
+
+// GetGovernanceAccount returns the governance ModuleAccount
+func (k Keeper)
+
+GetGovernanceAccount(ctx context.Context)
+
+sdk.ModuleAccountI {
+    return k.authKeeper.GetModuleAccount(ctx, types.ModuleName)
+}
+
+// ModuleAccountAddress returns gov module account address
+func (k Keeper)
+
+ModuleAccountAddress()
+
+sdk.AccAddress {
+    return k.authKeeper.GetModuleAddress(types.ModuleName)
+}
+
+// assertMetadataLength returns an error if given metadata length
+// is greater than a pre-defined MaxMetadataLen.
+func (k Keeper)
+
+assertMetadataLength(metadata string)
+
+error {
+    if metadata != "" && uint64(len(metadata)) > k.config.MaxMetadataLen {
+    return types.ErrMetadataTooLong.Wrapf("got metadata with length %d", len(metadata))
+}
+
+return nil
+}
+
+// assertSummaryLength returns an error if given summary length
+// is greater than a pre-defined 40*MaxMetadataLen.
+func (k Keeper)
+
+assertSummaryLength(summary string)
+
+error {
+    if summary != "" && uint64(len(summary)) > 40*k.config.MaxMetadataLen {
+    return types.ErrSummaryTooLong.Wrapf("got summary with length %d", len(summary))
+}
+
+return nil
+}
+```
+
+In order to only test `x/gov`, we mock the [expected keepers](https://docs.cosmos.network/v0.46/building-modules/keeper.html#type-definition) and instantiate the `Keeper` with the mocked dependencies. Note that we may need to configure the mocked dependencies to return the expected values:
+
+```go expandable
+package keeper_test
+
+import (
+    
+	"fmt"
+    "testing"
+
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	cmttime "github.com/cometbft/cometbft/types/time"
+    "github.com/stretchr/testify/require"
+    "go.uber.org/mock/gomock"
+    "cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec/address"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/testutil"
+    "github.com/cosmos/cosmos-sdk/testutil/testdata"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	disttypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+    "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	govtestutil "github.com/cosmos/cosmos-sdk/x/gov/testutil"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+)
+
+var (
+	_, _, addr   = testdata.KeyTestPubAddr()
+
+govAcct      = authtypes.NewModuleAddress(types.ModuleName)
+
+distAcct     = authtypes.NewModuleAddress(disttypes.ModuleName)
+
+TestProposal = getTestProposal()
+)
+
+// getTestProposal creates and returns a test proposal message.
+func getTestProposal() []sdk.Msg {
+    legacyProposalMsg, err := v1.NewLegacyContent(v1beta1.NewTextProposal("Title", "description"), authtypes.NewModuleAddress(types.ModuleName).String())
+    if err != nil {
+    panic(err)
+}
+
+return []sdk.Msg{
+    banktypes.NewMsgSend(govAcct, addr, sdk.NewCoins(sdk.NewCoin("stake", math.NewInt(1000)))),
+		legacyProposalMsg,
+}
+}
+
+// setupGovKeeper creates a govKeeper as well as all its dependencies.
+func setupGovKeeper(t *testing.T) (
+	*keeper.Keeper,
+	*govtestutil.MockAccountKeeper,
+	*govtestutil.MockBankKeeper,
+	*govtestutil.MockStakingKeeper,
+	*govtestutil.MockDistributionKeeper,
+	moduletestutil.TestEncodingConfig,
+	sdk.Context,
+) {
+    t.Helper()
+    key := storetypes.NewKVStoreKey(types.StoreKey)
+    storeService := runtime.NewKVStoreService(key)
+    testCtx := testutil.DefaultContextWithDB(t, key, storetypes.NewTransientStoreKey("transient_test"))
+    ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{
+    Time: cmttime.Now()
+})
+    encCfg := moduletestutil.MakeTestEncodingConfig()
+
+v1.RegisterInterfaces(encCfg.InterfaceRegistry)
+
+v1beta1.RegisterInterfaces(encCfg.InterfaceRegistry)
+
+banktypes.RegisterInterfaces(encCfg.InterfaceRegistry)
+
+	// Create MsgServiceRouter, but don't populate it before creating the gov
+	// keeper.
+    msr := baseapp.NewMsgServiceRouter()
+
+	// gomock initializations
+    ctrl := gomock.NewController(t)
+    acctKeeper := govtestutil.NewMockAccountKeeper(ctrl)
+    bankKeeper := govtestutil.NewMockBankKeeper(ctrl)
+    stakingKeeper := govtestutil.NewMockStakingKeeper(ctrl)
+    distributionKeeper := govtestutil.NewMockDistributionKeeper(ctrl)
+
+acctKeeper.EXPECT().GetModuleAddress(types.ModuleName).Return(govAcct).AnyTimes()
+
+acctKeeper.EXPECT().GetModuleAddress(disttypes.ModuleName).Return(distAcct).AnyTimes()
+
+acctKeeper.EXPECT().GetModuleAccount(gomock.Any(), types.ModuleName).Return(authtypes.NewEmptyModuleAccount(types.ModuleName)).AnyTimes()
+
+acctKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+
+trackMockBalances(bankKeeper, distributionKeeper)
+
+stakingKeeper.EXPECT().TokensFromConsensusPower(ctx, gomock.Any()).DoAndReturn(func(ctx sdk.Context, power int64)
+
+math.Int {
+    return sdk.TokensFromConsensusPower(power, math.NewIntFromUint64(1000000))
+}).AnyTimes()
+
+stakingKeeper.EXPECT().BondDenom(ctx).Return("stake", nil).AnyTimes()
+
+stakingKeeper.EXPECT().IterateBondedValidatorsByPower(gomock.Any(), gomock.Any()).AnyTimes()
+
+stakingKeeper.EXPECT().IterateDelegations(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+stakingKeeper.EXPECT().TotalBondedTokens(gomock.Any()).Return(math.NewInt(10000000), nil).AnyTimes()
+
+distributionKeeper.EXPECT().FundCommunityPool(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+	// Gov keeper initializations
+    govKeeper := keeper.NewKeeper(encCfg.Codec, storeService, acctKeeper, bankKeeper, stakingKeeper, distributionKeeper, msr, types.DefaultConfig(), govAcct.String())
+
+require.NoError(t, govKeeper.ProposalID.Set(ctx, 1))
+    govRouter := v1beta1.NewRouter() // Also register legacy gov handlers to test them too.
+	govRouter.AddRoute(types.RouterKey, v1beta1.ProposalHandler)
+
+govKeeper.SetLegacyRouter(govRouter)
+    err := govKeeper.Params.Set(ctx, v1.DefaultParams())
+
+require.NoError(t, err)
+
+err = govKeeper.Constitution.Set(ctx, "constitution")
+
+require.NoError(t, err)
+
+	// Register all handlers for the MegServiceRouter.
+	msr.SetInterfaceRegistry(encCfg.InterfaceRegistry)
+
+v1.RegisterMsgServer(msr, keeper.NewMsgServerImpl(govKeeper))
+
+banktypes.RegisterMsgServer(msr, nil) // Nil is fine here as long as we never execute the proposal's Msgs.
+
+	return govKeeper, acctKeeper, bankKeeper, stakingKeeper, distributionKeeper, encCfg, ctx
+}
+
+// trackMockBalances sets up expected calls on the Mock BankKeeper, and also
+// locally tracks accounts balances (not modules balances).
+func trackMockBalances(bankKeeper *govtestutil.MockBankKeeper, distributionKeeper *govtestutil.MockDistributionKeeper) {
+    balances := make(map[string]sdk.Coins)
+
+balances[distAcct.String()] = sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, math.NewInt(0)))
+
+	// We don't track module account balances.
+	bankKeeper.EXPECT().MintCoins(gomock.Any(), minttypes.ModuleName, gomock.Any()).AnyTimes()
+
+bankKeeper.EXPECT().BurnCoins(gomock.Any(), types.ModuleName, gomock.Any()).AnyTimes()
+
+bankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), minttypes.ModuleName, types.ModuleName, gomock.Any()).AnyTimes()
+
+	// But we do track normal account balances.
+	bankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any()).DoAndReturn(func(_ sdk.Context, sender sdk.AccAddress, _ string, coins sdk.Coins)
+
+error {
+    newBalance, negative := balances[sender.String()].SafeSub(coins...)
+    if negative {
+    return fmt.Errorf("not enough balance")
+}
+
+balances[sender.String()] = newBalance
+		return nil
+}).AnyTimes()
+
+bankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ sdk.Context, module string, rcpt sdk.AccAddress, coins sdk.Coins)
+
+error {
+    balances[rcpt.String()] = balances[rcpt.String()].Add(coins...)
+
+return nil
+}).AnyTimes()
+
+bankKeeper.EXPECT().GetAllBalances(gomock.Any(), gomock.Any()).DoAndReturn(func(_ sdk.Context, addr sdk.AccAddress)
+
+sdk.Coins {
+    return balances[addr.String()]
+}).AnyTimes()
+
+bankKeeper.EXPECT().GetBalance(gomock.Any(), gomock.Any(), sdk.DefaultBondDenom).DoAndReturn(func(_ sdk.Context, addr sdk.AccAddress, _ string)
+
+sdk.Coin {
+    balances := balances[addr.String()]
+    for _, balance := range balances {
+    if balance.Denom == sdk.DefaultBondDenom {
+    return balance
+}
+	
+}
+
+return sdk.NewCoin(sdk.DefaultBondDenom, math.NewInt(0))
+}).AnyTimes()
+
+distributionKeeper.EXPECT().FundCommunityPool(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ sdk.Context, coins sdk.Coins, sender sdk.AccAddress)
+
+error {
+		// sender balance
+		newBalance, negative := balances[sender.String()].SafeSub(coins...)
+    if negative {
+    return fmt.Errorf("not enough balance")
+}
+
+balances[sender.String()] = newBalance
+		// receiver balance
+		balances[distAcct.String()] = balances[distAcct.String()].Add(coins...)
+
+return nil
+}).AnyTimes()
+}
+```
+
+This allows us to test the `x/gov` module without having to import other modules.
+
+```go expandable
+package keeper_test
+
+import (
+    
+	"testing"
+    "github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/suite"
+    "cosmossdk.io/collections"
+	sdkmath "cosmossdk.io/math"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec"
+    "github.com/cosmos/cosmos-sdk/codec/address"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	govtestutil "github.com/cosmos/cosmos-sdk/x/gov/testutil"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+)
+
+var address1 = "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"
+
+type KeeperTestSuite struct {
+    suite.Suite
+
+	cdc               codec.Codec
+	ctx               sdk.Context
+	govKeeper         *keeper.Keeper
+	acctKeeper        *govtestutil.MockAccountKeeper
+	bankKeeper        *govtestutil.MockBankKeeper
+	stakingKeeper     *govtestutil.MockStakingKeeper
+	distKeeper        *govtestutil.MockDistributionKeeper
+	queryClient       v1.QueryClient
+	legacyQueryClient v1beta1.QueryClient
+	addrs             []sdk.AccAddress
+	msgSrvr           v1.MsgServer
+	legacyMsgSrvr     v1beta1.MsgServer
+}
+
+func (suite *KeeperTestSuite)
+
+SetupSuite() {
+    suite.reset()
+}
+
+func (suite *KeeperTestSuite)
+
+reset() {
+    govKeeper, acctKeeper, bankKeeper, stakingKeeper, distKeeper, encCfg, ctx := setupGovKeeper(suite.T())
+
+	// Populate the gov account with some coins, as the TestProposal we have
+	// is a MsgSend from the gov account.
+    coins := sdk.NewCoins(sdk.NewCoin("stake", sdkmath.NewInt(100000)))
+    err := bankKeeper.MintCoins(suite.ctx, minttypes.ModuleName, coins)
+
+suite.NoError(err)
+
+err = bankKeeper.SendCoinsFromModuleToModule(ctx, minttypes.ModuleName, types.ModuleName, coins)
+
+suite.NoError(err)
+    queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+
+v1.RegisterQueryServer(queryHelper, keeper.NewQueryServer(govKeeper))
+    legacyQueryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+
+v1beta1.RegisterQueryServer(legacyQueryHelper, keeper.NewLegacyQueryServer(govKeeper))
+    queryClient := v1.NewQueryClient(queryHelper)
+    legacyQueryClient := v1beta1.NewQueryClient(legacyQueryHelper)
+
+suite.ctx = ctx
+	suite.govKeeper = govKeeper
+	suite.acctKeeper = acctKeeper
+	suite.bankKeeper = bankKeeper
+	suite.stakingKeeper = stakingKeeper
+	suite.distKeeper = distKeeper
+	suite.cdc = encCfg.Codec
+	suite.queryClient = queryClient
+	suite.legacyQueryClient = legacyQueryClient
+	suite.msgSrvr = keeper.NewMsgServerImpl(suite.govKeeper)
+
+suite.legacyMsgSrvr = keeper.NewLegacyMsgServerImpl(govAcct.String(), suite.msgSrvr)
+
+suite.addrs = simtestutil.AddTestAddrsIncremental(bankKeeper, stakingKeeper, ctx, 3, sdkmath.NewInt(30000000))
+
+suite.acctKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+}
+
+func TestIncrementProposalNumber(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+
+authKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+    ac := address.NewBech32Codec("cosmos")
+
+addrBz, err := ac.StringToBytes(address1)
+
+require.NoError(t, err)
+    tp := TestProposal
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, true)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, true)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+proposal6, err := govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+require.Equal(t, uint64(6), proposal6.Id)
+}
+
+func TestProposalQueues(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+    ac := address.NewBech32Codec("cosmos")
+
+addrBz, err := ac.StringToBytes(address1)
+
+require.NoError(t, err)
+
+authKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+
+	// create test proposals
+    tp := TestProposal
+	proposal, err := govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+has, err := govKeeper.InactiveProposalsQueue.Has(ctx, collections.Join(*proposal.DepositEndTime, proposal.Id))
+
+require.NoError(t, err)
+
+require.True(t, has)
+
+require.NoError(t, govKeeper.ActivateVotingPeriod(ctx, proposal))
+
+proposal, err = govKeeper.Proposals.Get(ctx, proposal.Id)
+
+require.Nil(t, err)
+
+has, err = govKeeper.ActiveProposalsQueue.Has(ctx, collections.Join(*proposal.VotingEndTime, proposal.Id))
+
+require.NoError(t, err)
+
+require.True(t, has)
+}
+
+func TestSetHooks(t *testing.T) {
+    govKeeper, _, _, _, _, _, _ := setupGovKeeper(t)
+
+require.Empty(t, govKeeper.Hooks())
+    govHooksReceiver := MockGovHooksReceiver{
+}
+
+govKeeper.SetHooks(types.NewMultiGovHooks(&govHooksReceiver))
+
+require.NotNil(t, govKeeper.Hooks())
+
+require.Panics(t, func() {
+    govKeeper.SetHooks(&govHooksReceiver)
+})
+}
+
+func TestGetGovGovernanceAndModuleAccountAddress(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+    mAcc := authKeeper.GetModuleAccount(ctx, "gov")
+
+require.Equal(t, mAcc, govKeeper.GetGovernanceAccount(ctx))
+    mAddr := authKeeper.GetModuleAddress("gov")
+
+require.Equal(t, mAddr, govKeeper.ModuleAccountAddress())
+}
+
+func TestKeeperTestSuite(t *testing.T) {
+    suite.Run(t, new(KeeperTestSuite))
+}
+```
+
+We can test then create unit tests using the newly created `Keeper` instance.
+
+```go expandable
+package keeper_test
+
+import (
+    
+	"testing"
+    "github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/suite"
+    "cosmossdk.io/collections"
+	sdkmath "cosmossdk.io/math"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec"
+    "github.com/cosmos/cosmos-sdk/codec/address"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+	govtestutil "github.com/cosmos/cosmos-sdk/x/gov/testutil"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+)
+
+var address1 = "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"
+
+type KeeperTestSuite struct {
+    suite.Suite
+
+	cdc               codec.Codec
+	ctx               sdk.Context
+	govKeeper         *keeper.Keeper
+	acctKeeper        *govtestutil.MockAccountKeeper
+	bankKeeper        *govtestutil.MockBankKeeper
+	stakingKeeper     *govtestutil.MockStakingKeeper
+	distKeeper        *govtestutil.MockDistributionKeeper
+	queryClient       v1.QueryClient
+	legacyQueryClient v1beta1.QueryClient
+	addrs             []sdk.AccAddress
+	msgSrvr           v1.MsgServer
+	legacyMsgSrvr     v1beta1.MsgServer
+}
+
+func (suite *KeeperTestSuite)
+
+SetupSuite() {
+    suite.reset()
+}
+
+func (suite *KeeperTestSuite)
+
+reset() {
+    govKeeper, acctKeeper, bankKeeper, stakingKeeper, distKeeper, encCfg, ctx := setupGovKeeper(suite.T())
+
+	// Populate the gov account with some coins, as the TestProposal we have
+	// is a MsgSend from the gov account.
+    coins := sdk.NewCoins(sdk.NewCoin("stake", sdkmath.NewInt(100000)))
+    err := bankKeeper.MintCoins(suite.ctx, minttypes.ModuleName, coins)
+
+suite.NoError(err)
+
+err = bankKeeper.SendCoinsFromModuleToModule(ctx, minttypes.ModuleName, types.ModuleName, coins)
+
+suite.NoError(err)
+    queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+
+v1.RegisterQueryServer(queryHelper, keeper.NewQueryServer(govKeeper))
+    legacyQueryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+
+v1beta1.RegisterQueryServer(legacyQueryHelper, keeper.NewLegacyQueryServer(govKeeper))
+    queryClient := v1.NewQueryClient(queryHelper)
+    legacyQueryClient := v1beta1.NewQueryClient(legacyQueryHelper)
+
+suite.ctx = ctx
+	suite.govKeeper = govKeeper
+	suite.acctKeeper = acctKeeper
+	suite.bankKeeper = bankKeeper
+	suite.stakingKeeper = stakingKeeper
+	suite.distKeeper = distKeeper
+	suite.cdc = encCfg.Codec
+	suite.queryClient = queryClient
+	suite.legacyQueryClient = legacyQueryClient
+	suite.msgSrvr = keeper.NewMsgServerImpl(suite.govKeeper)
+
+suite.legacyMsgSrvr = keeper.NewLegacyMsgServerImpl(govAcct.String(), suite.msgSrvr)
+
+suite.addrs = simtestutil.AddTestAddrsIncremental(bankKeeper, stakingKeeper, ctx, 3, sdkmath.NewInt(30000000))
+
+suite.acctKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+}
+
+func TestIncrementProposalNumber(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+
+authKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+    ac := address.NewBech32Codec("cosmos")
+
+addrBz, err := ac.StringToBytes(address1)
+
+require.NoError(t, err)
+    tp := TestProposal
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, true)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, true)
+
+require.NoError(t, err)
+	_, err = govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+proposal6, err := govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+require.Equal(t, uint64(6), proposal6.Id)
+}
+
+func TestProposalQueues(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+    ac := address.NewBech32Codec("cosmos")
+
+addrBz, err := ac.StringToBytes(address1)
+
+require.NoError(t, err)
+
+authKeeper.EXPECT().AddressCodec().Return(address.NewBech32Codec("cosmos")).AnyTimes()
+
+	// create test proposals
+    tp := TestProposal
+	proposal, err := govKeeper.SubmitProposal(ctx, tp, "", "test", "summary", addrBz, false)
+
+require.NoError(t, err)
+
+has, err := govKeeper.InactiveProposalsQueue.Has(ctx, collections.Join(*proposal.DepositEndTime, proposal.Id))
+
+require.NoError(t, err)
+
+require.True(t, has)
+
+require.NoError(t, govKeeper.ActivateVotingPeriod(ctx, proposal))
+
+proposal, err = govKeeper.Proposals.Get(ctx, proposal.Id)
+
+require.Nil(t, err)
+
+has, err = govKeeper.ActiveProposalsQueue.Has(ctx, collections.Join(*proposal.VotingEndTime, proposal.Id))
+
+require.NoError(t, err)
+
+require.True(t, has)
+}
+
+func TestSetHooks(t *testing.T) {
+    govKeeper, _, _, _, _, _, _ := setupGovKeeper(t)
+
+require.Empty(t, govKeeper.Hooks())
+    govHooksReceiver := MockGovHooksReceiver{
+}
+
+govKeeper.SetHooks(types.NewMultiGovHooks(&govHooksReceiver))
+
+require.NotNil(t, govKeeper.Hooks())
+
+require.Panics(t, func() {
+    govKeeper.SetHooks(&govHooksReceiver)
+})
+}
+
+func TestGetGovGovernanceAndModuleAccountAddress(t *testing.T) {
+    govKeeper, authKeeper, _, _, _, _, ctx := setupGovKeeper(t)
+    mAcc := authKeeper.GetModuleAccount(ctx, "gov")
+
+require.Equal(t, mAcc, govKeeper.GetGovernanceAccount(ctx))
+    mAddr := authKeeper.GetModuleAddress("gov")
+
+require.Equal(t, mAddr, govKeeper.ModuleAccountAddress())
+}
+
+func TestKeeperTestSuite(t *testing.T) {
+    suite.Run(t, new(KeeperTestSuite))
+}
+```
+
+## Integration Tests
+
+Integration tests are at the second level of the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html).
+In the SDK, we locate our integration tests under [`/tests/integrations`](https://github.com/cosmos/cosmos-sdk/tree/main/tests/integration).
+
+The goal of these integration tests is to test how a component interacts with other dependencies. Compared to unit tests, integration tests do not mock dependencies. Instead, they use the direct dependencies of the component. This differs as well from end-to-end tests, which test the component with a full application.
+
+Integration tests interact with the tested module via the defined `Msg` and `Query` services. The result of the test can be verified by checking the state of the application, by checking the emitted events or the response. It is adviced to combine two of these methods to verify the result of the test.
+
+The SDK provides small helpers for quickly setting up an integration tests. These helpers can be found at [Link](https://github.com/cosmos/cosmos-sdk/blob/main/testutil/integration).
+
+### Example
+
+```go expandable
+package integration_test
+
+import (
+    
+	"fmt"
+    "io"
+
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+    "github.com/google/go-cmp/cmp"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
+
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/testutil/integration"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+    "github.com/cosmos/cosmos-sdk/x/auth"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	authsims "github.com/cosmos/cosmos-sdk/x/auth/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+    "github.com/cosmos/cosmos-sdk/x/mint"
+	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+)
+
+// Example shows how to use the integration test framework to test the integration of SDK modules.
+// Panics are used in this example, but in a real test case, you should use the testing.T object and assertions.
+func Example() {
+	// in this example we are testing the integration of the following modules:
+	// - mint, which directly depends on auth, bank and staking
+    encodingCfg := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{
+}, mint.AppModuleBasic{
+})
+    keys := storetypes.NewKVStoreKeys(authtypes.StoreKey, minttypes.StoreKey)
+    authority := authtypes.NewModuleAddress("gov").String()
+
+	// replace the logger by testing values in a real test case (e.g. log.NewTestLogger(t))
+    logger := log.NewNopLogger()
+    cms := integration.CreateMultiStore(keys, logger)
+    newCtx := sdk.NewContext(cms, cmtproto.Header{
+}, true, logger)
+    accountKeeper := authkeeper.NewAccountKeeper(
+		encodingCfg.Codec,
+		runtime.NewKVStoreService(keys[authtypes.StoreKey]),
+		authtypes.ProtoBaseAccount,
+		map[string][]string{
+    minttypes.ModuleName: {
+    authtypes.Minter
+}},
+		addresscodec.NewBech32Codec("cosmos"),
+		"cosmos",
+		authority,
+	)
+
+	// subspace is nil because we don't test params (which is legacy anyway)
+    authModule := auth.NewAppModule(encodingCfg.Codec, accountKeeper, authsims.RandomGenesisAccounts, nil)
+
+	// here bankkeeper and staking keeper is nil because we are not testing them
+	// subspace is nil because we don't test params (which is legacy anyway)
+    mintKeeper := mintkeeper.NewKeeper(encodingCfg.Codec, runtime.NewKVStoreService(keys[minttypes.StoreKey]), nil, accountKeeper, nil, authtypes.FeeCollectorName, authority)
+    mintModule := mint.NewAppModule(encodingCfg.Codec, mintKeeper, accountKeeper, nil, nil)
+
+	// create the application and register all the modules from the previous step
+    integrationApp := integration.NewIntegrationApp(
+		newCtx,
+		logger,
+		keys,
+		encodingCfg.Codec,
+		map[string]appmodule.AppModule{
+    authtypes.ModuleName: authModule,
+			minttypes.ModuleName: mintModule,
+},
+	)
+
+	// register the message and query servers
+	authtypes.RegisterMsgServer(integrationApp.MsgServiceRouter(), authkeeper.NewMsgServerImpl(accountKeeper))
+
+minttypes.RegisterMsgServer(integrationApp.MsgServiceRouter(), mintkeeper.NewMsgServerImpl(mintKeeper))
+
+minttypes.RegisterQueryServer(integrationApp.QueryHelper(), mintkeeper.NewQueryServerImpl(mintKeeper))
+    params := minttypes.DefaultParams()
+
+params.BlocksPerYear = 10000
+
+	// now we can use the application to test a mint message
+	result, err := integrationApp.RunMsg(&minttypes.MsgUpdateParams{
+    Authority: authority,
+    Params:    params,
+})
+    if err != nil {
+    panic(err)
+}
+
+	// in this example the result is an empty response, a nil check is enough
+	// in other cases, it is recommended to check the result value.
+    if result == nil {
+    panic(fmt.Errorf("unexpected nil result"))
+}
+
+	// we now check the result
+    resp := minttypes.MsgUpdateParamsResponse{
+}
+
+err = encodingCfg.Codec.Unmarshal(result.Value, &resp)
+    if err != nil {
+    panic(err)
+}
+    sdkCtx := sdk.UnwrapSDKContext(integrationApp.Context())
+
+	// we should also check the state of the application
+	got, err := mintKeeper.Params.Get(sdkCtx)
+    if err != nil {
+    panic(err)
+}
+    if diff := cmp.Diff(got, params); diff != "" {
+    panic(diff)
+}
+
+fmt.Println(got.BlocksPerYear)
+	// Output: 10000
+}
+
+// ExampleOneModule shows how to use the integration test framework to test the integration of a single module.
+// That module has no dependency on other modules.
+func Example_oneModule() {
+	// in this example we are testing the integration of the auth module:
+    encodingCfg := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{
+})
+    keys := storetypes.NewKVStoreKeys(authtypes.StoreKey)
+    authority := authtypes.NewModuleAddress("gov").String()
+
+	// replace the logger by testing values in a real test case (e.g. log.NewTestLogger(t))
+    logger := log.NewLogger(io.Discard)
+    cms := integration.CreateMultiStore(keys, logger)
+    newCtx := sdk.NewContext(cms, cmtproto.Header{
+}, true, logger)
+    accountKeeper := authkeeper.NewAccountKeeper(
+		encodingCfg.Codec,
+		runtime.NewKVStoreService(keys[authtypes.StoreKey]),
+		authtypes.ProtoBaseAccount,
+		map[string][]string{
+    minttypes.ModuleName: {
+    authtypes.Minter
+}},
+		addresscodec.NewBech32Codec("cosmos"),
+		"cosmos",
+		authority,
+	)
+
+	// subspace is nil because we don't test params (which is legacy anyway)
+    authModule := auth.NewAppModule(encodingCfg.Codec, accountKeeper, authsims.RandomGenesisAccounts, nil)
+
+	// create the application and register all the modules from the previous step
+    integrationApp := integration.NewIntegrationApp(
+		newCtx,
+		logger,
+		keys,
+		encodingCfg.Codec,
+		map[string]appmodule.AppModule{
+    authtypes.ModuleName: authModule,
+},
+	)
+
+	// register the message and query servers
+	authtypes.RegisterMsgServer(integrationApp.MsgServiceRouter(), authkeeper.NewMsgServerImpl(accountKeeper))
+    params := authtypes.DefaultParams()
+
+params.MaxMemoCharacters = 1000
+
+	// now we can use the application to test a mint message
+	result, err := integrationApp.RunMsg(&authtypes.MsgUpdateParams{
+    Authority: authority,
+    Params:    params,
+},
+		// this allows to the begin and end blocker of the module before and after the message
+		integration.WithAutomaticFinalizeBlock(),
+		// this allows to commit the state after the message
+		integration.WithAutomaticCommit(),
+	)
+    if err != nil {
+    panic(err)
+}
+
+	// verify that the begin and end blocker were called
+	// NOTE: in this example, we are testing auth, which doesn't have any begin or end blocker
+	// so verifying the block height is enough
+    if integrationApp.LastBlockHeight() != 2 {
+    panic(fmt.Errorf("expected block height to be 2, got %d", integrationApp.LastBlockHeight()))
+}
+
+	// in this example the result is an empty response, a nil check is enough
+	// in other cases, it is recommended to check the result value.
+    if result == nil {
+    panic(fmt.Errorf("unexpected nil result"))
+}
+
+	// we now check the result
+    resp := authtypes.MsgUpdateParamsResponse{
+}
+
+err = encodingCfg.Codec.Unmarshal(result.Value, &resp)
+    if err != nil {
+    panic(err)
+}
+    sdkCtx := sdk.UnwrapSDKContext(integrationApp.Context())
+
+	// we should also check the state of the application
+    got := accountKeeper.GetParams(sdkCtx)
+    if diff := cmp.Diff(got, params); diff != "" {
+    panic(diff)
+}
+
+fmt.Println(got.MaxMemoCharacters)
+	// Output: 1000
+}
+```
+
+## Deterministic and Regression tests
+
+Tests are written for queries in the Cosmos SDK which have `module_query_safe` Protobuf annotation.
+
+Each query is tested using 2 methods:
+
+* Use property-based testing with the [`rapid`](https://pkg.go.dev/pgregory.net/rapid@v0.5.3) library. The property that is tested is that the query response and gas consumption are the same upon 1000 query calls.
+* Regression tests are written with hardcoded responses and gas, and verify they don't change upon 1000 calls and between SDK patch versions.
+
+Here's an example of regression tests:
+
+```go expandable
+package keeper_test
+
+import (
+    
+	"testing"
+
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+    "github.com/stretchr/testify/require"
+    "gotest.tools/v3/assert"
+    "pgregory.net/rapid"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/log"
+    "cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
+
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/testutil/integration"
+    "github.com/cosmos/cosmos-sdk/testutil/testdata"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+    "github.com/cosmos/cosmos-sdk/x/auth"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	authsims "github.com/cosmos/cosmos-sdk/x/auth/simulation"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+    "github.com/cosmos/cosmos-sdk/x/bank"
+    "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+	banktestutil "github.com/cosmos/cosmos-sdk/x/bank/testutil"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	_ "github.com/cosmos/cosmos-sdk/x/consensus"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
+	_ "github.com/cosmos/cosmos-sdk/x/params"
+	_ "github.com/cosmos/cosmos-sdk/x/staking"
+)
+
+var (
+	denomRegex   = sdk.DefaultCoinDenomRegex()
+
+addr1        = sdk.MustAccAddressFromBech32("cosmos139f7kncmglres2nf3h4hc4tade85ekfr8sulz5")
+
+coin1        = sdk.NewCoin("denom", math.NewInt(10))
+
+metadataAtom = banktypes.Metadata{
+    Description: "The native staking token of the Cosmos Hub.",
+    DenomUnits: []*banktypes.DenomUnit{
+			{
+    Denom:    "uatom",
+    Exponent: 0,
+    Aliases:  []string{"microatom"
+},
+},
+			{
+    Denom:    "atom",
+    Exponent: 6,
+    Aliases:  []string{"ATOM"
+},
+},
+},
+    Base:    "uatom",
+    Display: "atom",
+}
+)
+
+type deterministicFixture struct {
+    ctx         sdk.Context
+	bankKeeper  keeper.BaseKeeper
+	queryClient banktypes.QueryClient
+}
+
+func initDeterministicFixture(t *testing.T) *deterministicFixture {
+    t.Helper()
+    keys := storetypes.NewKVStoreKeys(authtypes.StoreKey, banktypes.StoreKey)
+    cdc := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{
+}, bank.AppModuleBasic{
+}).Codec
+    logger := log.NewTestLogger(t)
+    cms := integration.CreateMultiStore(keys, logger)
+    newCtx := sdk.NewContext(cms, cmtproto.Header{
+}, true, logger)
+    authority := authtypes.NewModuleAddress("gov")
+    maccPerms := map[string][]string{
+    minttypes.ModuleName: {
+    authtypes.Minter
+},
+}
+    accountKeeper := authkeeper.NewAccountKeeper(
+		cdc,
+		runtime.NewKVStoreService(keys[authtypes.StoreKey]),
+		authtypes.ProtoBaseAccount,
+		maccPerms,
+		addresscodec.NewBech32Codec(sdk.Bech32MainPrefix),
+		sdk.Bech32MainPrefix,
+		authority.String(),
+	)
+    blockedAddresses := map[string]bool{
+    accountKeeper.GetAuthority(): false,
+}
+    bankKeeper := keeper.NewBaseKeeper(
+		cdc,
+		runtime.NewKVStoreService(keys[banktypes.StoreKey]),
+		accountKeeper,
+		blockedAddresses,
+		authority.String(),
+		log.NewNopLogger(),
+	)
+    authModule := auth.NewAppModule(cdc, accountKeeper, authsims.RandomGenesisAccounts, nil)
+    bankModule := bank.NewAppModule(cdc, bankKeeper, accountKeeper, nil)
+    integrationApp := integration.NewIntegrationApp(newCtx, logger, keys, cdc, map[string]appmodule.AppModule{
+    authtypes.ModuleName: authModule,
+		banktypes.ModuleName: bankModule,
+})
+    sdkCtx := sdk.UnwrapSDKContext(integrationApp.Context())
+
+	// Register MsgServer and QueryServer
+	banktypes.RegisterMsgServer(integrationApp.MsgServiceRouter(), keeper.NewMsgServerImpl(bankKeeper))
+
+banktypes.RegisterQueryServer(integrationApp.QueryHelper(), keeper.NewQuerier(&bankKeeper))
+    qr := integrationApp.QueryHelper()
+    queryClient := banktypes.NewQueryClient(qr)
+    f := deterministicFixture{
+    ctx:         sdkCtx,
+		bankKeeper:  bankKeeper,
+		queryClient: queryClient,
+}
+
+return &f
+}
+
+func fundAccount(f *deterministicFixture, addr sdk.AccAddress, coin ...sdk.Coin) {
+    err := banktestutil.FundAccount(f.ctx, f.bankKeeper, addr, sdk.NewCoins(coin...))
+
+assert.NilError(&testing.T{
+}, err)
+}
+
+func getCoin(rt *rapid.T)
+
+sdk.Coin {
+    return sdk.NewCoin(
+		rapid.StringMatching(denomRegex).Draw(rt, "denom"),
+		math.NewInt(rapid.Int64Min(1).Draw(rt, "amount")),
+	)
+}
+
+func TestGRPCQueryBalance(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    addr := testdata.AddressGenerator(rt).Draw(rt, "address")
+    coin := getCoin(rt)
+
+fundAccount(f, addr, coin)
+    req := banktypes.NewQueryBalanceRequest(addr, coin.GetDenom())
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Balance, 0, true)
+})
+
+fundAccount(f, addr1, coin1)
+    req := banktypes.NewQueryBalanceRequest(addr1, coin1.GetDenom())
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Balance, 1087, false)
+}
+
+func TestGRPCQueryAllBalances(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    addr := testdata.AddressGenerator(rt).Draw(rt, "address")
+    numCoins := rapid.IntRange(1, 10).Draw(rt, "num-count")
+    coins := make(sdk.Coins, 0, numCoins)
+    for i := 0; i < numCoins; i++ {
+    coin := getCoin(rt)
+
+			// NewCoins sorts the denoms
+			coins = sdk.NewCoins(append(coins, coin)...)
+}
+
+fundAccount(f, addr, coins...)
+    req := banktypes.NewQueryAllBalancesRequest(addr, testdata.PaginationGenerator(rt, uint64(numCoins)).Draw(rt, "pagination"), false)
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.AllBalances, 0, true)
+})
+    coins := sdk.NewCoins(
+		sdk.NewCoin("stake", math.NewInt(10)),
+		sdk.NewCoin("denom", math.NewInt(100)),
+	)
+
+fundAccount(f, addr1, coins...)
+    req := banktypes.NewQueryAllBalancesRequest(addr1, nil, false)
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.AllBalances, 357, false)
+}
+
+func TestGRPCQuerySpendableBalances(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    addr := testdata.AddressGenerator(rt).Draw(rt, "address")
+
+		// Denoms must be unique, otherwise sdk.NewCoins will panic.
+    denoms := rapid.SliceOfNDistinct(rapid.StringMatching(denomRegex), 1, 10, rapid.ID[string]).Draw(rt, "denoms")
+    coins := make(sdk.Coins, 0, len(denoms))
+    for _, denom := range denoms {
+    coin := sdk.NewCoin(
+				denom,
+				math.NewInt(rapid.Int64Min(1).Draw(rt, "amount")),
+			)
+
+			// NewCoins sorts the denoms
+			coins = sdk.NewCoins(append(coins, coin)...)
+}
+    err := banktestutil.FundAccount(f.ctx, f.bankKeeper, addr, coins)
+
+assert.NilError(t, err)
+    req := banktypes.NewQuerySpendableBalancesRequest(addr, testdata.PaginationGenerator(rt, uint64(len(denoms))).Draw(rt, "pagination"))
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SpendableBalances, 0, true)
+})
+    coins := sdk.NewCoins(
+		sdk.NewCoin("stake", math.NewInt(10)),
+		sdk.NewCoin("denom", math.NewInt(100)),
+	)
+    err := banktestutil.FundAccount(f.ctx, f.bankKeeper, addr1, coins)
+
+assert.NilError(t, err)
+    req := banktypes.NewQuerySpendableBalancesRequest(addr1, nil)
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SpendableBalances, 2032, false)
+}
+
+func TestGRPCQueryTotalSupply(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+res, err := f.queryClient.TotalSupply(f.ctx, &banktypes.QueryTotalSupplyRequest{
+})
+
+assert.NilError(t, err)
+    initialSupply := res.GetSupply()
+
+rapid.Check(t, func(rt *rapid.T) {
+    numCoins := rapid.IntRange(1, 3).Draw(rt, "num-count")
+    coins := make(sdk.Coins, 0, numCoins)
+    for i := 0; i < numCoins; i++ {
+    coin := sdk.NewCoin(
+				rapid.StringMatching(denomRegex).Draw(rt, "denom"),
+				math.NewInt(rapid.Int64Min(1).Draw(rt, "amount")),
+			)
+
+coins = coins.Add(coin)
+}
+
+assert.NilError(t, f.bankKeeper.MintCoins(f.ctx, minttypes.ModuleName, coins))
+
+initialSupply = initialSupply.Add(coins...)
+    req := &banktypes.QueryTotalSupplyRequest{
+    Pagination: testdata.PaginationGenerator(rt, uint64(len(initialSupply))).Draw(rt, "pagination"),
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.TotalSupply, 0, true)
+})
+
+f = initDeterministicFixture(t) // reset
+    coins := sdk.NewCoins(
+		sdk.NewCoin("foo", math.NewInt(10)),
+		sdk.NewCoin("bar", math.NewInt(100)),
+	)
+
+assert.NilError(t, f.bankKeeper.MintCoins(f.ctx, minttypes.ModuleName, coins))
+    req := &banktypes.QueryTotalSupplyRequest{
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.TotalSupply, 150, false)
+}
+
+func TestGRPCQueryTotalSupplyOf(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    coin := sdk.NewCoin(
+			rapid.StringMatching(denomRegex).Draw(rt, "denom"),
+			math.NewInt(rapid.Int64Min(1).Draw(rt, "amount")),
+		)
+
+assert.NilError(t, f.bankKeeper.MintCoins(f.ctx, minttypes.ModuleName, sdk.NewCoins(coin)))
+    req := &banktypes.QuerySupplyOfRequest{
+    Denom: coin.GetDenom()
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SupplyOf, 0, true)
+})
+    coin := sdk.NewCoin("bar", math.NewInt(100))
+
+assert.NilError(t, f.bankKeeper.MintCoins(f.ctx, minttypes.ModuleName, sdk.NewCoins(coin)))
+    req := &banktypes.QuerySupplyOfRequest{
+    Denom: coin.GetDenom()
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SupplyOf, 1021, false)
+}
+
+func TestGRPCQueryParams(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    enabledStatus := banktypes.SendEnabled{
+    Denom:   rapid.StringMatching(denomRegex).Draw(rt, "denom"),
+    Enabled: rapid.Bool().Draw(rt, "status"),
+}
+    params := banktypes.Params{
+    SendEnabled:        []*banktypes.SendEnabled{&enabledStatus
+},
+    DefaultSendEnabled: rapid.Bool().Draw(rt, "send"),
+}
+
+require.NoError(t, f.bankKeeper.SetParams(f.ctx, params))
+    req := &banktypes.QueryParamsRequest{
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Params, 0, true)
+})
+    enabledStatus := banktypes.SendEnabled{
+    Denom:   "denom",
+    Enabled: true,
+}
+    params := banktypes.Params{
+    SendEnabled:        []*banktypes.SendEnabled{&enabledStatus
+},
+    DefaultSendEnabled: false,
+}
+
+require.NoError(t, f.bankKeeper.SetParams(f.ctx, params))
+    req := &banktypes.QueryParamsRequest{
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.Params, 1003, false)
+}
+
+func createAndReturnMetadatas(t *rapid.T, count int) []banktypes.Metadata {
+    denomsMetadata := make([]banktypes.Metadata, 0, count)
+    for i := 0; i < count; i++ {
+    denom := rapid.StringMatching(denomRegex).Draw(t, "denom")
+    aliases := rapid.SliceOf(rapid.String()).Draw(t, "aliases")
+		// In the GRPC server code, empty arrays are returned as nil
+    if len(aliases) == 0 {
+    aliases = nil
+}
+    metadata := banktypes.Metadata{
+    Description: rapid.StringN(1, 100, 100).Draw(t, "desc"),
+    DenomUnits: []*banktypes.DenomUnit{
+				{
+    Denom:    denom,
+    Exponent: rapid.Uint32().Draw(t, "exponent"),
+    Aliases:  aliases,
+},
+},
+    Base:    denom,
+    Display: denom,
+    Name:    rapid.String().Draw(t, "name"),
+    Symbol:  rapid.String().Draw(t, "symbol"),
+    URI:     rapid.String().Draw(t, "uri"),
+    URIHash: rapid.String().Draw(t, "uri-hash"),
+}
+
+denomsMetadata = append(denomsMetadata, metadata)
+}
+
+return denomsMetadata
+}
+
+func TestGRPCDenomsMetadata(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    count := rapid.IntRange(1, 3).Draw(rt, "count")
+    denomsMetadata := createAndReturnMetadatas(rt, count)
+
+assert.Assert(t, len(denomsMetadata) == count)
+    for i := 0; i < count; i++ {
+    f.bankKeeper.SetDenomMetaData(f.ctx, denomsMetadata[i])
+}
+    req := &banktypes.QueryDenomsMetadataRequest{
+    Pagination: testdata.PaginationGenerator(rt, uint64(count)).Draw(rt, "pagination"),
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomsMetadata, 0, true)
+})
+
+f = initDeterministicFixture(t) // reset
+
+	f.bankKeeper.SetDenomMetaData(f.ctx, metadataAtom)
+    req := &banktypes.QueryDenomsMetadataRequest{
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomsMetadata, 660, false)
+}
+
+func TestGRPCDenomMetadata(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    denomMetadata := createAndReturnMetadatas(rt, 1)
+
+assert.Assert(t, len(denomMetadata) == 1)
+
+f.bankKeeper.SetDenomMetaData(f.ctx, denomMetadata[0])
+    req := &banktypes.QueryDenomMetadataRequest{
+    Denom: denomMetadata[0].Base,
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomMetadata, 0, true)
+})
+
+f.bankKeeper.SetDenomMetaData(f.ctx, metadataAtom)
+    req := &banktypes.QueryDenomMetadataRequest{
+    Denom: metadataAtom.Base,
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomMetadata, 1300, false)
+}
+
+func TestGRPCSendEnabled(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+    allDenoms := []string{
+}
+
+rapid.Check(t, func(rt *rapid.T) {
+    count := rapid.IntRange(0, 10).Draw(rt, "count")
+    denoms := make([]string, 0, count)
+    for i := 0; i < count; i++ {
+    coin := banktypes.SendEnabled{
+    Denom:   rapid.StringMatching(denomRegex).Draw(rt, "denom"),
+    Enabled: rapid.Bool().Draw(rt, "enabled-status"),
+}
+
+f.bankKeeper.SetSendEnabled(f.ctx, coin.Denom, coin.Enabled)
+
+denoms = append(denoms, coin.Denom)
+}
+
+allDenoms = append(allDenoms, denoms...)
+    req := &banktypes.QuerySendEnabledRequest{
+    Denoms: denoms,
+			// Pagination is only taken into account when `denoms` is an empty array
+			Pagination: testdata.PaginationGenerator(rt, uint64(len(allDenoms))).Draw(rt, "pagination"),
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SendEnabled, 0, true)
+})
+
+coin1 := banktypes.SendEnabled{
+    Denom:   "falsecoin",
+    Enabled: false,
+}
+
+coin2 := banktypes.SendEnabled{
+    Denom:   "truecoin",
+    Enabled: true,
+}
+
+f.bankKeeper.SetSendEnabled(f.ctx, coin1.Denom, false)
+
+f.bankKeeper.SetSendEnabled(f.ctx, coin2.Denom, true)
+    req := &banktypes.QuerySendEnabledRequest{
+    Denoms: []string{
+    coin1.GetDenom(), coin2.GetDenom()
+},
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.SendEnabled, 4063, false)
+}
+
+func TestGRPCDenomOwners(t *testing.T) {
+    t.Parallel()
+    f := initDeterministicFixture(t)
+
+rapid.Check(t, func(rt *rapid.T) {
+    denom := rapid.StringMatching(denomRegex).Draw(rt, "denom")
+    numAddr := rapid.IntRange(1, 10).Draw(rt, "number-address")
+    for i := 0; i < numAddr; i++ {
+    addr := testdata.AddressGenerator(rt).Draw(rt, "address")
+    coin := sdk.NewCoin(
+				denom,
+				math.NewInt(rapid.Int64Min(1).Draw(rt, "amount")),
+			)
+    err := banktestutil.FundAccount(f.ctx, f.bankKeeper, addr, sdk.NewCoins(coin))
+
+assert.NilError(t, err)
+}
+    req := &banktypes.QueryDenomOwnersRequest{
+    Denom:      denom,
+    Pagination: testdata.PaginationGenerator(rt, uint64(numAddr)).Draw(rt, "pagination"),
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomOwners, 0, true)
+})
+    denomOwners := []*banktypes.DenomOwner{
+		{
+    Address: "cosmos1qg65a9q6k2sqq7l3ycp428sqqpmqcucgzze299",
+    Balance: coin1,
+},
+		{
+    Address: "cosmos1qglnsqgpq48l7qqzgs8qdshr6fh3gqq9ej3qut",
+    Balance: coin1,
+},
+}
+    for i := 0; i < len(denomOwners); i++ {
+    addr, err := sdk.AccAddressFromBech32(denomOwners[i].Address)
+
+assert.NilError(t, err)
+
+err = banktestutil.FundAccount(f.ctx, f.bankKeeper, addr, sdk.NewCoins(coin1))
+
+assert.NilError(t, err)
+}
+    req := &banktypes.QueryDenomOwnersRequest{
+    Denom: coin1.GetDenom(),
+}
+
+testdata.DeterministicIterations(f.ctx, t, req, f.queryClient.DenomOwners, 2516, false)
+}
+```
+
+## Simulations
+
+Simulations uses as well a minimal application, built with [`depinject`](/docs/sdk/v0.53/packages/depinject):
+
+<Note>
+You can as well use the `AppConfig` `configurator` for creating an `AppConfig` [inline](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/x/slashing/app_test.go#L54-L62). There is no difference between those two ways, use whichever you prefer.
+</Note>
+
+Following is an example for `x/gov/` simulations:
+
+```go expandable
+package simulation_test
+
+import (
+    
+	"fmt"
+    "math/rand"
+    "testing"
+    "time"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+    "github.com/cosmos/gogoproto/proto"
+    "github.com/stretchr/testify/require"
+    "cosmossdk.io/depinject"
+    "cosmossdk.io/log"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/testutil/configurator"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	_ "github.com/cosmos/cosmos-sdk/x/auth"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
+	_ "github.com/cosmos/cosmos-sdk/x/bank"
+	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+    "github.com/cosmos/cosmos-sdk/x/bank/testutil"
+	_ "github.com/cosmos/cosmos-sdk/x/consensus"
+	_ "github.com/cosmos/cosmos-sdk/x/distribution"
+	dk "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/gov"
+    "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+    "github.com/cosmos/cosmos-sdk/x/gov/simulation"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	_ "github.com/cosmos/cosmos-sdk/x/params"
+	_ "github.com/cosmos/cosmos-sdk/x/staking"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+)
+
+var (
+	_ simtypes.WeightedProposalMsg = MockWeightedProposals{
+}
+	//nolint:staticcheck // keeping around for legacy testing
+	_ simtypes.WeightedProposalContent = MockWeightedProposals{
+}
+)
+
+type MockWeightedProposals struct {
+    n int
+}
+
+func (m MockWeightedProposals)
+
+AppParamsKey()
+
+string {
+    return fmt.Sprintf("AppParamsKey-%d", m.n)
+}
+
+func (m MockWeightedProposals)
+
+DefaultWeight()
+
+int {
+    return m.n
+}
+
+func (m MockWeightedProposals)
+
+MsgSimulatorFn()
+
+simtypes.MsgSimulatorFn {
+    return func(r *rand.Rand, _ sdk.Context, _ []simtypes.Account)
+
+sdk.Msg {
+    return nil
+}
+}
+
+//nolint:staticcheck // retaining legacy content to maintain gov functionality
+func (m MockWeightedProposals)
+
+ContentSimulatorFn()
+
+simtypes.ContentSimulatorFn {
+    return func(r *rand.Rand, _ sdk.Context, _ []simtypes.Account)
+
+simtypes.Content {
+    return v1beta1.NewTextProposal(
+			fmt.Sprintf("title-%d: %s", m.n, simtypes.RandStringOfLength(r, 100)),
+			fmt.Sprintf("description-%d: %s", m.n, simtypes.RandStringOfLength(r, 4000)),
+		)
+}
+}
+
+func mockWeightedProposalMsg(n int) []simtypes.WeightedProposalMsg {
+    wpc := make([]simtypes.WeightedProposalMsg, n)
+    for i := range n {
+    wpc[i] = MockWeightedProposals{
+    i
+}
+	
+}
+
+return wpc
+}
+
+// nolint // keeping this legacy proposal for testing
+func mockWeightedLegacyProposalContent(n int) []simtypes.WeightedProposalContent {
+    wpc := make([]simtypes.WeightedProposalContent, n)
+    for i := range n {
+    wpc[i] = MockWeightedProposals{
+    i
+}
+	
+}
+
+return wpc
+}
+
+// TestWeightedOperations tests the weights of the operations.
+func TestWeightedOperations(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+	ctx.WithChainID("test-chain")
+    appParams := make(simtypes.AppParams)
+    weightesOps := simulation.WeightedOperations(appParams, suite.TxConfig, suite.AccountKeeper,
+		suite.BankKeeper, suite.GovKeeper, mockWeightedProposalMsg(3), mockWeightedLegacyProposalContent(1),
+	)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accs := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+    expected := []struct {
+    weight     int
+		opMsgRoute string
+		opMsgName  string
+}{
+		{
+    simulation.DefaultWeightMsgDeposit, types.ModuleName, simulation.TypeMsgDeposit
+},
+		{
+    simulation.DefaultWeightMsgVote, types.ModuleName, simulation.TypeMsgVote
+},
+		{
+    simulation.DefaultWeightMsgVoteWeighted, types.ModuleName, simulation.TypeMsgVoteWeighted
+},
+		{
+    simulation.DefaultWeightMsgCancelProposal, types.ModuleName, simulation.TypeMsgCancelProposal
+},
+		{0, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{1, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{2, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{0, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+}
+
+require.Equal(t, len(weightesOps), len(expected), "number of operations should be the same")
+    for i, w := range weightesOps {
+    operationMsg, _, err := w.Op()(r, app.BaseApp, ctx, accs, ctx.ChainID())
+
+require.NoError(t, err)
+
+		// the following checks are very much dependent from the ordering of the output given
+		// by WeightedOperations. if the ordering in WeightedOperations changes some tests
+		// will fail
+		require.Equal(t, expected[i].weight, w.Weight(), "weight should be the same")
+
+require.Equal(t, expected[i].opMsgRoute, operationMsg.Route, "route should be the same")
+
+require.Equal(t, expected[i].opMsgName, operationMsg.Name, "operation Msg name should be the same")
+}
+}
+
+// TestSimulateMsgSubmitProposal tests the normal scenario of a valid message of type TypeMsgSubmitProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgSubmitProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	_, err := app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgSubmitProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper, MockWeightedProposals{3
+}.MsgSimulatorFn())
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgSubmitProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Proposer)
+
+require.NotEqual(t, len(msg.InitialDeposit), 0)
+
+require.Equal(t, "47841094stake", msg.InitialDeposit[0].String())
+
+require.Equal(t, simulation.TypeMsgSubmitProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgSubmitProposal tests the normal scenario of a valid message of type TypeMsgSubmitProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgSubmitLegacyProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	_, err := app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+	// execute operation
+    op := simulation.SimulateMsgSubmitLegacyProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper, MockWeightedProposals{3
+}.ContentSimulatorFn())
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgSubmitProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+var msgLegacyContent v1.MsgExecLegacyContent
+	err = proto.Unmarshal(msg.Messages[0].Value, &msgLegacyContent)
+
+require.NoError(t, err)
+
+var textProposal v1beta1.TextProposal
+	err = proto.Unmarshal(msgLegacyContent.Content.Value, &textProposal)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, "cosmos1p8wcgrjr4pjju90xg6u9cgq55dxwq8j7u4x9a0", msg.Proposer)
+
+require.NotEqual(t, len(msg.InitialDeposit), 0)
+
+require.Equal(t, "25166256stake", msg.InitialDeposit[0].String())
+
+require.Equal(t, "title-3: ZBSpYuLyYggwexjxusrBqDOTtGTOWeLrQKjLxzIivHSlcxgdXhhuTSkuxKGLwQvuyNhYFmBZHeAerqyNEUzXPFGkqEGqiQWIXnku",
+		textProposal.GetTitle())
+
+require.Equal(t, "description-3: NJWzHdBNpAXKJPHWQdrGYcAHSctgVlqwqHoLfHsXUdStwfefwzqLuKEhmMyYLdbZrcPgYqjNHxPexsruwEGStAneKbWkQDDIlCWBLSiAASNhZqNFlPtfqPJoxKsgMdzjWqLWdqKQuJqWPMvwPQWZUtVMOTMYKJbfdlZsjdsomuScvDmbDkgRualsxDvRJuCAmPOXitIbcyWsKGSdrEunFAOdmXnsuyFVgJqEjbklvmwrUlsxjRSfKZxGcpayDdgoFcnVSutxjRgOSFzPwidAjubMncNweqpbxhXGchpZUxuFDOtpnhNUycJICRYqsPhPSCjPTWZFLkstHWJxvdPEAyEIxXgLwbNOjrgzmaujiBABBIXvcXpLrbcEWNNQsbjvgJFgJkflpRohHUutvnaUqoopuKjTDaemDeSdqbnOzcfJpcTuAQtZoiLZOoAIlboFDAeGmSNwkvObPRvRWQgWkGkxwtPauYgdkmypLjbqhlHJIQTntgWjXwZdOyYEdQRRLfMSdnxqppqUofqLbLQDUjwKVKfZJUJQPsWIPwIVaSTrmKskoAhvmZyJgeRpkaTfGgrJzAigcxtfshmiDCFkuiluqtMOkidknnTBtumyJYlIsWLnCQclqdVmikUoMOPdPWwYbJxXyqUVicNxFxyqJTenNblyyKSdlCbiXxUiYUiMwXZASYfvMDPFgxniSjWaZTjHkqlJvtBsXqwPpyVxnJVGFWhfSxgOcduoxkiopJvFjMmFabrGYeVtTXLhxVUEiGwYUvndjFGzDVntUvibiyZhfMQdMhgsiuysLMiePBNXifRLMsSmXPkwlPloUbJveCvUlaalhZHuvdkCnkSHbMbmOnrfEGPwQiACiPlnihiaOdbjPqPiTXaHDoJXjSlZmltGqNHHNrcKdlFSCdmVOuvDcBLdSklyGJmcLTbSFtALdGlPkqqecJrpLCXNPWefoTJNgEJlyMEPneVaxxduAAEqQpHWZodWyRkDAxzyMnFMcjSVqeRXLqsNyNtQBbuRvunZflWSbbvXXdkyLikYqutQhLPONXbvhcQZJPSWnOulqQaXmbfFxAkqfYeseSHOQidHwbcsOaMnSrrmGjjRmEMQNuknupMxJiIeVjmgZvbmjPIQTEhQFULQLBMPrxcFPvBinaOPYWGvYGRKxLZdwamfRQQFngcdSlvwjfaPbURasIsGJVHtcEAxnIIrhSriiXLOlbEBLXFElXJFGxHJczRBIxAuPKtBisjKBwfzZFagdNmjdwIRvwzLkFKWRTDPxJCmpzHUcrPiiXXHnOIlqNVoGSXZewdnCRhuxeYGPVTfrNTQNOxZmxInOazUYNTNDgzsxlgiVEHPKMfbesvPHUqpNkUqbzeuzfdrsuLDpKHMUbBMKczKKWOdYoIXoPYtEjfOnlQLoGnbQUCuERdEFaptwnsHzTJDsuZkKtzMpFaZobynZdzNydEeJJHDYaQcwUxcqvwfWwNUsCiLvkZQiSfzAHftYgAmVsXgtmcYgTqJIawstRYJrZdSxlfRiqTufgEQVambeZZmaAyRQbcmdjVUZZCgqDrSeltJGXPMgZnGDZqISrGDOClxXCxMjmKqEPwKHoOfOeyGmqWqihqjINXLqnyTesZePQRqaWDQNqpLgNrAUKulklmckTijUltQKuWQDwpLmDyxLppPVMwsmBIpOwQttYFMjgJQZLYFPmxWFLIeZihkRNnkzoypBICIxgEuYsVWGIGRbbxqVasYnstWomJnHwmtOhAFSpttRYYzBmyEtZXiCthvKvWszTXDbiJbGXMcrYpKAgvUVFtdKUfvdMfhAryctklUCEdjetjuGNfJjajZtvzdYaqInKtFPPLYmRaXPdQzxdSQfmZDEVHlHGEGNSPRFJuIfKLLfUmnHxHnRjmzQPNlqrXgifUdzAGKVabYqvcDeYoTYgPsBUqehrBhmQUgTvDnsdpuhUoxskDdppTsYMcnDIPSwKIqhXDCIxOuXrywahvVavvHkPuaenjLmEbMgrkrQLHEAwrhHkPRNvonNQKqprqOFVZKAtpRSpvQUxMoXCMZLSSbnLEFsjVfANdQNQVwTmGxqVjVqRuxREAhuaDrFgEZpYKhwWPEKBevBfsOIcaZKyykQafzmGPLRAKDtTcJxJVgiiuUkmyMYuDUNEUhBEdoBLJnamtLmMJQgmLiUELIhLpiEvpOXOvXCPUeldLFqkKOwfacqIaRcnnZvERKRMCKUkMABbDHytQqQblrvoxOZkwzosQfDKGtIdfcXRJNqlBNwOCWoQBcEWyqrMlYZIAXYJmLfnjoJepgSFvrgajaBAIksoyeHqgqbGvpAstMIGmIhRYGGNPRIfOQKsGoKgxtsidhTaAePRCBFqZgPDWCIkqOJezGVkjfYUCZTlInbxBXwUAVRsxHTQtJFnnpmMvXDYCVlEmnZBKhmmxQOIQzxFWpJQkQoSAYzTEiDWEOsVLNrbfzeHFRyeYATakQQWmFDLPbVMCJcWjFGJjfqCoVzlbNNEsqxdSmNPjTjHYOkuEMFLkXYGaoJlraLqayMeCsTjWNRDPBywBJLAPVkGQqTwApVVwYAetlwSbzsdHWsTwSIcctkyKDuRWYDQikRqsKTMJchrliONJeaZIzwPQrNbTwxsGdwuduvibtYndRwpdsvyCktRHFalvUuEKMqXbItfGcNGWsGzubdPMYayOUOINjpcFBeESdwpdlTYmrPsLsVDhpTzoMegKrytNVZkfJRPuDCUXxSlSthOohmsuxmIZUedzxKmowKOdXTMcEtdpHaPWgIsIjrViKrQOCONlSuazmLuCUjLltOGXeNgJKedTVrrVCpWYWHyVrdXpKgNaMJVjbXxnVMSChdWKuZdqpisvrkBJPoURDYxWOtpjzZoOpWzyUuYNhCzRoHsMjmmWDcXzQiHIyjwdhPNwiPqFxeUfMVFQGImhykFgMIlQEoZCaRoqSBXTSWAeDumdbsOGtATwEdZlLfoBKiTvodQBGOEcuATWXfiinSjPmJKcWgQrTVYVrwlyMWhxqNbCMpIQNoSMGTiWfPTCezUjYcdWppnsYJihLQCqbNLRGgqrwHuIvsazapTpoPZIyZyeeSueJuTIhpHMEJfJpScshJubJGfkusuVBgfTWQoywSSliQQSfbvaHKiLnyjdSbpMkdBgXepoSsHnCQaYuHQqZsoEOmJCiuQUpJkmfyfbIShzlZpHFmLCsbknEAkKXKfRTRnuwdBeuOGgFbJLbDksHVapaRayWzwoYBEpmrlAxrUxYMUekKbpjPNfjUCjhbdMAnJmYQVZBQZkFVweHDAlaqJjRqoQPoOMLhyvYCzqEuQsAFoxWrzRnTVjStPadhsESlERnKhpEPsfDxNvxqcOyIulaCkmPdambLHvGhTZzysvqFauEgkFRItPfvisehFmoBhQqmkfbHVsgfHXDPJVyhwPllQpuYLRYvGodxKjkarnSNgsXoKEMlaSKxKdcVgvOkuLcfLFfdtXGTclqfPOfeoVLbqcjcXCUEBgAGplrkgsmIEhWRZLlGPGCwKWRaCKMkBHTAcypUrYjWwCLtOPVygMwMANGoQwFnCqFrUGMCRZUGJKTZIGPyldsifauoMnJPLTcDHmilcmahlqOELaAUYDBuzsVywnDQfwRLGIWozYaOAilMBcObErwgTDNGWnwQMUgFFSKtPDMEoEQCTKVREqrXZSGLqwTMcxHfWotDllNkIJPMbXzjDVjPOOjCFuIvTyhXKLyhUScOXvYthRXpPfKwMhptXaxIxgqBoUqzrWbaoLTVpQoottZyPFfNOoMioXHRuFwMRYUiKvcWPkrayyTLOCFJlAyslDameIuqVAuxErqFPEWIScKpBORIuZqoXlZuTvAjEdlEWDODFRregDTqGNoFBIHxvimmIZwLfFyKUfEWAnNBdtdzDmTPXtpHRGdIbuucfTjOygZsTxPjfweXhSUkMhPjMaxKlMIJMOXcnQfyzeOcbWwNbeH",
+		textProposal.GetDescription())
+
+require.Equal(t, simulation.TypeMsgSubmitProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgCancelProposal tests the normal scenario of a valid message of type TypeMsgCancelProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgCancelProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+	// setup a proposal
+    proposer := accounts[0].Address
+    content := v1beta1.NewTextProposal("Test", "description")
+
+contentMsg, err := v1.NewLegacyContent(content, suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String())
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "title", "summary", proposer, false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.SetProposal(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgCancelProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgCancelProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, proposer.String(), msg.Proposer)
+
+require.Equal(t, simulation.TypeMsgCancelProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgDeposit tests the normal scenario of a valid message of type TypeMsgDeposit.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgDeposit(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    content := v1beta1.NewTextProposal("Test", "description")
+
+contentMsg, err := v1.NewLegacyContent(content, suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String())
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "description", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.SetProposal(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgDeposit(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgDeposit
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Depositor)
+
+require.NotEqual(t, len(msg.Amount), 0)
+
+require.Equal(t, "560969stake", msg.Amount[0].String())
+
+require.Equal(t, simulation.TypeMsgDeposit, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgVote tests the normal scenario of a valid message of type TypeMsgVote.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgVote(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    govAcc := suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String()
+
+contentMsg, err := v1.NewLegacyContent(v1beta1.NewTextProposal("Test", "description"), govAcc)
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "description", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.ActivateVotingPeriod(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgVote(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgVote
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Voter)
+
+require.Equal(t, v1.OptionYes, msg.Option)
+
+require.Equal(t, simulation.TypeMsgVote, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgVoteWeighted tests the normal scenario of a valid message of type TypeMsgVoteWeighted.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgVoteWeighted(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    govAcc := suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String()
+
+contentMsg, err := v1.NewLegacyContent(v1beta1.NewTextProposal("Test", "description"), govAcc)
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "test", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.ActivateVotingPeriod(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgVoteWeighted(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgVoteWeighted
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Voter)
+
+require.True(t, len(msg.Options) >= 1)
+
+require.Equal(t, simulation.TypeMsgVoteWeighted, sdk.MsgTypeURL(&msg))
+}
+
+type suite struct {
+    TxConfig           client.TxConfig
+	AccountKeeper      authkeeper.AccountKeeper
+	BankKeeper         bankkeeper.Keeper
+	GovKeeper          *keeper.Keeper
+	StakingKeeper      *stakingkeeper.Keeper
+	DistributionKeeper dk.Keeper
+	App                *runtime.App
+}
+
+// returns context and an app with updated mint keeper
+func createTestSuite(t *testing.T, isCheckTx bool) (suite, sdk.Context) {
+    t.Helper()
+    res := suite{
+}
+
+app, err := simtestutil.Setup(
+		depinject.Configs(
+			configurator.NewAppConfig(
+				configurator.AuthModule(),
+				configurator.TxModule(),
+				configurator.ParamsModule(),
+				configurator.BankModule(),
+				configurator.StakingModule(),
+				configurator.ConsensusModule(),
+				configurator.DistributionModule(),
+				configurator.GovModule(),
+			),
+			depinject.Supply(log.NewNopLogger()),
+		),
+		&res.TxConfig, &res.AccountKeeper, &res.BankKeeper, &res.GovKeeper, &res.StakingKeeper, &res.DistributionKeeper)
+
+require.NoError(t, err)
+    ctx := app.NewContext(isCheckTx)
+
+res.App = app
+	return res, ctx
+}
+
+func getTestingAccounts(
+	t *testing.T,
+	r *rand.Rand,
+	accountKeeper authkeeper.AccountKeeper,
+	bankKeeper bankkeeper.Keeper,
+	stakingKeeper *stakingkeeper.Keeper,
+	ctx sdk.Context,
+	n int,
+) []simtypes.Account {
+    t.Helper()
+    accounts := simtypes.RandomAccounts(r, n)
+    initAmt := stakingKeeper.TokensFromConsensusPower(ctx, 200)
+    initCoins := sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, initAmt))
+
+	// add coins to the accounts
+    for _, account := range accounts {
+    acc := accountKeeper.NewAccountWithAddress(ctx, account.Address)
+
+accountKeeper.SetAccount(ctx, acc)
+
+require.NoError(t, testutil.FundAccount(ctx, bankKeeper, account.Address, initCoins))
+}
+
+return accounts
+}
+```
+
+```go expandable
+package simulation_test
+
+import (
+    
+	"fmt"
+    "math/rand"
+    "testing"
+    "time"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+    "github.com/cosmos/gogoproto/proto"
+    "github.com/stretchr/testify/require"
+    "cosmossdk.io/depinject"
+    "cosmossdk.io/log"
+    "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/runtime"
+    "github.com/cosmos/cosmos-sdk/testutil/configurator"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	_ "github.com/cosmos/cosmos-sdk/x/auth"
+	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
+	_ "github.com/cosmos/cosmos-sdk/x/bank"
+	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+    "github.com/cosmos/cosmos-sdk/x/bank/testutil"
+	_ "github.com/cosmos/cosmos-sdk/x/consensus"
+	_ "github.com/cosmos/cosmos-sdk/x/distribution"
+	dk "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	_ "github.com/cosmos/cosmos-sdk/x/gov"
+    "github.com/cosmos/cosmos-sdk/x/gov/keeper"
+    "github.com/cosmos/cosmos-sdk/x/gov/simulation"
+    "github.com/cosmos/cosmos-sdk/x/gov/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+    "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
+	_ "github.com/cosmos/cosmos-sdk/x/params"
+	_ "github.com/cosmos/cosmos-sdk/x/staking"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+)
+
+var (
+	_ simtypes.WeightedProposalMsg = MockWeightedProposals{
+}
+	//nolint:staticcheck // keeping around for legacy testing
+	_ simtypes.WeightedProposalContent = MockWeightedProposals{
+}
+)
+
+type MockWeightedProposals struct {
+    n int
+}
+
+func (m MockWeightedProposals)
+
+AppParamsKey()
+
+string {
+    return fmt.Sprintf("AppParamsKey-%d", m.n)
+}
+
+func (m MockWeightedProposals)
+
+DefaultWeight()
+
+int {
+    return m.n
+}
+
+func (m MockWeightedProposals)
+
+MsgSimulatorFn()
+
+simtypes.MsgSimulatorFn {
+    return func(r *rand.Rand, _ sdk.Context, _ []simtypes.Account)
+
+sdk.Msg {
+    return nil
+}
+}
+
+//nolint:staticcheck // retaining legacy content to maintain gov functionality
+func (m MockWeightedProposals)
+
+ContentSimulatorFn()
+
+simtypes.ContentSimulatorFn {
+    return func(r *rand.Rand, _ sdk.Context, _ []simtypes.Account)
+
+simtypes.Content {
+    return v1beta1.NewTextProposal(
+			fmt.Sprintf("title-%d: %s", m.n, simtypes.RandStringOfLength(r, 100)),
+			fmt.Sprintf("description-%d: %s", m.n, simtypes.RandStringOfLength(r, 4000)),
+		)
+}
+}
+
+func mockWeightedProposalMsg(n int) []simtypes.WeightedProposalMsg {
+    wpc := make([]simtypes.WeightedProposalMsg, n)
+    for i := range n {
+    wpc[i] = MockWeightedProposals{
+    i
+}
+	
+}
+
+return wpc
+}
+
+// nolint // keeping this legacy proposal for testing
+func mockWeightedLegacyProposalContent(n int) []simtypes.WeightedProposalContent {
+    wpc := make([]simtypes.WeightedProposalContent, n)
+    for i := range n {
+    wpc[i] = MockWeightedProposals{
+    i
+}
+	
+}
+
+return wpc
+}
+
+// TestWeightedOperations tests the weights of the operations.
+func TestWeightedOperations(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+	ctx.WithChainID("test-chain")
+    appParams := make(simtypes.AppParams)
+    weightesOps := simulation.WeightedOperations(appParams, suite.TxConfig, suite.AccountKeeper,
+		suite.BankKeeper, suite.GovKeeper, mockWeightedProposalMsg(3), mockWeightedLegacyProposalContent(1),
+	)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accs := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+    expected := []struct {
+    weight     int
+		opMsgRoute string
+		opMsgName  string
+}{
+		{
+    simulation.DefaultWeightMsgDeposit, types.ModuleName, simulation.TypeMsgDeposit
+},
+		{
+    simulation.DefaultWeightMsgVote, types.ModuleName, simulation.TypeMsgVote
+},
+		{
+    simulation.DefaultWeightMsgVoteWeighted, types.ModuleName, simulation.TypeMsgVoteWeighted
+},
+		{
+    simulation.DefaultWeightMsgCancelProposal, types.ModuleName, simulation.TypeMsgCancelProposal
+},
+		{0, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{1, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{2, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+		{0, types.ModuleName, simulation.TypeMsgSubmitProposal
+},
+}
+
+require.Equal(t, len(weightesOps), len(expected), "number of operations should be the same")
+    for i, w := range weightesOps {
+    operationMsg, _, err := w.Op()(r, app.BaseApp, ctx, accs, ctx.ChainID())
+
+require.NoError(t, err)
+
+		// the following checks are very much dependent from the ordering of the output given
+		// by WeightedOperations. if the ordering in WeightedOperations changes some tests
+		// will fail
+		require.Equal(t, expected[i].weight, w.Weight(), "weight should be the same")
+
+require.Equal(t, expected[i].opMsgRoute, operationMsg.Route, "route should be the same")
+
+require.Equal(t, expected[i].opMsgName, operationMsg.Name, "operation Msg name should be the same")
+}
+}
+
+// TestSimulateMsgSubmitProposal tests the normal scenario of a valid message of type TypeMsgSubmitProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgSubmitProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	_, err := app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgSubmitProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper, MockWeightedProposals{3
+}.MsgSimulatorFn())
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgSubmitProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Proposer)
+
+require.NotEqual(t, len(msg.InitialDeposit), 0)
+
+require.Equal(t, "47841094stake", msg.InitialDeposit[0].String())
+
+require.Equal(t, simulation.TypeMsgSubmitProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgSubmitProposal tests the normal scenario of a valid message of type TypeMsgSubmitProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgSubmitLegacyProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	_, err := app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+	// execute operation
+    op := simulation.SimulateMsgSubmitLegacyProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper, MockWeightedProposals{3
+}.ContentSimulatorFn())
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgSubmitProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+var msgLegacyContent v1.MsgExecLegacyContent
+	err = proto.Unmarshal(msg.Messages[0].Value, &msgLegacyContent)
+
+require.NoError(t, err)
+
+var textProposal v1beta1.TextProposal
+	err = proto.Unmarshal(msgLegacyContent.Content.Value, &textProposal)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, "cosmos1p8wcgrjr4pjju90xg6u9cgq55dxwq8j7u4x9a0", msg.Proposer)
+
+require.NotEqual(t, len(msg.InitialDeposit), 0)
+
+require.Equal(t, "25166256stake", msg.InitialDeposit[0].String())
+
+require.Equal(t, "title-3: ZBSpYuLyYggwexjxusrBqDOTtGTOWeLrQKjLxzIivHSlcxgdXhhuTSkuxKGLwQvuyNhYFmBZHeAerqyNEUzXPFGkqEGqiQWIXnku",
+		textProposal.GetTitle())
+
+require.Equal(t, "description-3: NJWzHdBNpAXKJPHWQdrGYcAHSctgVlqwqHoLfHsXUdStwfefwzqLuKEhmMyYLdbZrcPgYqjNHxPexsruwEGStAneKbWkQDDIlCWBLSiAASNhZqNFlPtfqPJoxKsgMdzjWqLWdqKQuJqWPMvwPQWZUtVMOTMYKJbfdlZsjdsomuScvDmbDkgRualsxDvRJuCAmPOXitIbcyWsKGSdrEunFAOdmXnsuyFVgJqEjbklvmwrUlsxjRSfKZxGcpayDdgoFcnVSutxjRgOSFzPwidAjubMncNweqpbxhXGchpZUxuFDOtpnhNUycJICRYqsPhPSCjPTWZFLkstHWJxvdPEAyEIxXgLwbNOjrgzmaujiBABBIXvcXpLrbcEWNNQsbjvgJFgJkflpRohHUutvnaUqoopuKjTDaemDeSdqbnOzcfJpcTuAQtZoiLZOoAIlboFDAeGmSNwkvObPRvRWQgWkGkxwtPauYgdkmypLjbqhlHJIQTntgWjXwZdOyYEdQRRLfMSdnxqppqUofqLbLQDUjwKVKfZJUJQPsWIPwIVaSTrmKskoAhvmZyJgeRpkaTfGgrJzAigcxtfshmiDCFkuiluqtMOkidknnTBtumyJYlIsWLnCQclqdVmikUoMOPdPWwYbJxXyqUVicNxFxyqJTenNblyyKSdlCbiXxUiYUiMwXZASYfvMDPFgxniSjWaZTjHkqlJvtBsXqwPpyVxnJVGFWhfSxgOcduoxkiopJvFjMmFabrGYeVtTXLhxVUEiGwYUvndjFGzDVntUvibiyZhfMQdMhgsiuysLMiePBNXifRLMsSmXPkwlPloUbJveCvUlaalhZHuvdkCnkSHbMbmOnrfEGPwQiACiPlnihiaOdbjPqPiTXaHDoJXjSlZmltGqNHHNrcKdlFSCdmVOuvDcBLdSklyGJmcLTbSFtALdGlPkqqecJrpLCXNPWefoTJNgEJlyMEPneVaxxduAAEqQpHWZodWyRkDAxzyMnFMcjSVqeRXLqsNyNtQBbuRvunZflWSbbvXXdkyLikYqutQhLPONXbvhcQZJPSWnOulqQaXmbfFxAkqfYeseSHOQidHwbcsOaMnSrrmGjjRmEMQNuknupMxJiIeVjmgZvbmjPIQTEhQFULQLBMPrxcFPvBinaOPYWGvYGRKxLZdwamfRQQFngcdSlvwjfaPbURasIsGJVHtcEAxnIIrhSriiXLOlbEBLXFElXJFGxHJczRBIxAuPKtBisjKBwfzZFagdNmjdwIRvwzLkFKWRTDPxJCmpzHUcrPiiXXHnOIlqNVoGSXZewdnCRhuxeYGPVTfrNTQNOxZmxInOazUYNTNDgzsxlgiVEHPKMfbesvPHUqpNkUqbzeuzfdrsuLDpKHMUbBMKczKKWOdYoIXoPYtEjfOnlQLoGnbQUCuERdEFaptwnsHzTJDsuZkKtzMpFaZobynZdzNydEeJJHDYaQcwUxcqvwfWwNUsCiLvkZQiSfzAHftYgAmVsXgtmcYgTqJIawstRYJrZdSxlfRiqTufgEQVambeZZmaAyRQbcmdjVUZZCgqDrSeltJGXPMgZnGDZqISrGDOClxXCxMjmKqEPwKHoOfOeyGmqWqihqjINXLqnyTesZePQRqaWDQNqpLgNrAUKulklmckTijUltQKuWQDwpLmDyxLppPVMwsmBIpOwQttYFMjgJQZLYFPmxWFLIeZihkRNnkzoypBICIxgEuYsVWGIGRbbxqVasYnstWomJnHwmtOhAFSpttRYYzBmyEtZXiCthvKvWszTXDbiJbGXMcrYpKAgvUVFtdKUfvdMfhAryctklUCEdjetjuGNfJjajZtvzdYaqInKtFPPLYmRaXPdQzxdSQfmZDEVHlHGEGNSPRFJuIfKLLfUmnHxHnRjmzQPNlqrXgifUdzAGKVabYqvcDeYoTYgPsBUqehrBhmQUgTvDnsdpuhUoxskDdppTsYMcnDIPSwKIqhXDCIxOuXrywahvVavvHkPuaenjLmEbMgrkrQLHEAwrhHkPRNvonNQKqprqOFVZKAtpRSpvQUxMoXCMZLSSbnLEFsjVfANdQNQVwTmGxqVjVqRuxREAhuaDrFgEZpYKhwWPEKBevBfsOIcaZKyykQafzmGPLRAKDtTcJxJVgiiuUkmyMYuDUNEUhBEdoBLJnamtLmMJQgmLiUELIhLpiEvpOXOvXCPUeldLFqkKOwfacqIaRcnnZvERKRMCKUkMABbDHytQqQblrvoxOZkwzosQfDKGtIdfcXRJNqlBNwOCWoQBcEWyqrMlYZIAXYJmLfnjoJepgSFvrgajaBAIksoyeHqgqbGvpAstMIGmIhRYGGNPRIfOQKsGoKgxtsidhTaAePRCBFqZgPDWCIkqOJezGVkjfYUCZTlInbxBXwUAVRsxHTQtJFnnpmMvXDYCVlEmnZBKhmmxQOIQzxFWpJQkQoSAYzTEiDWEOsVLNrbfzeHFRyeYATakQQWmFDLPbVMCJcWjFGJjfqCoVzlbNNEsqxdSmNPjTjHYOkuEMFLkXYGaoJlraLqayMeCsTjWNRDPBywBJLAPVkGQqTwApVVwYAetlwSbzsdHWsTwSIcctkyKDuRWYDQikRqsKTMJchrliONJeaZIzwPQrNbTwxsGdwuduvibtYndRwpdsvyCktRHFalvUuEKMqXbItfGcNGWsGzubdPMYayOUOINjpcFBeESdwpdlTYmrPsLsVDhpTzoMegKrytNVZkfJRPuDCUXxSlSthOohmsuxmIZUedzxKmowKOdXTMcEtdpHaPWgIsIjrViKrQOCONlSuazmLuCUjLltOGXeNgJKedTVrrVCpWYWHyVrdXpKgNaMJVjbXxnVMSChdWKuZdqpisvrkBJPoURDYxWOtpjzZoOpWzyUuYNhCzRoHsMjmmWDcXzQiHIyjwdhPNwiPqFxeUfMVFQGImhykFgMIlQEoZCaRoqSBXTSWAeDumdbsOGtATwEdZlLfoBKiTvodQBGOEcuATWXfiinSjPmJKcWgQrTVYVrwlyMWhxqNbCMpIQNoSMGTiWfPTCezUjYcdWppnsYJihLQCqbNLRGgqrwHuIvsazapTpoPZIyZyeeSueJuTIhpHMEJfJpScshJubJGfkusuVBgfTWQoywSSliQQSfbvaHKiLnyjdSbpMkdBgXepoSsHnCQaYuHQqZsoEOmJCiuQUpJkmfyfbIShzlZpHFmLCsbknEAkKXKfRTRnuwdBeuOGgFbJLbDksHVapaRayWzwoYBEpmrlAxrUxYMUekKbpjPNfjUCjhbdMAnJmYQVZBQZkFVweHDAlaqJjRqoQPoOMLhyvYCzqEuQsAFoxWrzRnTVjStPadhsESlERnKhpEPsfDxNvxqcOyIulaCkmPdambLHvGhTZzysvqFauEgkFRItPfvisehFmoBhQqmkfbHVsgfHXDPJVyhwPllQpuYLRYvGodxKjkarnSNgsXoKEMlaSKxKdcVgvOkuLcfLFfdtXGTclqfPOfeoVLbqcjcXCUEBgAGplrkgsmIEhWRZLlGPGCwKWRaCKMkBHTAcypUrYjWwCLtOPVygMwMANGoQwFnCqFrUGMCRZUGJKTZIGPyldsifauoMnJPLTcDHmilcmahlqOELaAUYDBuzsVywnDQfwRLGIWozYaOAilMBcObErwgTDNGWnwQMUgFFSKtPDMEoEQCTKVREqrXZSGLqwTMcxHfWotDllNkIJPMbXzjDVjPOOjCFuIvTyhXKLyhUScOXvYthRXpPfKwMhptXaxIxgqBoUqzrWbaoLTVpQoottZyPFfNOoMioXHRuFwMRYUiKvcWPkrayyTLOCFJlAyslDameIuqVAuxErqFPEWIScKpBORIuZqoXlZuTvAjEdlEWDODFRregDTqGNoFBIHxvimmIZwLfFyKUfEWAnNBdtdzDmTPXtpHRGdIbuucfTjOygZsTxPjfweXhSUkMhPjMaxKlMIJMOXcnQfyzeOcbWwNbeH",
+		textProposal.GetDescription())
+
+require.Equal(t, simulation.TypeMsgSubmitProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgCancelProposal tests the normal scenario of a valid message of type TypeMsgCancelProposal.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgCancelProposal(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+	// setup a proposal
+    proposer := accounts[0].Address
+    content := v1beta1.NewTextProposal("Test", "description")
+
+contentMsg, err := v1.NewLegacyContent(content, suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String())
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "title", "summary", proposer, false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.SetProposal(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgCancelProposal(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgCancelProposal
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, proposer.String(), msg.Proposer)
+
+require.Equal(t, simulation.TypeMsgCancelProposal, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgDeposit tests the normal scenario of a valid message of type TypeMsgDeposit.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgDeposit(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    content := v1beta1.NewTextProposal("Test", "description")
+
+contentMsg, err := v1.NewLegacyContent(content, suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String())
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "description", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.SetProposal(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgDeposit(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgDeposit
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Depositor)
+
+require.NotEqual(t, len(msg.Amount), 0)
+
+require.Equal(t, "560969stake", msg.Amount[0].String())
+
+require.Equal(t, simulation.TypeMsgDeposit, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgVote tests the normal scenario of a valid message of type TypeMsgVote.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgVote(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    govAcc := suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String()
+
+contentMsg, err := v1.NewLegacyContent(v1beta1.NewTextProposal("Test", "description"), govAcc)
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "description", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.ActivateVotingPeriod(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgVote(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgVote
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Voter)
+
+require.Equal(t, v1.OptionYes, msg.Option)
+
+require.Equal(t, simulation.TypeMsgVote, sdk.MsgTypeURL(&msg))
+}
+
+// TestSimulateMsgVoteWeighted tests the normal scenario of a valid message of type TypeMsgVoteWeighted.
+// Abnormal scenarios, where errors occur, are not tested here.
+func TestSimulateMsgVoteWeighted(t *testing.T) {
+    suite, ctx := createTestSuite(t, false)
+    app := suite.App
+    blockTime := time.Now().UTC()
+
+ctx = ctx.WithBlockTime(blockTime)
+
+	// setup 3 accounts
+    s := rand.NewSource(1)
+    r := rand.New(s)
+    accounts := getTestingAccounts(t, r, suite.AccountKeeper, suite.BankKeeper, suite.StakingKeeper, ctx, 3)
+
+	// setup a proposal
+    govAcc := suite.GovKeeper.GetGovernanceAccount(ctx).GetAddress().String()
+
+contentMsg, err := v1.NewLegacyContent(v1beta1.NewTextProposal("Test", "description"), govAcc)
+
+require.NoError(t, err)
+    submitTime := ctx.BlockHeader().Time
+	params, _ := suite.GovKeeper.Params.Get(ctx)
+    depositPeriod := params.MaxDepositPeriod
+
+	proposal, err := v1.NewProposal([]sdk.Msg{
+    contentMsg
+}, 1, submitTime, submitTime.Add(*depositPeriod), "", "text proposal", "test", sdk.AccAddress("cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r"), false)
+
+require.NoError(t, err)
+
+require.NoError(t, suite.GovKeeper.ActivateVotingPeriod(ctx, proposal))
+
+	_, err = app.FinalizeBlock(&abci.RequestFinalizeBlock{
+    Height: app.LastBlockHeight() + 1,
+    Hash:   app.LastCommitID().Hash,
+})
+
+require.NoError(t, err)
+
+	// execute operation
+    op := simulation.SimulateMsgVoteWeighted(suite.TxConfig, suite.AccountKeeper, suite.BankKeeper, suite.GovKeeper)
+
+operationMsg, _, err := op(r, app.BaseApp, ctx, accounts, "")
+
+require.NoError(t, err)
+
+var msg v1.MsgVoteWeighted
+	err = proto.Unmarshal(operationMsg.Msg, &msg)
+
+require.NoError(t, err)
+
+require.True(t, operationMsg.OK)
+
+require.Equal(t, uint64(1), msg.ProposalId)
+
+require.Equal(t, "cosmos1ghekyjucln7y67ntx7cf27m9dpuxxemn4c8g4r", msg.Voter)
+
+require.True(t, len(msg.Options) >= 1)
+
+require.Equal(t, simulation.TypeMsgVoteWeighted, sdk.MsgTypeURL(&msg))
+}
+
+type suite struct {
+    TxConfig           client.TxConfig
+	AccountKeeper      authkeeper.AccountKeeper
+	BankKeeper         bankkeeper.Keeper
+	GovKeeper          *keeper.Keeper
+	StakingKeeper      *stakingkeeper.Keeper
+	DistributionKeeper dk.Keeper
+	App                *runtime.App
+}
+
+// returns context and an app with updated mint keeper
+func createTestSuite(t *testing.T, isCheckTx bool) (suite, sdk.Context) {
+    t.Helper()
+    res := suite{
+}
+
+app, err := simtestutil.Setup(
+		depinject.Configs(
+			configurator.NewAppConfig(
+				configurator.AuthModule(),
+				configurator.TxModule(),
+				configurator.ParamsModule(),
+				configurator.BankModule(),
+				configurator.StakingModule(),
+				configurator.ConsensusModule(),
+				configurator.DistributionModule(),
+				configurator.GovModule(),
+			),
+			depinject.Supply(log.NewNopLogger()),
+		),
+		&res.TxConfig, &res.AccountKeeper, &res.BankKeeper, &res.GovKeeper, &res.StakingKeeper, &res.DistributionKeeper)
+
+require.NoError(t, err)
+    ctx := app.NewContext(isCheckTx)
+
+res.App = app
+	return res, ctx
+}
+
+func getTestingAccounts(
+	t *testing.T,
+	r *rand.Rand,
+	accountKeeper authkeeper.AccountKeeper,
+	bankKeeper bankkeeper.Keeper,
+	stakingKeeper *stakingkeeper.Keeper,
+	ctx sdk.Context,
+	n int,
+) []simtypes.Account {
+    t.Helper()
+    accounts := simtypes.RandomAccounts(r, n)
+    initAmt := stakingKeeper.TokensFromConsensusPower(ctx, 200)
+    initCoins := sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, initAmt))
+
+	// add coins to the accounts
+    for _, account := range accounts {
+    acc := accountKeeper.NewAccountWithAddress(ctx, account.Address)
+
+accountKeeper.SetAccount(ctx, acc)
+
+require.NoError(t, testutil.FundAccount(ctx, bankKeeper, account.Address, initCoins))
+}
+
+return accounts
+}
+```
+
+## End-to-end Tests
+
+End-to-end tests are at the top of the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html).
+They must test the whole application flow, from the user perspective (for instance, CLI tests). They are located under [`/tests/e2e`](https://github.com/cosmos/cosmos-sdk/tree/main/tests/e2e).
+
+{/* @julienrbrt: makes more sense to use an app wired app to have 0 simapp dependencies */}
+For that, the SDK is using `simapp` but you should use your own application (`appd`).
+Here are some examples:
+
+* SDK E2E tests: [Link](https://github.com/cosmos/cosmos-sdk/tree/main/tests/e2e).
+* Cosmos Hub E2E tests: [Link](https://github.com/cosmos/gaia/tree/main/tests/e2e).
+* Osmosis E2E tests: [Link](https://github.com/osmosis-labs/osmosis/tree/main/tests/e2e).
+
+<Note>
+**warning**
+The SDK is in the process of creating its E2E tests, as defined in [ADR-59](https://docs.cosmos.network/main/architecture/adr-059-test-scopes.html). This page will eventually be updated with better examples.
+</Note>
+
+## Learn More
+
+Learn more about testing scope in [ADR-59](https://docs.cosmos.network/main/architecture/adr-059-test-scopes.html).

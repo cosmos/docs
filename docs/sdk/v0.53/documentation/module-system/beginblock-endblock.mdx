@@ -1,0 +1,113 @@
+---
+title: BeginBlocker and EndBlocker
+---
+
+<Note>
+**Synopsis**
+`BeginBlocker` and `EndBlocker` are optional methods module developers can implement in their module. They will be triggered at the beginning and at the end of each block respectively, when the [`BeginBlock`](/docs/sdk/v0.50//learn/advanced/baseapp#beginblock) and [`EndBlock`](/docs/sdk/v0.50//learn/advanced/baseapp#endblock) ABCI messages are received from the underlying consensus engine.
+</Note>
+
+<Note>
+**Pre-requisite Readings**
+
+* [Module Manager](/docs/sdk/v0.50/module-manager)
+
+</Note>
+
+## BeginBlocker and EndBlocker
+
+`BeginBlocker` and `EndBlocker` are a way for module developers to add automatic execution of logic to their module. This is a powerful tool that should be used carefully, as complex automatic functions can slow down or even halt the chain.
+
+In 0.47.0, Prepare and Process Proposal were added that allow app developers to do arbitrary work at those phases, but they do not influence the work that will be done in BeginBlock. If an application required `BeginBlock` to execute prior to any sort of work is done then this is not possible today (0.50.0).
+
+When needed, `BeginBlocker` and `EndBlocker` are implemented as part of the [`HasBeginBlocker`, `HasABCIEndBlocker` and `EndBlocker` interfaces](/docs/sdk/v0.50/module-manager#appmodule). This means either can be left-out if not required. The `BeginBlock` and `EndBlock` methods of the interface implemented in `module.go` generally defer to `BeginBlocker` and `EndBlocker` methods respectively, which are usually implemented in `abci.go`.
+
+The actual implementation of `BeginBlocker` and `EndBlocker` in `abci.go` are very similar to that of a [`Msg` service](/docs/sdk/v0.50/msg-services):
+
+* They generally use the [`keeper`](/docs/sdk/v0.50/keeper) and [`ctx`](/docs/sdk/v0.50//learn/advanced/context) to retrieve information about the latest state.
+* If needed, they use the `keeper` and `ctx` to trigger state-transitions.
+* If needed, they can emit [`events`](/docs/sdk/v0.50//learn/advanced/events) via the `ctx`'s `EventManager`.
+
+A specific type of `EndBlocker` is available to return validator updates to the underlying consensus engine in the form of an [`[]abci.ValidatorUpdates`](https://docs.cometbft.com/v0.37/spec/abci/abci++_methods#endblock). This is the preferred way to implement custom validator changes.
+
+It is possible for developers to define the order of execution between the `BeginBlocker`/`EndBlocker` functions of each of their application's modules via the module's manager `SetOrderBeginBlocker`/`SetOrderEndBlocker` methods. For more on the module manager, click [here](/docs/sdk/v0.50/module-manager#manager).
+
+See an example implementation of `BeginBlocker` from the `distribution` module:
+
+```go expandable
+package distribution
+
+import (
+    
+	"time"
+    "github.com/cosmos/cosmos-sdk/telemetry"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+    "github.com/cosmos/cosmos-sdk/x/distribution/types"
+)
+
+// BeginBlocker sets the proposer for determining distribution during endblock
+// and distribute rewards for the previous block.
+func BeginBlocker(ctx sdk.Context, k keeper.Keeper)
+
+error {
+    defer telemetry.ModuleMeasureSince(types.ModuleName, time.Now(), telemetry.MetricKeyBeginBlocker)
+
+	// determine the total power signing the block
+	var previousTotalPower int64
+    for _, voteInfo := range ctx.VoteInfos() {
+    previousTotalPower += voteInfo.Validator.Power
+}
+
+	// TODO this is Tendermint-dependent
+	// ref https://github.com/cosmos/cosmos-sdk/issues/3095
+    if ctx.BlockHeight() > 1 {
+    k.AllocateTokens(ctx, previousTotalPower, ctx.VoteInfos())
+}
+
+	// record the proposer for when we payout on the next block
+    consAddr := sdk.ConsAddress(ctx.BlockHeader().ProposerAddress)
+
+k.SetPreviousProposerConsAddr(ctx, consAddr)
+
+return nil
+}
+```
+
+and an example implementation of `EndBlocker` from the `staking` module:
+
+```go expandable
+package keeper
+
+import (
+    
+	"context"
+    "time"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+    "github.com/cosmos/cosmos-sdk/telemetry"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/staking/types"
+)
+
+// BeginBlocker will persist the current header and validator set as a historical entry
+// and prune the oldest entry based on the HistoricalEntries parameter
+func (k *Keeper)
+
+BeginBlocker(ctx sdk.Context) {
+    defer telemetry.ModuleMeasureSince(types.ModuleName, time.Now(), telemetry.MetricKeyBeginBlocker)
+
+k.TrackHistoricalInfo(ctx)
+}
+
+// Called every block, update validator set
+func (k *Keeper)
+
+EndBlocker(ctx context.Context) ([]abci.ValidatorUpdate, error) {
+    defer telemetry.ModuleMeasureSince(types.ModuleName, time.Now(), telemetry.MetricKeyEndBlocker)
+
+return k.BlockValidatorUpdates(sdk.UnwrapSDKContext(ctx)), nil
+}
+```
+
+{/* TODO: leaving this here to update docs with core api changes */}
