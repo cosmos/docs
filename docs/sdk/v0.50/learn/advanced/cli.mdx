@@ -4,7 +4,7 @@ title: Command-Line Interface
 
 <Note>
 **Synopsis**
-This document describes how command-line interface (CLI) works on a high-level, for an [**application**](/docs/sdk/v0.50/beginner/app-anatomy). A separate document for implementing a CLI for a Cosmos SDK [**module**](/docs/sdk/v0.50/build/building-modules/intro) can be found [here](/docs/sdk/v0.50/build/building-modules/module-interfaces#cli).
+This document describes how command-line interface (CLI) works on a high-level, for an [**application**](/docs/sdk/v0.50/beginner/app-anatomy). A separate document for implementing a CLI for a Cosmos SDK [**module**](/docs/sdk/v0.50/documentation/module-system/intro) can be found [here](/docs/sdk/v0.50/documentation/module-system/module-interfaces#cli).
 </Note>
 
 ## Command-Line Interface
@@ -74,7 +74,7 @@ Every application CLI first constructs a root command, then adds functionality b
 The root command (called `rootCmd`) is what the user first types into the command line to indicate which application they wish to interact with. The string used to invoke the command (the "Use" field) is typically the name of the application suffixed with `-d`, e.g. `simd` or `gaiad`. The root command typically includes the following commands to support basic functionality in the application.
 
 * **Status** command from the Cosmos SDK rpc client tools, which prints information about the status of the connected [`Node`](/docs/sdk/v0.50/node). The Status of a node includes `NodeInfo`,`SyncInfo` and `ValidatorInfo`.
-* **Keys** [commands](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/client/keys) from the Cosmos SDK client tools, which includes a collection of subcommands for using the key functions in the Cosmos SDK crypto tools, including adding a new key and saving it to the keyring, listing all public keys stored in the keyring, and deleting a key. For example, users can type `simd keys add <name>` to add a new key and save an encrypted copy to the keyring, using the flag `--recover` to recover a private key from a seed phrase or the flag `--multisig` to group multiple keys together to create a multisig key. For full details on the `add` key command, see the code [here](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/client/keys/add.go). For more details about usage of `--keyring-backend` for storage of key credentials look at the [keyring docs](/docs/sdk/v0.50/user/run-node/keyring).
+* **Keys** [commands](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/client/keys) from the Cosmos SDK client tools, which includes a collection of subcommands for using the key functions in the Cosmos SDK crypto tools, including adding a new key and saving it to the keyring, listing all public keys stored in the keyring, and deleting a key. For example, users can type `simd keys add <name>` to add a new key and save an encrypted copy to the keyring, using the flag `--recover` to recover a private key from a seed phrase or the flag `--multisig` to group multiple keys together to create a multisig key. For full details on the `add` key command, see the code [here](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/client/keys/add.go). For more details about usage of `--keyring-backend` for storage of key credentials look at the [keyring docs](/docs/sdk/v0.50/documentation/operations/keyring).
 * **Server** commands from the Cosmos SDK server package. These commands are responsible for providing the mechanisms necessary to start an ABCI CometBFT application and provides the CLI framework (based on [cobra](https://github.com/spf13/cobra)) necessary to fully bootstrap an application. The package exposes two core functions: `StartCmd` and `ExportCmd` which creates commands to start the application and export state respectively.
   Learn more [here](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/server).
 * [**Transaction**](#transaction-commands) commands.
@@ -83,7 +83,7 @@ The root command (called `rootCmd`) is what the user first types into the comman
 Next is an example `rootCmd` function from the `simapp` application. It instantiates the root command, adds a [*persistent* flag](#flags) and `PreRun` function to be run before every execution, and adds all of the necessary subcommands.
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -128,7 +128,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -157,14 +157,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -181,8 +181,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -217,32 +217,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -252,25 +252,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -314,7 +314,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -323,7 +323,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -331,7 +331,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -387,7 +387,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -405,7 +405,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -418,8 +418,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -432,7 +432,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -466,7 +466,7 @@ By default app uses CometBFT app config template from Cosmos SDK, which can be o
 Here's an example code to override default `app.toml` template.
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -511,7 +511,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -540,14 +540,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -564,8 +564,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -600,32 +600,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -635,25 +635,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -697,7 +697,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -706,7 +706,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -714,7 +714,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -770,7 +770,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -788,7 +788,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -801,8 +801,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -815,7 +815,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -841,7 +841,7 @@ return simApp.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modul
 The `initAppConfig()` also allows overriding the default Cosmos SDK's [server config](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/server/config/config.go#L235). One example is the `min-gas-prices` config, which defines the minimum gas prices a validator is willing to accept for processing a transaction. By default, the Cosmos SDK sets this parameter to `""` (empty string), which forces all validators to tweak their own `app.toml` and set a non-empty value, or else the node will halt on startup. This might not be the best UX for validators, so the chain developer can set a default `app.toml` value for validators inside this `initAppConfig()` function.
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -886,7 +886,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -915,14 +915,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -939,8 +939,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -975,32 +975,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -1010,25 +1010,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -1072,7 +1072,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -1081,7 +1081,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -1089,7 +1089,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -1145,7 +1145,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -1163,7 +1163,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -1176,8 +1176,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -1190,7 +1190,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -1217,10 +1217,10 @@ The root-level `status` and `keys` subcommands are common across most applicatio
 
 ### Transaction Commands
 
-[Transactions](/docs/sdk/v0.50/transactions) are objects wrapping [`Msg`s](/docs/sdk/v0.50/build/building-modules/messages-and-queries#messages) that trigger state changes. To enable the creation of transactions using the CLI interface, a function `txCommand` is generally added to the `rootCmd`:
+[Transactions](/docs/sdk/v0.50/transactions) are objects wrapping [`Msg`s](/docs/sdk/v0.50/documentation/module-system/messages-and-queries#messages) that trigger state changes. To enable the creation of transactions using the CLI interface, a function `txCommand` is generally added to the `rootCmd`:
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -1265,7 +1265,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -1294,14 +1294,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -1318,8 +1318,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -1354,32 +1354,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -1389,25 +1389,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -1451,7 +1451,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -1460,7 +1460,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -1468,7 +1468,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -1524,7 +1524,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -1542,7 +1542,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -1555,8 +1555,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -1569,7 +1569,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -1596,12 +1596,12 @@ This `txCommand` function adds all the transaction available to end-users for th
 
 * **Sign command** from the [`auth`](/docs/sdk/v0.50/build/modules/auth/README) module that signs messages in a transaction. To enable multisig, add the `auth` module's `MultiSign` command. Since every transaction requires some sort of signature in order to be valid, the signing command is necessary for every application.
 * **Broadcast command** from the Cosmos SDK client tools, to broadcast transactions.
-* **All [module transaction commands](/docs/sdk/v0.50/build/building-modules/module-interfaces#transaction-commands)** the application is dependent on, retrieved by using the [basic module manager's](/docs/sdk/v0.50/build/building-modules/module-manager#basic-manager) `AddTxCommands()` function, or enhanced by [AutoCLI](https://docs.cosmos.network/main/core/autocli).
+* **All [module transaction commands](/docs/sdk/v0.50/documentation/module-system/module-interfaces#transaction-commands)** the application is dependent on, retrieved by using the [basic module manager's](/docs/sdk/v0.50/documentation/module-system/module-manager#basic-manager) `AddTxCommands()` function, or enhanced by [AutoCLI](https://docs.cosmos.network/main/core/autocli).
 
 Here is an example of a `txCommand` aggregating these subcommands from the `simapp` application:
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -1646,7 +1646,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -1675,14 +1675,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -1699,8 +1699,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -1735,32 +1735,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -1770,25 +1770,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -1832,7 +1832,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -1841,7 +1841,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -1849,7 +1849,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -1905,7 +1905,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -1923,7 +1923,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -1936,8 +1936,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -1950,7 +1950,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -1980,10 +1980,10 @@ Read more about [AutoCLI](https://docs.cosmos.network/main/core/autocli) in its 
 
 ### Query Commands
 
-[**Queries**](/docs/sdk/v0.50/build/building-modules/messages-and-queries#queries) are objects that allow users to retrieve information about the application's state. To enable the creation of queries using the CLI interface, a function `queryCommand` is generally added to the `rootCmd`:
+[**Queries**](/docs/sdk/v0.50/documentation/module-system/messages-and-queries#queries) are objects that allow users to retrieve information about the application's state. To enable the creation of queries using the CLI interface, a function `queryCommand` is generally added to the `rootCmd`:
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -2028,7 +2028,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -2057,14 +2057,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -2081,8 +2081,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -2117,32 +2117,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -2152,25 +2152,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -2214,7 +2214,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -2223,7 +2223,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -2231,7 +2231,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -2287,7 +2287,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -2305,7 +2305,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -2318,8 +2318,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -2332,7 +2332,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -2361,12 +2361,12 @@ This `queryCommand` function adds all the queries available to end-users for the
 * **Account command** from the `auth` module, which displays the state (e.g. account balance) of an account given an address.
 * **Validator command** from the Cosmos SDK rpc client tools, which displays the validator set of a given height.
 * **Block command** from the Cosmos SDK RPC client tools, which displays the block data for a given height.
-* **All [module query commands](/docs/sdk/v0.50/build/building-modules/module-interfaces#query-commands)** the application is dependent on, retrieved by using the [basic module manager's](/docs/sdk/v0.50/build/building-modules/module-manager#basic-manager) `AddQueryCommands()` function, or enhanced by [AutoCLI](https://docs.cosmos.network/main/core/autocli).
+* **All [module query commands](/docs/sdk/v0.50/documentation/module-system/module-interfaces#query-commands)** the application is dependent on, retrieved by using the [basic module manager's](/docs/sdk/v0.50/build/building-modules/module-manager#basic-manager) `AddQueryCommands()` function, or enhanced by [AutoCLI](https://docs.cosmos.network/main/core/autocli).
 
 Here is an example of a `queryCommand` aggregating subcommands from the `simapp` application:
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -2411,7 +2411,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -2440,14 +2440,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -2464,8 +2464,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -2500,32 +2500,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -2535,25 +2535,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -2597,7 +2597,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -2606,7 +2606,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -2614,7 +2614,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -2670,7 +2670,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -2688,7 +2688,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -2701,8 +2701,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -2715,7 +2715,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -2745,11 +2745,11 @@ Read more about [AutoCLI](https://docs.cosmos.network/main/core/autocli) in its 
 
 ## Flags
 
-Flags are used to modify commands; developers can include them in a `flags.go` file with their CLI. Users can explicitly include them in commands or pre-configure them by inside their [`app.toml`](/docs/sdk/v0.50/user/run-node/run-node#configuring-the-node-using-apptoml-and-configtoml). Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with.
+Flags are used to modify commands; developers can include them in a `flags.go` file with their CLI. Users can explicitly include them in commands or pre-configure them by inside their [`app.toml`](/docs/sdk/v0.50/documentation/operations/run-node#configuring-the-node-using-apptoml-and-configtoml). Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with.
 
 A *persistent* flag (as opposed to a *local* flag) added to a command transcends all of its children: subcommands will inherit the configured values for these flags. Additionally, all flags have default values when they are added to commands; some toggle an option off but others are empty values that the user needs to override to create valid commands. A flag can be explicitly marked as *required* so that an error is automatically thrown if the user does not provide a value, but it is also acceptable to handle unexpected missing flags differently.
 
-Flags are added to commands directly (generally in the [module's CLI file](/docs/sdk/v0.50/build/building-modules/module-interfaces#flags) where module commands are defined) and no flag except for the `rootCmd` persistent flags has to be added at application level. It is common to add a *persistent* flag for `--chain-id`, the unique identifier of the blockchain the application pertains to, to the root command. Adding this flag can be done in the `main()` function. Adding this flag makes sense as the chain ID should not be changing across commands in this application CLI.
+Flags are added to commands directly (generally in the [module's CLI file](/docs/sdk/v0.50/documentation/module-system/module-interfaces#flags) where module commands are defined) and no flag except for the `rootCmd` persistent flags has to be added at application level. It is common to add a *persistent* flag for `--chain-id`, the unique identifier of the blockchain the application pertains to, to the root command. Adding this flag can be done in the `main()` function. Adding this flag makes sense as the chain ID should not be changing across commands in this application CLI.
 
 ## Environment variables
 
@@ -2779,7 +2779,7 @@ It is vital that the root command of an application uses `PersistentPreRun()` co
 Here is an example of an `PersistentPreRun()` function from `simapp`:
 
 ```go expandable
-//go:build !app_v1
+/go:build !app_v1
 
 package cmd
 
@@ -2824,7 +2824,7 @@ import (
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 )
 
-// NewRootCmd creates a new root command for simd. It is called once in the main function.
+/ NewRootCmd creates a new root command for simd. It is called once in the main function.
 func NewRootCmd() *cobra.Command {
     var (
 		interfaceRegistry  codectypes.InterfaceRegistry
@@ -2853,14 +2853,14 @@ func NewRootCmd() *cobra.Command {
 		WithAccountRetriever(types.AccountRetriever{
 }).
 		WithHomeDir(simapp.DefaultNodeHome).
-		WithViper("") // In simapp, we don't use any prefix for env variables.
+		WithViper("") / In simapp, we don't use any prefix for env variables.
     rootCmd := &cobra.Command{
     Use:   "simd",
     Short: "simulation app",
     PersistentPreRunE: func(cmd *cobra.Command, _ []string)
 
 error {
-			// set the default command outputs
+			/ set the default command outputs
 			cmd.SetOut(cmd.OutOrStdout())
 
 cmd.SetErr(cmd.ErrOrStderr())
@@ -2877,8 +2877,8 @@ initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
     return err
 }
 
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL.
+			/ This needs to go after ReadFromClientConfig, as that function
+			/ sets the RPC client needed for SIGN_MODE_TEXTUAL.
     enabledSignModes := append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL)
     txConfigOpts := tx.ConfigOptions{
     EnabledSignModes:           enabledSignModes,
@@ -2913,32 +2913,32 @@ initRootCmd(rootCmd, txConfig, interfaceRegistry, appCodec, moduleBasicManager)
 return rootCmd
 }
 
-// initCometBFTConfig helps to override default CometBFT Config values.
-// return cmtcfg.DefaultConfig if no custom configuration is required for the application.
+/ initCometBFTConfig helps to override default CometBFT Config values.
+/ return cmtcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometBFTConfig() *cmtcfg.Config {
     cfg := cmtcfg.DefaultConfig()
 
-	// these values put a higher strain on node memory
-	// cfg.P2P.MaxNumInboundPeers = 100
-	// cfg.P2P.MaxNumOutboundPeers = 40
+	/ these values put a higher strain on node memory
+	/ cfg.P2P.MaxNumInboundPeers = 100
+	/ cfg.P2P.MaxNumOutboundPeers = 40
 
 	return cfg
 }
 
-// initAppConfig helps to override default appConfig template and configs.
-// return "", nil if no custom configuration is required for the application.
+/ initAppConfig helps to override default appConfig template and configs.
+/ return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{
 }) {
-	// The following code snippet is just for reference.
+	/ The following code snippet is just for reference.
 
-	// WASMConfig defines configuration for the wasm module.
+	/ WASMConfig defines configuration for the wasm module.
 	type WASMConfig struct {
-		// This is the maximum sdk gas (wasm and storage)
+		/ This is the maximum sdk gas (wasm and storage)
 
 that we allow for any x/wasm "smart" queries
 		QueryGasLimit uint64 `mapstructure:"query_gas_limit"`
 
-		// Address defines the gRPC-web server to listen on
+		/ Address defines the gRPC-web server to listen on
 		LruSize uint64 `mapstructure:"lru_size"`
 }
 
@@ -2948,25 +2948,25 @@ type CustomAppConfig struct {
 		WASM WASMConfig `mapstructure:"wasm"`
 }
 
-	// Optionally allow the chain developer to overwrite the SDK's default
-	// server config.
+	/ Optionally allow the chain developer to overwrite the SDK's default
+	/ server config.
     srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value)
+	/ The SDK's default minimum gas price is set to "" (empty value)
 
 inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In simapp, we set the min gas prices to 0.
+	/ app.toml. If left empty by validators, the node will halt on startup.
+	/ However, the chain developer can set a default app.toml value for their
+	/ validators here.
+	/
+	/ In summary:
+	/ - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
+	/   own app.toml config,
+	/ - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
+	/   own app.toml to override, or use this default value.
+	/
+	/ In simapp, we set the min gas prices to 0.
 	srvCfg.MinGasPrices = "0stake"
-	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
+	/ srvCfg.BaseConfig.IAVLDisableFastNode = true / disable fastnode by default
     customAppConfig := CustomAppConfig{
     Config: *srvCfg,
     WASM: WASMConfig{
@@ -3010,7 +3010,7 @@ rootCmd.AddCommand(
 
 server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
 
-	// add keybase, auxiliary RPC, query, genesis, and tx child commands
+	/ add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		rpc.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -3019,7 +3019,7 @@ server.AddCommands(rootCmd, simapp.DefaultNodeHome, newApp, appExport, addModule
 		keys.Commands(simapp.DefaultNodeHome),
 	)
 
-	// add rosetta
+	/ add rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, appCodec))
 }
 
@@ -3027,7 +3027,7 @@ func addModuleInitFlags(startCmd *cobra.Command) {
     crisis.AddModuleInitFlags(startCmd)
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
+/ genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
     cmd := genutilcli.Commands(txConfig, basicManager, simapp.DefaultNodeHome)
     for _, subCmd := range cmds {
@@ -3083,7 +3083,7 @@ cmd.AddCommand(
 return cmd
 }
 
-// newApp creates the application
+/ newApp creates the application
 func newApp(
 	logger log.Logger,
 	db dbm.DB,
@@ -3101,7 +3101,7 @@ return simapp.NewSimApp(
 	)
 }
 
-// appExport creates a new simapp (optionally at a given height)
+/ appExport creates a new simapp (optionally at a given height)
 
 and exports state.
 func appExport(
@@ -3114,8 +3114,8 @@ func appExport(
 	appOpts servertypes.AppOptions,
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
-	// this check is necessary as we use the flag in x/upgrade.
-	// we can exit more gracefully by checking the flag here.
+	/ this check is necessary as we use the flag in x/upgrade.
+	/ we can exit more gracefully by checking the flag here.
 	homePath, ok := appOpts.Get(flags.FlagHome).(string)
     if !ok || homePath == "" {
     return servertypes.ExportedApp{
@@ -3128,7 +3128,7 @@ viperAppOpts, ok := appOpts.(*viper.Viper)
 }, errors.New("appOpts is not viper.Viper")
 }
 
-	// overwrite the FlagInvCheckPeriod
+	/ overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 
 appOpts = viperAppOpts
@@ -3166,14 +3166,14 @@ When willing to configure which logger is used, do not use `InterceptConfigsPreR
 +	return err
 +}
 
-+// overwrite default server logger
++/ overwrite default server logger
 +logger, err := server.CreateSDKLogger(serverCtx, cmd.OutOrStdout())
 +if err != nil {
 +	return err
 +}
 +serverCtx.Logger = logger.With(log.ModuleKey, "server")
 
-+// set server context
++/ set server context
 +return server.SetCmdServerContext(cmd, serverCtx)
 ```
 

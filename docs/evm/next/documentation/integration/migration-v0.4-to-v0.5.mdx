@@ -86,9 +86,9 @@ The `allow_unprotected_txs` parameter has been removed from VM module parameters
 If you have custom parameter validation logic, remove references to `allow_unprotected_txs`:
 
 ```diff
-// Remove any code referencing AllowUnprotectedTxs
+/ Remove any code referencing AllowUnprotectedTxs
 - if !params.AllowUnprotectedTxs {
--   // validation logic
+-   / validation logic
 - }
 ```
 
@@ -111,18 +111,18 @@ All precompile constructors now accept keeper interfaces instead of concrete imp
 **New Interface Definitions:**
 
 ```go New Interface Definitions expandable
-// precompiles/common/interfaces.go
+/ precompiles/common/interfaces.go
 type BankKeeper interface {
     IterateAccountBalances(ctx context.Context, account sdk.AccAddress, cb func(coin sdk.Coin) bool)
     GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
     SendCoins(ctx context.Context, fromAddr sdk.AccAddress, toAddr sdk.AccAddress, amt sdk.Coins) error
-    // ... other methods
+    / ... other methods
 }
 
 type StakingKeeper interface {
     BondDenom(ctx context.Context) (string, error)
     GetDelegatorValidators(ctx context.Context, delegatorAddr sdk.AccAddress, maxRetrieve uint32) (stakingtypes.Validators, error)
-    // ... other methods
+    / ... other methods
 }
 ```
 
@@ -131,20 +131,20 @@ type StakingKeeper interface {
 1. **Update Precompile Assembly:**
 
 ```diff Precompile Assembly Update expandable
-// evmd/precompiles.go or app/precompiles.go
+/ evmd/precompiles.go or app/precompiles.go
 func NewAvailableStaticPrecompiles(
-    // ... other params
+    / ... other params
 ) map[common.Address]vm.PrecompiledContract {
     precompiles := make(map[common.Address]vm.PrecompiledContract)
 
-    // Bank precompile - interface now required
+    / Bank precompile - interface now required
 -   bankPrecompile, err := bankprecompile.NewPrecompile(bankKeeper, ...)
 +   bankPrecompile, err := bankprecompile.NewPrecompile(
-+       common.BankKeeper(bankKeeper), // Cast to interface
-+       // ... other params
++       common.BankKeeper(bankKeeper), / Cast to interface
++       / ... other params
 +   )
 
-    // Distribution precompile - simplified parameters
+    / Distribution precompile - simplified parameters
 -   distributionPrecompile, err := distributionprecompile.NewPrecompile(
 -       distributionKeeper, stakingKeeper, authzKeeper, cdc, options.AddressCodec
 -   )
@@ -153,11 +153,11 @@ func NewAvailableStaticPrecompiles(
 +       cdc, options.AddressCodec
 +   )
 
-    // Staking precompile - keeper interface
+    / Staking precompile - keeper interface
 -   stakingPrecompile, err := stakingprecompile.NewPrecompile(stakingKeeper, ...)
 +   stakingPrecompile, err := stakingprecompile.NewPrecompile(
 +       common.StakingKeeper(stakingKeeper), 
-+       // ... other params
++       / ... other params
 +   )
     
     return precompiles
@@ -169,7 +169,7 @@ func NewAvailableStaticPrecompiles(
 If you have custom precompiles, update their constructors to accept interfaces:
 
 ```diff
-// Custom precompile constructor
+/ Custom precompile constructor
 - func NewMyPrecompile(bankKeeper bankkeeper.Keeper, stakingKeeper stakingkeeper.Keeper) (*MyPrecompile, error) {
 + func NewMyPrecompile(bankKeeper common.BankKeeper, stakingKeeper common.StakingKeeper) (*MyPrecompile, error) {
     return &MyPrecompile{
@@ -192,10 +192,10 @@ The mempool now uses configuration objects instead of pre-built pools for better
 If you use default mempool configuration, minimal changes are needed:
 
 ```go Standard Mempool Setup expandable
-// Existing code continues to work
+/ Existing code continues to work
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // or 0 for default
+    BlockGasLimit: 100_000_000, / or 0 for default
 }
 evmMempool := evmmempool.NewExperimentalEVMMempool(
     app.CreateQueryContext, 
@@ -218,7 +218,7 @@ If you previously built custom pools:
 -   CosmosPool:    customCosmosPool,
 +   LegacyPoolConfig: &legacypool.Config{
 +       PriceLimit: 2,
-+       // ... other legacy pool settings
++       / ... other legacy pool settings
 +   },
 +   CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{
 +       TxPriority: sdkmempool.TxPriority[math.Int]{
@@ -228,7 +228,7 @@ If you previously built custom pools:
 +       },
 +   },
    AnteHandler:      app.GetAnteHandler(),
-   BroadcastTxFn:    customBroadcastFunc, // optional
+   BroadcastTxFn:    customBroadcastFunc, / optional
    BlockGasLimit:    100_000_000,
  }
 ```
@@ -255,14 +255,14 @@ The ante handler system has been optimized to remove unnecessary EVM instance cr
 If you have custom ante handlers that depend on EVM instance creation during balance checks:
 
 ```diff
-// Custom ante handler example
+/ Custom ante handler example
 func (d MyCustomDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
-    // Balance checking now optimized - no EVM instance creation
+    / Balance checking now optimized - no EVM instance creation
 -   evm := d.evmKeeper.NewEVM(ctx, ...)
 -   stateDB := evm.StateDB
 -   balance := stateDB.GetBalance(address)
     
-    // Use keeper method instead
+    / Use keeper method instead
 +   balance := d.evmKeeper.GetBalance(ctx, address)
     
     return next(ctx, tx, simulate)
@@ -300,14 +300,14 @@ The global mempool registry has been removed in favor of direct injection.
 1. **Update JSON-RPC Server Initialization:**
 
 ```diff JSON-RPC Server Update expandable
-// server/start.go or equivalent
+/ server/start.go or equivalent
 - mempool.SetGlobalEVMMempool(evmMempool)
   
   jsonRPCServer, err := jsonrpc.StartJSONRPC(
       ctx,
       clientCtx,
       logger.With("module", "jsonrpc"),
-+     evmMempool, // Pass mempool directly
++     evmMempool, / Pass mempool directly
       config,
       indexer,
   )
@@ -318,16 +318,16 @@ The global mempool registry has been removed in favor of direct injection.
 If you have custom RPC backends:
 
 ```diff Custom RPC Backend Update expandable
-// Custom RPC backend
+/ Custom RPC backend
 func NewCustomBackend(
-    // ... other params
+    / ... other params
 +   mempool *evmmempool.ExperimentalEVMMempool,
 ) *CustomBackend {
 -   mempool := mempool.GetGlobalEVMMempool()
     
     return &CustomBackend{
         mempool: mempool,
-        // ... other fields
+        / ... other fields
     }
 }
 ```
@@ -350,7 +350,7 @@ EIP-7702 enables externally owned accounts to temporarily execute smart contract
 
 **Usage Example:**
 ```javascript
-// Enable EOA to execute as multicall contract
+/ Enable EOA to execute as multicall contract
 const authorization = await signAuthorization({
     chainId: 9000,
     address: multicallContractAddress,
@@ -358,7 +358,7 @@ const authorization = await signAuthorization({
 }, wallet);
 
 const tx = {
-    type: 4, // SetCodeTxType  
+    type: 4, / SetCodeTxType  
     authorizationList: [authorization],
     to: wallet.address,
     data: multicall.interface.encodeFunctionData("batchCall", [calls]),
@@ -390,17 +390,17 @@ EIP-2935 provides standardized access to historical block hashes via contract st
 **Configuration:**
 
 ```go
-// Genesis parameter
-"history_serve_window": 8192  // Default: 8192 blocks
+/ Genesis parameter
+"history_serve_window": 8192  / Default: 8192 blocks
 ```
 
 **Usage for Developers:**
 
 ```solidity
-// Smart contract can now reliably access historical block hashes
+/ Smart contract can now reliably access historical block hashes
 contract HistoryExample {
     function getRecentBlockHash(uint256 blockNumber) public view returns (bytes32) {
-        // Works for blocks within history_serve_window range
+        / Works for blocks within history_serve_window range
         return blockhash(blockNumber);
     }
 }
@@ -521,9 +521,9 @@ cast call --rpc-url http://localhost:8545 \
 ### Integration Tests
 
 ```go Integration Test Example expandable
-// Example integration test
+/ Example integration test
 func TestV050Migration(t *testing.T) {
-    // Test mempool configuration
+    / Test mempool configuration
     config := &evmmempool.EVMMempoolConfig{
         AnteHandler:   anteHandler,
         BlockGasLimit: 100_000_000,
@@ -531,16 +531,16 @@ func TestV050Migration(t *testing.T) {
     mempool := evmmempool.NewExperimentalEVMMempool(...)
     require.NotNil(t, mempool)
     
-    // Test precompile interfaces
+    / Test precompile interfaces
     bankPrecompile, err := bankprecompile.NewPrecompile(
         common.BankKeeper(bankKeeper),
     )
     require.NoError(t, err)
     
-    // Test parameter validation
+    / Test parameter validation
     params := vmtypes.NewParams(...)
     require.Equal(t, uint64(8192), params.HistoryServeWindow)
-    require.False(t, hasAllowUnprotectedTxs(params)) // Should be removed
+    require.False(t, hasAllowUnprotectedTxs(params)) / Should be removed
 }
 ```
 
@@ -578,7 +578,7 @@ error: cannot use bankKeeper (type bankkeeper.Keeper) as type common.BankKeeper
 
 ```go
 bankPrecompile, err := bankprecompile.NewPrecompile(
-    common.BankKeeper(bankKeeper), // Add interface cast
+    common.BankKeeper(bankKeeper), / Add interface cast
 )
 ```
 
@@ -619,9 +619,9 @@ error: undefined: mempool.GetGlobalEVMMempool
 **Solution:** Pass mempool directly instead of using global access:
 
 ```go
-// Pass mempool as parameter
+/ Pass mempool as parameter
 func NewRPCService(mempool *evmmempool.ExperimentalEVMMempool) {
-    // Use injected mempool
+    / Use injected mempool
 }
 ```
 
@@ -640,6 +640,6 @@ v0.5.0 introduces significant improvements in performance, EVM compatibility, an
 Review all breaking changes carefully and test thoroughly before deploying to production.
 
 For additional support, refer to:
-- [Precompiles Documentation](/docs/evm/next/documentation/smart-contracts/precompiles/overview.mdx)
-- [EVM Compatibility Guide](/docs/evm/next/documentation/evm-compatibility/overview.mdx)
-- [Performance Optimization Guide](/docs/evm/next/documentation/concepts/performance.mdx)
+- [Precompiles Documentation](/docs/evm/next/documentation/smart-contracts/precompiles/overview)
+- [EVM Compatibility Guide](/docs/evm/next/documentation/evm-compatibility/overview)
+- [Performance Optimization Guide](/docs/evm/next/documentation/concepts/performance)

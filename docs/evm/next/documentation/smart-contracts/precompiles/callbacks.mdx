@@ -27,14 +27,14 @@ Critically, **only the IBC packet sender can set the callback**.
 
 <CodeGroup>
 ```solidity Solidity expandable lines
-// SPDX-License-Identifier: MIT
+/ SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 contract CallbacksExample {
-    // Address of the authorized IBC module
+    / Address of the authorized IBC module
     address public immutable ibcModule;
     
-    // Mapping to track packet statuses
+    / Mapping to track packet statuses
     mapping(bytes32 => PacketStatus) public packetStatuses;
     mapping(address => uint256) public userBalances;
     
@@ -67,14 +67,14 @@ contract CallbacksExample {
     ) external onlyIBC {
         bytes32 packetId = keccak256(abi.encodePacked(channelId, portId, sequence));
         
-        // Ensure packet hasn't been processed already
+        / Ensure packet hasn't been processed already
         if (packetStatuses[packetId] != PacketStatus.None) {
             revert PacketAlreadyProcessed();
         }
         
         packetStatuses[packetId] = PacketStatus.Acknowledged;
         
-        // Parse acknowledgement to determine success/failure
+        / Parse acknowledgement to determine success/failure
         bool success = _parseAcknowledgement(acknowledgement);
         
         if (success) {
@@ -93,13 +93,13 @@ contract CallbacksExample {
     {
         if (acknowledgement.length == 0) return false;
         
-        // Check for error indicators in acknowledgement
+        / Check for error indicators in acknowledgement
         bytes5 errorPrefix = bytes5(acknowledgement);
         if (errorPrefix == bytes5("error")) {
             return false;
         }
         
-        return true; // Non-error acknowledgement indicates success
+        return true; / Non-error acknowledgement indicates success
     }
     
     function _handleSuccessfulAcknowledgement(
@@ -107,14 +107,14 @@ contract CallbacksExample {
         bytes memory data,
         bytes memory acknowledgement
     ) internal {
-        // Parse packet data to get sender and amount
+        / Parse packet data to get sender and amount
         (address sender, uint256 amount, string memory operation) = _parsePacketData(data);
         
         if (keccak256(bytes(operation)) == keccak256(bytes("cross_chain_swap"))) {
             emit CrossChainOrderExecuted(packetId, sender, amount);
         }
         
-        // Credit any rewards or returns
+        / Credit any rewards or returns
         userBalances[sender] += amount;
     }
     
@@ -125,7 +125,7 @@ contract CallbacksExample {
     ) internal {
         (address sender, uint256 amount, ) = _parsePacketData(data);
         
-        // Issue refund for failed transaction
+        / Issue refund for failed transaction
         userBalances[sender] += amount;
         emit RefundIssued(sender, amount, packetId);
     }
@@ -135,7 +135,7 @@ contract CallbacksExample {
         pure 
         returns (address sender, uint256 amount, string memory operation) 
     {
-        // Simplified parser - extract sender, amount, and operation from packet data
+        / Simplified parser - extract sender, amount, and operation from packet data
         if (data.length < 64) {
             revert InvalidPacketData();
         }
@@ -145,8 +145,8 @@ contract CallbacksExample {
             amount := mload(add(data, 64))
         }
         
-        // Extract operation string (simplified)
-        operation = "cross_chain_swap"; // Default operation
+        / Extract operation string (simplified)
+        operation = "cross_chain_swap"; / Default operation
         return (sender, amount, operation);
     }
 }
@@ -154,14 +154,14 @@ contract CallbacksExample {
 ```javascript Ethers.js expandable lines
 import { ethers } from "ethers";
 
-// Deploy a contract that implements IBC callbacks
+/ Deploy a contract that implements IBC callbacks
 class IBCCallbackHandler {
     constructor(provider, signer, contractAddress) {
         this.provider = provider;
         this.signer = signer;
         this.contractAddress = contractAddress;
         
-        // ABI for the callback interface
+        / ABI for the callback interface
         this.abi = [
             "function onPacketAcknowledgement(string channelId, string portId, uint64 sequence, bytes data, bytes acknowledgement)",
             "event PacketAcknowledged(bytes32 indexed packetId, string channelId, uint64 sequence)",
@@ -171,7 +171,7 @@ class IBCCallbackHandler {
         this.contract = new ethers.Contract(contractAddress, this.abi, signer);
     }
     
-    // Listen for packet acknowledgement events
+    / Listen for packet acknowledgement events
     async listenForAcknowledgements() {
         console.log("Listening for packet acknowledgements...");
         
@@ -190,14 +190,14 @@ class IBCCallbackHandler {
         });
     }
     
-    // Get packet status
+    / Get packet status
     async getPacketStatus(channelId, portId, sequence) {
         const packetId = ethers.solidityPackedKeccak256(
             ["string", "string", "uint64"],
             [channelId, portId, sequence]
         );
         
-        // Assuming the contract has a packetStatuses mapping
+        / Assuming the contract has a packetStatuses mapping
         const statusAbi = ["function packetStatuses(bytes32) view returns (uint8)"];
         const contract = new ethers.Contract(this.contractAddress, statusAbi, this.provider);
         
@@ -212,7 +212,7 @@ class IBCCallbackHandler {
     }
 }
 
-// Example usage
+/ Example usage
 async function setupCallbackHandler() {
     const provider = new ethers.JsonRpcProvider("<RPC_URL>");
     const signer = new ethers.Wallet("<PRIVATE_KEY>", provider);
@@ -220,15 +220,15 @@ async function setupCallbackHandler() {
     
     const handler = new IBCCallbackHandler(provider, signer, contractAddress);
     
-    // Start listening for events
+    / Start listening for events
     await handler.listenForAcknowledgements();
     
-    // Check a packet status
+    / Check a packet status
     const status = await handler.getPacketStatus("channel-0", "transfer", 123);
     console.log("Packet status:", status);
 }
 
-// setupCallbackHandler();
+/ setupCallbackHandler();
 ```
 </CodeGroup>
 
@@ -240,7 +240,7 @@ async function setupCallbackHandler() {
 
 <CodeGroup>
 ```solidity Solidity expandable lines
-// SPDX-License-Identifier: MIT
+/ SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 contract CallbacksExample {
@@ -275,27 +275,27 @@ contract CallbacksExample {
     ) external onlyIBC {
         bytes32 packetId = keccak256(abi.encodePacked(channelId, portId, sequence));
         
-        // Ensure packet hasn't been processed already
+        / Ensure packet hasn't been processed already
         if (packetStatuses[packetId] != PacketStatus.None) {
             revert PacketAlreadyProcessed();
         }
         
         packetStatuses[packetId] = PacketStatus.TimedOut;
         
-        // Handle timeout by issuing refunds
+        / Handle timeout by issuing refunds
         _handleTimeout(packetId, data);
         
         emit PacketTimedOut(packetId, channelId, sequence);
     }
     
     function _handleTimeout(bytes32 packetId, bytes memory data) internal {
-        // Parse packet data to extract sender and amount for refund
+        / Parse packet data to extract sender and amount for refund
         (address sender, uint256 amount, string memory operation) = _parsePacketData(data);
         
-        // Issue full refund for timed out packets
+        / Issue full refund for timed out packets
         _issueRefund(sender, amount, packetId);
         
-        // Additional timeout-specific logic based on operation type
+        / Additional timeout-specific logic based on operation type
         if (keccak256(bytes(operation)) == keccak256(bytes("stake_remote"))) {
             _handleStakeTimeout(sender, amount, packetId);
         } else if (keccak256(bytes(operation)) == keccak256(bytes("cross_chain_swap"))) {
@@ -309,18 +309,18 @@ contract CallbacksExample {
     }
     
     function _handleStakeTimeout(address user, uint256 amount, bytes32 packetId) internal {
-        // Handle staking timeout - might need to cancel staking plans
-        // Restore user's staking availability
-        userBalances[user] += amount; // Return staked amount
+        / Handle staking timeout - might need to cancel staking plans
+        / Restore user's staking availability
+        userBalances[user] += amount; / Return staked amount
         
-        // Additional staking-specific cleanup logic here
+        / Additional staking-specific cleanup logic here
     }
     
     function _handleSwapTimeout(address user, uint256 amount, bytes32 packetId) internal {
-        // Handle swap timeout - return original tokens
+        / Handle swap timeout - return original tokens
         userBalances[user] += amount;
         
-        // Additional swap-specific cleanup logic here
+        / Additional swap-specific cleanup logic here
     }
     
     function _parsePacketData(bytes memory data) 
@@ -337,11 +337,11 @@ contract CallbacksExample {
             amount := mload(add(data, 64))
         }
         
-        operation = "timeout_operation"; // Default
+        operation = "timeout_operation"; / Default
         return (sender, amount, operation);
     }
     
-    // User functions to interact with refunds
+    / User functions to interact with refunds
     function withdraw(uint256 amount) external {
         require(userBalances[msg.sender] >= amount, "Insufficient balance");
         userBalances[msg.sender] -= amount;
@@ -365,14 +365,14 @@ contract CallbacksExample {
 ```javascript Ethers.js expandable lines
 import { ethers } from "ethers";
 
-// Handle timeout callbacks
+/ Handle timeout callbacks
 class TimeoutHandler {
     constructor(provider, signer, contractAddress) {
         this.provider = provider;
         this.signer = signer;
         this.contractAddress = contractAddress;
         
-        // ABI for timeout handling
+        / ABI for timeout handling
         this.abi = [
             "function onPacketTimeout(string channelId, string portId, uint64 sequence, bytes data)",
             "event PacketTimedOut(bytes32 indexed packetId, string channelId, uint64 sequence)",
@@ -383,7 +383,7 @@ class TimeoutHandler {
         this.contract = new ethers.Contract(contractAddress, this.abi, signer);
     }
     
-    // Listen for timeout events
+    / Listen for timeout events
     async listenForTimeouts() {
         console.log("Listening for packet timeouts...");
         
@@ -400,13 +400,13 @@ class TimeoutHandler {
             console.log(`  Amount: ${ethers.formatEther(amount)} ETH`);
             console.log(`  Packet ID: ${packetId}`);
             
-            // Check new balance
+            / Check new balance
             const newBalance = await this.contract.userBalances(user);
             console.log(`  New user balance: ${ethers.formatEther(newBalance)} ETH`);
         });
     }
     
-    // Check user balance after refund
+    / Check user balance after refund
     async checkUserBalance(userAddress) {
         const balance = await this.contract.userBalances(userAddress);
         return {
@@ -416,9 +416,9 @@ class TimeoutHandler {
         };
     }
     
-    // Encode packet data for testing
+    / Encode packet data for testing
     static encodePacketData(sender, amount, operation = "cross_chain_swap") {
-        // Simple encoding for testing
+        / Simple encoding for testing
         return ethers.AbiCoder.defaultAbiCoder().encode(
             ["address", "uint256", "string"],
             [sender, amount, operation]
@@ -426,7 +426,7 @@ class TimeoutHandler {
     }
 }
 
-// Example usage
+/ Example usage
 async function handleTimeouts() {
     const provider = new ethers.JsonRpcProvider("<RPC_URL>");
     const signer = new ethers.Wallet("<PRIVATE_KEY>", provider);
@@ -434,15 +434,15 @@ async function handleTimeouts() {
     
     const handler = new TimeoutHandler(provider, signer, contractAddress);
     
-    // Start listening
+    / Start listening
     await handler.listenForTimeouts();
     
-    // Check balance after refund
+    / Check balance after refund
     const balance = await handler.checkUserBalance("0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb8");
     console.log("User balance:", balance.formatted);
 }
 
-// handleTimeouts();
+/ handleTimeouts();
 ```
 </CodeGroup>
 
@@ -464,7 +464,7 @@ When implementing the Callbacks interface, consider the following security aspec
 ### Example Security Pattern
 ```solidity
 contract SecureIBCCallback is ICallbacks {
-    address constant IBC_MODULE = 0x...; // IBC module address
+    address constant IBC_MODULE = 0x...; / IBC module address
     
     modifier onlyIBC() {
         require(msg.sender == IBC_MODULE, "Unauthorized");
@@ -472,11 +472,11 @@ contract SecureIBCCallback is ICallbacks {
     }
     
     function onPacketAcknowledgement(...) external onlyIBC {
-        // Callback logic
+        / Callback logic
     }
     
     function onPacketTimeout(...) external onlyIBC {
-        // Timeout logic
+        / Timeout logic
     }
 }
 ```
@@ -484,19 +484,19 @@ contract SecureIBCCallback is ICallbacks {
 ## Full Solidity Interface & ABI
 
 ```solidity title="Callbacks Solidity Interface" lines expandable
-// SPDX-License-Identifier: LGPL-3.0-only
+/ SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity >=0.8.18;
 
 interface ICallbacks {
-    /// @dev Callback function to be called on the source chain
-    /// after the packet life cycle is completed and acknowledgement is processed
-    /// by source chain. The contract address is passed the packet information and acknowledgmeent
-    /// to execute the callback logic.
-    /// @param channelId the channnel identifier of the packet
-    /// @param portId the port identifier of the packet
-    /// @param sequence the sequence number of the packet
-    /// @param data the data of the packet
-    /// @param acknowledgement the acknowledgement of the packet
+    / @dev Callback function to be called on the source chain
+    / after the packet life cycle is completed and acknowledgement is processed
+    / by source chain. The contract address is passed the packet information and acknowledgmeent
+    / to execute the callback logic.
+    / @param channelId the channnel identifier of the packet
+    / @param portId the port identifier of the packet
+    / @param sequence the sequence number of the packet
+    / @param data the data of the packet
+    / @param acknowledgement the acknowledgement of the packet
     function onPacketAcknowledgement(
         string memory channelId,
         string memory portId,
@@ -505,14 +505,14 @@ interface ICallbacks {
         bytes memory acknowledgement
     ) external;
 
-    /// @dev Callback function to be called on the source chain
-    /// after the packet life cycle is completed and the packet is timed out
-    /// by source chain. The contract address is passed the packet information
-    /// to execute the callback logic.
-    /// @param channelId the channnel identifier of the packet
-    /// @param portId the port identifier of the packet
-    /// @param sequence the sequence number of the packet
-    /// @param data the data of the packet
+    / @dev Callback function to be called on the source chain
+    / after the packet life cycle is completed and the packet is timed out
+    / by source chain. The contract address is passed the packet information
+    / to execute the callback logic.
+    / @param channelId the channnel identifier of the packet
+    / @param portId the port identifier of the packet
+    / @param sequence the sequence number of the packet
+    / @param data the data of the packet
     function onPacketTimeout(
         string memory channelId,
         string memory portId,

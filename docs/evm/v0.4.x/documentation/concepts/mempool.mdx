@@ -22,41 +22,41 @@ The EVM mempool enables seamless interaction with Ethereum tooling and deploymen
 DeFi protocols like Uniswap deploy multiple interdependent contracts in rapid succession. With the EVM mempool, these deployment scripts work without modification:
 
 ```javascript
-// Deploy Uniswap V3 contracts - sends many transactions at once
+/ Deploy Uniswap V3 contracts - sends many transactions at once
 const factory = await UniswapV3Factory.deploy();
 const router = await SwapRouter.deploy(factory.address, WETH);
 const quoter = await Quoter.deploy(factory.address, WETH);
 const multicall = await UniswapInterfaceMulticall.deploy();
 
-// All transactions queue properly even if they arrive out of order
-// The mempool handles nonce gaps automatically
+/ All transactions queue properly even if they arrive out of order
+/ The mempool handles nonce gaps automatically
 ```
 
 ### Batch Transaction Submission
 
 ```javascript
-// Ethereum tooling sends multiple transactions
-await wallet.sendTransaction({nonce: 100, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 101, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 103, ...}); // OK: Queued locally (gap)
-await wallet.sendTransaction({nonce: 102, ...}); // OK: Fills gap, both execute
+/ Ethereum tooling sends multiple transactions
+await wallet.sendTransaction({nonce: 100, ...}); / OK: Immediate execution
+await wallet.sendTransaction({nonce: 101, ...}); / OK: Immediate execution
+await wallet.sendTransaction({nonce: 103, ...}); / OK: Queued locally (gap)
+await wallet.sendTransaction({nonce: 102, ...}); / OK: Fills gap, both execute
 ```
 
 ### Transaction Replacement
 
 ```javascript
-// Speed up transaction with same nonce, higher fee
+/ Speed up transaction with same nonce, higher fee
 const tx1 = await wallet.sendTransaction({
   nonce: 100,
   gasPrice: parseUnits("20", "gwei")
 });
 
-// Replace with higher fee
+/ Replace with higher fee
 const tx2 = await wallet.sendTransaction({
-  nonce: 100, // Same nonce
-  gasPrice: parseUnits("30", "gwei") // Higher fee
+  nonce: 100, / Same nonce
+  gasPrice: parseUnits("30", "gwei") / Higher fee
 });
-// tx1 is replaced by tx2
+/ tx1 is replaced by tx2
 ```
 
 ## Transaction Flow
@@ -75,17 +75,17 @@ The CheckTx handler processes transactions with special handling for nonce gaps 
 
 **Nonce Gap Detection** - Transactions with future nonces are intercepted and queued locally:
 ```go
-// From mempool/check_tx.go
+/ From mempool/check_tx.go
 if err != nil {
-    // detect if there is a nonce gap error (only returned for EVM transactions)
+    / detect if there is a nonce gap error (only returned for EVM transactions)
     if errors.Is(err, ErrNonceGap) {
-        // send it to the mempool for further triage
+        / send it to the mempool for further triage
         err := mempool.InsertInvalidNonce(request.Tx)
         if err != nil {
             return sdkerrors.ResponseCheckTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, anteEvents, false), nil
         }
     }
-    // anything else, return regular error
+    / anything else, return regular error
     return sdkerrors.ResponseCheckTxWithEvents(err, gInfo.GasWanted, gInfo.GasUsed, anteEvents, false), nil
 }
 ```

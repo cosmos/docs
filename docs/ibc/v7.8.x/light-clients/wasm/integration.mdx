@@ -16,14 +16,14 @@ Learn how to integrate the `08-wasm` module in a chain binary and about the reco
 go get github.com/cosmos/ibc-go/modules/light-clients/08-wasm@7ee2a2452b79d0bc8316dc622a1243afa058e8cb
 ```
 
-You can find the version matrix in [here](/docs/ibc/v7.8.x/docs/03-light-clients/04-wasm/integration.mdx#importing-the-08-wasm-module).
+You can find the version matrix in [here](/docs/ibc/v7.8.x/docs/03-light-clients/04-wasm/integration#importing-the-08-wasm-module).
 
 ## `app.go` setup
 
-The sample code below shows the relevant integration points in `app.go` required to setup the `08-wasm` module in a chain binary. Since `08-wasm` is a light client module itself, please check out as well the section [Integrating light clients](/docs/ibc/v7.8.x/ibc/integration.mdx#integrating-light-clients) for more information:
+The sample code below shows the relevant integration points in `app.go` required to setup the `08-wasm` module in a chain binary. Since `08-wasm` is a light client module itself, please check out as well the section [Integrating light clients](/docs/ibc/v7.8.x/ibc/integration#integrating-light-clients) for more information:
 
 ```go expandable
-// app.go
+/ app.go
 import (
 
   ...
@@ -39,7 +39,7 @@ import (
 
 ...
 
-// Register the AppModule for the 08-wasm module
+/ Register the AppModule for the 08-wasm module
 ModuleBasics = module.NewBasicManager(
   ...
   ibcwasm.AppModuleBasic{
@@ -47,7 +47,7 @@ ModuleBasics = module.NewBasicManager(
   ...
 )
 
-// Add 08-wasm Keeper
+/ Add 08-wasm Keeper
 type SimApp struct {
   ...
   WasmClientKeeper ibcwasmkeeper.Keeper
@@ -68,12 +68,12 @@ func NewSimApp(
     ibcwasmtypes.StoreKey,
   )
 
-  // Instantiate 08-wasm's keeper
-  // This sample code uses a constructor function that
-  // accepts a pointer to an existing instance of Wasm VM.
-  // This is the recommended approach when the chain
-  // also uses `x/wasm`, and then the Wasm VM instance
-  // can be shared.
+  / Instantiate 08-wasm's keeper
+  / This sample code uses a constructor function that
+  / accepts a pointer to an existing instance of Wasm VM.
+  / This is the recommended approach when the chain
+  / also uses `x/wasm`, and then the Wasm VM instance
+  / can be shared.
   app.WasmClientKeeper = ibcwasmkeeper.NewKeeperWithVM(
     appCodec,
     keys[wasmtypes.StoreKey],
@@ -84,7 +84,7 @@ func NewSimApp(
   )
 
 app.ModuleManager = module.NewManager(
-    // SDK app modules
+    / SDK app modules
     ...
     ibcwasm.NewAppModule(app.WasmClientKeeper),
   )
@@ -111,11 +111,11 @@ app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
 app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
   ...
 
-	// initialize BaseApp
+	/ initialize BaseApp
   app.SetInitChainer(app.InitChainer)
   ...
 
-  // must be before Loading version
+  / must be before Loading version
     if manager := app.SnapshotManager(); manager != nil {
     err := manager.RegisterExtensions(
       ibcwasmkeeper.NewWasmSnapshotter(app.CommitMultiStore(), &app.WasmClientKeeper),
@@ -131,7 +131,7 @@ app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
     ctx := app.BaseApp.NewUncachedContext(true, cmtproto.Header{
 })
 
-    // Initialize pinned codes in wasmvm as they are not persisted there
+    / Initialize pinned codes in wasmvm as they are not persisted there
     if err := ibcwasmkeeper.InitializePinnedCodes(ctx, app.appCodec); err != nil {
     cmtos.Exit(fmt.Sprintf("failed initialize pinned codes %s", err))
 }
@@ -158,7 +158,7 @@ In order to share the Wasm VM instance please follow the guideline below. Please
 The code to set this up would look something like this:
 
 ```go expandable
-// app.go
+/ app.go
 import (
 
   ...
@@ -175,7 +175,7 @@ import (
 
 ...
 
-// instantiate the Wasm VM with the chosen parameters
+/ instantiate the Wasm VM with the chosen parameters
 wasmer, err := wasmvm.NewVM(
   dataDir,
   availableCapabilities,
@@ -187,14 +187,14 @@ wasmer, err := wasmvm.NewVM(
     panic(err)
 }
 
-// create an Option slice (or append to an existing one)
-// with the option to use a custom Wasm VM instance
+/ create an Option slice (or append to an existing one)
+/ with the option to use a custom Wasm VM instance
 wasmOpts = []wasmkeeper.Option{
     wasmkeeper.WithWasmEngine(wasmer),
 }
 
-// the keeper will use the provided Wasm VM instance,
-// instead of instantiating a new one
+/ the keeper will use the provided Wasm VM instance,
+/ instead of instantiating a new one
 app.WasmKeeper = wasmkeeper.NewKeeper(
   appCodec,
   keys[wasmtypes.StoreKey],
@@ -202,7 +202,7 @@ app.WasmKeeper = wasmkeeper.NewKeeper(
   app.BankKeeper,
   app.StakingKeeper,
   distrkeeper.NewQuerier(app.DistrKeeper),
-  app.IBCFeeKeeper, // ISC4 Wrapper: fee IBC middleware
+  app.IBCFeeKeeper, / ISC4 Wrapper: fee IBC middleware
   app.IBCKeeper.ChannelKeeper,
   &app.IBCKeeper.PortKeeper,
   scopedWasmKeeper,
@@ -221,7 +221,7 @@ app.WasmClientKeeper = ibcwasmkeeper.NewKeeperWithVM(
   keys[ibcwasmtypes.StoreKey],
   app.IBCKeeper.ClientKeeper,
   authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-  wasmer, // pass the Wasm VM instance to `08-wasm` keeper constructor
+  wasmer, / pass the Wasm VM instance to `08-wasm` keeper constructor
   app.GRPCQueryRouter(),
 )
 ...
@@ -242,7 +242,7 @@ Another configuration parameter of the Wasm VM is the contract memory limit (in 
 The following sample code shows how the keeper would be constructed using this method:
 
 ```go expandable
-// app.go
+/ app.go
 import (
 
   ...
@@ -255,8 +255,8 @@ import (
 
 ...
 
-// homePath is the path to the directory where the data
-// directory for Wasm blobs and caches will be created
+/ homePath is the path to the directory where the data
+/ directory for Wasm blobs and caches will be created
     wasmConfig := ibcwasmtypes.WasmConfig{
     DataDir:               filepath.Join(homePath, "ibc_08-wasm_client_data"),
     SupportedCapabilities: "iterator",
@@ -291,10 +291,10 @@ We first construct a [`QueryPlugins`](https://github.com/cosmos/ibc-go/blob/b306
 ```go
 queryPlugins := ibcwasmtypes.QueryPlugins {
     Custom: MyCustomQueryPlugin(),
-  // `myAcceptList` is a `[]string` containing the list of gRPC query paths that the chain wants to allow for the `08-wasm` module to query.
-  // These queries must be registered in the chain's gRPC query router, be deterministic, and track their gas usage.
-  // The `AcceptListStargateQuerier` function will return a query plugin that will only allow queries for the paths in the `myAcceptList`.
-  // The query responses are encoded in protobuf unlike the implementation in `x/wasm`.
+  / `myAcceptList` is a `[]string` containing the list of gRPC query paths that the chain wants to allow for the `08-wasm` module to query.
+  / These queries must be registered in the chain's gRPC query router, be deterministic, and track their gas usage.
+  / The `AcceptListStargateQuerier` function will return a query plugin that will only allow queries for the paths in the `myAcceptList`.
+  / The query responses are encoded in protobuf unlike the implementation in `x/wasm`.
   Stargate: ibcwasmtypes.AcceptListStargateQuerier(myAcceptList),
 }
 ```
@@ -327,7 +327,7 @@ app.WasmClientKeeper = ibcwasmkeeper.NewKeeperWithVM(
   keys[wasmtypes.StoreKey],
   app.IBCKeeper.ClientKeeper,
   authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-  wasmer, // pass the Wasm VM instance to `08-wasm` keeper constructor
+  wasmer, / pass the Wasm VM instance to `08-wasm` keeper constructor
   app.GRPCQueryRouter(),
 + querierOption,
 )
@@ -356,7 +356,7 @@ func CreateWasmUpgradeHandler(
 upgradetypes.UpgradeHandler {
     return func(goCtx context.Context, _ upgradetypes.Plan, vm module.VersionMap) (module.VersionMap, error) {
     ctx := sdk.UnwrapSDKContext(goCtx)
-    // explicitly update the IBC 02-client params, adding the wasm client type
+    / explicitly update the IBC 02-client params, adding the wasm client type
     params := clientKeeper.GetParams(ctx)
 
 params.AllowedClients = append(params.AllowedClients, ibcwasmtypes.Wasm)
@@ -368,7 +368,7 @@ return mm.RunMigrations(goCtx, configurator, vm)
 }
 ```
 
-Or alternatively the parameter can be updated via a governance proposal (see at the bottom of section [`Creating clients`](/docs/ibc/v7.8.x/light-clients/developer-guide/setup.mdx#creating-clients) for an example of how to do this).
+Or alternatively the parameter can be updated via a governance proposal (see at the bottom of section [`Creating clients`](/docs/ibc/v7.8.x/light-clients/developer-guide/setup#creating-clients) for an example of how to do this).
 
 ## Adding the module to the store
 
@@ -387,7 +387,7 @@ RegisterUpgradeHandlers() {
 },
 }
 
-    // configure store loader that checks if version == upgradeHeight and applies store upgrades
+    / configure store loader that checks if version == upgradeHeight and applies store upgrades
     app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, &storeUpgrades))
 }
 }

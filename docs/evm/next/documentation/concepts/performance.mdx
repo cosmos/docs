@@ -17,19 +17,19 @@ v0.5.0 introduces intelligent gas estimation that dramatically improves performa
 **Performance Improvement:** ~90% faster gas estimation for simple ETH transfers
 
 ```solidity
-// These transactions now estimate gas instantly (21000)
-contract.call{value: 1 ether}(""); // Empty call to EOA
-payable(recipient).transfer(amount); // Direct transfer
+/ These transactions now estimate gas instantly (21000)
+contract.call{value: 1 ether}(""); / Empty call to EOA
+payable(recipient).transfer(amount); / Direct transfer
 ```
 
 **Implementation Details:**
 ```go
-// Short-circuit logic for plain transfers
-// Source: x/vm/keeper/grpc_query.go:414-422
+/ Short-circuit logic for plain transfers
+/ Source: x/vm/keeper/grpc_query.go:414-422
 if len(msg.Data) == 0 && msg.To != nil {
     acct := k.GetAccountWithoutBalance(ctx, *msg.To)
     if acct == nil || !acct.IsContract() {
-        // Return 21000 immediately without full execution
+        / Return 21000 immediately without full execution
         return &types.EstimateGasResponse{Gas: ethparams.TxGas}, nil
     }
 }
@@ -40,15 +40,15 @@ if len(msg.Data) == 0 && msg.To != nil {
 **Performance Improvement:** Faster estimation for complex transactions through better initial bounds
 
 ```go
-// Uses actual execution results to optimize binary search
-// Source: x/vm/keeper/grpc_query.go:450-452
+/ Uses actual execution results to optimize binary search
+/ Source: x/vm/keeper/grpc_query.go:450-452
 optimisticGasLimit := (result.MaxUsedGas + ethparams.CallStipend) * 64 / 63
 
-// Binary search starts with smarter bounds instead of blind search  
+/ Binary search starts with smarter bounds instead of blind search  
 if optimisticGasLimit < hi {
-    // Test optimistic limit first
+    / Test optimistic limit first
     if !failed {
-        hi = optimisticGasLimit // Much faster convergence
+        hi = optimisticGasLimit / Much faster convergence
     }
 }
 ```
@@ -71,17 +71,17 @@ if optimisticGasLimit < hi {
 **What Changed:** Eliminated unnecessary EVM instance creation during balance checks
 
 ```go
-// Before (v0.4.x): Created full EVM instance for balance checks
+/ Before (v0.4.x): Created full EVM instance for balance checks
 func (d CanTransferDecorator) AnteHandle(...) {
     evm := d.evmKeeper.NewEVM(ctx, msg, cfg, tracer, stateDB)
     balance := evm.StateDB.GetBalance(msg.From)
-    // Heavy operation for simple balance check
+    / Heavy operation for simple balance check
 }
 
-// After (v0.5.0): Direct keeper method
+/ After (v0.5.0): Direct keeper method
 func CanTransfer(ctx sdk.Context, evmKeeper EVMKeeper, msg core.Message, ...) error {
     balance := evmKeeper.GetAccount(ctx, msg.From).Balance
-    // Lightweight direct access
+    / Lightweight direct access
 }
 ```
 
@@ -95,14 +95,14 @@ func CanTransfer(ctx sdk.Context, evmKeeper EVMKeeper, msg core.Message, ...) er
 **EIP Compliance:** Implements proper storage empty checks per Ethereum standards
 
 ```go
-// Optimized storage operations with empty checks
+/ Optimized storage operations with empty checks
 func (k Keeper) SetState(ctx sdk.Context, addr common.Address, key, value common.Hash) {
     if value == (common.Hash{}) {
-        // Optimized path for storage deletion
+        / Optimized path for storage deletion
         k.deleteState(ctx, addr, key)
         return
     }
-    // Standard storage set
+    / Standard storage set
     k.setState(ctx, addr, key, value)
 }
 ```
@@ -116,17 +116,17 @@ v0.5.0's configurable mempool enables fine-tuning for different performance requ
 #### High-Throughput Configuration
 
 ```go
-// Optimized for maximum transaction volume
+/ Optimized for maximum transaction volume
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     LegacyPoolConfig: &legacypool.Config{
-        AccountSlots: 64,    // 4x more transactions per account
-        GlobalSlots:  16384, // 4x more pending transactions
-        AccountQueue: 256,   // 4x larger queues
+        AccountSlots: 64,    / 4x more transactions per account
+        GlobalSlots:  16384, / 4x more pending transactions
+        AccountQueue: 256,   / 4x larger queues
         GlobalQueue:  4096,
-        PriceLimit:   1,     // Accept lowest gas prices
-        Lifetime:     6*time.Hour, // Longer retention
+        PriceLimit:   1,     / Accept lowest gas prices
+        Lifetime:     6*time.Hour, / Longer retention
     },
-    BlockGasLimit: 200_000_000, // Higher gas limit
+    BlockGasLimit: 200_000_000, / Higher gas limit
 }
 ```
 
@@ -138,15 +138,15 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 #### Low-Latency Configuration
 
 ```go
-// Optimized for fastest transaction processing
+/ Optimized for fastest transaction processing
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     LegacyPoolConfig: &legacypool.Config{
-        AccountSlots: 4,      // Faster iteration
-        GlobalSlots:  1024,   // Smaller pools
-        AccountQueue: 16,     // Quick processing
+        AccountSlots: 4,      / Faster iteration
+        GlobalSlots:  1024,   / Smaller pools
+        AccountQueue: 16,     / Quick processing
         GlobalQueue:  256,
-        PriceLimit:   10,     // Higher minimum price
-        Lifetime:     30*time.Minute, // Faster eviction
+        PriceLimit:   10,     / Higher minimum price
+        Lifetime:     30*time.Minute, / Faster eviction
     },
 }
 ```
@@ -161,30 +161,30 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 **Performance-Aware Priority:** Optimize transaction ordering for specific use cases
 
 ```go Custom Priority Functions expandable
-// MEV-resistant priority function
+/ MEV-resistant priority function
 func mevResistantPriority(goCtx context.Context, tx sdk.Tx) math.Int {
-    // Prioritize based on transaction age instead of just fees
+    / Prioritize based on transaction age instead of just fees
     feeTx, ok := tx.(sdk.FeeTx)
     if !ok {
         return math.ZeroInt()
     }
     
     basePriority := calculateFeePriority(feeTx)
-    agePriority := calculateAgePriority(tx) // Factor in submission time
+    agePriority := calculateAgePriority(tx) / Factor in submission time
     
-    // Balanced priority prevents MEV front-running
+    / Balanced priority prevents MEV front-running
     return basePriority.Add(agePriority)
 }
 
-// High-frequency trading priority
+/ High-frequency trading priority
 func hftPriority(goCtx context.Context, tx sdk.Tx) math.Int {
-    // Custom priority for time-sensitive protocols
+    / Custom priority for time-sensitive protocols
     for _, msg := range tx.GetMsgs() {
         if isArbitrageTx(msg) {
-            return math.NewInt(1000000) // Highest priority
+            return math.NewInt(1000000) / Highest priority
         }
         if isLiquidationTx(msg) {
-            return math.NewInt(500000)  // High priority
+            return math.NewInt(500000)  / High priority
         }
     }
     return standardPriority(tx)
@@ -198,8 +198,8 @@ func hftPriority(goCtx context.Context, tx sdk.Tx) math.Int {
 **What Changed:** Improved block notification timing prevents funding errors
 
 ```go
-// Before: Block notifications could arrive too late
-// After: Optimized timing ensures mempool updates before transaction processing
+/ Before: Block notifications could arrive too late
+/ After: Optimized timing ensures mempool updates before transaction processing
 ```
 
 **Benefits:**
@@ -212,13 +212,13 @@ func hftPriority(goCtx context.Context, tx sdk.Tx) math.Int {
 **EVM Log Optimization:** EVM logs no longer emitted to cosmos-sdk events (commit fedc27f6)
 
 ```go
-// Before: Double emission increased processing overhead
-// 1. EVM logs stored in transient state
-// 2. EVM logs also emitted as Cosmos events
+/ Before: Double emission increased processing overhead
+/ 1. EVM logs stored in transient state
+/ 2. EVM logs also emitted as Cosmos events
 
-// After: Single emission path
-// 1. EVM logs stored in transient state only
-// 2. No duplicate Cosmos event emission
+/ After: Single emission path
+/ 1. EVM logs stored in transient state only
+/ 2. No duplicate Cosmos event emission
 ```
 
 **Performance Impact:**
@@ -262,14 +262,14 @@ max-open-connections = 50
 **New RPC Method:** `eth_createAccessList` enables transaction cost optimization
 
 ```javascript
-// Generate access list for gas optimization
+/ Generate access list for gas optimization
 const accessList = await provider.send("eth_createAccessList", [{
     to: contractAddress,
     data: contractInterface.encodeFunctionData("complexFunction", [arg1, arg2]),
     gasPrice: "0x" + gasPrice.toString(16)
 }, "latest"]);
 
-// Use access list in transaction for reduced gas costs
+/ Use access list in transaction for reduced gas costs
 const tx = await contract.complexFunction(arg1, arg2, {
     accessList: accessList.accessList,
     gasLimit: accessList.gasUsed
@@ -285,58 +285,58 @@ const tx = await contract.complexFunction(arg1, arg2, {
 #### DeFi-Focused Chain
 
 ```go DeFi Chain Configuration expandable
-// Optimized for DeFi protocols
+/ Optimized for DeFi protocols
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     LegacyPoolConfig: &legacypool.Config{
-        AccountSlots: 32,     // Higher per-account limit
-        PriceBump:    25,     // Higher replacement threshold (MEV protection)
-        Lifetime:     30*time.Minute, // Fast eviction
+        AccountSlots: 32,     / Higher per-account limit
+        PriceBump:    25,     / Higher replacement threshold (MEV protection)
+        Lifetime:     30*time.Minute, / Fast eviction
     },
-    BlockGasLimit: 150_000_000, // Optimized for complex contracts
+    BlockGasLimit: 150_000_000, / Optimized for complex contracts
 }
 
-// VM parameters
+/ VM parameters
 {
-    "history_serve_window": 4096, // Balanced for flash loan protocols
+    "history_serve_window": 4096, / Balanced for flash loan protocols
 }
 ```
 
 #### Gaming Chain
 
 ```go Gaming Chain Configuration expandable
-// Optimized for high transaction volume, low complexity
+/ Optimized for high transaction volume, low complexity
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     LegacyPoolConfig: &legacypool.Config{
-        AccountSlots: 128,    // Many small transactions per player
-        GlobalSlots:  32768,  // Very high global capacity
-        PriceLimit:   1,      // Accept very low gas prices
-        Lifetime:     10*time.Minute, // Fast turnover
+        AccountSlots: 128,    / Many small transactions per player
+        GlobalSlots:  32768,  / Very high global capacity
+        PriceLimit:   1,      / Accept very low gas prices
+        Lifetime:     10*time.Minute, / Fast turnover
     },
 }
 
-// VM parameters
+/ VM parameters
 {
-    "history_serve_window": 1024, // Lower storage overhead
+    "history_serve_window": 1024, / Lower storage overhead
 }
 ```
 
 #### Enterprise/Private Chain
 
 ```go Enterprise Chain Configuration expandable
-// Optimized for predictable, high-value transactions
+/ Optimized for predictable, high-value transactions
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     LegacyPoolConfig: &legacypool.Config{
-        AccountSlots: 16,     // Standard capacity
-        GlobalSlots:  4096,   // Standard global capacity
-        PriceLimit:   100,    // Higher minimum price
-        PriceBump:    50,     // High replacement threshold
-        Lifetime:     24*time.Hour, // Long retention
+        AccountSlots: 16,     / Standard capacity
+        GlobalSlots:  4096,   / Standard global capacity
+        PriceLimit:   100,    / Higher minimum price
+        PriceBump:    50,     / High replacement threshold
+        Lifetime:     24*time.Hour, / Long retention
     },
 }
 
-// VM parameters  
+/ VM parameters  
 {
-    "history_serve_window": 16384, // Extended history for audit trails
+    "history_serve_window": 16384, / Extended history for audit trails
 }
 ```
 
@@ -441,9 +441,9 @@ watch 'curl -s -X POST \
 ### Custom Transaction Lifecycle
 
 ```go
-// Implement custom broadcast function for performance
+/ Implement custom broadcast function for performance
 BroadcastTxFn: func(txs []*ethtypes.Transaction) error {
-    // Batch broadcast for efficiency
+    / Batch broadcast for efficiency
     return batchBroadcastTransactions(txs, batchSize=50)
 }
 ```
@@ -451,10 +451,10 @@ BroadcastTxFn: func(txs []*ethtypes.Transaction) error {
 ### State Preloading
 
 ```go
-// Preload frequently accessed state
+/ Preload frequently accessed state
 func (k Keeper) PreloadState(ctx sdk.Context, addresses []common.Address) {
     for _, addr := range addresses {
-        // Warm cache with frequently accessed accounts
+        / Warm cache with frequently accessed accounts
         k.GetAccount(ctx, addr)
     }
 }
@@ -463,7 +463,7 @@ func (k Keeper) PreloadState(ctx sdk.Context, addresses []common.Address) {
 ### Gas Price Oracle Optimization
 
 ```go
-// Custom gas price calculation for better estimation
+/ Custom gas price calculation for better estimation
 func optimizedGasPrice(baseFee *big.Int, urgency string) *big.Int {
     switch urgency {
     case "immediate":
@@ -495,14 +495,14 @@ go test -bench=BenchmarkRPC ./rpc/namespaces/ethereum/eth/
 ### Load Testing Scripts
 
 ```javascript Load Testing Script expandable
-// Ethereum tooling load test
+/ Ethereum tooling load test
 const { ethers } = require("ethers");
 
 async function loadTest() {
     const provider = new ethers.JsonRpcProvider("http://localhost:8545");
     const wallet = new ethers.Wallet(privateKey, provider);
     
-    // Send 1000 transactions concurrently
+    / Send 1000 transactions concurrently
     const promises = [];
     for (let i = 0; i < 1000; i++) {
         promises.push(
@@ -527,4 +527,4 @@ async function loadTest() {
 - **Gas Estimation PR:** [cosmos/evm#538](https://github.com/cosmos/evm/pull/538)
 - **Mempool Optimization PR:** [cosmos/evm#496](https://github.com/cosmos/evm/pull/496)  
 - **Ante Handler Performance PR:** [cosmos/evm#352](https://github.com/cosmos/evm/pull/352)
-- **Related Documentation:** [Mempool Configuration](/docs/evm/next/documentation/concepts/mempool.mdx), [VM Module](/docs/evm/next/documentation/cosmos-sdk/modules/vm.mdx)
+- **Related Documentation:** [Mempool Configuration](/docs/evm/next/documentation/concepts/mempool), [VM Module](/docs/evm/next/documentation/cosmos-sdk/modules/vm)

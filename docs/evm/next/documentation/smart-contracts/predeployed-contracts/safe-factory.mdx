@@ -48,7 +48,7 @@ import { SafeFactory } from "@safe-global/safe-core-sdk";
 
 const FACTORY_ADDRESS = "0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7";
 
-// Using Safe SDK
+/ Using Safe SDK
 async function deploySafeWallet(owners, threshold, signer) {
   const safeFactory = await SafeFactory.create({
     ethAdapter: new EthersAdapter({ ethers, signer }),
@@ -58,18 +58,18 @@ async function deploySafeWallet(owners, threshold, signer) {
   const safeAccountConfig = {
     owners: owners,
     threshold: threshold,
-    // Optional parameters
-    fallbackHandler: "0x...", // Fallback handler address
+    / Optional parameters
+    fallbackHandler: "0x...", / Fallback handler address
     paymentToken: ethers.ZeroAddress,
     payment: 0,
     paymentReceiver: ethers.ZeroAddress
   };
 
-  // Predict address before deployment
+  / Predict address before deployment
   const predictedAddress = await safeFactory.predictSafeAddress(safeAccountConfig);
   console.log("Safe will be deployed to:", predictedAddress);
 
-  // Deploy the Safe
+  / Deploy the Safe
   const safeSdk = await safeFactory.deploySafe({ safeAccountConfig });
   const safeAddress = await safeSdk.getAddress();
 
@@ -77,7 +77,7 @@ async function deploySafeWallet(owners, threshold, signer) {
   return safeSdk;
 }
 
-// Manual deployment without SDK
+/ Manual deployment without SDK
 async function deployManually(signer) {
   const factory = new ethers.Contract(
     FACTORY_ADDRESS,
@@ -85,22 +85,22 @@ async function deployManually(signer) {
     signer
   );
 
-  // Prepare Safe proxy bytecode with initialization
-  const proxyBytecode = "0x..."; // Safe proxy bytecode
+  / Prepare Safe proxy bytecode with initialization
+  const proxyBytecode = "0x..."; / Safe proxy bytecode
   const salt = ethers.id("my-safe-v1");
 
-  // Deploy
+  / Deploy
   const tx = await factory.deploy(proxyBytecode, salt);
   const receipt = await tx.wait();
 
-  // Get deployed address from events
+  / Get deployed address from events
   const deployedAddress = receipt.logs[0].address;
   return deployedAddress;
 }
 ```
 
 ```solidity "Solidity Safe Deployer Contract" expandable
-// SPDX-License-Identifier: MIT
+/ SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 interface ISafeFactory {
@@ -118,28 +118,28 @@ contract SafeDeployer {
         bytes memory initializer,
         uint256 saltNonce
     ) external returns (address safe) {
-        // Prepare proxy creation code
+        / Prepare proxy creation code
         bytes memory deploymentData = abi.encodePacked(
             getProxyCreationCode(),
             uint256(uint160(safeSingleton))
         );
 
-        // Calculate salt
+        / Calculate salt
         bytes32 salt = keccak256(abi.encodePacked(
             keccak256(initializer),
             saltNonce
         ));
 
-        // Deploy via factory
+        / Deploy via factory
         safe = factory.deploy(deploymentData, salt);
 
-        // Initialize the Safe
+        / Initialize the Safe
         (bool success,) = safe.call(initializer);
         require(success, "Safe initialization failed");
     }
 
     function getProxyCreationCode() pure returns (bytes memory) {
-        // Safe proxy bytecode
+        / Safe proxy bytecode
         return hex"608060405234801561001057600080fd5b50...";
     }
 }
@@ -185,19 +185,19 @@ async function deployCustomSafe(config, signer) {
     fallbackHandler
   } = config;
 
-  // Encode initialization data
+  / Encode initialization data
   const setupData = safeSingleton.interface.encodeFunctionData("setup", [
     owners,
     threshold,
-    ethers.ZeroAddress, // to
-    "0x",               // data
+    ethers.ZeroAddress, / to
+    "0x",               / data
     fallbackHandler,
-    ethers.ZeroAddress, // paymentToken
-    0,                  // payment
-    ethers.ZeroAddress  // paymentReceiver
+    ethers.ZeroAddress, / paymentToken
+    0,                  / payment
+    ethers.ZeroAddress  / paymentReceiver
   ]);
 
-  // Deploy proxy pointing to singleton
+  / Deploy proxy pointing to singleton
   const proxyFactory = new ethers.Contract(
     PROXY_FACTORY_ADDRESS,
     proxyFactoryAbi,
@@ -207,13 +207,13 @@ async function deployCustomSafe(config, signer) {
   const tx = await proxyFactory.createProxyWithNonce(
     SAFE_SINGLETON_ADDRESS,
     setupData,
-    Date.now() // saltNonce
+    Date.now() / saltNonce
   );
 
   const receipt = await tx.wait();
   const safeAddress = getSafeAddressFromReceipt(receipt);
 
-  // Enable modules if specified
+  / Enable modules if specified
   for (const module of modules) {
     await enableModule(safeAddress, module, signer);
   }
@@ -237,7 +237,7 @@ async function deployOrgTreasury(orgId, chains) {
     const provider = new ethers.JsonRpcProvider(chain.rpc);
     const signer = new ethers.Wallet(deployerKey, provider);
 
-    // Same salt = same address on all chains
+    / Same salt = same address on all chains
     const address = await deploySafeWithSalt(salt, signer);
     results[chain.name] = address;
   }
@@ -259,16 +259,16 @@ class CounterfactualSafe {
   }
 
   predictAddress() {
-    // Calculate address without deploying
+    / Calculate address without deploying
     return predictSafeAddress(
       this.owners,
       this.threshold,
-      0 // saltNonce
+      0 / saltNonce
     );
   }
 
   async deploy(signer) {
-    // Only deploy when needed
+    / Only deploy when needed
     const code = await signer.provider.getCode(this.address);
     if (code !== "0x") {
       console.log("Already deployed");
@@ -291,14 +291,14 @@ class CounterfactualSafe {
 Deploy and enable Safe modules:
 
 ```javascript "Safe Module Deployment and Configuration" expandable
-// Deploy module via factory
+/ Deploy module via factory
 async function deployModule(moduleCode, salt) {
   const tx = await factory.deploy(moduleCode, salt);
   const receipt = await tx.wait();
   return receipt.contractAddress;
 }
 
-// Enable module on Safe
+/ Enable module on Safe
 async function enableModule(safeAddress, moduleAddress, signer) {
   const safe = new ethers.Contract(safeAddress, safeAbi, signer);
   const tx = await safe.enableModule(moduleAddress);
@@ -312,11 +312,11 @@ Deploy transaction guards for additional security:
 
 ```javascript "Deploy and Set Safe Transaction Guard" expandable
 async function deployAndSetGuard(safeAddress, guardCode, signer) {
-  // Deploy guard
+  / Deploy guard
   const salt = ethers.id(`guard-${safeAddress}`);
   const guardAddress = await factory.deploy(guardCode, salt);
 
-  // Set as Safe guard
+  / Set as Safe guard
   const safe = new ethers.Contract(safeAddress, safeAbi, signer);
   const tx = await safe.setGuard(guardAddress);
   await tx.wait();
@@ -330,7 +330,7 @@ async function deployAndSetGuard(safeAddress, guardCode, signer) {
 ### Salt Management
 
 ```javascript "Structured Salt Generation Patterns" expandable
-// Structured salt generation
+/ Structured salt generation
 function generateSalt(context, nonce) {
   return ethers.solidityPackedKeccak256(
     ["string", "uint256"],
@@ -338,7 +338,7 @@ function generateSalt(context, nonce) {
   );
 }
 
-// Examples
+/ Examples
 const userSalt = generateSalt(`user-${userId}`, 0);
 const orgSalt = generateSalt(`org-${orgId}`, iteration);
 const appSalt = generateSalt(`app-${appId}-${version}`, 0);

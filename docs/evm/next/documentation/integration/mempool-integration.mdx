@@ -15,9 +15,9 @@ Update your `app/app.go` to include the EVM mempool:
 ```go
 type App struct {
     *baseapp.BaseApp
-    // ... other keepers
+    / ... other keepers
 
-    // Cosmos EVM keepers
+    / Cosmos EVM keepers
     FeeMarketKeeper   feemarketkeeper.Keeper
     EVMKeeper         *evmkeeper.Keeper
     EVMMempool        *evmmempool.ExperimentalEVMMempool
@@ -34,7 +34,7 @@ Add the following configuration in your `NewApp` constructor:
 
 <Expandable title="View EVM mempool initialization code">
 ```go
-// Set the EVM priority nonce mempool
+/ Set the EVM priority nonce mempool
 if evmtypes.GetChainConfig() != nil {
     mempoolConfig := &evmmempool.EVMMempoolConfig{
         AnteHandler:   app.GetAnteHandler(),
@@ -52,14 +52,14 @@ if evmtypes.GetChainConfig() != nil {
     )
     app.EVMMempool = evmMempool
 
-    // Replace BaseApp mempool
+    / Replace BaseApp mempool
     app.SetMempool(evmMempool)
 
-    // Set custom CheckTx handler for nonce gap support
+    / Set custom CheckTx handler for nonce gap support
     checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
     app.SetCheckTxHandler(checkTxHandler)
 
-    // Set custom PrepareProposal handler
+    / Set custom PrepareProposal handler
     abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
     abciProposalHandler.SetSignerExtractionAdapter(
         evmmempool.NewEthSignerExtractionAdapter(
@@ -84,7 +84,7 @@ The `EVMMempoolConfig` struct provides several configuration options for customi
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // 100M gas limit
+    BlockGasLimit: 100_000_000, / 100M gas limit
 }
 ```
 
@@ -92,22 +92,22 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 
 ```go
 type EVMMempoolConfig struct {
-    // Required: AnteHandler for transaction validation
+    / Required: AnteHandler for transaction validation
     AnteHandler   sdk.AnteHandler
 
-    // Required: Block gas limit for transaction selection
+    / Required: Block gas limit for transaction selection
     BlockGasLimit uint64
 
-    // Optional: Custom legacy pool configuration (replaces TxPool)
+    / Optional: Custom legacy pool configuration (replaces TxPool)
     LegacyPoolConfig *legacypool.Config
 
-    // Optional: Custom Cosmos pool configuration (replaces CosmosPool)
+    / Optional: Custom Cosmos pool configuration (replaces CosmosPool)
     CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]
 
-    // Optional: Custom broadcast function for promoted transactions
+    / Optional: Custom broadcast function for promoted transactions
     BroadcastTxFn func(txs []*ethtypes.Transaction) error
 
-    // Optional: Minimum tip required for EVM transactions
+    / Optional: Minimum tip required for EVM transactions
     MinTip *uint256.Int
 }
 ```
@@ -129,8 +129,8 @@ type EVMMempoolConfig struct {
 **Before (v0.4.x):**
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
-    TxPool:     customTxPool,      // ← REMOVED
-    CosmosPool: customCosmosPool,  // ← REMOVED
+    TxPool:     customTxPool,      / ← REMOVED
+    CosmosPool: customCosmosPool,  / ← REMOVED
     AnteHandler: app.GetAnteHandler(),
     BlockGasLimit: 100_000_000,
 }
@@ -139,13 +139,13 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 **After (v0.5.0):**
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
-    LegacyPoolConfig: &legacypool.Config{     // ← NEW
+    LegacyPoolConfig: &legacypool.Config{     / ← NEW
         AccountSlots: 16,
         GlobalSlots:  5120,
         PriceLimit:   1,
-        // ... other config options
+        / ... other config options
     },
-    CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{ // ← NEW
+    CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{ / ← NEW
         TxPriority: customPriorityConfig,
     },
     AnteHandler:   app.GetAnteHandler(),
@@ -158,7 +158,7 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 The mempool uses a `PriorityNonceMempool` for Cosmos transactions by default. You can customize the priority calculation:
 
 ```go
-// Define custom priority calculation for Cosmos transactions
+/ Define custom priority calculation for Cosmos transactions
 priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
     TxPriority: sdkmempool.TxPriority[math.Int]{
         GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
@@ -167,20 +167,20 @@ priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
                 return math.ZeroInt()
             }
 
-            // Get fee in bond denomination
-            bondDenom := "test" // or your chain's bond denom
+            / Get fee in bond denomination
+            bondDenom := "test" / or your chain's bond denom
             fee := feeTx.GetFee()
             found, coin := fee.Find(bondDenom)
             if !found {
                 return math.ZeroInt()
             }
 
-            // Calculate gas price: fee_amount / gas_limit
+            / Calculate gas price: fee_amount / gas_limit
             gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
             return gasPrice
         },
         Compare: func(a, b math.Int) int {
-            return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
+            return a.BigInt().Cmp(b.BigInt()) / Higher values have priority
         },
         MinValue: math.ZeroInt(),
     },
@@ -189,7 +189,7 @@ priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:      app.GetAnteHandler(),
     BlockGasLimit:    100_000_000,
-    CosmosPoolConfig: &priorityConfig, // Pass config instead of pre-built pool
+    CosmosPoolConfig: &priorityConfig, / Pass config instead of pre-built pool
 }
 ```
 
@@ -198,7 +198,7 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 Different chains may require different gas limits based on their capacity:
 
 ```go
-// Example: 50M gas limit for lower capacity chains
+/ Example: 50M gas limit for lower capacity chains
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
     BlockGasLimit: 50_000_000,
@@ -210,7 +210,7 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 For best results, connect the mempool to CometBFT's EventBus so it can react to finalized blocks:
 
 ```go
-// After starting the CometBFT node
+/ After starting the CometBFT node
 if m, ok := app.GetMempool().(*evmmempool.ExperimentalEVMMempool); ok {
     m.SetEventBus(bftNode.EventBus())
 }
@@ -238,9 +238,9 @@ Custom transaction validation that handles nonce gaps specially (`mempool/check_
 **Special Handling**: On `ErrNonceGap` for EVM transactions:
 ```go
 if errors.Is(err, ErrNonceGap) {
-    // Route to local queue instead of rejecting
+    / Route to local queue instead of rejecting
     err := mempool.InsertInvalidNonce(request.Tx)
-    // Must intercept error and return success to EVM client
+    / Must intercept error and return success to EVM client
     return interceptedSuccess
 }
 ```
@@ -260,7 +260,7 @@ Standard Cosmos SDK mempool for non-EVM transactions with fee-based prioritizati
 
 **Default Priority Calculation**:
 ```go
-// Calculate effective gas price
+/ Calculate effective gas price
 priority = (fee_amount / gas_limit) - base_fee
 ```
 
@@ -284,12 +284,12 @@ The mempool handles different transaction types appropriately:
 During block building, both transaction types compete fairly based on their effective tips:
 
 ```go
-// Simplified selection logic
+/ Simplified selection logic
 func SelectTransactions() Iterator {
-    evmTxs := GetPendingEVMTransactions()      // From local TxPool
-    cosmosTxs := GetPendingCosmosTransactions() // From Cosmos mempool
+    evmTxs := GetPendingEVMTransactions()      / From local TxPool
+    cosmosTxs := GetPendingCosmosTransactions() / From Cosmos mempool
 
-    return NewUnifiedIterator(evmTxs, cosmosTxs) // Fee-based priority
+    return NewUnifiedIterator(evmTxs, cosmosTxs) / Fee-based priority
 }
 ```
 
@@ -305,10 +305,10 @@ func SelectTransactions() Iterator {
 Test that transactions with nonce gaps are properly queued:
 
 ```javascript
-// Send transactions out of order
-await wallet.sendTransaction({nonce: 100, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 102, ...}); // OK: Queued locally (gap)
-await wallet.sendTransaction({nonce: 101, ...}); // OK: Fills gap, both execute
+/ Send transactions out of order
+await wallet.sendTransaction({nonce: 100, ...}); / OK: Immediate execution
+await wallet.sendTransaction({nonce: 102, ...}); / OK: Queued locally (gap)
+await wallet.sendTransaction({nonce: 101, ...}); / OK: Fills gap, both execute
 ```
 
 ### Test Transaction Replacement
@@ -316,18 +316,18 @@ await wallet.sendTransaction({nonce: 101, ...}); // OK: Fills gap, both execute
 Verify that higher-fee transactions replace lower-fee ones:
 
 ```javascript
-// Send initial transaction
+/ Send initial transaction
 const tx1 = await wallet.sendTransaction({
   nonce: 100,
   gasPrice: parseUnits("20", "gwei")
 });
 
-// Replace with higher fee
+/ Replace with higher fee
 const tx2 = await wallet.sendTransaction({
-  nonce: 100, // Same nonce
-  gasPrice: parseUnits("30", "gwei") // Higher fee
+  nonce: 100, / Same nonce
+  gasPrice: parseUnits("30", "gwei") / Higher fee
 });
-// tx1 is replaced by tx2
+/ tx1 is replaced by tx2
 ```
 
 ### Verify Batch Deployments
@@ -335,11 +335,11 @@ const tx2 = await wallet.sendTransaction({
 Test typical deployment scripts (like Uniswap) that send many transactions at once:
 
 ```javascript
-// Deploy multiple contracts in quick succession
+/ Deploy multiple contracts in quick succession
 const factory = await Factory.deploy();
 const router = await Router.deploy(factory.address);
 const multicall = await Multicall.deploy();
-// All transactions should queue and execute properly
+/ All transactions should queue and execute properly
 ```
 
 ## Monitoring and Debugging

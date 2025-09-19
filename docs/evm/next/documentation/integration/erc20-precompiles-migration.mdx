@@ -47,11 +47,11 @@ Your chain needs this migration if you have:
 Add this essential migration logic to your existing upgrade handler:
 
 ```go
-// In your upgrade handler
+/ In your upgrade handler
 store := ctx.KVStore(storeKeys[erc20types.StoreKey])
-const addressLength = 42 // "0x" + 40 hex characters
+const addressLength = 42 / "0x" + 40 hex characters
 
-// Migrate dynamic precompiles (IBC tokens, token factory)
+/ Migrate dynamic precompiles (IBC tokens, token factory)
 if oldData := store.Get([]byte("DynamicPrecompiles")); len(oldData) > 0 {
     for i := 0; i < len(oldData); i += addressLength {
         address := common.HexToAddress(string(oldData[i : i+addressLength]))
@@ -60,7 +60,7 @@ if oldData := store.Get([]byte("DynamicPrecompiles")); len(oldData) > 0 {
     store.Delete([]byte("DynamicPrecompiles"))
 }
 
-// Migrate native precompiles
+/ Migrate native precompiles
 if oldData := store.Get([]byte("NativePrecompiles")); len(oldData) > 0 {
     for i := 0; i < len(oldData); i += addressLength {
         address := common.HexToAddress(string(oldData[i : i+addressLength]))
@@ -103,13 +103,13 @@ func CreateUpgradeHandler(
         ctx := sdk.UnwrapSDKContext(c)
         ctx.Logger().Info("Starting v0.4.0 upgrade...")
 
-        // Run standard module migrations
+        / Run standard module migrations
         vm, err := mm.RunMigrations(ctx, configurator, vm)
         if err != nil {
             return vm, err
         }
 
-        // Migrate ERC20 precompiles
+        / Migrate ERC20 precompiles
         if err := migrateERC20Precompiles(ctx, storeKeys[erc20types.StoreKey], keepers.Erc20Keeper); err != nil {
             return vm, err
         }
@@ -138,7 +138,7 @@ func migrateERC20Precompiles(
     erc20Keeper erc20keeper.Keeper,
 ) error {
     store := ctx.KVStore(storeKey)
-    const addressLength = 42 // "0x" + 40 hex characters
+    const addressLength = 42 / "0x" + 40 hex characters
 
     migrations := []struct {
         oldKey string
@@ -183,7 +183,7 @@ func migrateERC20Precompiles(
             addressStr := string(oldData[i : i+addressLength])
             address := common.HexToAddress(addressStr)
 
-            // Validate address
+            / Validate address
             if address == (common.Address{}) {
                 ctx.Logger().Warn("Skipping zero address",
                     "type", migration.description,
@@ -192,7 +192,7 @@ func migrateERC20Precompiles(
                 continue
             }
 
-            // Migrate to new storage
+            / Migrate to new storage
             migration.setter(ctx, address)
             migratedCount++
 
@@ -203,7 +203,7 @@ func migrateERC20Precompiles(
             )
         }
 
-        // Clean up old storage
+        / Clean up old storage
         store.Delete([]byte(migration.oldKey))
         ctx.Logger().Info("Migration complete",
             "type", migration.description,
@@ -277,13 +277,13 @@ mantrachaind export | jq '.app_state.erc20.dynamic_precompiles'
 
 ```go tests/upgrade_test.go
 func TestERC20PrecompileMigration(t *testing.T) {
-    // Setup test environment
+    / Setup test environment
     app, ctx := setupTestApp(t)
 
-    // Create legacy storage entries
+    / Create legacy storage entries
     store := ctx.KVStore(app.keys[erc20types.StoreKey])
 
-    // Add test addresses in old format
+    / Add test addresses in old format
     dynamicAddresses := []string{
         "0x6eC942095eCD4948d9C094337ABd59Dc3c521005",
         "0x1234567890123456789012345678901234567890",
@@ -294,15 +294,15 @@ func TestERC20PrecompileMigration(t *testing.T) {
     }
     store.Set([]byte("DynamicPrecompiles"), []byte(dynamicData))
 
-    // Run migration
+    / Run migration
     err := migrateERC20Precompiles(ctx, app.keys[erc20types.StoreKey], app.Erc20Keeper)
     require.NoError(t, err)
 
-    // Verify migration
+    / Verify migration
     migratedAddresses := app.Erc20Keeper.GetDynamicPrecompiles(ctx)
     require.Len(t, migratedAddresses, len(dynamicAddresses))
 
-    // Verify old storage is cleaned
+    / Verify old storage is cleaned
     oldData := store.Get([]byte("DynamicPrecompiles"))
     require.Nil(t, oldData)
 }
