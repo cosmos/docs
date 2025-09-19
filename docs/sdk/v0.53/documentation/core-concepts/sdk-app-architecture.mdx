@@ -11,22 +11,20 @@ A state machine is a computer science concept whereby a machine can have multipl
 
 Given a state S and a transaction T, the state machine will return a new state S'.
 
-```text
-+--------+                 +--------+
-|        |                 |        |
-|   S    +---------------->+   S'   |
-|        |    apply(T)     |        |
-+--------+                 +--------+
+```mermaid expandable
+flowchart LR
+    S["State S"] -->|"apply(T)"|  S'["State S'"]
+    style S fill:#f9f,stroke:#333,stroke-width:2px
+    style S' fill:#9ff,stroke:#333,stroke-width:2px
 ```
 
 In practice, the transactions are bundled in blocks to make the process more efficient. Given a state S and a block of transactions B, the state machine will return a new state S'.
 
-```text
-+--------+                              +--------+
-|        |                              |        |
-|   S    +----------------------------> |   S'   |
-|        |   For each T in B: apply(T)  |        |
-+--------+                              +--------+
+```mermaid expandable
+flowchart LR
+    S["State S"] -->|"For each T in Block B: apply(T)"|  S'["State S'"]
+    style S fill:#f9f,stroke:#333,stroke-width:2px
+    style S' fill:#9ff,stroke:#333,stroke-width:2px
 ```
 
 In a blockchain context, the state machine is deterministic. This means that if a node is started at a given state and replays the same sequence of transactions, it will always end up with the same final state.
@@ -37,20 +35,27 @@ The Cosmos SDK gives developers maximum flexibility to define the state of their
 
 Thanks to the Cosmos SDK, developers just have to define the state machine, and [*CometBFT*](https://docs.cometbft.com/v0.37/introduction/what-is-cometbft) will handle replication over the network for them.
 
-```text expandable
-                ^  +-------------------------------+  ^
-                |  |                               |  |   Built with Cosmos SDK
-                |  |  State-machine = Application  |  |
-                |  |                               |  v
-                |  +-------------------------------+
-                |  |                               |  ^
-Blockchain node |  |           Consensus           |  |
-                |  |                               |  |
-                |  +-------------------------------+  |   CometBFT
-                |  |                               |  |
-                |  |           Networking          |  |
-                |  |                               |  |
-                v  +-------------------------------+  v
+```mermaid expandable
+flowchart TB
+    subgraph Node["Blockchain Node"]
+        subgraph SDK["Built with Cosmos SDK"]
+            App["State-machine = Application"]
+        end
+        subgraph CBT["CometBFT"]
+            Consensus["Consensus"]
+            Network["Networking"]
+        end
+    end
+
+    App -.->|"ABCI"| Consensus
+    Consensus --> Network
+
+    style App fill:#e1f5e1,stroke:#4caf50,stroke-width:2px
+    style Consensus fill:#e3f2fd,stroke:#2196f3,stroke-width:2px
+    style Network fill:#e3f2fd,stroke:#2196f3,stroke-width:2px
+    style SDK fill:#f5f5f5,stroke:#333,stroke-width:1px
+    style CBT fill:#f5f5f5,stroke:#333,stroke-width:1px
+    style Node fill:#fafafa,stroke:#333,stroke-width:2px
 ```
 
 [CometBFT](https://docs.cometbft.com/v0.37/introduction/what-is-cometbft) is an application-agnostic engine that is responsible for handling the *networking* and *consensus* layers of a blockchain. In practice, this means that CometBFT is responsible for propagating and ordering transaction bytes. CometBFT relies on an eponymous Byzantine-Fault-Tolerant (BFT) algorithm to reach consensus on the order of transactions.
@@ -61,22 +66,15 @@ The CometBFT [consensus algorithm](https://docs.cometbft.com/v0.37/introduction/
 
 CometBFT passes transactions to the application through an interface called the [ABCI](https://docs.cometbft.com/v0.37/spec/abci/), which the application must implement.
 
-```text expandable
-              +---------------------+
-              |                     |
-              |     Application     |
-              |                     |
-              +--------+---+--------+
-                       ^   |
-                       |   | ABCI
-                       |   v
-              +--------+---+--------+
-              |                     |
-              |                     |
-              |       CometBFT      |
-              |                     |
-              |                     |
-              +---------------------+
+```mermaid expandable
+flowchart TB
+    App["Application<br/>(State Machine)"]
+    CBT["CometBFT<br/>(Consensus & Networking)"]
+
+    App <-->|"ABCI<br/>Interface"| CBT
+
+    style App fill:#e1f5e1,stroke:#4caf50,stroke-width:2px
+    style CBT fill:#e3f2fd,stroke:#2196f3,stroke-width:2px
 ```
 
 Note that **CometBFT only handles transaction bytes**. It has no knowledge of what these bytes mean. All CometBFT does is order these transaction bytes deterministically. CometBFT passes the bytes to the application via the ABCI, and expects a return code to inform it if the messages contained in the transactions were successfully processed or not.
