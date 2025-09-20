@@ -93,7 +93,15 @@ The Cosmos SDK `x/authz` module comes with following authorization types:
 `GenericAuthorization` implements the `Authorization` interface that gives unrestricted permission to execute the provided Msg on behalf of granter's account.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/authz/v1beta1/authz.proto#L14-L22
+// GenericAuthorization gives the grantee unrestricted permissions to execute
+// the provided method on behalf of the granter's account.
+message GenericAuthorization {
+  option (amino.name)                        = "cosmos-sdk/GenericAuthorization";
+  option (cosmos_proto.implements_interface) = "cosmos.authz.v1beta1.Authorization";
+
+  // Msg, identified by it's type URL, to grant unrestricted permissions to execute
+  string msg = 1;
+}
 ```
 
 ```go expandable
@@ -152,7 +160,26 @@ error {
 * It takes an (optional) `AllowList` that specifies to which addresses a grantee can send token.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/authz.proto#L11-L30
+// SendAuthorization allows the grantee to spend up to spend_limit coins from
+// the granter's account.
+//
+// Since: cosmos-sdk 0.43
+message SendAuthorization {
+  option (cosmos_proto.implements_interface) = "cosmos.authz.v1beta1.Authorization";
+  option (amino.name)                        = "cosmos-sdk/SendAuthorization";
+
+  repeated cosmos.base.v1beta1.Coin spend_limit = 1 [
+    (gogoproto.nullable)     = false,
+    (amino.dont_omitempty)   = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+
+  // allow_list specifies an optional list of addresses to whom the grantee can send tokens on behalf of the
+  // granter. If omitted, any recipient is allowed.
+  //
+  // Since: cosmos-sdk 0.47
+  repeated string allow_list = 2;
+}
 ```
 
 ```go expandable
@@ -282,7 +309,31 @@ return allowedAddrs
 `StakeAuthorization` implements the `Authorization` interface for messages in the [staking module](https://docs.cosmos.network/v0.53/build/modules/staking). It takes an `AuthorizationType` to specify whether you want to authorise delegating, undelegating or redelegating (i.e. these have to be authorised separately). It also takes an optional `MaxTokens` that keeps track of a limit to the amount of tokens that can be delegated/undelegated/redelegated. If left empty, the amount is unlimited. Additionally, this Msg takes an `AllowList` or a `DenyList`, which allows you to select which validators you allow or deny grantees to stake with.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/staking/v1beta1/authz.proto#L11-L35
+// StakeAuthorization defines authorization for delegate/undelegate/redelegate.
+//
+// Since: cosmos-sdk 0.43
+message StakeAuthorization {
+  option (cosmos_proto.implements_interface) = "cosmos.authz.v1beta1.Authorization";
+  option (amino.name)                        = "cosmos-sdk/StakeAuthorization";
+
+  // max_tokens specifies the maximum amount of tokens can be delegate to a validator. If it is
+  // empty, there is no spend limit and any amount of coins can be delegated.
+  cosmos.base.v1beta1.Coin max_tokens = 1 [(gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coin"];
+  // validators is the oneof that represents either allow_list or deny_list
+  oneof validators {
+    // allow_list specifies list of validator addresses to whom grantee can delegate tokens on behalf of granter's
+    // account.
+    Validators allow_list = 2;
+    // deny_list specifies list of validator addresses to whom grantee can not delegate tokens.
+    Validators deny_list = 3;
+  }
+  // Validators defines list of validator addresses.
+  message Validators {
+    repeated string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  }
+  // authorization_type defines one of AuthorizationType.
+  AuthorizationType authorization_type = 4;
+}
 ```
 
 ```go expandable
@@ -498,7 +549,15 @@ Grants are identified by combining granter address (the address bytes of the gra
 The grant object encapsulates an `Authorization` type and an expiration timestamp:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/authz/v1beta1/authz.proto#L24-L32
+// Grant gives permissions to execute
+// the provide method with expiration time.
+message Grant {
+  google.protobuf.Any authorization = 1 [(cosmos_proto.accepts_interface) = "cosmos.authz.v1beta1.Authorization"];
+  // time when the grant will expire and will be pruned. If null, then the grant
+  // doesn't have a time expiration (other conditions  in `authorization`
+  // may apply to invalidate the grant)
+  google.protobuf.Timestamp expiration = 2 [(gogoproto.stdtime) = true, (gogoproto.nullable) = true];
+}
 ```
 
 ### GrantQueue
@@ -1106,7 +1165,17 @@ An authorization grant is created using the `MsgGrant` message.
 If there is already a grant for the `(granter, grantee, Authorization)` triple, then the new grant overwrites the previous one. To update or extend an existing grant, a new grant with the same `(granter, grantee, Authorization)` triple should be created.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/authz/v1beta1/tx.proto#L35-L45
+// MsgGrant is a request type for Grant method. It declares authorization to the grantee
+// on behalf of the granter with the provided expiration time.
+message MsgGrant {
+  option (cosmos.msg.v1.signer) = "granter";
+  option (amino.name)           = "cosmos-sdk/MsgGrant";
+
+  string granter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string grantee = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  cosmos.authz.v1beta1.Grant grant = 3 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
 ```
 
 The message handling should fail if:
@@ -1121,7 +1190,16 @@ The message handling should fail if:
 A grant can be removed with the `MsgRevoke` message.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/authz/v1beta1/tx.proto#L69-L78
+// MsgRevoke revokes any authorization with the provided sdk.Msg type on the
+// granter's account with that has been granted to the grantee.
+message MsgRevoke {
+  option (cosmos.msg.v1.signer) = "granter";
+  option (amino.name)           = "cosmos-sdk/MsgRevoke";
+
+  string granter      = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string grantee      = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string msg_type_url = 3;
+}
 ```
 
 The message handling should fail if:
@@ -1136,7 +1214,18 @@ NOTE: The `MsgExec` message removes a grant if the grant has expired.
 When a grantee wants to execute a transaction on behalf of a granter, they must send `MsgExec`.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/authz/v1beta1/tx.proto#L52-L63
+// MsgExec attempts to execute the provided messages using
+// authorizations granted to the grantee. Each message should have only
+// one signer corresponding to the granter of the authorization.
+message MsgExec {
+  option (cosmos.msg.v1.signer) = "grantee";
+  option (amino.name)           = "cosmos-sdk/MsgExec";
+
+  string grantee = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  // Execute Msg.
+  // The x/authz will try to find a grant matching (msg.signers[0], grantee, MsgTypeURL(msg))
+  // triple and validate it.
+  repeated google.protobuf.Any msgs = 2 [(cosmos_proto.accepts_interface) = "cosmos.base.v1beta1.Msg"];
 ```
 
 The message handling should fail if:

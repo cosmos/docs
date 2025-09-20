@@ -10,15 +10,15 @@ title: Transactions
 <Note>
 **Pre-requisite Readings**
 
-* [Anatomy of a Cosmos SDK Application](/docs/sdk/v0.50/beginner/app-anatomy)
+* [Anatomy of a Cosmos SDK Application](/docs/sdk/v0.50/learn/beginner/app-anatomy)
 
 </Note>
 
 ## Transactions
 
-Transactions are comprised of metadata held in [contexts](/docs/sdk/v0.50/context) and [`sdk.Msg`s](/docs/sdk/v0.50/documentation/module-system/messages-and-queries) that trigger state changes within a module through the module's Protobuf [`Msg` service](/docs/sdk/v0.50/documentation/module-system/msg-services).
+Transactions are comprised of metadata held in [contexts](/docs/sdk/v0.50/learn/advanced/context) and [`sdk.Msg`s](/docs/sdk/v0.50/build/building-modules/messages-and-queries) that trigger state changes within a module through the module's Protobuf [`Msg` service](/docs/sdk/v0.50/build/building-modules/msg-services).
 
-When users want to interact with an application and make state changes (e.g. sending coins), they create transactions. Each of a transaction's `sdk.Msg` must be signed using the private key associated with the appropriate account(s), before the transaction is broadcasted to the network. A transaction must then be included in a block, validated, and approved by the network through the consensus process. To read more about the lifecycle of a transaction, click [here](/docs/sdk/v0.50/beginner/tx-lifecycle).
+When users want to interact with an application and make state changes (e.g. sending coins), they create transactions. Each of a transaction's `sdk.Msg` must be signed using the private key associated with the appropriate account(s), before the transaction is broadcasted to the network. A transaction must then be included in a block, validated, and approved by the network through the consensus process. To read more about the lifecycle of a transaction, click [here](/docs/sdk/v0.50/learn/beginner/tx-lifecycle).
 
 ## Type Definition
 
@@ -187,10 +187,10 @@ return ""
 It contains the following methods:
 
 * **GetMsgs:** unwraps the transaction and returns a list of contained `sdk.Msg`s - one transaction may have one or multiple messages, which are defined by module developers.
-* **ValidateBasic:** lightweight, [*stateless*](/docs/sdk/v0.50/beginner/tx-lifecycle#types-of-checks) checks used by ABCI messages [`CheckTx`](/docs/sdk/v0.50/baseapp#checktx) and [`DeliverTx`](/docs/sdk/v0.50/baseapp#delivertx) to make sure transactions are not invalid. For example, the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/main/x/auth) module's `ValidateBasic` function checks that its transactions are signed by the correct number of signers and that the fees do not exceed what the user's maximum. When [`runTx`](/docs/sdk/v0.50/baseapp#runtx) is checking a transaction created from the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/main/x/auth/spec) module, it first runs `ValidateBasic` on each message, then runs the `auth` module AnteHandler which calls `ValidateBasic` for the transaction itself.
+* **ValidateBasic:** lightweight, [*stateless*](/docs/sdk/v0.50/learn/beginner/tx-lifecycle#types-of-checks) checks used by ABCI messages [`CheckTx`](/docs/sdk/v0.50/learn/advanced/baseapp#checktx) and [`DeliverTx`](/docs/sdk/v0.50/learn/advanced/baseapp#delivertx) to make sure transactions are not invalid. For example, the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/main/x/auth) module's `ValidateBasic` function checks that its transactions are signed by the correct number of signers and that the fees do not exceed what the user's maximum. When [`runTx`](/docs/sdk/v0.50/learn/advanced/baseapp#runtx) is checking a transaction created from the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/main/x/auth/spec) module, it first runs `ValidateBasic` on each message, then runs the `auth` module AnteHandler which calls `ValidateBasic` for the transaction itself.
 
 <Note>
-This function is different from the deprecated `sdk.Msg` [`ValidateBasic`](/docs/sdk/v0.50/beginner/tx-lifecycle#ValidateBasic) methods, which was performing basic validity checks on messages only.
+This function is different from the deprecated `sdk.Msg` [`ValidateBasic`](/docs/sdk/v0.50/learn/beginner/tx-lifecycle#ValidateBasic) methods, which was performing basic validity checks on messages only.
 </Note>
 
 As a developer, you should rarely manipulate `Tx` directly, as `Tx` is really an intermediate type used for transaction generation. Instead, developers should prefer the `TxBuilder` interface, which you can learn more about [below](#transaction-generation).
@@ -204,13 +204,43 @@ Every message in a transaction must be signed by the addresses specified by its 
 The most used implementation of the `Tx` interface is the Protobuf `Tx` message, which is used in `SIGN_MODE_DIRECT`:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta1/tx.proto#L13-L26
+
+// Tx is the standard type used for broadcasting transactions.
+message Tx {
+  // body is the processable content of the transaction
+  TxBody body = 1;
+
+  // auth_info is the authorization related content of the transaction,
+  // specifically signers, signer modes and fee
+  AuthInfo auth_info = 2;
+
+  // signatures is a list of signatures that matches the length and order of
+  // AuthInfo's signer_infos to allow connecting signature meta information like
+  // public key and signing mode by position.
+  repeated bytes signatures = 3;
 ```
 
 Because Protobuf serialization is not deterministic, the Cosmos SDK uses an additional `TxRaw` type to denote the pinned bytes over which a transaction is signed. Any user can generate a valid `body` and `auth_info` for a transaction, and serialize these two messages using Protobuf. `TxRaw` then pins the user's exact binary representation of `body` and `auth_info`, called respectively `body_bytes` and `auth_info_bytes`. The document that is signed by all signers of the transaction is `SignDoc` (deterministically serialized using [ADR-027](/docs/sdk/v0.50/build/architecture/adr-027-deterministic-protobuf-serialization)):
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta1/tx.proto#L48-L65
+
+// SignDoc is the type used for generating sign bytes for SIGN_MODE_DIRECT.
+message SignDoc {
+  // body_bytes is protobuf serialization of a TxBody that matches the
+  // representation in TxRaw.
+  bytes body_bytes = 1;
+
+  // auth_info_bytes is a protobuf serialization of an AuthInfo that matches the
+  // representation in TxRaw.
+  bytes auth_info_bytes = 2;
+
+  // chain_id is the unique identifier of the chain this transaction targets.
+  // It prevents signed transactions from being used on another chain by an
+  // attacker
+  string chain_id = 3;
+
+  // account_number is the account number of the account in state
+  uint64 account_number = 4;
 ```
 
 Once signed by all signers, the `body_bytes`, `auth_info_bytes` and `signatures` are gathered into `TxRaw`, whose serialized bytes are broadcasted over the network.
@@ -708,7 +738,38 @@ The Cosmos SDK also provides a couple of other sign modes for particular use cas
 need to sign over the fees:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/tx/v1beta1/tx.proto#L67-L98
+
+// SignDocDirectAux is the type used for generating sign bytes for
+// SIGN_MODE_DIRECT_AUX.
+//
+// Since: cosmos-sdk 0.46
+message SignDocDirectAux {
+  // body_bytes is protobuf serialization of a TxBody that matches the
+  // representation in TxRaw.
+  bytes body_bytes = 1;
+
+  // public_key is the public key of the signing account.
+  google.protobuf.Any public_key = 2;
+
+  // chain_id is the identifier of the chain this transaction targets.
+  // It prevents signed transactions from being used on another chain by an
+  // attacker.
+  string chain_id = 3;
+
+  // account_number is the account number of the account in state.
+  uint64 account_number = 4;
+
+  // sequence is the sequence number of the signing account.
+  uint64 sequence = 5;
+
+  // Tip is the optional tip used for transactions fees paid in another denom.
+  // It should be left empty if the signer is not the tipper for this
+  // transaction.
+  //
+  // This field is ignored if the chain didn't enable tips, i.e. didn't add the
+  // `TipDecorator` in its posthandler.
+  Tip tip = 6;
+}
 ```
 
 The use case is a multi-signer transaction, where one of the signers is appointed to gather all signatures, broadcast the signature and pay for fees, and the others only care about the transaction body. This generally allows for a better multi-signing UX. If Alice, Bob and Charlie are part of a 3-signer transaction, then Alice and Bob can both use `SIGN_MODE_DIRECT_AUX` to sign over the `TxBody` and their own signer info (no need an additional step to gather other signers' ones, like in `SIGN_MODE_DIRECT`), without specifying a fee in their SignDoc. Charlie can then gather both signatures from Alice and Bob, and
@@ -744,12 +805,12 @@ The next paragraphs will describe each of these components, in this order.
 Module `sdk.Msg`s are not to be confused with [ABCI Messages](https://docs.cometbft.com/v0.37/spec/abci/) which define interactions between the CometBFT and application layers.
 </Tip>
 
-**Messages** (or `sdk.Msg`s) are module-specific objects that trigger state transitions within the scope of the module they belong to. Module developers define the messages for their module by adding methods to the Protobuf [`Msg` service](/docs/sdk/v0.50/documentation/module-system/msg-services), and also implement the corresponding `MsgServer`.
+**Messages** (or `sdk.Msg`s) are module-specific objects that trigger state transitions within the scope of the module they belong to. Module developers define the messages for their module by adding methods to the Protobuf [`Msg` service](/docs/sdk/v0.50/build/building-modules/msg-services), and also implement the corresponding `MsgServer`.
 
-Each `sdk.Msg`s is related to exactly one Protobuf [`Msg` service](/docs/sdk/v0.50/documentation/module-system/msg-services) RPC, defined inside each module's `tx.proto` file. A SDK app router automatically maps every `sdk.Msg` to a corresponding RPC. Protobuf generates a `MsgServer` interface for each module `Msg` service, and the module developer needs to implement this interface.
+Each `sdk.Msg`s is related to exactly one Protobuf [`Msg` service](/docs/sdk/v0.50/build/building-modules/msg-services) RPC, defined inside each module's `tx.proto` file. A SDK app router automatically maps every `sdk.Msg` to a corresponding RPC. Protobuf generates a `MsgServer` interface for each module `Msg` service, and the module developer needs to implement this interface.
 This design puts more responsibility on module developers, allowing application developers to reuse common functionalities without having to implement state transition logic repetitively.
 
-To learn more about Protobuf `Msg` services and how to implement `MsgServer`, click [here](/docs/sdk/v0.50/documentation/module-system/msg-services).
+To learn more about Protobuf `Msg` services and how to implement `MsgServer`, click [here](/docs/sdk/v0.50/build/building-modules/msg-services).
 
 While messages contain the information for state transition logic, a transaction's other metadata and relevant information are stored in the `TxBuilder` and `Context`.
 
@@ -972,9 +1033,9 @@ Once the transaction bytes are generated, there are currently three ways of broa
 
 #### CLI
 
-Application developers create entry points to the application by creating a [command-line interface](/docs/sdk/v0.50/cli), [gRPC and/or REST interface](/docs/sdk/v0.50/grpc_rest), typically found in the application's `./cmd` folder. These interfaces allow users to interact with the application through command-line.
+Application developers create entry points to the application by creating a [command-line interface](/docs/sdk/v0.50/learn/advanced/cli), [gRPC and/or REST interface](/docs/sdk/v0.50/learn/advanced/grpc_rest), typically found in the application's `./cmd` folder. These interfaces allow users to interact with the application through command-line.
 
-For the [command-line interface](/docs/sdk/v0.50/documentation/module-system/module-interfaces#cli), module developers create subcommands to add as children to the application top-level transaction command `TxCmd`. CLI commands actually bundle all the steps of transaction processing into one simple command: creating messages, generating transactions and broadcasting. For concrete examples, see the [Interacting with a Node](/docs/sdk/v0.50/documentation/operations/interact-node) section. An example transaction made using CLI looks like:
+For the [command-line interface](/docs/sdk/v0.50/build/building-modules/module-interfaces#cli), module developers create subcommands to add as children to the application top-level transaction command `TxCmd`. CLI commands actually bundle all the steps of transaction processing into one simple command: creating messages, generating transactions and broadcasting. For concrete examples, see the [Interacting with a Node](/docs/sdk/v0.50/user/run-node/interact-node) section. An example transaction made using CLI looks like:
 
 ```bash
 simd tx send $MY_VALIDATOR_ADDRESS $RECIPIENT 1000stake
@@ -982,7 +1043,7 @@ simd tx send $MY_VALIDATOR_ADDRESS $RECIPIENT 1000stake
 
 #### gRPC
 
-[gRPC](https://grpc.io) is the main component for the Cosmos SDK's RPC layer. Its principal usage is in the context of modules' [`Query` services](/docs/sdk/v0.50/documentation/module-system/query-services). However, the Cosmos SDK also exposes a few other module-agnostic gRPC services, one of them being the `Tx` service:
+[gRPC](https://grpc.io) is the main component for the Cosmos SDK's RPC layer. Its principal usage is in the context of modules' [`Query` services](/docs/sdk/v0.50/build/building-modules/query-services). However, the Cosmos SDK also exposes a few other module-agnostic gRPC services, one of them being the `Tx` service:
 
 ```go expandable
 syntax = "proto3";
@@ -1303,13 +1364,13 @@ message TxDecodeAminoResponse {
 
 The `Tx` service exposes a handful of utility functions, such as simulating a transaction or querying a transaction, and also one method to broadcast transactions.
 
-Examples of broadcasting and simulating a transaction are shown [here](/docs/sdk/v0.50/documentation/operations/txs#programmatically-with-go).
+Examples of broadcasting and simulating a transaction are shown [here](/docs/sdk/v0.50/user/run-node/txs#programmatically-with-go).
 
 #### REST
 
 Each gRPC method has its corresponding REST endpoint, generated using [gRPC-gateway](https://github.com/grpc-ecosystem/grpc-gateway). Therefore, instead of using gRPC, you can also use HTTP to broadcast the same transaction, on the `POST /cosmos/tx/v1beta1/txs` endpoint.
 
-An example can be seen [here](/docs/sdk/v0.50/documentation/operations/txs#using-rest)
+An example can be seen [here](/docs/sdk/v0.50/user/run-node/txs#using-rest)
 
 #### CometBFT RPC
 

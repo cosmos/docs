@@ -134,7 +134,18 @@ it can be updated with governance or the address with authority.
 * Params: `0x05 | ProtocolBuffer(Params)`
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/bank.proto#L12-L23
+// Params defines the parameters for the bank module.
+message Params {
+  option (amino.name)                 = "cosmos-sdk/x/bank/Params";
+  option (gogoproto.goproto_stringer) = false;
+  // Deprecated: Use of SendEnabled in params is deprecated.
+  // For genesis, use the newly added send_enabled field in the genesis object.
+  // Storage, lookup, and manipulation of this information is now in the keeper.
+  //
+  // As of cosmos-sdk 0.47, this only exists for backwards compatibility of genesis files.
+  repeated SendEnabled send_enabled         = 1 [deprecated = true];
+  bool                 default_send_enabled = 2;
+}
 ```
 
 ## Keepers
@@ -472,7 +483,22 @@ IterateAllBalances(ctx context.Context, cb func(address sdk.AccAddress, coin sdk
 Send coins from one address to another.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L38-L53
+// MsgSend represents a message to send coins from one account to another.
+message MsgSend {
+  option (cosmos.msg.v1.signer) = "from_address";
+  option (amino.name)           = "cosmos-sdk/MsgSend";
+
+  option (gogoproto.equal)           = false;
+  option (gogoproto.goproto_getters) = false;
+
+  string   from_address                    = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string   to_address                      = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  repeated cosmos.base.v1beta1.Coin amount = 3 [
+    (gogoproto.nullable)     = false,
+    (amino.dont_omitempty)   = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+}
 ```
 
 The message will fail under the following conditions:
@@ -485,7 +511,18 @@ The message will fail under the following conditions:
 Send coins from one sender and to a series of different address. If any of the receiving addresses do not correspond to an existing account, a new account is created.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L58-L69
+// MsgMultiSend represents an arbitrary multi-in, multi-out send message.
+message MsgMultiSend {
+  option (cosmos.msg.v1.signer) = "inputs";
+  option (amino.name)           = "cosmos-sdk/MsgMultiSend";
+
+  option (gogoproto.equal) = false;
+
+  // Inputs, despite being `repeated`, only allows one sender input. This is
+  // checked in MsgMultiSend's ValidateBasic.
+  repeated Input  inputs  = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  repeated Output outputs = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
 ```
 
 The message will fail under the following conditions:
@@ -500,7 +537,21 @@ The message will fail under the following conditions:
 The `bank` module params can be updated through `MsgUpdateParams`, which can be done using governance proposal. The signer will always be the `gov` module account address.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L74-L88
+// MsgUpdateParams is the Msg/UpdateParams request type.
+//
+// Since: cosmos-sdk 0.47
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority    = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  option (amino.name) = "cosmos-sdk/x/bank/MsgUpdateParams";
+
+  // params defines the x/bank parameters to update.
+  //
+  // NOTE: All parameters must be supplied.
+  Params params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
 ```
 
 The message handling can fail if:
@@ -512,7 +563,28 @@ The message handling can fail if:
 Used with the x/gov module to set create/edit SendEnabled entries.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/bank/v1beta1/tx.proto#L96-L117
+// MsgSetSendEnabled is the Msg/SetSendEnabled request type.
+//
+// Only entries to add/update/delete need to be included.
+// Existing SendEnabled entries that are not included in this
+// message are left unchanged.
+//
+// Since: cosmos-sdk 0.47
+message MsgSetSendEnabled {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name)           = "cosmos-sdk/MsgSetSendEnabled";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // send_enabled is the list of entries to add or update.
+  repeated SendEnabled send_enabled = 2;
+
+  // use_default_for is a list of denoms that should use the params.default_send_enabled value.
+  // Denoms listed here will have their SendEnabled entries deleted.
+  // If a denom is included that doesn't have a SendEnabled entry,
+  // it will be ignored.
+  repeated string use_default_for = 3;
+}
 ```
 
 The message will fail under the following conditions:

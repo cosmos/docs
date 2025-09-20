@@ -16,7 +16,7 @@ This document details how to build CLI and REST interfaces for a module. Example
 
 ## CLI
 
-One of the main interfaces for an application is the [command-line interface](/docs/sdk/next/api-reference/client-tools/cli). This entrypoint adds commands from the application's modules enabling end-users to create [**messages**](/docs/sdk/next/messages-and-queries#messages) wrapped in transactions and [**queries**](/docs/sdk/next/messages-and-queries#queries). The CLI files are typically found in the module's `./client/cli` folder.
+One of the main interfaces for an application is the [command-line interface](/docs/sdk/next/api-reference/client-tools/cli). This entrypoint adds commands from the application's modules enabling end-users to create [**messages**](/docs/sdk/next/documentation/module-system/messages-and-queries#messages) wrapped in transactions and [**queries**](/docs/sdk/next/documentation/module-system/messages-and-queries#queries). The CLI files are typically found in the module's `./client/cli` folder.
 
 ### Transaction Commands
 
@@ -194,7 +194,7 @@ In general, the getter function does the following:
   * **RunE:** Defines a function that can return an error. This is the function that is called when the command is executed. This function encapsulates all of the logic to create a new transaction.
     * The function typically starts by getting the `clientCtx`, which can be done with `client.GetClientTxContext(cmd)`. The `clientCtx` contains information relevant to transaction handling, including information about the user. In this example, the `clientCtx` is used to retrieve the address of the sender by calling `clientCtx.GetFromAddress()`.
     * If applicable, the command's arguments are parsed. In this example, the arguments `[to_address]` and `[amount]` are both parsed.
-    * A [message](/docs/sdk/next/messages-and-queries) is created using the parsed arguments and information from the `clientCtx`. The constructor function of the message type is called directly. In this case, `types.NewMsgSend(fromAddr, toAddr, amount)`. Its good practice to call, if possible, the necessary [message validation methods](/docs/sdk/next/building-modules/msg-services#Validation) before broadcasting the message.
+    * A [message](/docs/sdk/next/documentation/module-system/messages-and-queries) is created using the parsed arguments and information from the `clientCtx`. The constructor function of the message type is called directly. In this case, `types.NewMsgSend(fromAddr, toAddr, amount)`. Its good practice to call, if possible, the necessary [message validation methods](/docs/sdk/next/documentation/module-system/msg-services#Validation) before broadcasting the message.
     * Depending on what the user wants, the transaction is either generated offline or signed and broadcasted to the preconfigured node using `tx.GenerateOrBroadcastTxCLI(clientCtx, flags, msg)`.
 * **Adds transaction flags:** All transaction commands must add a set of transaction [flags](#flags). The transaction flags are used to collect additional information from the user (e.g. the amount of fees the user is willing to pay). The transaction flags are added to the constructed command using `AddTxFlagsToCmd(cmd)`.
 * **Returns the command:** Finally, the transaction command is returned.
@@ -1073,7 +1073,82 @@ Applications need to support web services that use HTTP requests (e.g. a web wal
 Modules that want to expose REST queries should add `google.api.http` annotations to their `rpc` methods, such as in the example below from the `x/auth` module:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/auth/v1beta1/query.proto#L14-L89
+// Query defines the gRPC querier service.
+service Query {
+  // Accounts returns all the existing accounts.
+  //
+  // When called from another module, this query might consume a high amount of
+  // gas if the pagination field is incorrectly set.
+  //
+  // Since: cosmos-sdk 0.43
+  rpc Accounts(QueryAccountsRequest) returns (QueryAccountsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/accounts";
+  }
+
+  // Account returns account details based on address.
+  rpc Account(QueryAccountRequest) returns (QueryAccountResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/accounts/{address}";
+  }
+
+  // AccountAddressByID returns account address based on account number.
+  //
+  // Since: cosmos-sdk 0.46.2
+  rpc AccountAddressByID(QueryAccountAddressByIDRequest) returns (QueryAccountAddressByIDResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/address_by_id/{id}";
+  }
+
+  // Params queries all parameters.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/params";
+  }
+
+  // ModuleAccounts returns all the existing module accounts.
+  //
+  // Since: cosmos-sdk 0.46
+  rpc ModuleAccounts(QueryModuleAccountsRequest) returns (QueryModuleAccountsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/module_accounts";
+  }
+
+  // ModuleAccountByName returns the module account info by module name
+  rpc ModuleAccountByName(QueryModuleAccountByNameRequest) returns (QueryModuleAccountByNameResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/module_accounts/{name}";
+  }
+
+  // Bech32Prefix queries bech32Prefix
+  //
+  // Since: cosmos-sdk 0.46
+  rpc Bech32Prefix(Bech32PrefixRequest) returns (Bech32PrefixResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32";
+  }
+
+  // AddressBytesToString converts Account Address bytes to string
+  //
+  // Since: cosmos-sdk 0.46
+  rpc AddressBytesToString(AddressBytesToStringRequest) returns (AddressBytesToStringResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32/{address_bytes}";
+  }
+
+  // AddressStringToBytes converts Address string to bytes
+  //
+  // Since: cosmos-sdk 0.46
+  rpc AddressStringToBytes(AddressStringToBytesRequest) returns (AddressStringToBytesResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32/{address_string}";
+  }
+
+  // AccountInfo queries account info which is common to all account types.
+  //
+  // Since: cosmos-sdk 0.47
+  rpc AccountInfo(QueryAccountInfoRequest) returns (QueryAccountInfoResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/account_info/{address}";
+  }
+}
 ```
 
 gRPC gateway is started in-process along with the application and CometBFT. It can be enabled or disabled by setting gRPC Configuration `enable` in [`app.toml`](/docs/sdk/next/documentation/operations/run-node#configuring-the-node-using-apptoml-and-configtoml).

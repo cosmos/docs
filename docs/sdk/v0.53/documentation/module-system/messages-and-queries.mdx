@@ -18,7 +18,7 @@ title: Messages and Queries
 
 `Msg`s are objects whose end-goal is to trigger state-transitions. They are wrapped in [transactions](/docs/sdk/v0.53/documentation/protocol-development/transactions), which may contain one or more of them.
 
-When a transaction is relayed from the underlying consensus engine to the Cosmos SDK application, it is first decoded by [`BaseApp`](/docs/sdk/v0.53/documentation/application-framework/baseapp). Then, each message contained in the transaction is extracted and routed to the appropriate module via `BaseApp`'s `MsgServiceRouter` so that it can be processed by the module's [`Msg` service](/docs/sdk/v0.53/msg-services). For a more detailed explanation of the lifecycle of a transaction, click [here](/docs/sdk/v0.53/documentation/protocol-development/tx-lifecycle).
+When a transaction is relayed from the underlying consensus engine to the Cosmos SDK application, it is first decoded by [`BaseApp`](/docs/sdk/v0.53/documentation/application-framework/baseapp). Then, each message contained in the transaction is extracted and routed to the appropriate module via `BaseApp`'s `MsgServiceRouter` so that it can be processed by the module's [`Msg` service](/docs/sdk/v0.53/documentation/module-system/msg-services). For a more detailed explanation of the lifecycle of a transaction, click [here](/docs/sdk/v0.53/documentation/protocol-development/tx-lifecycle).
 
 ### `Msg` Services
 
@@ -33,7 +33,30 @@ Each `Msg` service method must have exactly one argument, which must implement t
 See an example of a `Msg` service definition from `x/bank` module:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/bank/v1beta1/tx.proto#L13-L36
+// Msg defines the bank Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // Send defines a method for sending coins from one account to another account.
+  rpc Send(MsgSend) returns (MsgSendResponse);
+
+  // MultiSend defines a method for sending coins from some accounts to other accounts.
+  rpc MultiSend(MsgMultiSend) returns (MsgMultiSendResponse);
+
+  // UpdateParams defines a governance operation for updating the x/bank module parameters.
+  // The authority is defined in the keeper.
+  //
+  // Since: cosmos-sdk 0.47
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // SetSendEnabled is a governance operation for setting the SendEnabled flag
+  // on any number of Denoms. Only the entries to add or update should be
+  // included. Entries that already exist in the store, but that aren't
+  // included in this message, will be left unchanged.
+  //
+  // Since: cosmos-sdk 0.47
+  rpc SetSendEnabled(MsgSetSendEnabled) returns (MsgSetSendEnabledResponse);
+}
 ```
 
 ### `sdk.Msg` Interface
@@ -202,10 +225,10 @@ return ""
 
 In 0.50+ signers from the `GetSigners()` call is automated via a protobuf annotation.
 
-Read more about the signer field [here](/docs/sdk/v0.53/protobuf-annotations).
+Read more about the signer field [here](/docs/sdk/v0.53/documentation/protocol-development/protobuf-annotations).
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/e6848d99b55a65d014375b295bdd7f9641aac95e/proto/cosmos/bank/v1beta1/tx.proto#L40
+  option (cosmos.msg.v1.signer) = "from_address";
 ```
 
 If there is a need for custom signers then there is an alternative path which can be taken. A function which returns `signing.CustomGetSigner` for a specific message can be defined.
@@ -236,10 +259,10 @@ depinject.Provide(banktypes.ProvideBankSendTransactionGetSigners)
 
 The Cosmos SDK uses Protobuf definitions to generate client and server code:
 
-* `MsgServer` interface defines the server API for the `Msg` service and its implementation is described as part of the [`Msg` services](/docs/sdk/v0.53/msg-services) documentation.
+* `MsgServer` interface defines the server API for the `Msg` service and its implementation is described as part of the [`Msg` services](/docs/sdk/v0.53/documentation/module-system/msg-services) documentation.
 * Structures are generated for all RPC request and response types.
 
-A `RegisterMsgServer` method is also generated and should be used to register the module's `MsgServer` implementation in `RegisterServices` method from the [`AppModule` interface](/docs/sdk/v0.53/module-manager#appmodule).
+A `RegisterMsgServer` method is also generated and should be used to register the module's `MsgServer` implementation in `RegisterServices` method from the [`AppModule` interface](/docs/sdk/v0.53/documentation/module-system/module-manager#appmodule).
 
 In order for clients (CLI and grpc-gateway) to have these URLs registered, the Cosmos SDK provides the function `RegisterMsgServiceDesc(registry codectypes.InterfaceRegistry, sd *grpc.ServiceDesc)` that should be called inside module's [`RegisterInterfaces`](/docs/sdk/v0.53/documentation/module-system/module-manager#appmodulebasic) method, using the proto-generated `&_Msg_serviceDesc` as `*grpc.ServiceDesc` argument.
 
@@ -254,12 +277,87 @@ Queries should be defined using [Protobuf services](https://developers.google.co
 Here's an example of such a `Query` service definition:
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/proto/cosmos/auth/v1beta1/query.proto#L14-L89
+// Query defines the gRPC querier service.
+service Query {
+  // Accounts returns all the existing accounts.
+  //
+  // When called from another module, this query might consume a high amount of
+  // gas if the pagination field is incorrectly set.
+  //
+  // Since: cosmos-sdk 0.43
+  rpc Accounts(QueryAccountsRequest) returns (QueryAccountsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/accounts";
+  }
+
+  // Account returns account details based on address.
+  rpc Account(QueryAccountRequest) returns (QueryAccountResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/accounts/{address}";
+  }
+
+  // AccountAddressByID returns account address based on account number.
+  //
+  // Since: cosmos-sdk 0.46.2
+  rpc AccountAddressByID(QueryAccountAddressByIDRequest) returns (QueryAccountAddressByIDResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/address_by_id/{id}";
+  }
+
+  // Params queries all parameters.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/params";
+  }
+
+  // ModuleAccounts returns all the existing module accounts.
+  //
+  // Since: cosmos-sdk 0.46
+  rpc ModuleAccounts(QueryModuleAccountsRequest) returns (QueryModuleAccountsResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/module_accounts";
+  }
+
+  // ModuleAccountByName returns the module account info by module name
+  rpc ModuleAccountByName(QueryModuleAccountByNameRequest) returns (QueryModuleAccountByNameResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/module_accounts/{name}";
+  }
+
+  // Bech32Prefix queries bech32Prefix
+  //
+  // Since: cosmos-sdk 0.46
+  rpc Bech32Prefix(Bech32PrefixRequest) returns (Bech32PrefixResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32";
+  }
+
+  // AddressBytesToString converts Account Address bytes to string
+  //
+  // Since: cosmos-sdk 0.46
+  rpc AddressBytesToString(AddressBytesToStringRequest) returns (AddressBytesToStringResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32/{address_bytes}";
+  }
+
+  // AddressStringToBytes converts Address string to bytes
+  //
+  // Since: cosmos-sdk 0.46
+  rpc AddressStringToBytes(AddressStringToBytesRequest) returns (AddressStringToBytesResponse) {
+    option (google.api.http).get = "/cosmos/auth/v1beta1/bech32/{address_string}";
+  }
+
+  // AccountInfo queries account info which is common to all account types.
+  //
+  // Since: cosmos-sdk 0.47
+  rpc AccountInfo(QueryAccountInfoRequest) returns (QueryAccountInfoResponse) {
+    option (cosmos.query.v1.module_query_safe) = true;
+    option (google.api.http).get               = "/cosmos/auth/v1beta1/account_info/{address}";
+  }
+}
 ```
 
 As `proto.Message`s, generated `Response` types implement by default `String()` method of [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer).
 
-A `RegisterQueryServer` method is also generated and should be used to register the module's query server in the `RegisterServices` method from the [`AppModule` interface](/docs/sdk/v0.53/module-manager#appmodule).
+A `RegisterQueryServer` method is also generated and should be used to register the module's query server in the `RegisterServices` method from the [`AppModule` interface](/docs/sdk/v0.53/documentation/module-system/module-manager#appmodule).
 
 ### Legacy Queries
 
@@ -273,13 +371,13 @@ where:
 
 * `queryCategory` is the category of the `query`, typically `custom` for module queries. It is used to differentiate between different kinds of queries within `BaseApp`'s [`Query` method](/docs/sdk/v0.53/documentation/application-framework/baseapp#query).
 * `queryRoute` is used by `BaseApp`'s [`queryRouter`](/docs/sdk/v0.53/documentation/application-framework/baseapp#query-routing) to map the `query` to its module. Usually, `queryRoute` should be the name of the module.
-* `queryType` is used by the module's [`querier`](/docs/sdk/v0.53/query-services#legacy-queriers) to map the `query` to the appropriate `querier function` within the module.
+* `queryType` is used by the module's [`querier`](/docs/sdk/v0.53/documentation/module-system/query-services#legacy-queriers) to map the `query` to the appropriate `querier function` within the module.
 * `args` are the actual arguments needed to process the `query`. They are filled out by the end-user. Note that for bigger queries, you might prefer passing arguments in the `Data` field of the request `req` instead of the `path`.
 
-The `path` for each `query` must be defined by the module developer in the module's [command-line interface file](/docs/sdk/v0.53/module-interfaces#query-commands).Overall, there are 3 mains components module developers need to implement in order to make the subset of the state defined by their module queryable:
+The `path` for each `query` must be defined by the module developer in the module's [command-line interface file](/docs/sdk/v0.53/documentation/module-system/module-interfaces#query-commands).Overall, there are 3 mains components module developers need to implement in order to make the subset of the state defined by their module queryable:
 
-* A [`querier`](/docs/sdk/v0.53/query-services#legacy-queriers), to process the `query` once it has been [routed to the module](/docs/sdk/v0.53/documentation/application-framework/baseapp#query-routing).
-* [Query commands](/docs/sdk/v0.53/module-interfaces#query-commands) in the module's CLI file, where the `path` for each `query` is specified.
+* A [`querier`](/docs/sdk/v0.53/documentation/module-system/query-services#legacy-queriers), to process the `query` once it has been [routed to the module](/docs/sdk/v0.53/documentation/application-framework/baseapp#query-routing).
+* [Query commands](/docs/sdk/v0.53/documentation/module-system/module-interfaces#query-commands) in the module's CLI file, where the `path` for each `query` is specified.
 * `query` return types. Typically defined in a file `types/querier.go`, they specify the result type of each of the module's `queries`. These custom types must implement the `String()` method of [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer).
 
 ### Store Queries

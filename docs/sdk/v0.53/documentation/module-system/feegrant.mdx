@@ -36,7 +36,17 @@ This module allows accounts to grant fee allowances and to use fees from their a
 `Grant` is stored in the KVStore to record a grant with full context. Every grant will contain `granter`, `grantee` and what kind of `allowance` is granted. `granter` is an account address who is giving permission to `grantee` (the beneficiary account address) to pay for some or all of `grantee`'s transaction fees. `allowance` defines what kind of fee allowance (`BasicAllowance` or `PeriodicAllowance`, see below) is granted to `grantee`. `allowance` accepts an interface which implements `FeeAllowanceI`, encoded as `Any` type. There can be only one existing fee grant allowed for a `grantee` and `granter`, self grants are not allowed.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L83-L93
+// Grant is stored in the KVStore to record a grant with full context
+message Grant {
+  // granter is the address of the user granting an allowance of their funds.
+  string granter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // grantee is the address of the user being granted an allowance of another user's funds.
+  string grantee = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // allowance can be any of basic, periodic, allowed fee allowance.
+  google.protobuf.Any allowance = 3 [(cosmos_proto.accepts_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI"];
+}
 ```
 
 `FeeAllowanceI` looks like:
@@ -91,7 +101,20 @@ There are two types of fee allowances present at the moment:
 `BasicAllowance` is permission for `grantee` to use fee from a `granter`'s account. If any of the `spend_limit` or `expiration` reaches its limit, the grant will be removed from the state.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L15-L28
+// BasicAllowance implements Allowance with a one-time grant of coins
+// that optionally expires. The grantee can use up to SpendLimit to cover fees.
+message BasicAllowance {
+  option (cosmos_proto.implements_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI";
+  option (amino.name)                        = "cosmos-sdk/BasicAllowance";
+
+  // spend_limit specifies the maximum amount of coins that can be spent
+  // by this allowance and will be updated as coins are spent. If it is
+  // empty, there is no spend limit and any amount of coins can be spent.
+  repeated cosmos.base.v1beta1.Coin spend_limit = 1 [
+    (gogoproto.nullable)     = false,
+    (amino.dont_omitempty)   = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
 ```
 
 * `spend_limit` is the limit of coins that are allowed to be used from the `granter` account. If it is empty, it assumes there's no spend limit, `grantee` can use any number of available coins from `granter` account address before the expiration.
@@ -105,7 +128,41 @@ There are two types of fee allowances present at the moment:
 `PeriodicAllowance` is a repeating fee allowance for the mentioned period, we can mention when the grant can expire as well as when a period can reset. We can also define the maximum number of coins that can be used in a mentioned period of time.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L34-L68
+// PeriodicAllowance extends Allowance to allow for both a maximum cap,
+// as well as a limit per time period.
+message PeriodicAllowance {
+  option (cosmos_proto.implements_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI";
+  option (amino.name)                        = "cosmos-sdk/PeriodicAllowance";
+
+  // basic specifies a struct of `BasicAllowance`
+  BasicAllowance basic = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+
+  // period specifies the time duration in which period_spend_limit coins can
+  // be spent before that allowance is reset
+  google.protobuf.Duration period = 2
+      [(gogoproto.stdduration) = true, (gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+
+  // period_spend_limit specifies the maximum number of coins that can be spent
+  // in the period
+  repeated cosmos.base.v1beta1.Coin period_spend_limit = 3 [
+    (gogoproto.nullable)     = false,
+    (amino.dont_omitempty)   = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+
+  // period_can_spend is the number of coins left to be spent before the period_reset time
+  repeated cosmos.base.v1beta1.Coin period_can_spend = 4 [
+    (gogoproto.nullable)     = false,
+    (amino.dont_omitempty)   = true,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+
+  // period_reset is the time at which this period resets and a new one begins,
+  // it is calculated from the start time of the first transaction after the
+  // last period ended
+  google.protobuf.Timestamp period_reset = 5
+      [(gogoproto.stdtime) = true, (gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
 ```
 
 * `basic` is the instance of `BasicAllowance` which is optional for periodic fee allowance. If empty, the grant will have no `expiration` and no `spend_limit`.
@@ -123,7 +180,18 @@ There are two types of fee allowances present at the moment:
 `AllowedMsgAllowance` is a fee allowance, it can be any of `BasicFeeAllowance`, `PeriodicAllowance` but restricted only to the allowed messages mentioned by the granter.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/feegrant.proto#L70-L81
+// AllowedMsgAllowance creates allowance only for specified message types.
+message AllowedMsgAllowance {
+  option (gogoproto.goproto_getters)         = false;
+  option (cosmos_proto.implements_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI";
+  option (amino.name)                        = "cosmos-sdk/AllowedMsgAllowance";
+
+  // allowance can be any of basic and periodic fee allowance.
+  google.protobuf.Any allowance = 1 [(cosmos_proto.accepts_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI"];
+
+  // allowed_messages are the messages for which the grantee has the access.
+  repeated string allowed_messages = 2;
+}
 ```
 
 * `allowance` is either `BasicAllowance` or `PeriodicAllowance`.
@@ -1586,7 +1654,28 @@ return nil
 ```
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/tx/v1beta1/tx.proto#L203-L224
+// Fee includes the amount of coins paid in fees and the maximum
+// gas to be used by the transaction. The ratio yields an effective "gasprice",
+// which must be above some miminum to be accepted into the mempool.
+message Fee {
+  // amount is the amount of coins to be paid as a fee
+  repeated cosmos.base.v1beta1.Coin amount = 1
+      [(gogoproto.nullable) = false, (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"];
+
+  // gas_limit is the maximum gas that can be used in transaction processing
+  // before an out of gas error occurs
+  uint64 gas_limit = 2;
+
+  // if unset, the first signer is responsible for paying the fees. If set, the specified account must pay the fees.
+  // the payer must be a tx signer (and thus have signed this field in AuthInfo).
+  // setting this field does *not* change the ordering of required signers for the transaction.
+  string payer = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // if set, the fee payer (either the first signer or the value of the payer field) requests that a fee grant be used
+  // to pay fees instead of the fee payer's own balance. If an appropriate fee grant does not exist or the chain does
+  // not support fee grants, this will fail
+  string granter = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
 ```
 
 Example cmd:
@@ -3409,7 +3498,21 @@ Fee allowance queue keys are stored in the state as follows:
 A fee allowance grant will be created with the `MsgGrantAllowance` message.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/tx.proto#L25-L39
+// MsgGrantAllowance adds permission for Grantee to spend up to Allowance
+// of fees from the account of Granter.
+message MsgGrantAllowance {
+  option (cosmos.msg.v1.signer) = "granter";
+  option (amino.name)           = "cosmos-sdk/MsgGrantAllowance";
+
+  // granter is the address of the user granting an allowance of their funds.
+  string granter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // grantee is the address of the user being granted an allowance of another user's funds.
+  string grantee = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // allowance can be any of basic, periodic, allowed fee allowance.
+  google.protobuf.Any allowance = 3 [(cosmos_proto.accepts_interface) = "cosmos.feegrant.v1beta1.FeeAllowanceI"];
+}
 ```
 
 ### Msg/RevokeAllowance
@@ -3417,7 +3520,20 @@ A fee allowance grant will be created with the `MsgGrantAllowance` message.
 An allowed grant fee allowance can be removed with the `MsgRevokeAllowance` message.
 
 ```protobuf
-/ Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/proto/cosmos/feegrant/v1beta1/tx.proto#L41-L54
+// MsgGrantAllowanceResponse defines the Msg/GrantAllowanceResponse response type.
+message MsgGrantAllowanceResponse {}
+
+// MsgRevokeAllowance removes any existing Allowance from Granter to Grantee.
+message MsgRevokeAllowance {
+  option (cosmos.msg.v1.signer) = "granter";
+  option (amino.name)           = "cosmos-sdk/MsgRevokeAllowance";
+
+  // granter is the address of the user granting an allowance of their funds.
+  string granter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // grantee is the address of the user being granted an allowance of another user's funds.
+  string grantee = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
 ```
 
 ## Events
