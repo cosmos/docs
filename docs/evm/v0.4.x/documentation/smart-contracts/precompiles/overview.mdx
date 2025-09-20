@@ -5,6 +5,182 @@ icon: "code"
 keywords: ['precompiles', 'precompiled contracts', 'cosmos sdk', 'evm', 'smart contracts', 'staking', 'governance', 'ibc', 'bank', 'distribution', 'slashing', 'evidence', 'bech32', 'p256', 'erc20', 'werc20', 'callbacks']
 ---
 
+## How Precompiles Work
+
+Precompiles are special contracts that exist at the protocol level rather than as deployed bytecode on the blockchain. They execute native code directly within the node software, offering significant performance advantages over regular smart contracts while maintaining compatibility with the EVM interface.
+
+### Architecture
+
+Precompiles operate through a unique architecture:
+
+1. **Native Implementation**: Unlike regular smart contracts that execute bytecode through the EVM interpreter, precompiles run optimized native code directly within the blockchain node
+2. **Fixed Addresses**: Each precompile is assigned a specific address in the reserved range (typically `0x00...00` to `0x00...FF` for standard precompiles, with extended ranges for custom implementations)
+3. **Gas Metering**: Precompiles use predetermined gas costs for operations, often much lower than equivalent EVM bytecode execution
+4. **State Access**: They have direct access to the underlying blockchain state through native modules, bypassing EVM state management overhead
+
+### Building and Implementing Precompiles
+
+Creating custom precompiles involves several key steps:
+
+1. **Define the Interface**: Create a Solidity interface that defines the precompile's functions and events
+2. **Implement Native Logic**: Write the actual implementation in the node's native language (typically Go for Cosmos chains)
+3. **Register the Precompile**: Map the implementation to a specific address in the EVM configuration
+4. **Gas Configuration**: Define appropriate gas costs for each operation based on computational complexity
+
+The implementation must handle:
+- Input parsing and validation from EVM calldata
+- State transitions through the native module system
+- Result encoding back to EVM-compatible formats
+- Error handling and reversion logic
+
+## Implementation Patterns
+
+Based on the Cosmos EVM precompile architecture, several critical patterns must be followed when implementing precompiles:
+
+### 1. The Run/run Wrapper Pattern
+
+Every precompile implements a public `Run` method that wraps a private `run` method. This pattern provides consistent error handling and return value formatting:
+
+```go
+// Public Run method - entry point for EVM
+func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+    bz, err = p.run(evm, contract, readOnly)
+    if err != nil {
+        return cmn.ReturnRevertError(evm, err)
+    }
+    return bz, nil
+}
+
+// Private run method - actual implementation
+func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+    // Setup and method routing logic
+    ctx, stateDB, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+
+    // Balance handler for native token operations
+    p.GetBalanceHandler().BeforeBalanceChange(ctx)
+
+    // Method execution with gas tracking
+    // ...
+
+    // Finalize balance changes
+    if err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB); err != nil {
+        return nil, err
+    }
+
+    return bz, nil
+}
+```
+
+### 2. Native Balance Handler
+
+Precompiles that modify native token balances must use the balance handler to track changes properly. The handler monitors bank module events and synchronizes them with the EVM state:
+
+```go
+// Before any balance-changing operation
+p.GetBalanceHandler().BeforeBalanceChange(ctx)
+
+// Execute the operation that may change balances
+// ...
+
+// After the operation, sync balance changes with StateDB
+if err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB); err != nil {
+    return nil, err
+}
+```
+
+The balance handler:
+- Records the event count before operations
+- Processes `CoinSpent` and `CoinReceived` events after operations
+- Updates the StateDB with `AddBalance` and `SubBalance` calls
+- Handles fractional balance changes for precise accounting
+- Bypasses blocked addresses to prevent authorization errors
+
+### 3. Required Structure
+
+Every precompile must embed the common `Precompile` struct and implement these components:
+
+```go
+type Precompile struct {
+    cmn.Precompile              // Embedded common precompile
+    stakingKeeper    Keeper     // Module keeper
+    stakingMsgServer MsgServer   // Message server for transactions
+    stakingQuerier   QueryServer // Query server for reads
+}
+
+// Required methods
+func (p Precompile) RequiredGas(input []byte) uint64
+func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) ([]byte, error)
+func (p Precompile) IsTransaction(method *abi.Method) bool
+```
+
+### 4. Gas Management
+
+Precompiles use a two-phase gas management approach:
+
+```go
+// Initial gas tracking
+initialGas := ctx.GasMeter().GasConsumed()
+
+// Deferred gas error handler
+defer cmn.HandleGasError(ctx, contract, initialGas, &err)()
+
+// After method execution
+cost := ctx.GasMeter().GasConsumed() - initialGas
+if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
+    return nil, vm.ErrOutOfGas
+}
+```
+
+### 5. State Management
+
+Precompiles must properly manage state transitions:
+
+```go
+// Take snapshot before changes
+snapshot := stateDB.MultiStoreSnapshot()
+events := ctx.EventManager().Events()
+
+// Add to journal for reversion
+err = stateDB.AddPrecompileFn(snapshot, events)
+
+// Commit cache context changes
+if err := stateDB.CommitWithCacheCtx(); err != nil {
+    return nil, err
+}
+```
+
+## Testing Precompiles
+
+### The Testing Challenge
+
+A significant challenge when working with precompiles is that their code doesn't exist as deployable bytecode. Traditional development tools like Foundry or Hardhat cannot directly access precompile implementations since they simulate the EVM locally without the underlying node infrastructure. When these tools encounter a call to a precompile address, they find no deployed code and the call fails.
+
+### Using Foundry's Etch Cheatcode
+
+Foundry provides a powerful workaround through its `vm.etch` cheatcode, which allows you to inject bytecode at any address during testing. This enables simulation of precompile behavior by deploying mock implementations at the precompile addresses.
+
+Here's how to use `etch` effectively:
+
+```solidity
+// Deploy a mock implementation of the precompile
+MockStakingPrecompile mockStaking = new MockStakingPrecompile();
+
+// Use etch to place the mock bytecode at the precompile address
+vm.etch(0x0000000000000000000000000000000000000800, address(mockStaking).code);
+
+// Now calls to the precompile address will execute the mock implementation
+IStaking staking = IStaking(0x0000000000000000000000000000000000000800);
+staking.delegate(validator, amount); // This will work in tests
+```
+
+This approach allows you to:
+- Test smart contracts that interact with precompiles
+- Simulate various precompile responses and edge cases
+- Develop and debug locally without a full node setup
+- Maintain consistent testing workflows with other smart contract development
+
+For comprehensive testing, consider creating mock implementations that closely mirror the actual precompile behavior, including gas consumption patterns and error conditions. This ensures your contracts will behave correctly when deployed to the actual chain.
+
 ## Available Precompiles
 
 | Precompile       | Address                                      | Purpose                                                          | Reference                 |

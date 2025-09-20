@@ -2,16 +2,15 @@
 title: BaseApp
 ---
 
-<Note>
-**Synopsis**
+## Synopsis
+
 This document describes `BaseApp`, the abstraction that implements the core functionalities of a Cosmos SDK application.
-</Note>
 
 <Note>
 **Pre-requisite Readings**
 
-* [Anatomy of a Cosmos SDK application](/docs/sdk/v0.50/learn/beginner/app-anatomy)
-* [Lifecycle of a Cosmos SDK transaction](/docs/sdk/v0.50/learn/beginner/tx-lifecycle)
+- [Anatomy of a Cosmos SDK application](/docs/sdk/v0.50/learn/beginner/app-anatomy)
+- [Lifecycle of a Cosmos SDK transaction](/docs/sdk/v0.50/learn/beginner/tx-lifecycle)
 
 </Note>
 
@@ -19,9 +18,9 @@ This document describes `BaseApp`, the abstraction that implements the core func
 
 `BaseApp` is a base type that implements the core of a Cosmos SDK application, namely:
 
-* The [Application Blockchain Interface](#main-abci-messages), for the state-machine to communicate with the underlying consensus engine (e.g. CometBFT).
-* [Service Routers](#service-routers), to route messages and queries to the appropriate module.
-* Different [states](#state-updates), as the state-machine can have different volatile states updated based on the ABCI message received.
+- The [Application Blockchain Interface](#main-abci-messages), for the state-machine to communicate with the underlying consensus engine (e.g. CometBFT).
+- [Service Routers](#service-routers), to route messages and queries to the appropriate module.
+- Different [states](#state-updates), as the state-machine can have different volatile states updated based on the ABCI message received.
 
 The goal of `BaseApp` is to provide the fundamental layer of a Cosmos SDK application
 that developers can easily extend to build their own custom application. Usually,
@@ -53,7 +52,7 @@ The `BaseApp` type holds many important parameters for any Cosmos SDK based appl
 package baseapp
 
 import (
-    
+
 	"context"
     "fmt"
     "sort"
@@ -386,7 +385,7 @@ else {
 default:
 			panic(fmt.Sprintf("Unrecognized store key type :%T", key))
 }
-	
+
 }
 }
 
@@ -405,7 +404,7 @@ else {
 			/ retain history, but it's useful for faster simulation.
 			app.MountStore(key, storetypes.StoreTypeDB)
 }
-	
+
 }
 }
 
@@ -606,7 +605,7 @@ setIndexEvents(ie []string) {
     app.indexEvents[e] = struct{
 }{
 }
-	
+
 }
 }
 
@@ -696,7 +695,7 @@ cmtproto.ConsensusParams {
     if app.paramStore == nil {
     return cmtproto.ConsensusParams{
 }
-	
+
 }
 
 cp, err := app.paramStore.Get(ctx)
@@ -805,7 +804,7 @@ error {
     if err := m.ValidateBasic(); err != nil {
     return err
 }
-	
+
 }
 
 return nil
@@ -1026,7 +1025,7 @@ gInfo = sdk.GasInfo{
     GasWanted: gasWanted,
     GasUsed: ctx.GasMeter().GasConsumed()
 }
-	
+
 }()
     blockGasConsumed := false
 
@@ -1040,7 +1039,7 @@ gInfo = sdk.GasInfo{
 				ctx.GasMeter().GasConsumedToLimit(), "block gas meter",
 			)
 }
-	
+
 }
 
 	/ If BlockGasMeter()
@@ -1111,7 +1110,7 @@ anteEvents = events.ToABCIEvents()
     if err != nil {
     return gInfo, nil, anteEvents, err
 }
-	
+
 }
 
 else if mode == execModeFinalize {
@@ -1120,7 +1119,7 @@ else if mode == execModeFinalize {
     return gInfo, nil, anteEvents,
 				fmt.Errorf("failed to remove tx from mempool: %w", err)
 }
-	
+
 }
 
 	/ Create a new Context based off of the existing Context with a MultiStore branch
@@ -1162,7 +1161,7 @@ msCache.Write()
 			/ append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
 }
-	
+
 }
 
 return gInfo, result, anteEvents, err
@@ -1226,7 +1225,7 @@ has exactly one Msg response, set inside
 msgResponses = append(msgResponses, msgResponse)
 }
 
-	
+
 }
 
 data, err := makeABCIData(msgResponses)
@@ -1273,7 +1272,7 @@ msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeySender, ad
     if moduleName := sdk.GetModuleNameFromTypeURL(eventMsgName); moduleName != "" {
     msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeyModule, moduleName))
 }
-	
+
 }
 
 return sdk.Events{
@@ -1340,50 +1339,50 @@ Let us go through the most important components.
 
 First, the important parameters that are initialized during the bootstrapping of the application:
 
-* [`CommitMultiStore`](/docs/sdk/v0.50/learn/advanced/store#commitmultistore): This is the main store of the application,
+- [`CommitMultiStore`](/docs/sdk/v0.50/learn/advanced/store#commitmultistore): This is the main store of the application,
   which holds the canonical state that is committed at the [end of each block](#commit). This store
   is **not** cached, meaning it is not used to update the application's volatile (un-committed) states.
   The `CommitMultiStore` is a multi-store, meaning a store of stores. Each module of the application
   uses one or multiple `KVStores` in the multi-store to persist their subset of the state.
-* Database: The `db` is used by the `CommitMultiStore` to handle data persistence.
-* [`Msg` Service Router](#msg-service-router): The `msgServiceRouter` facilitates the routing of `sdk.Msg` requests to the appropriate
+- Database: The `db` is used by the `CommitMultiStore` to handle data persistence.
+- [`Msg` Service Router](#msg-service-router): The `msgServiceRouter` facilitates the routing of `sdk.Msg` requests to the appropriate
   module `Msg` service for processing. Here a `sdk.Msg` refers to the transaction component that needs to be
   processed by a service in order to update the application state, and not to ABCI message which implements
   the interface between the application and the underlying consensus engine.
-* [gRPC Query Router](#grpc-query-router): The `grpcQueryRouter` facilitates the routing of gRPC queries to the
+- [gRPC Query Router](#grpc-query-router): The `grpcQueryRouter` facilitates the routing of gRPC queries to the
   appropriate module for it to be processed. These queries are not ABCI messages themselves, but they
   are relayed to the relevant module's gRPC `Query` service.
-* [`TxDecoder`](https://pkg.go.dev/github.com/cosmos/cosmos-sdk/types#TxDecoder): It is used to decode
+- [`TxDecoder`](https://pkg.go.dev/github.com/cosmos/cosmos-sdk/types#TxDecoder): It is used to decode
   raw transaction bytes relayed by the underlying CometBFT engine.
-* [`AnteHandler`](#antehandler): This handler is used to handle signature verification, fee payment,
+- [`AnteHandler`](#antehandler): This handler is used to handle signature verification, fee payment,
   and other pre-message execution checks when a transaction is received. It's executed during
   [`CheckTx/RecheckTx`](#checktx) and [`FinalizeBlock`](#finalizeblock).
-* [`InitChainer`](/docs/sdk/v0.50/learn/beginner/app-anatomy#initchainer), [`PreBlocker`](/docs/sdk/v0.50/learn/beginner/app-anatomy#preblocker), [`BeginBlocker` and `EndBlocker`](/docs/sdk/v0.50/learn/beginner/app-anatomy#beginblocker-and-endblocker): These are
+- [`InitChainer`](/docs/sdk/v0.50/learn/beginner/app-anatomy#initchainer), [`PreBlocker`](/docs/sdk/v0.50/learn/beginner/app-anatomy#preblocker), [`BeginBlocker` and `EndBlocker`](/docs/sdk/v0.50/learn/beginner/app-anatomy#beginblocker-and-endblocker): These are
   the functions executed when the application receives the `InitChain` and `FinalizeBlock`
   ABCI messages from the underlying CometBFT engine.
 
 Then, parameters used to define [volatile states](#state-updates) (i.e. cached states):
 
-* `checkState`: This state is updated during [`CheckTx`](#checktx), and reset on [`Commit`](#commit).
-* `finalizeBlockState`: This state is updated during [`FinalizeBlock`](#finalizeblock), and set to `nil` on
+- `checkState`: This state is updated during [`CheckTx`](#checktx), and reset on [`Commit`](#commit).
+- `finalizeBlockState`: This state is updated during [`FinalizeBlock`](#finalizeblock), and set to `nil` on
   [`Commit`](#commit) and gets re-initialized on `FinalizeBlock`.
-* `processProposalState`: This state is updated during [`ProcessProposal`](#process-proposal).
-* `prepareProposalState`: This state is updated during [`PrepareProposal`](#prepare-proposal).
+- `processProposalState`: This state is updated during [`ProcessProposal`](#process-proposal).
+- `prepareProposalState`: This state is updated during [`PrepareProposal`](#prepare-proposal).
 
 Finally, a few more important parameters:
 
-* `voteInfos`: This parameter carries the list of validators whose precommit is missing, either
+- `voteInfos`: This parameter carries the list of validators whose precommit is missing, either
   because they did not vote or because the proposer did not include their vote. This information is
   carried by the [Context](/docs/sdk/v0.50/learn/advanced/context) and can be used by the application for various things like
   punishing absent validators.
-* `minGasPrices`: This parameter defines the minimum gas prices accepted by the node. This is a
+- `minGasPrices`: This parameter defines the minimum gas prices accepted by the node. This is a
   **local** parameter, meaning each full-node can set a different `minGasPrices`. It is used in the
   `AnteHandler` during [`CheckTx`](#checktx), mainly as a spam protection mechanism. The transaction
   enters the [mempool](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_basic_concepts.md#mempool-methods)
   only if the gas prices of the transaction are greater than one of the minimum gas price in
   `minGasPrices` (e.g. if `minGasPrices == 1uatom,1photon`, the `gas-price` of the transaction must be
   greater than `1uatom` OR `1photon`).
-* `appVersion`: Version of the application. It is set in the
+- `appVersion`: Version of the application. It is set in the
   [application's constructor function](/docs/sdk/v0.50/learn/beginner/app-anatomy#constructor-function).
 
 ## Constructor
@@ -1412,7 +1411,7 @@ is the canonical state of the application and the volatile states, `checkState`,
 are used to handle state transitions in-between the main state made during [`Commit`](#commit).
 
 Internally, there is only a single `CommitMultiStore` which we refer to as the main or root state.
-From this root state, we derive four volatile states by using a mechanism called *store branching* (performed by `CacheWrap` function).
+From this root state, we derive four volatile states by using a mechanism called _store branching_ (performed by `CacheWrap` function).
 The types can be illustrated as follows:
 
 ![Types](/docs/sdk/images/learn/advanced/baseapp_state.png)
@@ -1496,7 +1495,7 @@ When messages and queries are received by the application, they must be routed t
 
 ### `Msg` Service Router
 
-[`sdk.Msg`s](/docs/sdk/v0.50/build/building-modules/messages-and-queries#messages) need to be routed after they are extracted from transactions, which are sent from the underlying CometBFT engine via the [`CheckTx`](#checktx) and [`FinalizeBlock`](#finalizeblock) ABCI messages. To do so, `BaseApp` holds a `msgServiceRouter` which maps fully-qualified service methods (`string`, defined in each module's Protobuf  `Msg` service) to the appropriate module's `MsgServer` implementation.
+[`sdk.Msg`s](/docs/sdk/v0.50/build/building-modules/messages-and-queries#messages) need to be routed after they are extracted from transactions, which are sent from the underlying CometBFT engine via the [`CheckTx`](#checktx) and [`FinalizeBlock`](#finalizeblock) ABCI messages. To do so, `BaseApp` holds a `msgServiceRouter` which maps fully-qualified service methods (`string`, defined in each module's Protobuf `Msg` service) to the appropriate module's `MsgServer` implementation.
 
 The [default `msgServiceRouter` included in `BaseApp`](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/baseapp/msg_service_router.go) is stateless. However, some applications may want to make use of more stateful routing mechanisms such as allowing governance to disable certain routes or point them to new modules for upgrade purposes. For this reason, the `sdk.Context` is also passed into each [route handler inside `msgServiceRouter`](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/baseapp/msg_service_router.go#L31-L32). For a stateless router that doesn't want to make use of this, you can just ignore the `ctx`.
 
@@ -1514,19 +1513,19 @@ The [Application-Blockchain Interface](https://github.com/cometbft/cometbft/blob
 
 The consensus engine handles two main tasks:
 
-* The networking logic, which mainly consists in gossiping block parts, transactions and consensus votes.
-* The consensus logic, which results in the deterministic ordering of transactions in the form of blocks.
+- The networking logic, which mainly consists in gossiping block parts, transactions and consensus votes.
+- The consensus logic, which results in the deterministic ordering of transactions in the form of blocks.
 
 It is **not** the role of the consensus engine to define the state or the validity of transactions. Generally, transactions are handled by the consensus engine in the form of `[]bytes`, and relayed to the application via the ABCI to be decoded and processed. At keys moments in the networking and consensus processes (e.g. beginning of a block, commit of a block, reception of an unconfirmed transaction, ...), the consensus engine emits ABCI messages for the state-machine to act on.
 
 Developers building on top of the Cosmos SDK need not implement the ABCI themselves, as `BaseApp` comes with a built-in implementation of the interface. Let us go through the main ABCI messages that `BaseApp` implements:
 
-* [`Prepare Proposal`](#prepare-proposal)
-* [`Process Proposal`](#process-proposal)
-* [`CheckTx`](#checktx)
-* [`FinalizeBlock`](#finalizeblock)
-* [`ExtendVote`](#extendvote)
-* [`VerifyVoteExtension`](#verifyvoteextension)
+- [`Prepare Proposal`](#prepare-proposal)
+- [`Process Proposal`](#process-proposal)
+- [`CheckTx`](#checktx)
+- [`FinalizeBlock`](#finalizeblock)
+- [`ExtendVote`](#extendvote)
+- [`VerifyVoteExtension`](#verifyvoteextension)
 
 ### Prepare Proposal
 
@@ -1535,7 +1534,7 @@ The `PrepareProposal` function is part of the new methods introduced in Applicat
 Here is how the `PrepareProposal` function can be implemented:
 
 1. Extract the `sdk.Msg`s from the transaction.
-2. Perform *stateful* checks by calling `Validate()` on each of the `sdk.Msg`'s. This is done after *stateless* checks as *stateful* checks are more computationally expensive. If `Validate()` fails, `PrepareProposal` returns before running further checks, which saves resources.
+2. Perform _stateful_ checks by calling `Validate()` on each of the `sdk.Msg`'s. This is done after _stateless_ checks as _stateful_ checks are more computationally expensive. If `Validate()` fails, `PrepareProposal` returns before running further checks, which saves resources.
 3. Perform any additional checks that are specific to the application, such as checking account balances, or ensuring that certain conditions are met before a transaction is proposed.hey are processed by the consensus engine, if necessary.
 4. Return the updated transactions to be processed by the consensus engine
 
@@ -1545,10 +1544,10 @@ It's important to note that `PrepareProposal` complements the `ProcessProposal` 
 
 `PrepareProposal` returns a response to the underlying consensus engine of type [`abci.ResponseCheckTx`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#processproposal). The response contains:
 
-* `Code (uint32)`: Response Code. `0` if successful.
-* `Data ([]byte)`: Result bytes, if any.
-* `Log (string):` The output of the application's logger. May be non-deterministic.
-* `Info (string):` Additional information. May be non-deterministic.
+- `Code (uint32)`: Response Code. `0` if successful.
+- `Data ([]byte)`: Result bytes, if any.
+- `Log (string):` The output of the application's logger. May be non-deterministic.
+- `Info (string):` Additional information. May be non-deterministic.
 
 ### Process Proposal
 
@@ -1571,10 +1570,10 @@ However, developers must exercise greater caution when using these methods. Inco
 
 `ProcessProposal` returns a response to the underlying consensus engine of type [`abci.ResponseCheckTx`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#processproposal). The response contains:
 
-* `Code (uint32)`: Response Code. `0` if successful.
-* `Data ([]byte)`: Result bytes, if any.
-* `Log (string):` The output of the application's logger. May be non-deterministic.
-* `Info (string):` Additional information. May be non-deterministic.
+- `Code (uint32)`: Response Code. `0` if successful.
+- `Data ([]byte)`: Result bytes, if any.
+- `Log (string):` The output of the application's logger. May be non-deterministic.
+- `Info (string):` Additional information. May be non-deterministic.
 
 ### CheckTx
 
@@ -1583,25 +1582,25 @@ transaction is received by a full-node. The role of `CheckTx` is to guard the fu
 (where unconfirmed transactions are stored until they are included in a block) from spam transactions.
 Unconfirmed transactions are relayed to peers only if they pass `CheckTx`.
 
-`CheckTx()` can perform both *stateful* and *stateless* checks, but developers should strive to
+`CheckTx()` can perform both _stateful_ and _stateless_ checks, but developers should strive to
 make the checks **lightweight** because gas fees are not charged for the resources (CPU, data load...) used during the `CheckTx`.
 
 In the Cosmos SDK, after [decoding transactions](/docs/sdk/v0.50/learn/advanced/encoding), `CheckTx()` is implemented
 to do the following checks:
 
 1. Extract the `sdk.Msg`s from the transaction.
-2. **Optionally** perform *stateless* checks by calling `ValidateBasic()` on each of the `sdk.Msg`s. This is done
-   first, as *stateless* checks are less computationally expensive than *stateful* checks. If
-   `ValidateBasic()` fail, `CheckTx` returns before running *stateful* checks, which saves resources.
+2. **Optionally** perform _stateless_ checks by calling `ValidateBasic()` on each of the `sdk.Msg`s. This is done
+   first, as _stateless_ checks are less computationally expensive than _stateful_ checks. If
+   `ValidateBasic()` fail, `CheckTx` returns before running _stateful_ checks, which saves resources.
    This check is still performed for messages that have not yet migrated to the new message validation mechanism defined in [RFC 001](https://docs.cosmos.network/main/rfc/rfc-001-tx-validation) and still have a `ValidateBasic()` method.
-3. Perform non-module related *stateful* checks on the [account](/docs/sdk/v0.50/learn/beginner/accounts). This step is mainly about checking
+3. Perform non-module related _stateful_ checks on the [account](/docs/sdk/v0.50/learn/beginner/accounts). This step is mainly about checking
    that the `sdk.Msg` signatures are valid, that enough fees are provided and that the sending account
    has enough funds to pay for said fees. Note that no precise [`gas`](/docs/sdk/v0.50/learn/beginner/gas-fees) counting occurs here,
    as `sdk.Msg`s are not processed. Usually, the [`AnteHandler`](/docs/sdk/v0.50/learn/beginner/gas-fees#antehandler) will check that the `gas` provided
    with the transaction is superior to a minimum reference gas amount based on the raw transaction size,
    in order to avoid spam with transactions that provide 0 gas.
 
-`CheckTx` does **not** process `sdk.Msg`s -  they only need to be processed when the canonical state needs to be updated, which happens during `FinalizeBlock`.
+`CheckTx` does **not** process `sdk.Msg`s - they only need to be processed when the canonical state needs to be updated, which happens during `FinalizeBlock`.
 
 Steps 2. and 3. are performed by the [`AnteHandler`](/docs/sdk/v0.50/learn/beginner/gas-fees#antehandler) in the [`RunTx()`](#runtx-antehandler-and-runmsgs)
 function, which `CheckTx()` calls with the `runTxModeCheck` mode. During each step of `CheckTx()`, a
@@ -1618,18 +1617,18 @@ is actually included in a block, because `checkState` never gets committed to th
 `CheckTx` returns a response to the underlying consensus engine of type [`abci.ResponseCheckTx`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#checktx).
 The response contains:
 
-* `Code (uint32)`: Response Code. `0` if successful.
-* `Data ([]byte)`: Result bytes, if any.
-* `Log (string):` The output of the application's logger. May be non-deterministic.
-* `Info (string):` Additional information. May be non-deterministic.
-* `GasWanted (int64)`: Amount of gas requested for transaction. It is provided by users when they generate the transaction.
-* `GasUsed (int64)`: Amount of gas consumed by transaction. During `CheckTx`, this value is computed by multiplying the standard cost of a transaction byte by the size of the raw transaction. Next is an example:
+- `Code (uint32)`: Response Code. `0` if successful.
+- `Data ([]byte)`: Result bytes, if any.
+- `Log (string):` The output of the application's logger. May be non-deterministic.
+- `Info (string):` Additional information. May be non-deterministic.
+- `GasWanted (int64)`: Amount of gas requested for transaction. It is provided by users when they generate the transaction.
+- `GasUsed (int64)`: Amount of gas consumed by transaction. During `CheckTx`, this value is computed by multiplying the standard cost of a transaction byte by the size of the raw transaction. Next is an example:
 
 ```go expandable
 package ante
 
 import (
-    
+
 	storetypes "cosmossdk.io/store/types"
 
 	errorsmod "cosmossdk.io/errors"
@@ -1668,7 +1667,7 @@ AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk
     if err := validateBasic.ValidateBasic(); err != nil {
     return ctx, err
 }
-	
+
 }
 
 return next(ctx, tx, simulate)
@@ -1705,7 +1704,7 @@ AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk
 				params.MaxMemoCharacters, memoLength,
 			)
 }
-	
+
 }
 
 return next(ctx, tx, simulate)
@@ -1791,7 +1790,7 @@ else {
 
 ctx.GasMeter().ConsumeGas(params.TxSizeCostPerByte*cost, "txSize")
 }
-	
+
 }
 
 return next(ctx, tx, simulate)
@@ -1815,9 +1814,9 @@ bool {
     if isIncompleteSignature(s) {
     return true
 }
-	
+
 }
-	
+
 }
 
 return false
@@ -1873,8 +1872,8 @@ return next(ctx, tx, simulate)
 }
 ```
 
-* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.50/learn/advanced/events) for more.
-* `Codespace (string)`: Namespace for the Code.
+- `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.50/learn/advanced/events) for more.
+- `Codespace (string)`: Namespace for the Code.
 
 #### RecheckTx
 
@@ -1893,7 +1892,7 @@ This allows certain checks like signature verification can be skipped during `Ch
 
 The first thing `RunTx` does upon being called is to retrieve the `context`'s `CacheMultiStore` by calling the `getContextForTx()` function with the appropriate mode (either `runTxModeCheck` or `execModeFinalize`). This `CacheMultiStore` is a branch of the main store, with cache functionality (for query requests), instantiated during `FinalizeBlock` for transaction execution and during the `Commit` of the previous block for `CheckTx`. After that, two `defer func()` are called for [`gas`](/docs/sdk/v0.50/learn/beginner/gas-fees) management. They are executed when `runTx` returns and make sure `gas` is actually consumed, and will throw errors, if any.
 
-After that, `RunTx()` calls `ValidateBasic()`, when available and for backward compatibility, on each `sdk.Msg`in the `Tx`, which runs preliminary *stateless* validity checks. If any `sdk.Msg` fails to pass `ValidateBasic()`, `RunTx()` returns with an error.
+After that, `RunTx()` calls `ValidateBasic()`, when available and for backward compatibility, on each `sdk.Msg`in the `Tx`, which runs preliminary _stateless_ validity checks. If any `sdk.Msg` fails to pass `ValidateBasic()`, `RunTx()` returns with an error.
 
 Then, the [`anteHandler`](#antehandler) of the application is run (if it exists). In preparation of this step, both the `checkState`/`finalizeBlockState`'s `context` and `context`'s `CacheMultiStore` are branched using the `cacheTxContext()` function.
 
@@ -1901,7 +1900,7 @@ Then, the [`anteHandler`](#antehandler) of the application is run (if it exists)
 package baseapp
 
 import (
-    
+
 	"context"
     "fmt"
     "sort"
@@ -2234,7 +2233,7 @@ else {
 default:
 			panic(fmt.Sprintf("Unrecognized store key type :%T", key))
 }
-	
+
 }
 }
 
@@ -2253,7 +2252,7 @@ else {
 			/ retain history, but it's useful for faster simulation.
 			app.MountStore(key, storetypes.StoreTypeDB)
 }
-	
+
 }
 }
 
@@ -2454,7 +2453,7 @@ setIndexEvents(ie []string) {
     app.indexEvents[e] = struct{
 }{
 }
-	
+
 }
 }
 
@@ -2544,7 +2543,7 @@ cmtproto.ConsensusParams {
     if app.paramStore == nil {
     return cmtproto.ConsensusParams{
 }
-	
+
 }
 
 cp, err := app.paramStore.Get(ctx)
@@ -2653,7 +2652,7 @@ error {
     if err := m.ValidateBasic(); err != nil {
     return err
 }
-	
+
 }
 
 return nil
@@ -2874,7 +2873,7 @@ gInfo = sdk.GasInfo{
     GasWanted: gasWanted,
     GasUsed: ctx.GasMeter().GasConsumed()
 }
-	
+
 }()
     blockGasConsumed := false
 
@@ -2888,7 +2887,7 @@ gInfo = sdk.GasInfo{
 				ctx.GasMeter().GasConsumedToLimit(), "block gas meter",
 			)
 }
-	
+
 }
 
 	/ If BlockGasMeter()
@@ -2959,7 +2958,7 @@ anteEvents = events.ToABCIEvents()
     if err != nil {
     return gInfo, nil, anteEvents, err
 }
-	
+
 }
 
 else if mode == execModeFinalize {
@@ -2968,7 +2967,7 @@ else if mode == execModeFinalize {
     return gInfo, nil, anteEvents,
 				fmt.Errorf("failed to remove tx from mempool: %w", err)
 }
-	
+
 }
 
 	/ Create a new Context based off of the existing Context with a MultiStore branch
@@ -3010,7 +3009,7 @@ msCache.Write()
 			/ append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
 }
-	
+
 }
 
 return gInfo, result, anteEvents, err
@@ -3074,7 +3073,7 @@ has exactly one Msg response, set inside
 msgResponses = append(msgResponses, msgResponse)
 }
 
-	
+
 }
 
 data, err := makeABCIData(msgResponses)
@@ -3121,7 +3120,7 @@ msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeySender, ad
     if moduleName := sdk.GetModuleNameFromTypeURL(eventMsgName); moduleName != "" {
     msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeyModule, moduleName))
 }
-	
+
 }
 
 return sdk.Events{
@@ -3245,7 +3244,7 @@ AnteHandler {
 		handlerChain[ii] = func(ctx Context, tx Tx, simulate bool) (Context, error) {
     return chain[ii].AnteHandle(ctx, tx, simulate, handlerChain[ii+1])
 }
-	
+
 }
 
 return handlerChain[0]
@@ -3277,7 +3276,7 @@ PostHandler {
 		handlerChain[ii] = func(ctx Context, tx Tx, simulate, success bool) (Context, error) {
     return chain[ii].PostHandle(ctx, tx, simulate, success, handlerChain[ii+1])
 }
-	
+
 }
 
 return handlerChain[0]
@@ -3323,9 +3322,9 @@ PostHandle(ctx Context, _ Tx, _, _ bool, _ PostHandler) (Context, error) {
 
 The `AnteHandler` is theoretically optional, but still a very important component of public blockchain networks. It serves 3 primary purposes:
 
-* Be a primary line of defense against spam and second line of defense (the first one being the mempool) against transaction replay with fees deduction and [`sequence`](/docs/sdk/v0.50/learn/advanced/transactions#transaction-generation) checking.
-* Perform preliminary *stateful* validity checks like ensuring signatures are valid or that the sender has enough funds to pay for fees.
-* Play a role in the incentivisation of stakeholders via the collection of transaction fees.
+- Be a primary line of defense against spam and second line of defense (the first one being the mempool) against transaction replay with fees deduction and [`sequence`](/docs/sdk/v0.50/learn/advanced/transactions#transaction-generation) checking.
+- Perform preliminary _stateful_ validity checks like ensuring signatures are valid or that the sender has enough funds to pay for fees.
+- Play a role in the incentivisation of stakeholders via the collection of transaction fees.
 
 `BaseApp` holds an `anteHandler` as parameter that is initialized in the [application's constructor](/docs/sdk/v0.50/learn/beginner/app-anatomy#application-constructor). The most widely used `anteHandler` is the [`auth` module](https://github.com/cosmos/cosmos-sdk/blob/v0.50.0-alpha.0/x/auth/ante/ante.go).
 
@@ -3349,7 +3348,7 @@ Other use cases like unused gas refund can also be enabled by `PostHandler`s.
 package posthandler
 
 import (
-    
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
@@ -3374,9 +3373,9 @@ Note, when `PostHandler`s fail, the state from `runMsgs` is also reverted, effec
 
 The [`InitChain` ABCI message](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_basic_concepts.md#method-overview) is sent from the underlying CometBFT engine when the chain is first started. It is mainly used to **initialize** parameters and state like:
 
-* [Consensus Parameters](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_app_requirements.md#consensus-parameters) via `setConsensusParams`.
-* [`checkState` and `finalizeBlockState`](#state-updates) via `setState`.
-* The [block gas meter](/docs/sdk/v0.50/learn/beginner/gas-fees#block-gas-meter), with infinite gas to process genesis transactions.
+- [Consensus Parameters](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_app_requirements.md#consensus-parameters) via `setConsensusParams`.
+- [`checkState` and `finalizeBlockState`](#state-updates) via `setState`.
+- The [block gas meter](/docs/sdk/v0.50/learn/beginner/gas-fees#block-gas-meter), with infinite gas to process genesis transactions.
 
 Finally, the `InitChain(req abci.RequestInitChain)` method of `BaseApp` calls the [`initChainer()`](/docs/sdk/v0.50/learn/beginner/app-anatomy#initchainer) of the application in order to initialize the main state of the application from the `genesis file` and, if defined, call the [`InitGenesis`](/docs/sdk/v0.50/build/building-modules/genesis#initgenesis) function of each of the application's modules.
 
@@ -3388,7 +3387,7 @@ The [`FinalizeBlock` ABCI message](https://github.com/cometbft/cometbft/blob/v0.
 package baseapp
 
 import (
-    
+
 	"context"
     "crypto/sha256"
     "fmt"
@@ -3452,7 +3451,7 @@ app.initialHeight = req.InitialHeight
     if err := app.cms.SetInitialVersion(req.InitialHeight); err != nil {
     return nil, err
 }
-	
+
 }
 
 	/ initialize states with a correct header
@@ -3468,7 +3467,7 @@ app.setState(execModeCheck, initHeader)
     if err != nil {
     return nil, err
 }
-	
+
 }
 
 defer func() {
@@ -3509,9 +3508,9 @@ sort.Sort(abci.ValidatorUpdates(res.Validators))
     if !proto.Equal(&res.Validators[i], &req.Validators[i]) {
     return nil, fmt.Errorf("genesisValidators[%d] != req.Validators[%d] ", i, i)
 }
-	
+
 }
-	
+
 }
 
 	/ In the case of a new chain, AppHash will be the hash of an empty string.
@@ -3565,7 +3564,7 @@ Query(_ context.Context, req *abci.RequestQuery) (resp *abci.ResponseQuery, err 
     if r := recover(); r != nil {
     resp = sdkerrors.QueryResult(errorsmod.Wrapf(sdkerrors.ErrPanic, "%v", r), app.trace)
 }
-	
+
 }()
 
 	/ when a client did not provide a query height, manually inject the latest
@@ -3874,9 +3873,9 @@ defer func() {
 
 resp = &abci.ResponsePrepareProposal{
 }
-	
+
 }
-	
+
 }()
 
 resp, err = app.prepareProposal(app.prepareProposalState.ctx, req)
@@ -3970,9 +3969,9 @@ defer func() {
 resp = &abci.ResponseProcessProposal{
     Status: abci.ResponseProcessProposal_REJECT
 }
-	
+
 }
-	
+
 }()
 
 resp, err = app.processProposal(app.processProposalState.ctx, req)
@@ -4037,7 +4036,7 @@ app.voteExtensionState.ctx = app.voteExtensionState.ctx.
 
 err = fmt.Errorf("recovered application panic in ExtendVote: %v", r)
 }
-	
+
 }()
 
 resp, err = app.extendVote(app.voteExtensionState.ctx, req)
@@ -4085,7 +4084,7 @@ VerifyVoteExtension(req *abci.RequestVerifyVoteExtension) (resp *abci.ResponseVe
 
 err = fmt.Errorf("recovered application panic in VerifyVoteExtension: %v", r)
 }
-	
+
 }()
 
 resp, err = app.verifyVoteExt(app.voteExtensionState.ctx, req)
@@ -4172,7 +4171,7 @@ events = append(events, beginBlock.Events...)
     if _, err := app.txDecoder(rawTx); err == nil {
     txResults = append(txResults, app.deliverTx(rawTx))
 }
-	
+
 }
     if app.finalizeBlockState.ms.TracingEnabled() {
     app.finalizeBlockState.ms = app.finalizeBlockState.ms.SetTracingContext(nil).(storetypes.CacheMultiStore)
@@ -4229,9 +4228,9 @@ app.cms.Commit()
     if err := abciListener.ListenCommit(ctx, *resp, changeSet); err != nil {
     app.logger.Error("Commit listening hook failed", "height", blockHeight, "err", err)
 }
-	
+
 }
-	
+
 }
 
 	/ Reset the CheckTx state to the latest committed.
@@ -4307,7 +4306,7 @@ p, err := os.FindProcess(os.Getpid())
     if sigIntErr == nil || sigTermErr == nil {
     return
 }
-	
+
 }
 
 	/ Resort to exiting immediately if the process could not be found or killed
@@ -4352,7 +4351,7 @@ return &abci.ResponseQuery{
 default:
 			return sdkerrors.QueryResult(errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "unknown query: %s", path), app.trace)
 }
-	
+
 }
 
 return sdkerrors.QueryResult(
@@ -4590,9 +4589,9 @@ cacheMS, err := qms.CacheMultiStoreWithVersion(height)
     if cInfo != nil && err == nil {
     ctx = ctx.WithBlockTime(cInfo.Timestamp)
 }
-	
+
 }
-	
+
 }
 
 return ctx, nil
@@ -4646,7 +4645,7 @@ int64 {
 		default:
 			return y
 }
-	
+
 }
 
 	/ Define retentionHeight as the minimum value that satisfies all non-zero
@@ -4670,7 +4669,7 @@ are pruned
     if snapshotRetentionHeights > 0 {
     retentionHeight = minNonZero(retentionHeight, commitHeight-snapshotRetentionHeights)
 }
-	
+
 }
     v := commitHeight - int64(app.minRetainBlocks)
 
@@ -4694,7 +4693,7 @@ func toVoteInfo(votes []abci.ExtendedVoteInfo) []abci.VoteInfo {
 },
     BlockIdFlag: vote.BlockIdFlag,
 }
-	
+
 }
 
 return legacyVotes
@@ -4703,17 +4702,17 @@ return legacyVotes
 
 #### PreBlock
 
-* Run the application's [`preBlocker()`](/docs/sdk/v0.50/learn/beginner/app-anatomy#preblocker), which mainly runs the [`PreBlocker()`](/docs/sdk/v0.50/build/building-modules/preblock#preblock) method of each of the modules.
+- Run the application's [`preBlocker()`](/docs/sdk/v0.50/learn/beginner/app-anatomy#preblocker), which mainly runs the [`PreBlocker()`](/docs/sdk/v0.50/build/building-modules/preblock#preblock) method of each of the modules.
 
 #### BeginBlock
 
-* Initialize [`finalizeBlockState`](#state-updates) with the latest header using the `req abci.RequestFinalizeBlock` passed as parameter via the `setState` function.
+- Initialize [`finalizeBlockState`](#state-updates) with the latest header using the `req abci.RequestFinalizeBlock` passed as parameter via the `setState` function.
 
   ```go expandable
   package baseapp
 
   import (
-      
+
   	"context"
       "fmt"
       "sort"
@@ -5046,7 +5045,7 @@ return legacyVotes
   default:
   			panic(fmt.Sprintf("Unrecognized store key type :%T", key))
   }
-  	
+
   }
   }
 
@@ -5065,7 +5064,7 @@ return legacyVotes
   			/ retain history, but it's useful for faster simulation.
   			app.MountStore(key, storetypes.StoreTypeDB)
   }
-  	
+
   }
   }
 
@@ -5266,7 +5265,7 @@ return legacyVotes
       app.indexEvents[e] = struct{
   }{
   }
-  	
+
   }
   }
 
@@ -5356,7 +5355,7 @@ return legacyVotes
       if app.paramStore == nil {
       return cmtproto.ConsensusParams{
   }
-  	
+
   }
 
   cp, err := app.paramStore.Get(ctx)
@@ -5465,7 +5464,7 @@ return legacyVotes
       if err := m.ValidateBasic(); err != nil {
       return err
   }
-  	
+
   }
 
   return nil
@@ -5686,7 +5685,7 @@ return legacyVotes
       GasWanted: gasWanted,
       GasUsed: ctx.GasMeter().GasConsumed()
   }
-  	
+
   }()
       blockGasConsumed := false
 
@@ -5700,7 +5699,7 @@ return legacyVotes
   				ctx.GasMeter().GasConsumedToLimit(), "block gas meter",
   			)
   }
-  	
+
   }
 
   	/ If BlockGasMeter()
@@ -5771,7 +5770,7 @@ return legacyVotes
       if err != nil {
       return gInfo, nil, anteEvents, err
   }
-  	
+
   }
 
   else if mode == execModeFinalize {
@@ -5780,7 +5779,7 @@ return legacyVotes
       return gInfo, nil, anteEvents,
   				fmt.Errorf("failed to remove tx from mempool: %w", err)
   }
-  	
+
   }
 
   	/ Create a new Context based off of the existing Context with a MultiStore branch
@@ -5822,7 +5821,7 @@ return legacyVotes
   			/ append the events in the order of occurrence
   			result.Events = append(anteEvents, result.Events...)
   }
-  	
+
   }
 
   return gInfo, result, anteEvents, err
@@ -5886,7 +5885,7 @@ return legacyVotes
   msgResponses = append(msgResponses, msgResponse)
   }
 
-  	
+
   }
 
   data, err := makeABCIData(msgResponses)
@@ -5933,7 +5932,7 @@ return legacyVotes
       if moduleName := sdk.GetModuleNameFromTypeURL(eventMsgName); moduleName != "" {
       msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeyModule, moduleName))
   }
-  	
+
   }
 
   return sdk.Events{
@@ -5995,11 +5994,11 @@ return legacyVotes
 
   This function also resets the [main gas meter](/docs/sdk/v0.50/learn/beginner/gas-fees#main-gas-meter).
 
-* Initialize the [block gas meter](/docs/sdk/v0.50/learn/beginner/gas-fees#block-gas-meter) with the `maxGas` limit. The `gas` consumed within the block cannot go above `maxGas`. This parameter is defined in the application's consensus parameters.
+- Initialize the [block gas meter](/docs/sdk/v0.50/learn/beginner/gas-fees#block-gas-meter) with the `maxGas` limit. The `gas` consumed within the block cannot go above `maxGas`. This parameter is defined in the application's consensus parameters.
 
-* Run the application's [`beginBlocker()`](/docs/sdk/v0.50/learn/beginner/app-anatomy#beginblocker-and-endblocker), which mainly runs the [`BeginBlocker()`](/docs/sdk/v0.50/build/building-modules/beginblock-endblock#beginblock) method of each of the modules.
+- Run the application's [`beginBlocker()`](/docs/sdk/v0.50/learn/beginner/app-anatomy#beginblocker-and-endblocker), which mainly runs the [`BeginBlocker()`](/docs/sdk/v0.50/build/building-modules/beginblock-endblock#beginblock) method of each of the modules.
 
-* Set the [`VoteInfos`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#voteinfo) of the application, i.e. the list of validators whose *precommit* for the previous block was included by the proposer of the current block. This information is carried into the [`Context`](/docs/sdk/v0.50/learn/advanced/context) so that it can be used during transaction execution and EndBlock.
+- Set the [`VoteInfos`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#voteinfo) of the application, i.e. the list of validators whose _precommit_ for the previous block was included by the proposer of the current block. This information is carried into the [`Context`](/docs/sdk/v0.50/learn/advanced/context) so that it can be used during transaction execution and EndBlock.
 
 #### Transaction Execution
 
@@ -6011,7 +6010,7 @@ Before the first transaction of a given block is processed, a [volatile state](#
 package baseapp
 
 import (
-    
+
 	"context"
     "fmt"
     "sort"
@@ -6344,7 +6343,7 @@ else {
 default:
 			panic(fmt.Sprintf("Unrecognized store key type :%T", key))
 }
-	
+
 }
 }
 
@@ -6363,7 +6362,7 @@ else {
 			/ retain history, but it's useful for faster simulation.
 			app.MountStore(key, storetypes.StoreTypeDB)
 }
-	
+
 }
 }
 
@@ -6564,7 +6563,7 @@ setIndexEvents(ie []string) {
     app.indexEvents[e] = struct{
 }{
 }
-	
+
 }
 }
 
@@ -6654,7 +6653,7 @@ cmtproto.ConsensusParams {
     if app.paramStore == nil {
     return cmtproto.ConsensusParams{
 }
-	
+
 }
 
 cp, err := app.paramStore.Get(ctx)
@@ -6763,7 +6762,7 @@ error {
     if err := m.ValidateBasic(); err != nil {
     return err
 }
-	
+
 }
 
 return nil
@@ -6984,7 +6983,7 @@ gInfo = sdk.GasInfo{
     GasWanted: gasWanted,
     GasUsed: ctx.GasMeter().GasConsumed()
 }
-	
+
 }()
     blockGasConsumed := false
 
@@ -6998,7 +6997,7 @@ gInfo = sdk.GasInfo{
 				ctx.GasMeter().GasConsumedToLimit(), "block gas meter",
 			)
 }
-	
+
 }
 
 	/ If BlockGasMeter()
@@ -7069,7 +7068,7 @@ anteEvents = events.ToABCIEvents()
     if err != nil {
     return gInfo, nil, anteEvents, err
 }
-	
+
 }
 
 else if mode == execModeFinalize {
@@ -7078,7 +7077,7 @@ else if mode == execModeFinalize {
     return gInfo, nil, anteEvents,
 				fmt.Errorf("failed to remove tx from mempool: %w", err)
 }
-	
+
 }
 
 	/ Create a new Context based off of the existing Context with a MultiStore branch
@@ -7120,7 +7119,7 @@ msCache.Write()
 			/ append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
 }
-	
+
 }
 
 return gInfo, result, anteEvents, err
@@ -7184,7 +7183,7 @@ has exactly one Msg response, set inside
 msgResponses = append(msgResponses, msgResponse)
 }
 
-	
+
 }
 
 data, err := makeABCIData(msgResponses)
@@ -7231,7 +7230,7 @@ msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeySender, ad
     if moduleName := sdk.GetModuleNameFromTypeURL(eventMsgName); moduleName != "" {
     msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeyModule, moduleName))
 }
-	
+
 }
 
 return sdk.Events{
@@ -7294,7 +7293,7 @@ error {
 Transaction execution within `FinalizeBlock` performs the **exact same steps as `CheckTx`**, with a little caveat at step 3 and the addition of a fifth step:
 
 1. The `AnteHandler` does **not** check that the transaction's `gas-prices` is sufficient. That is because the `min-gas-prices` value `gas-prices` is checked against is local to the node, and therefore what is enough for one full-node might not be for another. This means that the proposer can potentially include transactions for free, although they are not incentivised to do so, as they earn a bonus on the total fee of the block they propose.
-2. For each `sdk.Msg` in the transaction, route to the appropriate module's Protobuf [`Msg` service](/docs/sdk/v0.50/build/building-modules/msg-services). Additional *stateful* checks are performed, and the branched multistore held in `finalizeBlockState`'s `context` is updated by the module's `keeper`. If the `Msg` service returns successfully, the branched multistore held in `context` is written to `finalizeBlockState` `CacheMultiStore`.
+2. For each `sdk.Msg` in the transaction, route to the appropriate module's Protobuf [`Msg` service](/docs/sdk/v0.50/build/building-modules/msg-services). Additional _stateful_ checks are performed, and the branched multistore held in `finalizeBlockState`'s `context` is updated by the module's `keeper`. If the `Msg` service returns successfully, the branched multistore held in `context` is written to `finalizeBlockState` `CacheMultiStore`.
 
 During the additional fifth step outlined in (2), each read/write to the store increases the value of `GasConsumed`. You can find the default cost of each operation:
 
@@ -7302,7 +7301,7 @@ During the additional fifth step outlined in (2), each read/write to the store i
 package types
 
 import (
-    
+
 	"fmt"
     "math"
 )
@@ -7660,14 +7659,14 @@ At any point, if `GasConsumed > GasWanted`, the function returns with `Code != 0
 
 Each transactions returns a response to the underlying consensus engine of type [`abci.ExecTxResult`](https://github.com/cometbft/cometbft/blob/v0.38.0-rc1/spec/abci/abci%2B%2B_methods.md#exectxresult). The response contains:
 
-* `Code (uint32)`: Response Code. `0` if successful.
-* `Data ([]byte)`: Result bytes, if any.
-* `Log (string):` The output of the application's logger. May be non-deterministic.
-* `Info (string):` Additional information. May be non-deterministic.
-* `GasWanted (int64)`: Amount of gas requested for transaction. It is provided by users when they generate the transaction.
-* `GasUsed (int64)`: Amount of gas consumed by transaction. During transaction execution, this value is computed by multiplying the standard cost of a transaction byte by the size of the raw transaction, and by adding gas each time a read/write to the store occurs.
-* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.50/learn/advanced/events) for more.
-* `Codespace (string)`: Namespace for the Code.
+- `Code (uint32)`: Response Code. `0` if successful.
+- `Data ([]byte)`: Result bytes, if any.
+- `Log (string):` The output of the application's logger. May be non-deterministic.
+- `Info (string):` Additional information. May be non-deterministic.
+- `GasWanted (int64)`: Amount of gas requested for transaction. It is provided by users when they generate the transaction.
+- `GasUsed (int64)`: Amount of gas consumed by transaction. During transaction execution, this value is computed by multiplying the standard cost of a transaction byte by the size of the raw transaction, and by adding gas each time a read/write to the store occurs.
+- `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.50/learn/advanced/events) for more.
+- `Codespace (string)`: Namespace for the Code.
 
 #### EndBlock
 
@@ -7677,7 +7676,7 @@ EndBlock is run after transaction execution completes. It allows developers to h
 package baseapp
 
 import (
-    
+
 	"context"
     "fmt"
     "sort"
@@ -8010,7 +8009,7 @@ else {
 default:
 			panic(fmt.Sprintf("Unrecognized store key type :%T", key))
 }
-	
+
 }
 }
 
@@ -8029,7 +8028,7 @@ else {
 			/ retain history, but it's useful for faster simulation.
 			app.MountStore(key, storetypes.StoreTypeDB)
 }
-	
+
 }
 }
 
@@ -8230,7 +8229,7 @@ setIndexEvents(ie []string) {
     app.indexEvents[e] = struct{
 }{
 }
-	
+
 }
 }
 
@@ -8320,7 +8319,7 @@ cmtproto.ConsensusParams {
     if app.paramStore == nil {
     return cmtproto.ConsensusParams{
 }
-	
+
 }
 
 cp, err := app.paramStore.Get(ctx)
@@ -8429,7 +8428,7 @@ error {
     if err := m.ValidateBasic(); err != nil {
     return err
 }
-	
+
 }
 
 return nil
@@ -8650,7 +8649,7 @@ gInfo = sdk.GasInfo{
     GasWanted: gasWanted,
     GasUsed: ctx.GasMeter().GasConsumed()
 }
-	
+
 }()
     blockGasConsumed := false
 
@@ -8664,7 +8663,7 @@ gInfo = sdk.GasInfo{
 				ctx.GasMeter().GasConsumedToLimit(), "block gas meter",
 			)
 }
-	
+
 }
 
 	/ If BlockGasMeter()
@@ -8735,7 +8734,7 @@ anteEvents = events.ToABCIEvents()
     if err != nil {
     return gInfo, nil, anteEvents, err
 }
-	
+
 }
 
 else if mode == execModeFinalize {
@@ -8744,7 +8743,7 @@ else if mode == execModeFinalize {
     return gInfo, nil, anteEvents,
 				fmt.Errorf("failed to remove tx from mempool: %w", err)
 }
-	
+
 }
 
 	/ Create a new Context based off of the existing Context with a MultiStore branch
@@ -8786,7 +8785,7 @@ msCache.Write()
 			/ append the events in the order of occurrence
 			result.Events = append(anteEvents, result.Events...)
 }
-	
+
 }
 
 return gInfo, result, anteEvents, err
@@ -8850,7 +8849,7 @@ has exactly one Msg response, set inside
 msgResponses = append(msgResponses, msgResponse)
 }
 
-	
+
 }
 
 data, err := makeABCIData(msgResponses)
@@ -8897,7 +8896,7 @@ msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeySender, ad
     if moduleName := sdk.GetModuleNameFromTypeURL(eventMsgName); moduleName != "" {
     msgEvent = msgEvent.AppendAttributes(sdk.NewAttribute(sdk.AttributeKeyModule, moduleName))
 }
-	
+
 }
 
 return sdk.Events{
@@ -8959,7 +8958,7 @@ error {
 
 ### Commit
 
-The [`Commit` ABCI message](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_basic_concepts.md#method-overview) is sent from the underlying CometBFT engine after the full-node has received *precommits* from 2/3+ of validators (weighted by voting power). On the `BaseApp` end, the `Commit(res abci.ResponseCommit)` function is implemented to commit all the valid state transitions that occurred during `FinalizeBlock` and to reset state for the next block.
+The [`Commit` ABCI message](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_basic_concepts.md#method-overview) is sent from the underlying CometBFT engine after the full-node has received _precommits_ from 2/3+ of validators (weighted by voting power). On the `BaseApp` end, the `Commit(res abci.ResponseCommit)` function is implemented to commit all the valid state transitions that occurred during `FinalizeBlock` and to reset state for the next block.
 
 To commit state-transitions, the `Commit` function calls the `Write()` function on `finalizeBlockState.ms`, where `finalizeBlockState.ms` is a branched multistore of the main store `app.cms`. Then, the `Commit` function sets `checkState` to the latest header (obtained from `finalizeBlockState.ctx.BlockHeader`) and `finalizeBlockState` to `nil`.
 
@@ -8975,9 +8974,9 @@ The [`Query` ABCI message](https://github.com/cometbft/cometbft/blob/v0.37.x/spe
 
 Each CometBFT `query` comes with a `path`, which is a `string` which denotes what to query. If the `path` matches a gRPC fully-qualified service method, then `BaseApp` will defer the query to the `grpcQueryRouter` and let it handle it like explained [above](#grpc-query-router). Otherwise, the `path` represents a query that is not (yet) handled by the gRPC router. `BaseApp` splits the `path` string with the `/` delimiter. By convention, the first element of the split string (`split[0]`) contains the category of `query` (`app`, `p2p`, `store` or `custom` ). The `BaseApp` implementation of the `Query(req abci.RequestQuery)` method is a simple dispatcher serving these 4 main categories of queries:
 
-* Application-related queries like querying the application's version, which are served via the `handleQueryApp` method.
-* Direct queries to the multistore, which are served by the `handlerQueryStore` method. These direct queries are different from custom queries which go through `app.queryRouter`, and are mainly used by third-party service provider like block explorers.
-* P2P queries, which are served via the `handleQueryP2P` method. These queries return either `app.addrPeerFilter` or `app.ipPeerFilter` that contain the list of peers filtered by address or IP respectively. These lists are first initialized via `options` in `BaseApp`'s [constructor](#constructor).
+- Application-related queries like querying the application's version, which are served via the `handleQueryApp` method.
+- Direct queries to the multistore, which are served by the `handlerQueryStore` method. These direct queries are different from custom queries which go through `app.queryRouter`, and are mainly used by third-party service provider like block explorers.
+- P2P queries, which are served via the `handleQueryP2P` method. These queries return either `app.addrPeerFilter` or `app.ipPeerFilter` that contain the list of peers filtered by address or IP respectively. These lists are first initialized via `options` in `BaseApp`'s [constructor](#constructor).
 
 ### ExtendVote
 
@@ -8989,7 +8988,7 @@ In the Cosmos-SDK this is implemented as a NoOp:
 package baseapp
 
 import (
-    
+
 	"bytes"
     "fmt"
     "cosmossdk.io/math"
@@ -9210,7 +9209,7 @@ var (
     if err != nil && !errors.Is(err, mempool.ErrTxNotFound) {
     panic(err)
 }
-	
+
 }
 
 else {
@@ -9224,7 +9223,7 @@ else {
 					/ more transactions.
 					break
 }
-	
+
 }
 
 iterator = iterator.Next()
@@ -9269,7 +9268,7 @@ return func(ctx sdk.Context, req *abci.RequestProcessProposal) (*abci.ResponsePr
     Status: abci.ResponseProcessProposal_REJECT
 }, nil
 }
-	
+
 }
 
 return &abci.ResponseProcessProposal{
@@ -9337,7 +9336,7 @@ In the Cosmos-SDK this is implemented as a NoOp:
 package baseapp
 
 import (
-    
+
 	"bytes"
     "fmt"
     "cosmossdk.io/math"
@@ -9558,7 +9557,7 @@ var (
     if err != nil && !errors.Is(err, mempool.ErrTxNotFound) {
     panic(err)
 }
-	
+
 }
 
 else {
@@ -9572,7 +9571,7 @@ else {
 					/ more transactions.
 					break
 }
-	
+
 }
 
 iterator = iterator.Next()
@@ -9617,7 +9616,7 @@ return func(ctx sdk.Context, req *abci.RequestProcessProposal) (*abci.ResponsePr
     Status: abci.ResponseProcessProposal_REJECT
 }, nil
 }
-	
+
 }
 
 return &abci.ResponseProcessProposal{
