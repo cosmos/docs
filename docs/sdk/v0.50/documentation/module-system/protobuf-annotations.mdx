@@ -1,0 +1,417 @@
+---
+title: Protocol Buffer Annotations
+description: >-
+  Comprehensive guide to protobuf annotations, code generation, and best practices
+  for Cosmos SDK module development
+---
+
+This comprehensive guide covers all aspects of Protocol Buffer usage in the Cosmos SDK, including annotations, code generation, and integration with the module system.
+
+## Project Setup and Code Generation
+
+### Directory Structure
+
+Organize your protobuf files following this structure:
+
+```shell
+proto/
+├── buf.yaml              # Buf configuration
+├── buf.gen.gogo.yaml     # Code generation config
+└── myapp/
+    └── mymodule/
+        └── v1/
+            ├── types.proto    # Core type definitions
+            ├── tx.proto       # Transaction messages
+            ├── query.proto    # Query services
+            ├── genesis.proto  # Genesis state
+            └── events.proto   # Event definitions
+```
+
+### Buf Configuration
+
+`proto/buf.yaml`:
+```yaml
+version: v1
+name: buf.build/myorg/myapp
+deps:
+  - buf.build/cosmos/cosmos-sdk
+  - buf.build/cosmos/cosmos-proto
+  - buf.build/cosmos/gogo-proto
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - STANDARD
+    - COMMENTS
+    - FILE_LOWER_SNAKE_CASE
+```
+
+`proto/buf.gen.gogo.yaml`:
+```yaml
+version: v1
+plugins:
+  - name: gocosmos
+    out: ..
+    opt: plugins=grpc,Mgoogle/protobuf/any.proto=github.com/cosmos/gogoproto/types/any
+  - name: grpc-gateway
+    out: ..
+    opt: logtostderr=true,allow_colon_final_segments=true
+```
+
+### Generating Code
+
+```bash
+# Install buf
+curl -sSL https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-$(uname -s)-$(uname -m) \
+  -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
+
+# Generate protobuf code
+cd proto
+buf generate
+
+# Move generated files to correct location
+cp -r github.com/myorg/myapp/* ../
+rm -rf github.com
+```
+
+## Message Annotations
+
+### Signer
+
+Specifies which field(s) contain the transaction signer(s):
+
+```protobuf
+message MsgSend {
+  option (cosmos.msg.v1.signer) = "from_address";
+
+  string from_address = 1;
+  string to_address = 2;
+  repeated cosmos.base.v1beta1.Coin amount = 3;
+}
+
+// Multiple signers
+message MsgMultiSend {
+  option (cosmos.msg.v1.signer) = "inputs";  // Repeated field with signers
+
+  repeated Input inputs = 1;
+  repeated Output outputs = 2;
+}
+```
+
+## Scalar Types
+
+Scalar annotations provide type information for client libraries and validation:
+
+### Address Types
+
+```protobuf
+message MsgDelegate {
+  // Delegator address (AccAddress)
+  string delegator_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // Validator operator address (ValAddress)
+  string validator_address = 2 [(cosmos_proto.scalar) = "cosmos.ValidatorAddressString"];
+
+  // Consensus address (ConsAddress) - used in evidence
+  string consensus_address = 3 [(cosmos_proto.scalar) = "cosmos.ConsensusAddressString"];
+}
+```
+
+### Numeric Types
+
+```protobuf
+message Proposal {
+  // Large integers (sdk.Int)
+  string yes_count = 1 [(cosmos_proto.scalar) = "cosmos.Int"];
+  string no_count = 2 [(cosmos_proto.scalar) = "cosmos.Int"];
+
+  // Decimals for precise calculations (sdk.Dec)
+  string quorum = 3 [(cosmos_proto.scalar) = "cosmos.Dec"];
+  string threshold = 4 [(cosmos_proto.scalar) = "cosmos.Dec"];
+}
+```
+
+### Complete Scalar Reference
+
+| Scalar Type | Go Type | Usage |
+|------------|---------|--------|
+| `cosmos.AddressString` | `sdk.AccAddress` | User account addresses |
+| `cosmos.ValidatorAddressString` | `sdk.ValAddress` | Validator operator addresses |
+| `cosmos.ConsensusAddressString` | `sdk.ConsAddress` | Consensus key addresses |
+| `cosmos.Int` | `sdk.Int` | Arbitrary precision integers |
+| `cosmos.Dec` | `sdk.Dec` | Arbitrary precision decimals |
+
+## Interface Annotations
+
+### Implements Interface
+
+Marks a message as implementing a specific interface:
+
+```protobuf
+// Mark as account implementation
+message BaseAccount {
+  option (cosmos_proto.implements_interface) = "cosmos.auth.v1beta1.AccountI";
+
+  string address = 1;
+  google.protobuf.Any pub_key = 2;
+  uint64 account_number = 3;
+  uint64 sequence = 4;
+}
+
+// Custom authorization implementation
+message SendAuthorization {
+  option (cosmos_proto.implements_interface) = "cosmos.authz.v1beta1.Authorization";
+
+  repeated cosmos.base.v1beta1.Coin spend_limit = 1;
+}
+```
+
+### Accepts Interface
+
+Specifies which interface an `Any` field accepts:
+
+```protobuf
+message Grant {
+  // Accepts any Authorization implementation
+  google.protobuf.Any authorization = 1 [
+    (cosmos_proto.accepts_interface) = "cosmos.authz.v1beta1.Authorization"
+  ];
+
+  google.protobuf.Timestamp expiration = 2;
+}
+
+message Account {
+  // Accepts any AccountI implementation
+  google.protobuf.Any account = 1 [
+    (cosmos_proto.accepts_interface) = "cosmos.auth.v1beta1.AccountI"
+  ];
+}
+```
+
+These annotations enable:
+- Type-safe `Any` unpacking
+- Client code generation
+- Automatic validation
+
+## Versioning Annotations
+
+Track when features were added for client compatibility:
+
+### Method Added In
+
+```protobuf
+service Msg {
+  // Available since v0.47
+  rpc Send(MsgSend) returns (MsgSendResponse);
+
+  // Added in v0.50
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse) {
+    option (cosmos_proto.method_added_in) = "cosmos-sdk v0.50";
+  }
+}
+```
+
+### Field Added In
+
+```protobuf
+message Params {
+  bool send_enabled = 1;
+
+  // Added in v0.50
+  string default_send_enabled = 2 [
+    (cosmos_proto.field_added_in) = "cosmos-sdk v0.50"
+  ];
+}
+```
+
+### Message Added In
+
+```protobuf
+// Added in v0.47
+message MsgUpdateParams {
+  option (cosmos_proto.message_added_in) = "cosmos-sdk v0.47";
+
+  string authority = 1;
+  Params params = 2;
+}
+```
+
+Format: `"[module] v[version]"`
+- `"cosmos-sdk v0.50.1"`
+- `"x/gov v2.0.0"`
+- `"ibc-go v8.0.0"`
+
+## Gogoproto Annotations
+
+Gogoproto provides Go-specific optimizations:
+
+### Performance Optimizations
+
+```protobuf
+message OptimizedMessage {
+  option (gogoproto.equal) = true;              // Generate Equal() method
+  option (gogoproto.goproto_getters) = false;   // Disable getters for direct field access
+  option (gogoproto.goproto_stringer) = false;  // Custom String() method
+
+  string id = 1;
+
+  // Non-nullable fields (avoid pointer overhead)
+  Item item = 2 [(gogoproto.nullable) = false];
+
+  // Non-nullable repeated fields
+  repeated Item items = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "Items"  // Custom slice type
+  ];
+
+  // Custom type casting
+  bytes custom_data = 4 [(gogoproto.casttype) = "CustomType"];
+}
+```
+
+### Common Gogoproto Options
+
+| Option | Effect | Usage |
+|--------|--------|-------|
+| `(gogoproto.nullable) = false` | Non-pointer fields | Reduce allocations |
+| `(gogoproto.equal) = true` | Generate `Equal()` method | Equality checks |
+| `(gogoproto.goproto_getters) = false` | No getter methods | Direct field access |
+| `(gogoproto.castrepeated)` | Custom slice type | Type-safe collections |
+| `(gogoproto.casttype)` | Custom Go type | Custom implementations |
+| `(gogoproto.customname)` | Custom field name | Go naming conventions |
+
+## Amino Annotations (Legacy)
+
+Amino annotations maintain backwards compatibility for signing:
+
+<Note>
+Amino is deprecated since v0.50. Only use for backwards compatibility.
+</Note>
+
+### Message Name
+
+```protobuf
+message MsgSend {
+  option (amino.name) = "cosmos-sdk/MsgSend";  // Display name for signing
+  // ...
+}
+```
+
+### Field Annotations
+
+```protobuf
+message Account {
+  // Custom field name in amino encoding
+  google.protobuf.Any pub_key = 1 [
+    (amino.field_name) = "public_key"
+  ];
+
+  // Always include in JSON (even if empty)
+  repeated cosmos.base.v1beta1.Coin coins = 2 [
+    (amino.dont_omitempty) = true,
+    (amino.encoding) = "legacy_coins"  // Special coin encoding
+  ];
+}
+```
+
+## Service Annotations
+
+### Message Service
+
+Mark a service as a Msg service for transactions:
+
+```protobuf
+service Msg {
+  option (cosmos.msg.v1.service) = true;  // This is a Msg service
+
+  rpc Send(MsgSend) returns (MsgSendResponse);
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+}
+```
+
+## Complete Example
+
+Here's a complete example using all annotation types:
+
+```protobuf
+syntax = "proto3";
+package myapp.mymodule.v1;
+
+import "gogoproto/gogo.proto";
+import "cosmos_proto/cosmos.proto";
+import "cosmos/msg/v1/msg.proto";
+import "amino/amino.proto";
+import "google/protobuf/any.proto";
+import "cosmos/base/v1beta1/coin.proto";
+
+option go_package = "github.com/myorg/myapp/x/mymodule/types";
+
+// Service definition
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  rpc CreateItem(MsgCreateItem) returns (MsgCreateItemResponse);
+}
+
+// Message with all annotations
+message MsgCreateItem {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "mymodule/CreateItem";
+  option (gogoproto.equal) = false;
+  option (gogoproto.goproto_getters) = false;
+
+  // Address with scalar
+  string creator = 1 [
+    (cosmos_proto.scalar) = "cosmos.AddressString"
+  ];
+
+  // Non-nullable nested message
+  Item item = 2 [
+    (gogoproto.nullable) = false
+  ];
+
+  // Coins with special handling
+  repeated cosmos.base.v1beta1.Coin fee = 3 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true,
+    (amino.encoding) = "legacy_coins",
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins"
+  ];
+}
+
+message MsgCreateItemResponse {
+  string id = 1;
+}
+
+// Type implementing an interface
+message Item {
+  option (cosmos_proto.implements_interface) = "mymodule.ItemI";
+
+  string id = 1;
+  string data = 2;
+
+  // Any field accepting interface
+  google.protobuf.Any extension = 3 [
+    (cosmos_proto.accepts_interface) = "mymodule.ItemExtension"
+  ];
+}
+```
+
+## Best Practices
+
+1. **Always use scalar annotations** for addresses and numeric types
+2. **Use `nullable=false`** for required fields to reduce allocations
+3. **Implement interfaces** with proper annotations for Any type safety
+4. **Version your APIs** with added_in annotations
+5. **Document breaking changes** with deprecated field markers
+6. **Generate code regularly** and commit .pb.go files
+7. **Use buf** for linting and breaking change detection
+
+## External Resources
+
+- [Protocol Buffers Documentation](https://protobuf.dev/)
+- [Buf Build](https://buf.build/) - Modern protobuf tooling
+- [Gogoproto](https://github.com/cosmos/gogoproto) - Go-specific protobuf extensions
+- [Cosmos Proto](https://github.com/cosmos/cosmos-proto) - Cosmos SDK protobuf extensions
+- [Buf Registry - Cosmos SDK](https://buf.build/cosmos/cosmos-sdk) - Published SDK protos
