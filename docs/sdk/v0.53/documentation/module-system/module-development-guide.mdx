@@ -1,0 +1,527 @@
+---
+title: Module Development Guide
+description: Technical reference for Cosmos SDK module development
+---
+
+# Module Development Guide
+
+## Overview
+
+Cosmos SDK modules are self-contained units of functionality that extend the capabilities of a blockchain application. To understand their flexibility, consider the range of modules in production: from the `x/bank` module that handles token transfers, to `x/ibc` that enables communication between independent blockchains, to the EVM module that runs Ethereum smart contracts on Cosmos chains.
+
+## Module Types and Capabilities
+
+The Cosmos SDK doesn't prescribe a single pattern for modules. Let's examine how different production modules leverage this flexibility:
+
+### The Bank Module: State Management Foundation
+
+The `x/bank` module manages all token balances and transfers. It's the foundation that other modules build upon:
+
+```go
+// From x/bank/keeper/keeper.go
+type BaseKeeper struct {
+    ak           types.AccountKeeper
+    cdc          codec.BinaryCodec
+    storeService store.KVStoreService
+    mintCoinsRestrictionFn MintingRestrictionFn
+
+    // State management using Collections
+    Schema    collections.Schema
+    Balances  collections.Map[collections.Pair[sdk.AccAddress, string], math.Int]
+    Supply    collections.Map[string, math.Int]
+    DenomMetadata collections.Map[string, types.Metadata]
+    SendEnabled   collections.Map[string, bool]
+}
+```
+
+The bank module demonstrates how modules manage state using the Collections framework. Every account balance is stored as a key-value pair where the key is the combination of address and denomination.
+
+### IBC: Protocol Implementation
+
+The IBC (Inter-Blockchain Communication) module shows how modules can implement complex protocols. IBC isn't just a simple state manager—it's a complete protocol for trustless communication between chains:
+
+```go
+// From ibc-go/modules/core/keeper/keeper.go
+type Keeper struct {
+    cdc codec.BinaryCodec
+
+    ClientKeeper       clientkeeper.Keeper
+    ConnectionKeeper   connectionkeeper.Keeper
+    ChannelKeeper      channelkeeper.Keeper
+    PortKeeper         portkeeper.Keeper
+
+    Router             *porttypes.Router
+
+    authority string
+}
+```
+
+IBC is composed of multiple sub-keepers, each managing different aspects of the protocol: clients track other chains, connections establish communication paths, channels handle packet flow, and ports manage module bindings.
+
+### The Upgrade Module: Coordinating Chain Evolution
+
+The `x/upgrade` module demonstrates a different pattern—it doesn't manage user funds or complex protocols, but coordinates the entire chain's upgrade process:
+
+```go
+// From x/upgrade/keeper/keeper.go
+func (k Keeper) ScheduleUpgrade(ctx context.Context, plan types.Plan) error {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+    // The upgrade module has the special ability to halt the chain
+    if err := plan.ValidateBasic(); err != nil {
+        return err
+    }
+
+    if !plan.Time.IsZero() {
+        return errors.New("upgrade by time is disabled")
+    }
+
+    if plan.Height <= sdkCtx.HeaderInfo().Height {
+        return errors.New("upgrade cannot be scheduled in the past")
+    }
+
+    // Store the plan - when the chain reaches this height, it will halt
+    if err := k.SetUpgradePlan(ctx, plan); err != nil {
+        return err
+    }
+
+    return nil
+}
+```
+
+This demonstrates how modules can have special privileges—the upgrade module can halt the entire chain, something no regular transaction could do.
+
+## Core Requirements
+
+Every module must implement `AppModuleBasic`, but what they do beyond that varies widely. Let's look at how different modules approach this:
+
+### The Minimal Interface: x/auth
+
+The auth module manages accounts and transaction authentication. Its basic interface is straightforward:
+
+```go
+// From x/auth/module.go
+func (AppModuleBasic) Name() string {
+    return types.ModuleName
+}
+
+func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    types.RegisterLegacyAminoCodec(cdc)
+}
+
+func (AppModuleBasic) RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    types.RegisterInterfaces(registry)
+}
+```
+
+### Extended Capabilities: x/staking
+
+The staking module needs to participate in block processing to handle validator updates:
+
+```go
+// From x/staking/module.go
+type AppModule struct {
+    AppModuleBasic
+    keeper        *keeper.Keeper
+    accountKeeper types.AccountKeeper
+    bankKeeper    types.BankKeeper
+}
+
+// BeginBlock updates validator set and handles slashing
+func (am AppModule) BeginBlock(ctx context.Context) error {
+    return am.keeper.BeginBlocker(ctx)
+}
+
+// EndBlock processes validator updates for CometBFT
+func (am AppModule) EndBlock(ctx context.Context) error {
+    return am.keeper.EndBlocker(ctx)
+}
+```
+
+The staking module's `BeginBlock` and `EndBlock` methods aren't just arbitrary hooks—they're essential for maintaining consensus by updating the validator set that CometBFT uses.
+
+## State Management Patterns
+
+### Collections Framework: x/bank's Approach
+
+The bank module uses Collections for type-safe state management:
+
+```go
+// From x/bank/keeper/keeper.go - Setting up collections
+sb := collections.NewSchemaBuilder(storeService)
+
+k := BaseKeeper{
+    Balances: collections.NewMap(
+        sb,
+        types.BalancesPrefix,
+        "balances",
+        collections.PairKeyCodec(sdk.AccAddressKey, collections.StringKey),
+        sdk.IntValue,
+    ),
+    Supply: collections.NewMap(
+        sb,
+        types.SupplyKey,
+        "supply",
+        collections.StringKey,
+        sdk.IntValue,
+    ),
+}
+
+// From x/bank/keeper/send.go - Using collections
+func (k BaseSendKeeper) GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin {
+    amt, err := k.Balances.Get(ctx, collections.Join(addr, denom))
+    if err != nil && !errors.Is(err, collections.ErrNotFound) {
+        panic(err)
+    }
+    return sdk.NewCoin(denom, amt)
+}
+```
+
+### Collections in Governance: x/gov Module
+
+The governance module also uses Collections for managing proposals and votes:
+
+```go
+// From x/gov/keeper/keeper.go
+type Keeper struct {
+    // ... other fields ...
+
+    // Collections for state management
+    Proposals              collections.Map[uint64, v1.Proposal]
+    Votes                  collections.Map[collections.Pair[uint64, sdk.AccAddress], v1.Vote]
+    ActiveProposalsQueue   collections.Map[collections.Pair[time.Time, uint64], uint64]
+    InactiveProposalsQueue collections.Map[collections.Pair[time.Time, uint64], uint64]
+    VotingPeriodProposals  collections.Map[uint64, []byte]
+}
+
+// From x/gov/keeper/keeper.go - Setup
+k := Keeper{
+    Proposals: collections.NewMap(
+        sb, types.ProposalsKeyPrefix, "proposals",
+        collections.Uint64Key, codec.CollValue[v1.Proposal](cdc),
+    ),
+    ActiveProposalsQueue: collections.NewMap(
+        sb, types.ActiveProposalQueuePrefix, "active_proposals_queue",
+        collections.PairKeyCodec(sdk.TimeKey, collections.Uint64Key),
+        collections.Uint64Value,
+    ),
+}
+```
+
+## Service Registration
+
+### Transaction Processing: x/bank's Message Server
+
+The bank module's message server shows how modules handle transactions:
+
+```go
+// From x/bank/keeper/msg_server.go
+type msgServer struct {
+    BaseKeeper
+}
+
+func (k msgServer) Send(goCtx context.Context, msg *types.MsgSend) (*types.MsgSendResponse, error) {
+    from, err := k.ak.AddressCodec().StringToBytes(msg.FromAddress)
+    if err != nil {
+        return nil, err
+    }
+
+    to, err := k.ak.AddressCodec().StringToBytes(msg.ToAddress)
+    if err != nil {
+        return nil, err
+    }
+
+    if k.BlockedAddr(to) {
+        return nil, errors.Wrapf(types.ErrUnauthorized, "%s is not allowed to receive funds", msg.ToAddress)
+    }
+
+    err = k.SendCoins(goCtx, from, to, msg.Amount)
+    if err != nil {
+        return nil, err
+    }
+
+    return &types.MsgSendResponse{}, nil
+}
+```
+
+This isn't just moving numbers in a database—the bank module enforces critical invariants like preventing sends to module accounts that shouldn't receive funds.
+
+### Query Services: x/staking's Information Provider
+
+The staking module provides extensive query services for validator information:
+
+```go
+// From x/staking/keeper/grpc_query.go
+func (k Querier) Validators(ctx context.Context, req *types.QueryValidatorsRequest) (*types.QueryValidatorsResponse, error) {
+    if req == nil {
+        return nil, errors.New("empty request")
+    }
+
+    // This query is critical for UIs and other chains to understand the validator set
+    validators, pageRes, err := query.CollectionPaginate(
+        ctx,
+        k.Keeper.Validators,
+        req.Pagination,
+        func(key []byte, val types.Validator) (types.Validator, error) {
+            if req.Status != "" && !strings.EqualFold(val.Status.String(), req.Status) {
+                return types.Validator{}, errors.Wrapf(collection.ErrSkipIteration, "validator %s does not match status %s", val.OperatorAddress, req.Status)
+            }
+            return val, nil
+        },
+    )
+
+    if err != nil {
+        return nil, errors.New("failed to query validators")
+    }
+
+    return &types.QueryValidatorsResponse{Validators: validators, Pagination: pageRes}, nil
+}
+```
+
+## Module Lifecycle Integration
+
+### The Distribution Module: Rewards at Block Boundaries
+
+The distribution module calculates and distributes staking rewards during block processing:
+
+```go
+// From x/distribution/abci.go
+func (am AppModule) BeginBlock(ctx context.Context) error {
+    defer telemetry.ModuleMeasureSince(types.ModuleName, time.Now(), telemetry.MetricKeyBeginBlocker)
+
+    // Distribute rewards for the previous block
+    // This must happen in BeginBlock to ensure rewards are distributed before any transactions
+    return am.keeper.AllocateTokens(ctx)
+}
+
+// From x/distribution/keeper/allocation.go
+func (k Keeper) AllocateTokens(ctx context.Context) error {
+    // Get the total power of all validators
+    totalPower := k.stakingKeeper.TotalBondedTokens(ctx)
+
+    // Get the fees collected in the last block
+    feeCollector := k.authKeeper.GetModuleAccount(ctx, k.feeCollectorName)
+    feesCollected := k.bankKeeper.GetAllBalances(ctx, feeCollector.GetAddress())
+
+    // Distribute to validators based on their voting power
+    // This complex calculation ensures fair reward distribution
+    // ...
+}
+```
+
+### The Evidence Module: Handling Misbehavior
+
+The evidence module processes evidence of validator misbehavior:
+
+```go
+// From x/evidence/keeper/keeper.go
+type Keeper struct {
+    cdc            codec.BinaryCodec
+    storeService   corestore.KVStoreService
+    router         types.Router
+    stakingKeeper  types.StakingKeeper
+    slashingKeeper types.SlashingKeeper
+
+    Schema   collections.Schema
+    Evidences collections.Map[[]byte, exported.Evidence]
+}
+
+// From x/evidence/keeper/infraction.go
+// handleEquivocationEvidence processes evidence of double signing
+func (k Keeper) handleEquivocationEvidence(ctx context.Context, evidence *types.Equivocation) error {
+    consAddr := evidence.GetConsensusAddress(k.stakingKeeper.ConsensusAddressCodec())
+
+    validator, err := k.stakingKeeper.ValidatorByConsAddr(ctx, consAddr)
+    if err != nil {
+        return err
+    }
+    if validator == nil || validator.IsUnbonded() {
+        return nil // Cannot slash unbonded validators
+    }
+
+    // Check if validator is already tombstoned
+    if k.slashingKeeper.IsTombstoned(ctx, consAddr) {
+        return nil // Already slashed for equivocation
+    }
+
+    // Slash the validator for double signing
+    // This protects the network from malicious validators
+    k.slashingKeeper.SlashWithInfractionReason(
+        ctx, consAddr, infractionHeight, power,
+        k.slashingKeeper.SlashFractionDoubleSign(ctx),
+        types.Infraction_INFRACTION_DOUBLE_SIGN,
+    )
+}
+```
+
+## Module Communication Patterns
+
+### Direct Keeper Interaction: x/gov and x/staking
+
+The governance module needs to execute proposals that can affect other modules. Here's how it interacts with the staking module:
+
+```go
+// From x/gov/keeper/keeper.go
+type Keeper struct {
+    // Governance needs access to staking to handle validator-related proposals
+    sk types.StakingKeeper
+    // ... other keepers
+}
+
+// From x/staking/types/expected_keepers.go
+type StakingKeeper interface {
+    // Gov module can jail validators through proposals
+    Jail(context.Context, sdk.ConsAddress) error
+    Unjail(context.Context, sdk.ConsAddress) error
+
+    // Gov can update staking parameters
+    SetParams(context.Context, types.Params) error
+}
+```
+
+### Event-Based Communication: x/slashing Notifications
+
+The slashing module emits events that other modules and external systems can respond to:
+
+```go
+// From x/slashing/keeper/infractions.go
+func (k Keeper) HandleValidatorSignature(ctx context.Context, addr cryptotypes.Address, power int64, signed comet.BlockIDFlag) error {
+    // ... slashing logic ...
+
+    // Emit an event that other modules or external monitors can observe
+    sdkCtx.EventManager().EmitEvent(
+        sdk.NewEvent(
+            types.EventTypeSlash,
+            sdk.NewAttribute(types.AttributeKeyAddress, consAddr.String()),
+            sdk.NewAttribute(types.AttributeKeyPower, fmt.Sprintf("%d", power)),
+            sdk.NewAttribute(types.AttributeKeyReason, types.AttributeValueMissingSignature),
+            sdk.NewAttribute(types.AttributeKeyJailed, fmt.Sprintf("%v", !validator.IsJailed())),
+        ),
+    )
+}
+```
+
+### The Feegrant Module: Extending Capabilities
+
+The feegrant module shows how modules can extend the capabilities of others without modifying them:
+
+```go
+// From x/feegrant/keeper/keeper.go
+func (k Keeper) UseGrantedFees(ctx context.Context, granter, grantee sdk.AccAddress, fee sdk.Coins, msgs []sdk.Msg) error {
+    grant, err := k.GetGrant(ctx, granter, grantee)
+    if err != nil {
+        return err
+    }
+
+    // The feegrant module allows one account to pay fees for another
+    // This extends the auth module's fee payment system without modifying it
+    allow, err := grant.GetGrant().Accept(ctx, fee, msgs)
+    if err != nil {
+        return err
+    }
+
+    // Deduct fees from the granter, not the grantee
+    err = k.bankKeeper.SendCoinsFromAccountToModule(ctx, granter, types.FeeCollectorName, fee)
+    if err != nil {
+        return err
+    }
+
+    // Update or remove the grant based on its remaining allowance
+    if allow != nil {
+        grant.Grant = allow
+        k.SetGrant(ctx, grant)
+    } else {
+        k.RemoveGrant(ctx, granter, grantee)
+    }
+
+    return nil
+}
+```
+
+## Advanced Module Capabilities
+
+### The AuthZ Module: Delegated Permissions
+
+The authz module enables sophisticated permission delegation:
+
+```go
+// From x/authz/keeper/keeper.go
+func (k Keeper) DispatchActions(ctx context.Context, grantee sdk.AccAddress, msgs []sdk.Msg) ([][]byte, error) {
+    results := make([][]byte, len(msgs))
+
+    for i, msg := range msgs {
+        signers := msg.GetSigners()
+        if len(signers) != 1 {
+            return nil, errors.New("authz can only dispatch messages with exactly one signer")
+        }
+
+        granter := signers[0]
+
+        // Check if grantee has authorization from granter
+        authorization, expiration, err := k.GetAuthorization(ctx, grantee, granter, sdk.MsgTypeURL(msg))
+        if err != nil {
+            return nil, err
+        }
+
+        // Execute the message on behalf of the granter
+        resp, err := authorization.Accept(ctx, msg)
+        if err != nil {
+            return nil, err
+        }
+
+        if resp.Delete {
+            k.DeleteGrant(ctx, grantee, granter, sdk.MsgTypeURL(msg))
+        } else if resp.Updated != nil {
+            k.SaveGrant(ctx, grantee, granter, resp.Updated, expiration)
+        }
+
+        results[i] = sdk.MsgTypeURL(msg)
+    }
+
+    return results, nil
+}
+```
+
+## Testing Strategies
+
+### The Bank Module's Comprehensive Testing
+
+The bank module's tests demonstrate thorough testing practices:
+
+```go
+// From x/bank/keeper/keeper_test.go
+func (suite *KeeperTestSuite) TestSendCoinsFromModuleToAccount() {
+    ctx := suite.ctx
+
+    // Setup: Create a module account with funds
+    moduleName := "test"
+    moduleAcc := authtypes.NewModuleAccount(
+        authtypes.NewBaseAccountWithAddress(sdk.AccAddress([]byte(moduleName))),
+        moduleName,
+        authtypes.Minter,
+    )
+
+    suite.authKeeper.SetModuleAccount(ctx, moduleAcc)
+    suite.Require().NoError(suite.bankKeeper.MintCoins(ctx, moduleName, initCoins))
+
+    // Test: Send from module to account
+    addr := sdk.AccAddress([]byte("addr"))
+    suite.Require().NoError(suite.bankKeeper.SendCoinsFromModuleToAccount(
+        ctx, moduleName, addr, initCoins,
+    ))
+
+    // Verify: Check balances
+    balance := suite.bankKeeper.GetAllBalances(ctx, addr)
+    suite.Require().Equal(initCoins, balance)
+
+    moduleBalance := suite.bankKeeper.GetAllBalances(ctx, moduleAcc.GetAddress())
+    suite.Require().True(moduleBalance.Empty())
+}
+```
+
+## References
+
+- [Cosmos SDK Modules Source Code](https://github.com/cosmos/cosmos-sdk/tree/main/x) - Production module implementations
+- [IBC-Go Modules](https://github.com/cosmos/ibc-go) - Inter-blockchain communication protocol
+- [CosmWasm](https://github.com/CosmWasm/cosmwasm) - Smart contract platform module
+- [Ethermint EVM](https://github.com/evmos/ethermint) - Ethereum Virtual Machine implementation

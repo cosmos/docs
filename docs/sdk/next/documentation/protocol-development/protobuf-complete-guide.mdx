@@ -1,0 +1,420 @@
+---
+title: Protocol Buffers Implementation Guide
+description: Technical reference for Protocol Buffers in Cosmos SDK
+---
+
+# Protocol Buffers in Cosmos SDK
+
+## Overview
+
+The Cosmos SDK uses Protocol Buffers for all serialization. This document provides a technical reference for implementing and working with protobuf in SDK modules.
+
+## Architecture
+
+Protocol Buffers serve four primary functions in the Cosmos SDK:
+
+1. **State Encoding** (ADR-019): Serialization of blockchain state
+2. **Transaction Encoding** (ADR-020): Transaction structure and signing
+3. **Query System** (ADR-021): gRPC query services
+4. **Message Services** (ADR-031): Transaction message routing
+
+## Setup
+
+### Required Tools
+
+```bash
+# Install buf
+curl -sSL https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-$(uname -s)-$(uname -m) \
+  -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
+```
+
+### Directory Structure
+
+```
+proto/
+├── buf.yaml
+├── buf.gen.gogo.yaml
+└── [org]/
+    └── [module]/
+        └── v1/
+            ├── types.proto
+            ├── tx.proto
+            ├── query.proto
+            ├── genesis.proto
+            └── events.proto
+```
+
+### Configuration Files
+
+`buf.yaml`:
+```yaml
+version: v1
+name: buf.build/[org]/[project]
+deps:
+  - buf.build/cosmos/cosmos-sdk
+  - buf.build/cosmos/cosmos-proto
+  - buf.build/cosmos/gogo-proto
+  - buf.build/googleapis/googleapis
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - STANDARD
+    - COMMENTS
+    - FILE_LOWER_SNAKE_CASE
+  except:
+    - UNARY_RPC
+    - COMMENT_FIELD
+```
+
+`buf.gen.gogo.yaml`:
+```yaml
+version: v1
+plugins:
+  - name: gocosmos
+    out: ..
+    opt: plugins=grpc,Mgoogle/protobuf/any.proto=github.com/cosmos/gogoproto/types/any
+  - name: grpc-gateway
+    out: ..
+    opt: logtostderr=true,allow_colon_final_segments=true
+```
+
+## Message Definitions
+
+### Basic Message Structure
+
+```protobuf
+syntax = "proto3";
+package example.module.v1;
+
+import "gogoproto/gogo.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/example/module/types";
+
+message Params {
+  option (gogoproto.goproto_stringer) = false;
+
+  bool enabled = 1;
+  uint32 max_items = 2;
+  string authority = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+```
+
+### Transaction Messages
+
+```protobuf
+syntax = "proto3";
+package example.module.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/example/module/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  rpc Execute(MsgExecute) returns (MsgExecuteResponse);
+}
+
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgUpdateParamsResponse {}
+
+message MsgExecute {
+  option (cosmos.msg.v1.signer) = "sender";
+
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string data = 2;
+}
+
+message MsgExecuteResponse {
+  string result = 1;
+}
+```
+
+### Query Services
+
+```protobuf
+syntax = "proto3";
+package example.module.v1;
+
+import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/example/module/types";
+
+service Query {
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/example/module/v1/params";
+  }
+
+  rpc State(QueryStateRequest) returns (QueryStateResponse) {
+    option (google.api.http).get = "/example/module/v1/state/{id}";
+  }
+
+  rpc States(QueryStatesRequest) returns (QueryStatesResponse) {
+    option (google.api.http).get = "/example/module/v1/states";
+  }
+}
+
+message QueryParamsRequest {}
+
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryStateRequest {
+  string id = 1;
+}
+
+message QueryStateResponse {
+  State state = 1;
+}
+
+message QueryStatesRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryStatesResponse {
+  repeated State states = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+```
+
+## Annotations
+
+### Cosmos Proto Annotations
+
+| Annotation | Usage | Description |
+|------------|-------|-------------|
+| `(cosmos_proto.scalar)` | Field-level | Type mapping for addresses and numbers |
+| `(cosmos_proto.accepts_interface)` | Field-level | Any field interface constraint |
+| `(cosmos_proto.implements_interface)` | Message-level | Interface implementation marker |
+| `(cosmos.msg.v1.signer)` | Message-level | Transaction signer field |
+| `(cosmos.msg.v1.service)` | Service-level | Msg service marker |
+
+### Scalar Types
+
+```protobuf
+message Example {
+  string account = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string validator = 2 [(cosmos_proto.scalar) = "cosmos.ValidatorAddressString"];
+  string consensus = 3 [(cosmos_proto.scalar) = "cosmos.ConsensusAddressString"];
+  string amount = 4 [(cosmos_proto.scalar) = "cosmos.Int"];
+  string rate = 5 [(cosmos_proto.scalar) = "cosmos.Dec"];
+}
+```
+
+### Gogoproto Annotations
+
+| Annotation | Effect |
+|------------|--------|
+| `(gogoproto.nullable) = false` | Non-pointer field in Go |
+| `(gogoproto.goproto_getters) = false` | No getter methods |
+| `(gogoproto.equal) = true` | Generate Equal() method |
+| `(gogoproto.goproto_stringer) = false` | Custom String() method |
+| `(gogoproto.castrepeated)` | Custom slice type |
+| `(gogoproto.casttype)` | Custom Go type |
+
+## Interface Registry
+
+### Registration
+
+```go
+package types
+
+import (
+    "github.com/cosmos/cosmos-sdk/codec"
+    cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+    sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/msgservice"
+)
+
+func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+    registry.RegisterImplementations((*sdk.Msg)(nil),
+        &MsgUpdateParams{},
+        &MsgExecute{},
+    )
+
+    msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
+}
+
+var (
+    Amino     = codec.NewLegacyAmino()
+    ModuleCdc = codec.NewProtoCodec(cdctypes.NewInterfaceRegistry())
+)
+```
+
+### Working with Any Types
+
+```go
+// Pack interface to Any
+func PackInterface(i proto.Message) (*codectypes.Any, error) {
+    return codectypes.NewAnyWithValue(i)
+}
+
+// Unpack Any to interface
+func UnpackInterface(any *codectypes.Any, iface interface{}) error {
+    return ModuleCdc.UnpackAny(any, iface)
+}
+
+// Implement UnpackInterfaces for types containing Any fields
+func (m *Message) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
+    var iface InterfaceType
+    return unpacker.UnpackAny(m.AnyField, &iface)
+}
+```
+
+## Code Generation
+
+```bash
+# Generate code
+cd proto
+buf generate
+
+# Move generated files
+cp -r github.com/[org]/[project]/* ../
+rm -rf github.com
+```
+
+## Deterministic Encoding
+
+The SDK requires deterministic encoding for:
+- Transaction signing
+- State commitment
+- Consensus
+
+Implementation:
+```go
+func GetSignBytes(msg proto.Message) ([]byte, error) {
+    return msg.Marshal() // protobuf marshaling is deterministic
+}
+```
+
+## Field Management
+
+### Field Numbers
+
+```protobuf
+message Schema {
+  // Frequently accessed fields: 1-15 (single byte encoding)
+  string id = 1;
+  string name = 2;
+
+  // Reserved for deleted fields
+  reserved 3, 4;
+  reserved "old_field", "removed_field";
+
+  // Deprecated field
+  string legacy_field = 5 [deprecated = true];
+
+  // Less frequent fields: 16+
+  string metadata = 16;
+}
+```
+
+### Versioning
+
+```protobuf
+// Initial version
+package example.module.v1beta1;
+
+// Stable version
+package example.module.v1;
+
+// Breaking changes require new version
+package example.module.v2;
+```
+
+### Version Annotations
+
+```protobuf
+service Msg {
+  rpc OriginalMethod(Request) returns (Response);
+
+  rpc NewMethod(NewRequest) returns (NewResponse) {
+    option (cosmos_proto.method_added_in) = "v0.47";
+  }
+}
+
+message Enhanced {
+  string existing = 1;
+  string new_field = 2 [(cosmos_proto.field_added_in) = "v0.47"];
+}
+```
+
+## Testing
+
+### Message Testing
+
+```go
+func TestMessage(t *testing.T) {
+    msg := &types.MsgExecute{
+        Sender: "cosmos1...",
+        Data:   "test",
+    }
+
+    // Test marshaling
+    bz, err := msg.Marshal()
+    require.NoError(t, err)
+
+    // Test unmarshaling
+    var decoded types.MsgExecute
+    err = decoded.Unmarshal(bz)
+    require.NoError(t, err)
+    require.Equal(t, msg, &decoded)
+
+    // Test determinism
+    bz2, err := msg.Marshal()
+    require.NoError(t, err)
+    require.Equal(t, bz, bz2)
+}
+```
+
+### Interface Registration Testing
+
+```go
+func TestRegistration(t *testing.T) {
+    registry := cdctypes.NewInterfaceRegistry()
+    types.RegisterInterfaces(registry)
+
+    msg := &MsgExecute{Sender: "cosmos1...", Data: "test"}
+
+    any, err := codectypes.NewAnyWithValue(msg)
+    require.NoError(t, err)
+
+    var unpacked sdk.Msg
+    err = registry.UnpackAny(any, &unpacked)
+    require.NoError(t, err)
+    require.Equal(t, msg, unpacked)
+}
+```
+
+## Troubleshooting
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Type URL not found` | Missing registration | Add to `RegisterInterfaces` |
+| `Cannot unmarshal Any` | Interface mismatch | Verify interface implementation |
+| `Breaking changes detected` | Field modification | Use deprecation or new version |
+| `Import not found` | Missing dependency | Run `buf mod update` |
+| `Field number collision` | Reused number | Use reserved statement |
+
+## References
+
+- [Protocol Buffers Language Guide](https://protobuf.dev/programming-guides/proto3/)
+- [Buf Documentation](https://buf.build/docs/)
+- [Gogoproto Extensions](https://github.com/cosmos/gogoproto)
+- [Cosmos Proto](https://github.com/cosmos/cosmos-proto)
+- [SDK Proto Definitions](https://buf.build/cosmos/cosmos-sdk)

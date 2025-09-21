@@ -34,10 +34,10 @@ const PRODUCT_REPOS = {
 
 // Version configurations per product
 const PRODUCT_VERSIONS = {
-  evm: ['next'], // EVM uses 'next' as primary
-  sdk: ['v0.53', 'v0.50', 'v0.47'], // SDK has multiple versions
-  ibc: ['v8', 'v7', 'v6'], // Example IBC versions
-  cometbft: ['v0.38', 'v0.37'], // Example CometBFT versions
+  evm: ['next', 'v0.4.x'], // EVM versions
+  sdk: ['next', 'v0.53', 'v0.50', 'v0.47'], // SDK versions
+  ibc: ['next', 'v10.1.x', 'v8.5.x', 'v7.8.x', 'v6.3.x', 'v5.4.x', 'v4.6.x'], // IBC versions
+  cometbft: ['v0.38', 'v0.37'], // Example CometBFT versions (to be added)
   // Add version configs as needed
 };
 
@@ -68,10 +68,25 @@ async function fetchChangelog(source, version = null) {
   // Determine the actual source to fetch from
   let fetchSource = source;
 
-  // For SDK/IBC, try release branches first
-  if (version && SUBDIR !== 'evm') {
-    // Try release/vX.Y.x branch format
-    fetchSource = `release/${version}.x`;
+  // Handle different branch naming conventions per product
+  if (version && SUBDIR === 'ibc') {
+    // IBC uses release/vX.Y.x format (with .x suffix)
+    // For version patterns like v10.1.x, v8.5.x, use the pattern as-is
+
+    // For 'next', use 'main' branch
+    if (version === 'next') {
+      fetchSource = 'main';
+    } else {
+      // IBC uses vX.Y.x format for release branches
+      fetchSource = `release/${version}`;
+    }
+  } else if (version && SUBDIR === 'sdk') {
+    // SDK uses release/vX.Y.x branch format
+    if (version === 'next') {
+      fetchSource = 'main';
+    } else {
+      fetchSource = `release/${version}.x`;
+    }
   } else if (source === 'latest' && version) {
     // For specific version requests
     fetchSource = version;
@@ -119,7 +134,7 @@ function sanitizeLine(line) {
   return line.replace(/<!--/g, '{/*').replace(/-->/g, '*/}');
 }
 
-function parseChangelogToMintlify(changelogContent) {
+function parseChangelogToMintlify(changelogContent, targetVersion = null) {
   console.log(' Converting changelog to Mintlify format...');
 
   const lines = changelogContent.split('\n');
@@ -128,6 +143,16 @@ function parseChangelogToMintlify(changelogContent) {
   let currentDate = null;
   let currentChanges = [];
 
+  // For version-specific requests (e.g., v0.53), extract major.minor version
+  let targetMajorMinor = null;
+  if (targetVersion && targetVersion !== 'next') {
+    // Extract major.minor from patterns like v0.53, v0.53.x, v10.1.x
+    const match = targetVersion.match(/^v?(\d+\.\d+)/);
+    if (match) {
+      targetMajorMinor = match[1];
+    }
+  }
+
   for (const line of lines) {
     // Match version headers commonly used across repos
     // Examples:
@@ -135,7 +160,8 @@ function parseChangelogToMintlify(changelogContent) {
     //   ## v0.53.0 - 2024-08-15
     //   ## v0.53
     //   ## [v0.4.x] - 2024-08-15
-    const versionMatch = line.match(/^##\s*\[?([vV]?\d+\.\d+(?:\.(?:\d+|x))?)\]?\s*(?:-\s*(.+))?$/);
+    //   ## [v0.53.4](link) - 2025-07-25
+    const versionMatch = line.match(/^##\s*\[?v?(\d+\.\d+(?:\.\d+)?(?:\.x)?)\]?(?:\([^)]*\))?\s*(?:-\s*(.+))?$/);
 
     if (versionMatch) {
       // Save previous version if exists
@@ -172,10 +198,28 @@ function parseChangelogToMintlify(changelogContent) {
     });
   }
 
+  // Filter updates to only include versions matching the target
+  let filteredUpdates = updates;
+  if (targetMajorMinor) {
+    filteredUpdates = updates.filter(update => {
+      // Check if the update version starts with the target major.minor
+      const updateVersion = update.version.replace(/^v/, '');
+      return updateVersion.startsWith(targetMajorMinor);
+    });
+
+    // If no matching versions found, include all as fallback
+    if (filteredUpdates.length === 0) {
+      console.log(` No versions matching ${targetMajorMinor} found, including all versions`);
+      filteredUpdates = updates;
+    } else {
+      console.log(` Found ${filteredUpdates.length} versions matching ${targetMajorMinor}`);
+    }
+  }
+
   // Fallback: if nothing parsed, wrap entire changelog
-  if (updates.length === 0) {
+  if (filteredUpdates.length === 0) {
     const nonEmpty = lines.filter(l => l.trim().length).slice(0, 500);
-    updates.push({ version: SOURCE, date: '', changes: nonEmpty.map(l => sanitizeLine(`- ${l.trim()}`)) });
+    filteredUpdates.push({ version: targetVersion || SOURCE, date: '', changes: nonEmpty.map(l => sanitizeLine(`- ${l.trim()}`)) });
   }
 
   // Generate Mintlify format
@@ -185,7 +229,7 @@ description: "Cosmos ${PRODUCT_LABEL} release notes and changelog"
 mode: "custom"
 ---
 
-${updates.map(update =>
+${filteredUpdates.map(update =>
   `<Update version="${update.version}" date="${update.date}">
 ${update.changes.map(change => `  ${change}`).join('\n')}
 </Update>`
@@ -198,7 +242,6 @@ async function updateReleaseNotes(content, version = 'next') {
   // Determine output path based on product and version
   const outputPath = path.join(
     __dirname,
-    '..',
     '..',
     'docs',
     SUBDIR,
@@ -226,7 +269,7 @@ async function processVersion(version, source) {
   try {
     // Fetch and process changelog for this version
     const changelog = await fetchChangelog(source, version);
-    const mintlifyContent = parseChangelogToMintlify(changelog);
+    const mintlifyContent = parseChangelogToMintlify(changelog, version);
     const result = await updateReleaseNotes(mintlifyContent, version);
 
     return {
