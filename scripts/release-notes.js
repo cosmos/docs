@@ -130,8 +130,48 @@ async function fetchChangelog(source, version = null) {
 }
 
 function sanitizeLine(line) {
-  // Convert HTML comments to MDX comments and neutralize problematic sequences
-  return line.replace(/<!--/g, '{/*').replace(/-->/g, '*/}');
+  // Convert HTML comments to MDX comments
+  let sanitized = line.replace(/<!--/g, '{/*').replace(/-->/g, '*/}');
+
+  // Escape JSX-like syntax that breaks MDX parsing
+  // Look for patterns like <word= or <word> that aren't part of MDX components
+  // Preserve actual MDX components and markdown links
+
+  // First, protect markdown links and code blocks
+  const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const codePattern = /`[^`]+`/g;
+
+  // Store protected content
+  const protectedParts = [];
+  let protectedIndex = 0;
+
+  // Protect inline code
+  sanitized = sanitized.replace(codePattern, (match) => {
+    const placeholder = `__PROTECTED_${protectedIndex}__`;
+    protectedParts[protectedIndex] = match;
+    protectedIndex++;
+    return placeholder;
+  });
+
+  // Protect markdown links
+  sanitized = sanitized.replace(linkPattern, (match) => {
+    const placeholder = `__PROTECTED_${protectedIndex}__`;
+    protectedParts[protectedIndex] = match;
+    protectedIndex++;
+    return placeholder;
+  });
+
+  // Escape problematic characters in the remaining text
+  // Escape < and > that look like JSX but aren't MDX components
+  sanitized = sanitized.replace(/<([a-zA-Z][^>]*=)/g, '\\<$1');
+  sanitized = sanitized.replace(/<([^A-Z/])/g, '\\<$1');
+
+  // Restore protected content
+  for (let i = 0; i < protectedParts.length; i++) {
+    sanitized = sanitized.replace(`__PROTECTED_${i}__`, protectedParts[i]);
+  }
+
+  return sanitized;
 }
 
 function parseChangelogToMintlify(changelogContent, targetVersion = null) {
@@ -142,6 +182,7 @@ function parseChangelogToMintlify(changelogContent, targetVersion = null) {
   let currentVersion = null;
   let currentDate = null;
   let currentChanges = [];
+  let inCommentBlock = false;
 
   // For version-specific requests (e.g., v0.53), extract major.minor version
   let targetMajorMinor = null;
@@ -154,6 +195,17 @@ function parseChangelogToMintlify(changelogContent, targetVersion = null) {
   }
 
   for (const line of lines) {
+    // Skip HTML comment blocks
+    if (line.includes('<!--')) {
+      inCommentBlock = true;
+    }
+    if (inCommentBlock) {
+      if (line.includes('-->')) {
+        inCommentBlock = false;
+      }
+      continue;
+    }
+
     // Match version headers commonly used across repos
     // Examples:
     //   ## [v0.4.1] - 2024-08-15
@@ -161,7 +213,15 @@ function parseChangelogToMintlify(changelogContent, targetVersion = null) {
     //   ## v0.53
     //   ## [v0.4.x] - 2024-08-15
     //   ## [v0.53.4](link) - 2025-07-25
+    //   ## [Unreleased]
     const versionMatch = line.match(/^##\s*\[?v?(\d+\.\d+(?:\.\d+)?(?:\.x)?)\]?(?:\([^)]*\))?\s*(?:-\s*(.+))?$/);
+
+    // Skip [Unreleased] sections
+    if (line.match(/^##\s*\[?Unreleased\]?/i)) {
+      currentVersion = null;
+      currentChanges = [];
+      continue;
+    }
 
     if (versionMatch) {
       // Save previous version if exists
@@ -183,9 +243,17 @@ function parseChangelogToMintlify(changelogContent, targetVersion = null) {
     // Skip empty lines and separators
     if (!line.trim() || line.match(/^[-=]+$/)) continue;
 
-    // Collect changes (lines that start with - or * or are indented)
-    if (currentVersion && (line.startsWith('- ') || line.startsWith('* ') || line.match(/^\s+/))) {
-      currentChanges.push(sanitizeLine(line.trim()));
+    // Skip lines that are part of the changelog header/guidelines
+    if (!currentVersion && line.match(/^#\s+Changelog/i)) continue;
+
+    // Collect changes (lines that start with - or * or subsection headers)
+    if (currentVersion) {
+      // Handle subsection headers (### Features, ### Bug Fixes, etc.)
+      if (line.match(/^###\s+/)) {
+        currentChanges.push(sanitizeLine(line.trim()));
+      } else if (line.startsWith('- ') || line.startsWith('* ') || line.match(/^\s+[-*]/)) {
+        currentChanges.push(sanitizeLine(line.trim()));
+      }
     }
   }
 
