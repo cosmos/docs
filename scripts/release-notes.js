@@ -298,7 +298,7 @@ mode: "custom"
 ---
 
 ${filteredUpdates.map(update =>
-  `<Update version="${update.version}" date="${update.date}">
+  `<Update label="${update.date}" description="v${update.version}" tags={["${PRODUCT_LABEL}", "Release"]}>
 ${update.changes.map(change => `  ${change}`).join('\n')}
 </Update>`
 ).join('\n\n')}`;

@@ -822,11 +822,11 @@ const migrationIssues = {
     if (totalIssues === 0) return '';
 
     let report = '\n' + '='.repeat(80) + '\n';
-    report += '📋 MIGRATION REPORT\n';
+    report += ' MIGRATION REPORT\n';
     report += '='.repeat(80) + '\n\n';
 
     if (this.errors.length > 0) {
-      report += `❌ ERRORS (${this.errors.length}) - These need manual fixes:\n`;
+      report += ` ERRORS (${this.errors.length}) - These need manual fixes:\n`;
       report += '-'.repeat(40) + '\n';
 
       const errorsByFile = {};
@@ -836,11 +836,11 @@ const migrationIssues = {
       });
 
       Object.entries(errorsByFile).forEach(([file, errors]) => {
-        report += `\n📄 ${file}:\n`;
+        report += `\n ${file}:\n`;
         errors.forEach(err => {
           report += `  Line ${err.line}: ${err.issue}\n`;
           if (err.suggestion) {
-            report += `    💡 Suggestion: ${err.suggestion}\n`;
+            report += `     Suggestion: ${err.suggestion}\n`;
           }
         });
       });
@@ -848,7 +848,7 @@ const migrationIssues = {
     }
 
     if (this.warnings.length > 0) {
-      report += `⚠️  WARNINGS (${this.warnings.length}) - Automatically handled but please verify:\n`;
+      report += `  WARNINGS (${this.warnings.length}) - Automatically handled but please verify:\n`;
       report += '-'.repeat(40) + '\n';
 
       const warningsByFile = {};
@@ -858,11 +858,11 @@ const migrationIssues = {
       });
 
       Object.entries(warningsByFile).forEach(([file, warnings]) => {
-        report += `\n📄 ${file}:\n`;
+        report += `\n ${file}:\n`;
         warnings.forEach(warn => {
           report += `  Line ${warn.line}: ${warn.issue}\n`;
           if (warn.suggestion) {
-            report += `    ✅ Applied: ${warn.suggestion}\n`;
+            report += `     Applied: ${warn.suggestion}\n`;
           }
         });
       });
@@ -2807,12 +2807,12 @@ async function migrateAllVersions(repositoryPath, targetDirectory, product = 'ge
   if (report) {
     console.log(report);
   } else {
-    console.log('\n✅ No issues detected during migration!\n');
+    console.log('\n No issues detected during migration!\n');
   }
 
   // Show cache statistics
   const cacheStats = migrationCache.getStats();
-  console.log('\n📊 Migration Cache Statistics:');
+  console.log('\n Migration Cache Statistics:');
   console.log('='.repeat(50));
   console.log(`Total files processed: ${cacheStats.totalFiles}`);
   console.log(`Unique content blocks: ${cacheStats.uniqueContent}`);
@@ -3012,7 +3012,7 @@ async function main() {
     if (report) {
       console.log(report);
     } else {
-      console.log('\n✅ No issues detected during migration!\n');
+      console.log('\n No issues detected during migration!\n');
     }
 
   } else {

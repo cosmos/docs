@@ -214,7 +214,7 @@ Conversion stats for v0.50:
 **Final cache statistics:**
 
 ```
-📊 Migration Cache Statistics:
+ Migration Cache Statistics:
 ==================================================
 Total files processed: 600
 Unique content blocks: 450
@@ -226,14 +226,14 @@ Duplicate percentage: 25.0%
 **Migration report example:**
 
 ```
-📋 MIGRATION REPORT
+ MIGRATION REPORT
 ================================================================================
 
-❌ ERRORS (6) - These need manual fixes:
+ ERRORS (6) - These need manual fixes:
 ----------------------------------------
-📄 path/to/file.md:
+ path/to/file.md:
   Line 45: Unclosed opening tag <Expandable>
-    💡 Suggestion: Add matching closing tag
+     Suggestion: Add matching closing tag
 
 REMOVED CONTENT (2) - Content that was removed:
 ----------------------------------------
