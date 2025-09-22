@@ -57,7 +57,9 @@ go mod tidy
 
 ### BREAKING: allow_unprotected_txs Parameter Removed
 
-The `allow_unprotected_txs` parameter has been removed from VM module parameters. Non-EIP-155 transaction acceptance is now managed per-node.
+**What it was**: This parameter controlled whether to accept non-EIP-155 transactions (transactions without chain ID in signature).
+
+**Why removed**: Security concerns - non-EIP-155 transactions are vulnerable to replay attacks across chains. The v0.5.0 approach is to reject these by default, with node operators able to override via local configuration if absolutely necessary (not recommended).
 
 **Migration Required:**
 
@@ -86,19 +88,27 @@ The `allow_unprotected_txs` parameter has been removed from VM module parameters
 If you have custom parameter validation logic, remove references to `allow_unprotected_txs`:
 
 ```diff
-/ Remove any code referencing AllowUnprotectedTxs
 - if !params.AllowUnprotectedTxs {
--   / validation logic
+-   return errors.New("unprotected transactions not allowed")
 - }
 ```
 
+**Impact if not removed**: Genesis validation will fail with "unknown field" error.
+
 ### NEW: history_serve_window Parameter
 
-Added for EIP-2935 block hash storage support.
+**Purpose**: Implements EIP-2935 (historical block hashes in state) for better Ethereum compatibility.
 
-- **Default value:** `8192` blocks
-- **Purpose:** Controls how many historical block hashes to serve
-- **Range:** Must be > 0, recommended ≤ 8192 for optimal performance
+**What it controls**: Number of recent block hashes accessible via the BLOCKHASH opcode and eth_getBlockByNumber.
+
+**Configuration guidance**:
+- **Default**: `8192` blocks (~13 hours at 6s blocks)
+- **Archive nodes**: `43200` (~3 days)
+- **Light clients**: `256` (minimal history)
+
+**Storage impact**: Each block hash uses ~100 bytes. 8192 blocks = ~800KB additional state.
+
+**Why this matters**: Smart contracts often verify historical data using block hashes. Without sufficient history, these verifications fail.
 
 ---
 
@@ -106,77 +116,158 @@ Added for EIP-2935 block hash storage support.
 
 ### BREAKING: Constructor Interface Updates
 
-All precompile constructors now accept keeper interfaces instead of concrete implementations for better decoupling.
+**The Problem v0.5.0 Solves**:
+In v0.4.0, precompiles were tightly coupled to concrete keeper implementations. This made testing difficult and created import cycles. The v0.5.0 approach uses interfaces for clean dependency injection.
 
-**New Interface Definitions:**
+**Impact**: ALL precompile initializations must be updated. This is not optional.
 
-```go New Interface Definitions expandable
-/ precompiles/common/interfaces.go
-type BankKeeper interface {
-    IterateAccountBalances(ctx context.Context, account sdk.AccAddress, cb func(coin sdk.Coin) bool)
-    GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
-    SendCoins(ctx context.Context, fromAddr sdk.AccAddress, toAddr sdk.AccAddress, amt sdk.Coins) error
-    / ... other methods
-}
+### What Changed and Why
 
-type StakingKeeper interface {
-    BondDenom(ctx context.Context) (string, error)
-    GetDelegatorValidators(ctx context.Context, delegatorAddr sdk.AccAddress, maxRetrieve uint32) (stakingtypes.Validators, error)
-    / ... other methods
-}
+Each precompile constructor now uses interface types from `precompiles/common/interfaces.go`:
+
+```go
+// v0.4.0 - Concrete types (problematic)
+func NewPrecompile(keeper bankkeeper.Keeper) (*Precompile, error)
+
+// v0.5.0 - Interface types (clean)
+func NewPrecompile(keeper common.BankKeeper) (*Precompile, error)
 ```
 
-**Migration Steps:**
+**Benefits of this change**:
+- Eliminates import cycles between modules
+- Enables proper mocking for tests
+- Reduces compilation time
+- Allows alternative keeper implementations
 
-1. **Update Precompile Assembly:**
+### Migration Steps for Each Precompile
 
-```diff Precompile Assembly Update expandable
-/ evmd/precompiles.go or app/precompiles.go
-func NewAvailableStaticPrecompiles(
-    / ... other params
-) map[common.Address]vm.PrecompiledContract {
-    precompiles := make(map[common.Address]vm.PrecompiledContract)
-
-    / Bank precompile - interface now required
--   bankPrecompile, err := bankprecompile.NewPrecompile(bankKeeper, ...)
-+   bankPrecompile, err := bankprecompile.NewPrecompile(
-+       common.BankKeeper(bankKeeper), / Cast to interface
-+       / ... other params
-+   )
-
-    / Distribution precompile - simplified parameters
--   distributionPrecompile, err := distributionprecompile.NewPrecompile(
--       distributionKeeper, stakingKeeper, authzKeeper, cdc, options.AddressCodec
--   )
-+   distributionPrecompile, err := distributionprecompile.NewPrecompile(
-+       common.DistributionKeeper(distributionKeeper),
-+       cdc, options.AddressCodec
-+   )
-
-    / Staking precompile - keeper interface
--   stakingPrecompile, err := stakingprecompile.NewPrecompile(stakingKeeper, ...)
-+   stakingPrecompile, err := stakingprecompile.NewPrecompile(
-+       common.StakingKeeper(stakingKeeper), 
-+       / ... other params
-+   )
-    
-    return precompiles
-}
-```
-
-2. **Update Custom Precompiles:**
-
-If you have custom precompiles, update their constructors to accept interfaces:
+#### Bank Precompile
 
 ```diff
-/ Custom precompile constructor
-- func NewMyPrecompile(bankKeeper bankkeeper.Keeper, stakingKeeper stakingkeeper.Keeper) (*MyPrecompile, error) {
-+ func NewMyPrecompile(bankKeeper common.BankKeeper, stakingKeeper common.StakingKeeper) (*MyPrecompile, error) {
-    return &MyPrecompile{
-        bankKeeper:    bankKeeper,
-        stakingKeeper: stakingKeeper,
-    }, nil
-}
+- bankPrecompile, err := bankprecompile.NewPrecompile(
+-     app.BankKeeper,  // Direct concrete keeper
+-     appCodec,
+- )
++ bankPrecompile, err := bankprecompile.NewPrecompile(
++     common.BankKeeper(app.BankKeeper),  // Cast to interface
++     appCodec,
++ )
+```
+
+**Why the cast is safe**: Your BankKeeper already implements all required methods.
+
+#### Distribution Precompile
+
+```diff
+- distributionPrecompile, err := distributionprecompile.NewPrecompile(
+-     app.DistrKeeper,
+-     app.StakingKeeper,  // REMOVED - not needed anymore
+-     app.AuthzKeeper,    // REMOVED - not used
+-     appCodec,
+-     addressCodec,
+- )
++ distributionPrecompile, err := distributionprecompile.NewPrecompile(
++     common.DistributionKeeper(app.DistrKeeper),
++     appCodec,
++     addressCodec,
++ )
+```
+
+**Why parameters were removed**:
+- StakingKeeper: Was only used for validator queries, now handled differently
+- AuthzKeeper: Never actually used in the precompile implementation
+
+#### Staking Precompile
+
+```diff
+- stakingPrecompile, err := stakingprecompile.NewPrecompile(
+-     app.StakingKeeper,
+-     appCodec,
+-     addressCodec,
+- )
++ stakingPrecompile, err := stakingprecompile.NewPrecompile(
++     common.StakingKeeper(app.StakingKeeper),
++     appCodec,
++     addressCodec,
++ )
+```
+
+#### ICS20 Precompile (Most Changed)
+
+```diff
+- ics20Precompile, err := ics20precompile.NewPrecompile(
+-     app.TransferKeeper,
+-     app.ChannelKeeper,
+-     app.BankKeeper,
+-     app.StakingKeeper,
+-     app.EVMKeeper,      // REMOVED - circular dependency!
+-     appCodec,
+-     addressCodec,
+- )
++ ics20Precompile, err := ics20precompile.NewPrecompile(
++     common.BankKeeper(app.BankKeeper),         // Bank first now
++     common.StakingKeeper(app.StakingKeeper),
++     app.TransferKeeper,                        // Concrete still OK
++     app.ChannelKeeper,                         // Concrete still OK
++     appCodec,
++     addressCodec,
++ )
+```
+
+**Critical change**: EVMKeeper removed to break circular dependency. The precompile no longer needs direct EVM access.
+
+#### Governance Precompile
+
+```diff
+- govPrecompile, err := govprecompile.NewPrecompile(
+-     app.GovKeeper,
+-     appCodec,
+-     addressCodec,
+- )
++ govPrecompile, err := govprecompile.NewPrecompile(
++     common.GovKeeper(app.GovKeeper),
++     appCodec,
++     addressCodec,
++ )
+```
+
+#### Slashing Precompile
+
+```diff
+- slashingPrecompile, err := slashingprecompile.NewPrecompile(
+-     app.SlashingKeeper,
+-     appCodec,
+-     validatorAddressCodec,
+-     consensusAddressCodec,
+- )
++ slashingPrecompile, err := slashingprecompile.NewPrecompile(
++     common.SlashingKeeper(app.SlashingKeeper),
++     appCodec,
++     validatorAddressCodec,
++     consensusAddressCodec,
++ )
+```
+
+### If You Have Custom Precompiles
+
+Update your custom precompile constructors to use interfaces:
+
+```diff
+// Your custom precompile
+- func NewMyPrecompile(
+-     bankKeeper bankkeeper.Keeper,
+-     stakingKeeper stakingkeeper.Keeper,
+- ) (*MyPrecompile, error) {
++ func NewMyPrecompile(
++     bankKeeper common.BankKeeper,      // Use interface
++     stakingKeeper common.StakingKeeper, // Use interface
++ ) (*MyPrecompile, error) {
+```
+
+**Testing benefit**: You can now use mock keepers:
+```go
+mockBank := &MockBankKeeper{}
+precompile, _ := NewMyPrecompile(mockBank, mockStaking)
 ```
 
 ---
@@ -185,53 +276,86 @@ If you have custom precompiles, update their constructors to accept interfaces:
 
 ### Configuration-Based Architecture
 
-The mempool now uses configuration objects instead of pre-built pools for better flexibility.
+**The Problem**: In v0.4.0, you had to construct complete `TxPool` and `CosmosPool` instances with 20+ parameters each. This was error-prone and required deep understanding of Ethereum internals.
 
-**Migration for Standard Setups:**
+**The Solution**: v0.5.0 accepts configuration objects with smart defaults. You only configure what differs from standard behavior.
 
-If you use default mempool configuration, minimal changes are needed:
+### Migration for Default Configurations
 
-```go Standard Mempool Setup expandable
-/ Existing code continues to work
+If you're using standard mempool settings, the migration is minimal:
+
+```go
+// v0.4.0 and v0.5.0 - Same for basic usage
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, / or 0 for default
+    BlockGasLimit: 0,  // 0 means use default 100M
 }
-evmMempool := evmmempool.NewExperimentalEVMMempool(
-    app.CreateQueryContext, 
-    logger, 
-    app.EVMKeeper, 
-    app.FeeMarketKeeper, 
-    app.txConfig, 
-    app.clientCtx, 
-    mempoolConfig
-)
 ```
 
-**Migration for Advanced Setups:**
+**What happens with defaults**:
+- Transaction capacity: 10,000 EVM + 5,000 Cosmos transactions
+- Gas pricing: 1 gwei minimum
+- Nonce ordering: Strict per account
+- Replacement rules: 10% gas increase required
 
-If you previously built custom pools:
+### Migration for Custom Configurations
 
-```diff Advanced Mempool Configuration expandable
- mempoolConfig := &evmmempool.EVMMempoolConfig{
--   TxPool:        customTxPool,
--   CosmosPool:    customCosmosPool,
+If you previously customized transaction pools:
+
+```diff
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+-   // v0.4.0: Had to build entire pool
+-   TxPool: &txpool.TxPool{
+-       config: txpool.Config{
+-           Locals:       []common.Address{...},
+-           NoLocals:     false,
+-           Journal:      ".ethereum/transactions.rlp",
+-           Rejournal:    time.Hour,
+-           PriceLimit:   1,
+-           PriceBump:    10,
+-           AccountSlots: 16,
+-           GlobalSlots:  10000,
+-           // ... 15+ more fields
+-       },
+-   },
+-   CosmosPool: customCosmosPool,
+
++   // v0.5.0: Just provide overrides
 +   LegacyPoolConfig: &legacypool.Config{
-+       PriceLimit: 2,
-+       / ... other legacy pool settings
++       AccountSlots: 64,      // Override: more txs per account
++       GlobalSlots:  50000,   // Override: bigger pool
++       // Defaults used for everything else
 +   },
-+   CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{
-+       TxPriority: sdkmempool.TxPriority[math.Int]{
-+           GetTxPriority: customPriorityFunc,
-+           Compare: math.IntComparator,
-+           MinValue: math.ZeroInt(),
-+       },
-+   },
-   AnteHandler:      app.GetAnteHandler(),
-   BroadcastTxFn:    customBroadcastFunc, / optional
-   BlockGasLimit:    100_000_000,
- }
++   CosmosPoolConfig: nil,  // Use all defaults
+
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 200_000_000,  // Custom: higher gas limit
+}
 ```
+
+**Key configuration parameters**:
+
+| Parameter | Default | When to Override |
+|-----------|---------|------------------|
+| AccountSlots | 16 | High-frequency trading (set 64+) |
+| GlobalSlots | 10,000 | High throughput chain (set 50,000+) |
+| PriceLimit | 1 gwei | Private chain (set 0) |
+| BlockGasLimit | 100M | Gaming/DeFi chain (adjust as needed) |
+
+### New MinTip Parameter
+
+v0.5.0 adds `MinTip` for spam protection:
+
+```go
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    // ... other config
+    MinTip: big.NewInt(1_000_000_000),  // 1 gwei minimum tip
+}
+```
+
+**Purpose**: Prevents zero-fee spam transactions during high congestion.
+**Default**: 0 (accept any fee)
+**Recommendation**: Set to 1 gwei for public chains
 
 ---
 
@@ -288,47 +412,90 @@ func (d MyCustomDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 
 ### BREAKING: Singleton Pattern Eliminated
 
-The global mempool registry has been removed in favor of direct injection.
+**The Problem with v0.4.0**: The global mempool singleton created several critical issues:
+- **Testing nightmare**: Couldn't run parallel tests (global state conflicts)
+- **Multi-chain impossible**: Couldn't run multiple chains in one process
+- **Race conditions**: Concurrent access to global state
+- **Memory leaks**: Global state never cleaned up
 
-**What Was Removed:**
-- `mempool.SetGlobalEVMMempool()`
-- `mempool.GetGlobalEVMMempool()`
-- Global mempool singleton pattern
+**The v0.5.0 Solution**: Direct dependency injection - each component receives its mempool reference explicitly.
 
-**Migration Steps:**
+### Required Migration Steps
 
-1. **Update JSON-RPC Server Initialization:**
+#### 1. Remove Global Mempool Registration
 
-```diff JSON-RPC Server Update expandable
-/ server/start.go or equivalent
-- mempool.SetGlobalEVMMempool(evmMempool)
-  
-  jsonRPCServer, err := jsonrpc.StartJSONRPC(
-      ctx,
-      clientCtx,
-      logger.With("module", "jsonrpc"),
-+     evmMempool, / Pass mempool directly
-      config,
-      indexer,
-  )
+```diff
+// In app.go or app initialization
+evmMempool := evmmempool.NewExperimentalEVMMempool(...)
+
+- // DELETE THIS - no longer needed or supported
+- if err := mempool.SetGlobalEVMMempool(evmMempool); err != nil {
+-     panic(err)
+- }
 ```
 
-2. **Update RPC Backend:**
+**Impact if not removed**: Compilation error - these functions no longer exist.
 
-If you have custom RPC backends:
+#### 2. Update JSON-RPC Server Initialization
 
-```diff Custom RPC Backend Update expandable
-/ Custom RPC backend
-func NewCustomBackend(
-    / ... other params
-+   mempool *evmmempool.ExperimentalEVMMempool,
-) *CustomBackend {
--   mempool := mempool.GetGlobalEVMMempool()
-    
-    return &CustomBackend{
-        mempool: mempool,
-        / ... other fields
+The JSON-RPC server now requires explicit mempool injection:
+
+```diff
+// In server/start.go or your server initialization
+jsonRPCServer, err := jsonrpc.StartJSONRPC(
+    ctx,
+    clientCtx,
+    logger.With("module", "jsonrpc"),
++   evmMempool,  // Pass mempool as parameter
+    config,
+    indexer,
+)
+```
+
+**Why this change**: The JSON-RPC server needs mempool access for `txpool_` methods. Previously it used the global, now it's explicitly provided.
+
+#### 3. Update Custom Components
+
+If you have custom components that accessed the global mempool:
+
+```diff
+// Custom component that used global mempool
+type MyCustomService struct {
+-   // No mempool field - used global
++   mempool *evmmempool.ExperimentalEVMMempool
+}
+
+- func NewMyCustomService() *MyCustomService {
++ func NewMyCustomService(mempool *evmmempool.ExperimentalEVMMempool) *MyCustomService {
+    return &MyCustomService{
+-       // Used to call mempool.GetGlobalEVMMempool() when needed
++       mempool: mempool,
     }
+}
+
+func (s *MyCustomService) DoSomething() {
+-   pool := mempool.GetGlobalEVMMempool()
+-   if pool == nil {
+-       return errors.New("mempool not initialized")
+-   }
++   // Use s.mempool directly
+    pending := s.mempool.GetPendingTransactions()
+}
+```
+
+### Testing Benefits
+
+The removal of global state enables proper testing:
+
+```go
+// v0.5.0 - Can run parallel tests
+func TestMempool(t *testing.T) {
+    t.Parallel()  // Now safe!
+
+    mempool1 := evmmempool.NewExperimentalEVMMempool(...)
+    mempool2 := evmmempool.NewExperimentalEVMMempool(...)
+
+    // Each test has isolated mempool
 }
 ```
 

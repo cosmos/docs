@@ -211,6 +211,14 @@ app.ModuleManager = module.NewManager(
 
 ## Step 4: Keeper Initialization
 
+### Why Initialization Order Matters
+
+The keeper initialization order is critical due to dependencies between modules:
+- **PreciseBank** must be initialized before EVM keeper as it wraps the bank keeper to provide 18-decimal precision
+- **FeeMarket** must exist before EVM keeper as EVM uses it for gas pricing
+- **EVM keeper** must be initialized before ERC20 keeper due to a forward reference pattern
+- **ERC20 keeper** requires a fully initialized EVM keeper to manage token contracts
+
 ### Initialization Order (Critical)
 
 ```go Initialization Order (Critical) expandable
@@ -220,63 +228,72 @@ app.BankKeeper = bankkeeper.NewKeeper(...)
 app.StakingKeeper = stakingkeeper.NewKeeper(...)
 / ... other SDK keepers
 
-/ 2. PreciseBank keeper (wraps bank keeper for 18-decimal precision)
+/ 2. PreciseBank keeper - REQUIRED for 18-decimal precision
+/ Why: Cosmos native tokens use 6 decimals, EVM uses 18. PreciseBank handles conversion.
+/ Without this: EVM transactions will lose precision, breaking DeFi protocols
 app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
     appCodec,
     keys[precisebanktypes.StoreKey],
-    app.BankKeeper,
+    app.BankKeeper,      / Wraps the standard bank keeper
     app.AccountKeeper,
 )
 
-/ 3. FeeMarket keeper (required by EVM)
+/ 3. FeeMarket keeper - REQUIRED for EIP-1559 gas pricing
+/ Why: Implements dynamic base fee adjustment based on block utilization
+/ Without this: EVM will use static gas prices, vulnerable to spam
 app.FeeMarketKeeper = feemarketkeeper.NewKeeper(
     appCodec,
-    authtypes.NewModuleAddress(govtypes.ModuleName),
+    authtypes.NewModuleAddress(govtypes.ModuleName),  / Gov can update params
     keys[feemarkettypes.StoreKey],
-    tkeys[feemarkettypes.TransientKey],
+    tkeys[feemarkettypes.TransientKey],  / For temporary base fee calculations
     app.GetSubspace(feemarkettypes.ModuleName),
 )
 
-/ 4. EVM keeper (MUST be before ERC20 keeper)
+/ 4. EVM keeper - Core EVM functionality
+/ CRITICAL: Must be before ERC20 keeper due to forward reference pattern
 tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
 app.EVMKeeper = evmkeeper.NewKeeper(
     appCodec,
-    keys[evmtypes.StoreKey],
-    tkeys[evmtypes.TransientKey],
-    keys,
+    keys[evmtypes.StoreKey],         / Persistent EVM state
+    tkeys[evmtypes.TransientKey],    / Temporary execution state
+    keys,                             / All store keys for precompile access
     authtypes.NewModuleAddress(govtypes.ModuleName),
     app.AccountKeeper,
-    app.PreciseBankKeeper,  / Use PreciseBank for 18-decimal support
-    app.StakingKeeper,
-    app.FeeMarketKeeper,
+    app.PreciseBankKeeper,  / MUST use PreciseBank, not BankKeeper
+    app.StakingKeeper,      / For precompile access to staking
+    app.FeeMarketKeeper,    / For dynamic gas pricing
     &app.ConsensusParamsKeeper,
-    &app.Erc20Keeper,  / Forward reference
-    tracer,
+    &app.Erc20Keeper,       / Forward reference - will be set below
+    tracer,                 / "" for production, "json" for debugging
 )
 
-/ 5. ERC20 keeper (after EVM keeper)
+/ 5. ERC20 keeper - Manages ERC20 token registration
+/ Why after EVM: Needs EVM keeper to deploy token contracts
+/ Why before Transfer: IBC transfer needs ERC20 for token mapping
 app.Erc20Keeper = erc20keeper.NewKeeper(
     keys[erc20types.StoreKey],
     appCodec,
     authtypes.NewModuleAddress(govtypes.ModuleName),
     app.AccountKeeper,
-    app.PreciseBankKeeper,
-    app.EVMKeeper,
-    app.StakingKeeper,
+    app.PreciseBankKeeper,  / For token balance conversions
+    app.EVMKeeper,          / To deploy and interact with contracts
+    app.StakingKeeper,      / For staking derivative tokens
 )
 
-/ 6. Enhanced IBC Transfer keeper for ERC20 support
+/ 6. Enhanced IBC Transfer keeper - REPLACES standard IBC transfer
+/ Why enhanced: Automatic ERC20 registration for IBC tokens
+/ Without this: IBC tokens won't be accessible from EVM
 app.TransferKeeper = transferkeeper.NewKeeper(
     appCodec,
     keys[ibctransfertypes.StoreKey],
     app.GetSubspace(ibctransfertypes.ModuleName),
-    app.IBCKeeper.ChannelKeeper,
-    app.IBCKeeper.ChannelKeeper,
-    app.IBCKeeper.PortKeeper,
+    app.IBCKeeper.ChannelKeeper,     / For IBC channel operations
+    app.IBCKeeper.ChannelKeeper,     / Duplicate required by interface
+    app.IBCKeeper.PortKeeper,        / For IBC port binding
     app.AccountKeeper,
-    app.PreciseBankKeeper,  / Use PreciseBank
+    app.PreciseBankKeeper,  / MUST use PreciseBank for 18-decimal support
     scopedTransferKeeper,
-    app.Erc20Keeper,  / EVM integration
+    app.Erc20Keeper,        / For automatic ERC20 registration of IBC tokens
 )
 ```
 
@@ -323,6 +340,20 @@ app.setAnteHandler(app.txConfig, maxGasWanted)
 
 ## Step 6: Mempool Integration (v0.5.0 Required)
 
+### Why Custom Mempool is Required
+
+The standard Cosmos SDK mempool cannot handle Ethereum transactions because:
+- **Nonce ordering**: Ethereum requires strict nonce ordering per account
+- **Gas price dynamics**: EIP-1559 transactions use dynamic base fees
+- **Transaction replacement**: Ethereum allows replacing pending transactions with higher gas
+- **Dual transaction types**: Must handle both Cosmos and Ethereum transaction formats
+
+Without the EVM mempool:
+- MetaMask transactions will be rejected
+- Nonce gaps will cause transaction failures
+- Gas estimation will be incorrect
+- Transaction replacement won't work
+
 ### Complete Mempool Setup
 
 ```go Complete Mempool Setup expandable
@@ -332,33 +363,40 @@ if cosmosevmtypes.GetChainConfig() != nil {
     blockGasLimit := evmconfig.GetBlockGasLimit(appOpts, logger)
     minTip := evmconfig.GetMinTip(appOpts, logger)
 
-    / Configure EVM mempool
+    / Configure EVM mempool with minimal required settings
+    / v0.5.0 uses smart defaults - only configure what you need
     mempoolConfig := &evmmempool.EVMMempoolConfig{
-        AnteHandler:   app.GetAnteHandler(),      / Must be set first
-        BlockGasLimit: blockGasLimit,             / From genesis consensus params
-        MinTip:        minTip,                    / From app.toml evm.min-tip (v0.5.0)
+        AnteHandler:   app.GetAnteHandler(),      / Required: validates transactions
+        BlockGasLimit: blockGasLimit,             / Default: 100M gas if not set
+        MinTip:        minTip,                    / Default: 0 (no minimum tip)
+        / LegacyPoolConfig: nil,                 / Uses defaults: 10K tx capacity
+        / CosmosPoolConfig: nil,                 / Uses defaults: 5K tx capacity
     }
 
     / Initialize EVM mempool
+    / This replaces the standard SDK mempool entirely
     evmMempool := evmmempool.NewExperimentalEVMMempool(
-        app.CreateQueryContext,
+        app.CreateQueryContext,     / For state queries during validation
         logger,
-        app.EVMKeeper,
-        app.FeeMarketKeeper,
-        app.txConfig,
-        app.clientCtx,
+        app.EVMKeeper,              / Access EVM state
+        app.FeeMarketKeeper,        / Get current base fee
+        app.txConfig,               / Transaction encoding/decoding
+        app.clientCtx,              / Client context for RPC
         mempoolConfig,
     )
     app.EVMMempool = evmMempool
 
-    / REQUIRED: Replace BaseApp mempool
+    / CRITICAL: Replace BaseApp mempool
+    / Without this: EVM transactions won't enter mempool
     app.SetMempool(evmMempool)
 
-    / REQUIRED: Set custom CheckTx handler
+    / CRITICAL: Set custom CheckTx handler
+    / Without this: EVM transaction validation fails
     checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
     app.SetCheckTxHandler(checkTxHandler)
 
-    / REQUIRED: Set custom PrepareProposal handler
+    / CRITICAL: Set custom PrepareProposal handler
+    / Without this: EVM transactions won't be included in blocks
     abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
     abciProposalHandler.SetSignerExtractionAdapter(
         evmmempool.NewEthSignerExtractionAdapter(
@@ -369,7 +407,46 @@ if cosmosevmtypes.GetChainConfig() != nil {
 }
 ```
 
+### What Happens Without Each Component
+
+| Component | Impact if Missing |
+|-----------|-------------------|
+| SetMempool | EVM transactions rejected with "unsupported tx type" |
+| CheckTxHandler | Transaction validation uses wrong rules, nonce errors |
+| PrepareProposal | EVM transactions in mempool but never included in blocks |
+| SignerExtractor | Cannot identify transaction sender, auth failures |
+
 ## Step 7: Precompile Registration
+
+### What Are Precompiles and When Do You Need Them?
+
+Precompiles are special contracts at fixed addresses that provide native Cosmos SDK functionality to EVM smart contracts. They execute native Go code instead of EVM bytecode, offering:
+- **Gas efficiency**: 10-100x cheaper than Solidity implementations
+- **Native integration**: Direct access to Cosmos SDK modules
+- **Atomicity**: Operations complete in the same transaction
+
+#### Decision Tree for Precompiles
+
+| If You Need... | Required Precompiles | Optional Precompiles |
+|----------------|---------------------|----------------------|
+| Basic EVM only | None | Bech32, P256 |
+| DeFi protocols | Bank | Staking, Distribution |
+| Liquid staking | Bank, Staking | Distribution, Governance |
+| Cross-chain assets | Bank, ICS20 | ERC20 |
+| Full Cosmos features | All | Custom precompiles |
+
+#### Precompile Addresses and Functions
+
+| Precompile | Address | Key Functions | Gas Cost |
+|------------|---------|---------------|----------|
+| Bech32 | 0x0000...0100 | Address conversion | ~3,000 |
+| P256 | 0x0000...0400 | Secp256r1 signatures | ~3,500 |
+| Bank | 0x0000...0800 | Send, balance queries | ~25,000 |
+| Staking | 0x0000...0801 | Delegate, undelegate | ~50,000 |
+| Distribution | 0x0000...0802 | Withdraw rewards | ~30,000 |
+| ICS20 | 0x0000...0804 | IBC transfers | ~100,000 |
+| Governance | 0x0000...0805 | Vote, deposit | ~30,000 |
+| Slashing | 0x0000...0806 | Unjail validator | ~50,000 |
 
 ### Interface-Based Precompile Setup
 
@@ -519,24 +596,44 @@ rootCmd.AddCommand(
 
 ## Step 9: Configuration Management
 
+### Understanding app.toml EVM Parameters
+
+Each parameter controls specific EVM behavior with direct impact on your chain's operation:
+
 ### app.toml EVM Section
 
 ```toml app.toml EVM Section expandable
 # EVM configuration (v0.5.0)
 [evm]
-# Minimum priority fee for mempool (in wei)
+# Minimum priority fee for mempool inclusion (in wei)
+# 0 = accept any transaction (permissioned/test chains)
+# 1000000000 (1 gwei) = standard for public chains (spam protection)
+# Impact: Too low allows spam, too high excludes legitimate users
 min-tip = 0
 
-# Maximum gas for eth transactions in check tx mode
+# Maximum gas allowed for a single transaction during CheckTx
+# 0 = use block gas limit (default behavior)
+# 50000000 = limit individual transactions to 50M gas
+# Why limit: Prevent DoS from expensive CheckTx validation
+# Impact: Too low blocks complex DeFi operations
 max-tx-gas-wanted = 0
 
-# EIP-155 chain ID (separate from Cosmos chain ID)
+# EIP-155 chain ID for transaction signatures
+# MUST be unique across all EVM chains to prevent replay attacks
+# Calculate: hash(cosmos_chain_id) % 2^32 for uniqueness
+# Common values: 1 (mainnet fork), 31337 (local dev), your custom ID
 evm-chain-id = 262144
 
-# EVM execution tracer (empty = disabled)
+# EVM execution tracer for debugging
+# "" = disabled (production - best performance)
+# "json" = structured JSON output (debugging)
+# "struct" = detailed struct logging (deep debugging)
+# "access_list" = track state access (gas optimization)
+# Impact: Tracing reduces performance by 20-50%
 tracer = ""
 
-# SHA3 preimage tracking (not implemented yet)
+# SHA3 preimage tracking (not implemented in v0.5.0)
+# Reserved for future Ethereum compatibility
 cache-preimage = false
 
 [json-rpc]
@@ -565,24 +662,50 @@ block-range-cap = 10000
   "app_state": {
     "evm": {
       "params": {
+        # The denomination used for EVM transactions (18 decimal places)
+        # Must match your chain's base denomination with 'a' prefix
+        # Example: "uatom" → "aatom", "stake" → "astake"
         "evm_denom": "atoken",
+
+        # Additional EIPs to activate beyond standard set
+        # [] = use defaults (sufficient for 99% of chains)
+        # [3855] = activate EIP-3855 (PUSH0 opcode) if needed
+        # Warning: Only add EIPs you fully understand
         "extra_eips": [],
+
+        # IBC channels for cross-chain EVM calls (advanced feature)
+        # [] = no cross-chain EVM (recommended for most chains)
+        # ["channel-0"] = allow EVM calls over specified channel
         "evm_channels": [],
+
+        # Access control for contract deployment and calls
+        # PERMISSIONLESS = anyone can deploy/call (public chains)
+        # RESTRICTED = only allowlisted addresses (private chains)
+        # FORBIDDEN = completely disabled (security lockdown)
         "access_control": {
           "create": {"access_type": "ACCESS_TYPE_PERMISSIONLESS"},
           "call": {"access_type": "ACCESS_TYPE_PERMISSIONLESS"}
         },
+
+        # Precompiles to activate (must match registered precompiles)
+        # Order doesn't matter, but all addresses must be exact
+        # Missing precompile = contract calls fail with "no code"
         "active_static_precompiles": [
-          "0x0000000000000000000000000000000000000100",
-          "0x0000000000000000000000000000000000000400",
-          "0x0000000000000000000000000000000000000800",
-          "0x0000000000000000000000000000000000000801",
-          "0x0000000000000000000000000000000000000802",
-          "0x0000000000000000000000000000000000000804",
-          "0x0000000000000000000000000000000000000805",
-          "0x0000000000000000000000000000000000000806",
-          "0x0000000000000000000000000000000000000807"
+          "0x0000000000000000000000000000000000000100",  # Bech32
+          "0x0000000000000000000000000000000000000400",  # P256
+          "0x0000000000000000000000000000000000000800",  # Bank
+          "0x0000000000000000000000000000000000000801",  # Staking
+          "0x0000000000000000000000000000000000000802",  # Distribution
+          "0x0000000000000000000000000000000000000804",  # ICS20
+          "0x0000000000000000000000000000000000000805",  # Governance
+          "0x0000000000000000000000000000000000000806",  # Slashing
+          "0x0000000000000000000000000000000000000807"   # Unknown/Custom
         ],
+
+        # Number of blocks to serve for eth_getBlockByNumber
+        # 8192 = ~13 hours at 6s blocks (standard)
+        # 43200 = ~3 days (for archive nodes)
+        # Impact: Higher = more disk usage, better for indexers
         "history_serve_window": 8192
       }
     },
@@ -715,64 +838,6 @@ batch-request-limit = 100
 tracer = ""
 ```
 
-## Common Integration Issues
-
-### Issue: Build Failure - Interface Not Satisfied
-
-```
-error: *App does not implement evmserver.Application
-```
-
-**Solution**: Ensure app constructor returns `evmserver.Application`:
-
-```diff
-- func NewApp(...) servertypes.Application {
-+ func NewApp(...) evmserver.Application {
-```
-
-### Issue: Runtime Panic - Missing Interface Methods
-
-```
-panic: App must implement AppWithPendingTxStream interface
-```
-
-**Solution**: Implement required interface methods:
-
-```go
-func (app *App) RegisterPendingTxListener(listener func(common.Hash)) {
-    app.pendingTxListeners = append(app.pendingTxListeners, listener)
-}
-```
-
-### Issue: Mempool Configuration Error
-
-```
-error: mempool config must not be nil
-```
-
-**Solution**: Ensure mempool configuration is properly set:
-
-```go Mempool Configuration Fix expandable
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),  / Must be set AFTER ante handler
-    BlockGasLimit: blockGasLimit,
-    MinTip:        minTip,                / From app.toml evm.min-tip (v0.5.0)
-}
-```
-
-### Issue: JSON-RPC Methods Not Working
-
-```
-error: eth_createAccessList not found
-```
-
-**Solution**: Ensure indexer is enabled and mempool is configured:
-
-```toml
-[json-rpc]
-enable-indexer = true
-api = "eth,net,web3,txpool"
-```
 
 ## Integration Checklist
 
