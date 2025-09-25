@@ -1,4 +1,4 @@
-import { CosmosIcon } from '/snippets/icons.mdx';
+import { CosmosIcon } from '/snippets/icons.jsx';
 
 export default function RPCMethodsViewerVersionB() {
   const [theme, setTheme] = useState('dark');

@@ -348,7 +348,7 @@ All icons are scalable, themeable, and accessible.
 ### Usage Examples
 
 ```jsx
-import { CosmosIcon, EthereumIcon, IconWrapper } from '/snippets/icons.mdx'
+import { CosmosIcon, EthereumIcon, IconWrapper } from '/snippets/icons.jsx'
 
 // Basic icon usage
 <CosmosIcon size={32} color="#4B47CA" />
