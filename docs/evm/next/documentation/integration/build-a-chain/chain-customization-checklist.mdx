@@ -1,0 +1,140 @@
+# Chain Customization Checklist
+
+Complete checklist for forking and customizing Cosmos EVM. Each item links to detailed documentation.
+
+<Note>
+**For detailed guidance**, see the [Building Your Chain Guide](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide).
+
+**For validator operators**, see [Validator Security](/docs/evm/next/documentation/getting-started/node-configuration#validator-nodes) for additional information.
+
+</Note>
+
+---
+
+## Pre-Genesis Setup
+
+<Warning>
+  These parameters must be set **before** running `evmd init`. They cannot be
+  changed after genesis without a hard fork.
+</Warning>
+
+- [ ] [Fork repository and rename from `evmd`](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#forking-and-initial-setup)
+- [ ] [Set Bech32 address prefix](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#bech32-address-prefix) in `config/config.go`
+- [ ] [Set BIP44 coin type](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#hd-wallet-configuration) in `crypto/hd/hdpath.go`
+- [ ] [Choose token decimal precision](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#token-economics-configuration)
+  - [ ] **If 18 decimals:** [Remove precisebank module](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#replacing-precisebank-with-standard-bank-module-18-decimal-chains)
+  - [ ] **If 6 or other decimals:** Keep precisebank module (already configured)
+
+---
+
+## Genesis Configuration
+
+Run `evmd init <moniker> --chain-id <chain-id>` then edit `~/.evmd/config/genesis.json`:
+
+### Chain Identity
+
+- [ ] [Cosmos Chain ID](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#chain-ids) (string, e.g., `yourchain-1`)
+- [ ] [EVM Chain ID](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#chain-ids) (number, register at [chainlist.org](https://chainlist.org))
+- [ ] [Genesis time](https://github.com/cosmos/evm/blob/main/local_node.sh#L210) for coordinated launch
+
+### Token Configuration
+
+<Tip>
+  **Real Example:** See [local_node.sh lines
+  234-248](https://github.com/cosmos/evm/blob/main/local_node.sh#L234-L248) for
+  working 18-decimal configuration.
+</Tip>
+
+- [ ] [Bank metadata configuration](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#token-economics-configuration)
+  - [ ] Base denom (`atest` for 18 decimal, `utest` for 6 decimal)
+  - [ ] Display denom and exponent (18 or 6)
+  - [ ] Token name, symbol, description
+- [ ] [VM params: `evm_denom`](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#token-economics-configuration) (must match bank metadata base)
+- [ ] **If non-18 decimals:** [Add `extended_denom_options`](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#token-economics-configuration)
+
+### VM Module
+
+- [ ] [Enable required precompiles](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#available-precompiles)
+- [ ] [Configure access control](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#access-control-configurations)
+- [ ] [Set Ethereum fork activations](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go) (optional, defaults are sensible)
+- [ ] [Configure history serve window](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#vm-module-parameters)
+
+### Fee Market
+
+- [ ] [Configure EIP-1559 settings](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#fee-market-configuration)
+- [ ] [Set initial base fee](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#fee-market-configuration)
+
+### Standard Cosmos Modules
+
+- [ ] [Staking parameters](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#standard-cosmos-modules) (unbonding time, max validators, bond denom)
+- [ ] [Governance parameters](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#standard-cosmos-modules) (deposit amounts, voting period)
+- [ ] [Mint parameters](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#standard-cosmos-modules) (inflation)
+- [ ] [Distribution parameters](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#standard-cosmos-modules) (community tax)
+
+### Initial State
+
+- [ ] [Add genesis accounts and balances](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#initial-token-distribution)
+- [ ] [Collect gentx files from validators](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#collecting-genesis-transactions)
+- [ ] [Generate final genesis](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#distributing-the-final-genesis)
+
+---
+
+## Runtime Configuration
+
+<Warning id="validator-security-warning">
+**Validator Security:** Validator nodes should NOT expose RPC/API ports publicly. Only RPC nodes (non-validators) should have these ports open.
+
+See the [Validator Nodes Guide](/docs/evm/next/documentation/getting-started/node-configuration#validator-nodes) for full requirements.
+
+**Exposing validator RPC ports can lead to:**
+
+- DDoS attacks affecting block production
+- Resource exhaustion and downtime with potential slashing
+- Security vulnerabilities
+
+</Warning>
+
+### For RPC Nodes Only
+
+Edit `~/.evmd/config/app.toml` on each RPC node:
+
+- [ ] [Configure JSON-RPC](/docs/evm/next/documentation/getting-started/node-configuration#json-rpc) (enable, addresses, API namespaces)
+- [ ] [Configure EVM settings](/docs/evm/next/documentation/getting-started/node-configuration#evm) (tracer, gas limits)
+- [ ] [Configure TLS](/docs/evm/next/documentation/getting-started/node-configuration#tls) (optional, for HTTPS)
+
+### For All Nodes
+
+- [ ] [Configure minimum gas prices](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#coordinated-network-launch)
+- [ ] [Set persistent peers](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#configure-persistent-peers)
+
+---
+
+## Network Launch
+
+- [ ] [Distribute final genesis file](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#distributing-the-final-genesis)
+- [ ] [Verify genesis hash](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#distributing-the-final-genesis) across all validators
+- [ ] [Exchange peer information](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#distributing-the-final-genesis)
+- [ ] [Coordinate launch time](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#launch-coordination)
+- [ ] [Start validator nodes](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#launch-coordination)
+- [ ] [Monitor network health](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#monitoring-network-health)
+
+---
+
+## Post-Launch Operations
+
+- [ ] [Set up monitoring and alerting](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#monitoring-network-health)
+- [ ] [Understand governance parameter updates](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#governance-parameter-updates)
+- [ ] [Plan for software upgrades](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide#software-upgrades)
+
+---
+
+## Quick Reference
+
+| Topic                             | Resource                                                                                                          |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Full Building Guide               | [Building Your Chain Guide](/docs/evm/next/documentation/integration/build-a-chain/building-your-chain-guide) |
+| Node Configuration (app.toml)     | [Node Configuration Docs](/docs/evm/next/documentation/getting-started/node-configuration)                        |
+| Validator Security                | [Validator Nodes Tab](/docs/evm/next/documentation/getting-started/node-configuration#validator-nodes)            |
+| Token Configuration Details       | [Token Configuration Guide](/docs/evm/next/documentation/integration/build-a-chain/token-configuration-guide)  |
+| Real Genesis Example (18 decimal) | [local_node.sh#L234-L248](https://github.com/cosmos/evm/blob/main/local_node.sh#L234-L248)                        |
+| Parameter Reference               | [Configuration Parameters](/docs/evm/next/documentation/integration/build-a-chain/configuration-parameters)    |

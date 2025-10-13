@@ -1,0 +1,229 @@
+# Cosmos EVM Configuration Quick Reference
+
+## Essential Parameters for New Chains
+
+### 1. Chain Identity (Set Before Genesis)
+```bash
+# Initialize with custom chain ID
+evmd init mynode --chain-id mychain-1
+
+# Set in genesis.json
+"chain_id": "mychain-1"
+```
+
+### 2. Token Configuration (Genesis)
+```json
+// genesis.json - bank and vm sections
+{
+  "bank": {
+    "denom_metadata": [
+      {
+        "denom_units": [
+          {
+            "denom": "ustake",    // Base denomination
+            "exponent": 0
+          },
+          {
+            "denom": "stake",     // Display denomination
+            "exponent": 6         // Decimals (6 = needs precisebank, 18 = use standard bank)
+          }
+        ],
+        "base": "ustake",
+        "display": "stake",
+        "name": "Stake Token",
+        "symbol": "STAKE"
+      }
+    ]
+  },
+  "vm": {
+    "params": {
+      "evm_chain_id": "888",      // Your EVM Chain ID (for MetaMask)
+      "evm_denom": "ustake",      // References bank metadata base denom
+      "extended_denom_options": {
+        "extended_denom": "astake"  // Only for non-18 decimal chains (18-decimal EVM representation)
+      }
+      // ... other params
+    }
+  }
+}
+```
+
+**Module Selection Based on Decimals:**
+- `decimals: 18` → Remove precisebank, use standard bank module
+- `decimals: 6` (or any non-18) → Keep precisebank module
+
+### 3. Enable Precompiles (Genesis)
+```json
+{
+  "vm": {
+    "params": {
+      "active_static_precompiles": [
+        "0x0000000000000000000000000000000000000800", // Staking
+        "0x0000000000000000000000000000000000000801", // Distribution
+        "0x0000000000000000000000000000000000000804"  // Bank
+      ]
+    }
+  }
+}
+```
+
+### 4. Fee Market Configuration (Genesis)
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false,          // Enable EIP-1559
+      "base_fee": "1000000000",      // Initial base fee (1 gwei)
+      "min_gas_price": "1000000000", // Minimum gas price
+      "elasticity_multiplier": 2      // Block gas elasticity
+    }
+  }
+}
+```
+
+### 5. Enable JSON-RPC (app.toml)
+```toml
+[json-rpc]
+enable = true
+address = "0.0.0.0:8545"
+ws-address = "0.0.0.0:8546"
+api = ["eth", "net", "web3", "txpool"]
+gas-cap = 50000000
+evm-timeout = "5s"
+```
+
+---
+
+## Common Configurations by Use Case
+
+### Public Mainnet
+```toml
+# app.toml
+[evm]
+min-tip = 1000000000  # 1 gwei minimum
+
+[json-rpc]
+enable = true
+api = ["eth", "net", "web3"]  # Limited API
+allow-unprotected-txs = false
+max-open-connections = 100
+enable-profiling = false  # Never on public nodes
+```
+
+### Private/Consortium Chain
+```json
+// genesis.json
+{
+  "vm": {
+    "params": {
+      "access_control": {
+        "create": {
+          "access_type": "permissioned",
+          "access_control_list": [
+            "0x...", // Allowed deployers
+            "0x..."
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Development/Testnet
+```toml
+# app.toml
+[json-rpc]
+enable = true
+api = ["eth", "net", "web3", "debug", "txpool", "personal"]
+allow-unprotected-txs = true
+enable-indexer = true
+enable-profiling = true
+```
+
+---
+
+## Launch Checklist
+
+- [ ] Set unique chain ID and EVM chain ID
+- [ ] Configure token through bank metadata and VM params
+- [ ] For 18-decimal chains: Remove precisebank module and use standard bank
+- [ ] For non-18 decimal chains: Add `extended_denom_options` in VM params
+- [ ] Enable required precompiles for your use case
+- [ ] Configure fee market parameters (base fee, elasticity)
+- [ ] Set appropriate JSON-RPC endpoints and APIs
+- [ ] Configure access control if needed (default: permissionless)
+- [ ] Test token transfers and EVM transactions before mainnet
+
+---
+
+## Common Issues and Solutions
+
+### Issue: MetaMask Can't Connect
+**Solution**: Check JSON-RPC is enabled and exposed:
+```toml
+[json-rpc]
+enable = true
+address = "0.0.0.0:8545"  # Bind to all interfaces
+```
+
+### Issue: Transactions Failing with Low Gas
+**Solution**: Adjust gas configuration:
+```toml
+[json-rpc]
+gas-cap = 50000000  # Increase if needed
+```
+
+### Issue: IBC Tokens Not Showing in MetaMask
+**Solution**: Ensure ERC20 module is configured:
+```json
+{
+  "erc20": {
+    "params": {
+      "enable_erc20": true,
+      "permissionless_registration": true
+    }
+  }
+}
+```
+
+### Issue: Wrong Chain ID in MetaMask
+**Solution**: EVM Chain ID is different from Cosmos Chain ID:
+```json
+{
+  "vm": {
+    "params": {
+      "evm_chain_id": "888"  // This is what MetaMask uses
+    }
+  }
+}
+```
+
+---
+
+## Parameter Modification Timeline
+
+| When | What Can Be Changed | How |
+|------|---------------------|-----|
+| **Before Genesis** | Chain ID, Bech32 prefix, Coin type | Configuration files |
+| **At Genesis** | All module parameters, Token config | Genesis file |
+| **After Launch** | Most module params (except chain/coin config) | Governance proposal |
+| **Any Time** | Node-specific settings (RPC, APIs, etc.) | app.toml + restart |
+
+---
+
+## Useful Commands
+
+```bash
+# Check current parameters
+evmd query vm params
+evmd query feemarket params
+evmd query erc20 params
+
+# Submit parameter change proposal
+evmd tx gov submit-proposal <proposal.json> --from validator
+
+# Update local configuration
+vim ~/.evmd/config/app.toml
+systemctl restart evmd
+```

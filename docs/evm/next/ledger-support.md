@@ -25,7 +25,7 @@ The Cosmos Ledger app cannot derive Ethereum-style addresses because it only sup
 
 ### How It Works
 
-```
+```sh
 ┌─────────────────────┐
 │ Cosmos Transaction  │
 │  (MsgSend, etc.)    │
@@ -93,22 +93,6 @@ A Cosmos transaction is converted to:
   }
 }
 ```
-
-## Benefits
-
-### For Users
-
-- **Single Key**: One `eth_secp256k1` key for both EVM and Cosmos transactions
-- **Single Ledger App**: Only need Ethereum app, not both apps
-- **Better UX**: No app switching on Ledger device
-- **Secure Verification**: Ledger displays hashes for verification
-
-### For Developers
-
-- **Standard Protocol**: Uses established EIP-712 standard
-- **Wide Compatibility**: Works with existing Ethereum tooling
-- **Type Safety**: Structured data with type definitions
-- **Extensible**: Easy to add new message types
 
 ## Implementation
 

@@ -1,0 +1,311 @@
+# Cosmos EVM Configuration Parameters Guide
+
+This document provides a comprehensive guide to all configurable parameters for teams building their own blockchain using Cosmos EVM. Parameters are categorized by when they can be set and modified.
+
+## Table of Contents
+1. [Chain Initialization Parameters](#chain-initialization-parameters)
+2. [Genesis Parameters](#genesis-parameters)
+3. [Runtime Configuration (app.toml)](#runtime-configuration-apptoml)
+4. [Governance Modifiable Parameters](#governance-modifiable-parameters)
+
+---
+
+## Chain Initialization Parameters
+
+These parameters must be set before the chain is initialized and CANNOT be changed after genesis without significant effort.
+
+### Chain Identity
+
+| Parameter | Location | Default | Valid Values | Description |
+|-----------|----------|---------|--------------|-------------|
+| `chain-id` | Genesis / CLI | `"cosmos-1"` | Any string | Cosmos chain ID (different from EVM Chain ID) |
+| `bech32-prefix` | `config/config.go` | `"cosmos"` | Any string | Address prefix for Bech32 encoding |
+| `coin-type` | `config/config.go` | `60` (Ethereum) | Any uint32 | BIP44 coin type for HD wallets |
+
+### Token Configuration
+
+Token configuration is set in genesis through bank metadata and VM parameters.
+
+The token configuration is derived from:
+1. **Bank Metadata** (`genesis.json`: `bank.denom_metadata`): Defines the token denominations and decimal precision
+2. **VM Parameters** (`genesis.json`: `vm.params.evm_denom`): Specifies which bank denom to use as the native EVM token
+3. **Extended Denom Options** (`genesis.json`: `vm.params.extended_denom_options`): Required only for non-18 decimal chains
+
+| Derived Parameter | Source | Description |
+|-------------------|---------|-------------|
+| `Denom` | `vm.params.evm_denom` | Base denomination from bank metadata |
+| `ExtendedDenom` | Auto/Options | 18-decimal denomination for EVM (same as denom for 18-decimal chains) |
+| `DisplayDenom` | Bank metadata `display` field | Human-readable denomination |
+| `Decimals` | Bank metadata denom units | Decimal precision (exponent of display denom) |
+
+**Important**: The decimal precision affects how balances are represented in the EVM and which modules you need:
+
+**Common configurations:**
+- **18 decimals**: Direct 1:1 mapping with EVM
+  - Use standard Cosmos SDK `x/bank` module
+  - Remove `x/precisebank` module entirely
+  - Simplest architecture (recommended)
+
+- **6 decimals**: Common in Cosmos ecosystem
+  - Requires `x/precisebank` module for fractional tracking
+  - Precisebank wraps standard bank module
+  - Handles conversion: 1 utoken = 10^12 wei
+
+- **Other values**:
+  - Requires `x/precisebank` module
+  - Test conversion logic thoroughly
+  - Consider implications for UI/UX
+
+**Module replacement for 18-decimal chains:**
+```go
+// Remove from app.go:
+// import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+// import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+
+// Use standard bank instead:
+import bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+
+// Update VM keeper to use bank directly:
+app.VMKeeper = evmkeeper.NewKeeper(
+    // ...
+    app.BankKeeper,  // Instead of app.PrecisebankKeeper
+    // ...
+)
+```
+
+---
+
+## Genesis Parameters
+
+These parameters are set in the genesis file and can be modified through governance proposals after chain launch.
+
+### VM Module (`vm`)
+
+| Parameter | Default | Valid Values | Modifiable | Description |
+|-----------|---------|--------------|------------|-------------|
+| `evm_chain_id` | `262144` | Any uint64 | Via Governance* | EIP-155 chain ID for EVM transactions |
+| `extra_eips` | `[]` | Valid EIP numbers | Yes | Additional EIPs to activate |
+| `active_static_precompiles` | `[]` | Precompile addresses | Yes | Enabled precompiled contracts |
+| `evm_channels` | `[]` | IBC channel IDs | Yes | Channels connected to EVM chains |
+| `access_control.create.type` | `"permissionless"` | `permissionless`, `restricted`, `permissioned` | Yes | Contract creation access control |
+| `access_control.create.list` | `[]` | Ethereum addresses | Yes | Allowlist/blocklist for creation |
+| `access_control.call.type` | `"permissionless"` | `permissionless`, `restricted`, `permissioned` | Yes | Contract call access control |
+| `access_control.call.list` | `[]` | Ethereum addresses | Yes | Allowlist/blocklist for calls |
+| `history_serve_window` | `8192` | Any uint64 | Yes | Number of blocks to serve historical data |
+
+#### Available Static Precompiles
+
+All precompiles can be individually enabled/disabled in genesis:
+
+| Address | Name | Description |
+|---------|------|-------------|
+| `0x0000...0100` | P256 | P256 curve operations |
+| `0x0000...0400` | Bech32 | Bech32 address conversion |
+| `0x0000...0800` | Staking | Cosmos staking operations |
+| `0x0000...0801` | Distribution | Reward distribution |
+| `0x0000...0802` | ICS20 | IBC token transfers |
+| `0x0000...0803` | Vesting | Vesting account operations |
+| `0x0000...0804` | Bank | Token transfers |
+| `0x0000...0805` | Gov | Governance operations |
+| `0x0000...0806` | Slashing | Validator slashing info |
+
+#### Chain Configuration (Ethereum Forks)
+
+All Ethereum hard fork activations. Set to `0` to activate at genesis, `null` to never activate:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `homestead_block` | `0` | Homestead fork |
+| `dao_fork_block` | `0` | DAO fork |
+| `dao_fork_support` | `true` | Support DAO fork |
+| `eip150_block` | `0` | EIP-150 (Gas cost changes) |
+| `eip155_block` | `0` | EIP-155 (Replay protection) |
+| `eip158_block` | `0` | EIP-158 (State trie clearing) |
+| `byzantium_block` | `0` | Byzantium fork |
+| `constantinople_block` | `0` | Constantinople fork |
+| `petersburg_block` | `0` | Petersburg fork |
+| `istanbul_block` | `0` | Istanbul fork |
+| `muir_glacier_block` | `0` | Muir Glacier fork |
+| `berlin_block` | `0` | Berlin fork |
+| `london_block` | `0` | London fork (EIP-1559) |
+| `arrow_glacier_block` | `0` | Arrow Glacier fork |
+| `gray_glacier_block` | `0` | Gray Glacier fork |
+| `merge_netsplit_block` | `0` | Merge fork |
+| `shanghai_time` | `0` | Shanghai fork (timestamp-based) |
+| `cancun_time` | `0` | Cancun fork (timestamp-based) |
+| `prague_time` | `0` | Prague fork (timestamp-based) |
+| `osaka_time` | `null` | Osaka fork (future) |
+| `verkle_time` | `null` | Verkle fork (future) |
+
+### Fee Market Module (`feemarket`)
+
+| Parameter | Default | Valid Values | Modifiable | Description |
+|-----------|---------|--------------|------------|-------------|
+| `no_base_fee` | `false` | true/false | Yes | Disable EIP-1559 base fee |
+| `base_fee` | `1000000000` | Any positive | Yes | Initial base fee (in wei) |
+| `base_fee_change_denominator` | `8` | > 0 | Yes | Controls base fee adjustment speed |
+| `elasticity_multiplier` | `2` | > 0 | Yes | Maximum block gas increase factor |
+| `enable_height` | `0` | >= 0 | Yes | Block height to enable fee market |
+| `min_gas_price` | `0` | >= 0 | Yes | Minimum gas price |
+| `min_gas_multiplier` | `0.5` | 0-1 | Yes | Multiplier for minimum gas price |
+
+### ERC20 Module (`erc20`)
+
+| Parameter | Default | Valid Values | Modifiable | Description |
+|-----------|---------|--------------|------------|-------------|
+| `enable_erc20` | `true` | true/false | Yes | Enable ERC20 module |
+| `permissionless_registration` | `true` | true/false | Yes | Allow anyone to register token pairs |
+| `token_pairs` | `[]` | Array of pairs | Yes | Pre-registered IBC/ERC20 pairs |
+| `native_precompiles` | `[]` | Contract addresses | Yes | Native token wrappers |
+
+### Standard Cosmos SDK Modules
+
+Standard parameters for mint, staking, distribution, gov, etc. follow Cosmos SDK defaults and can be modified through governance.
+
+---
+
+## Runtime Configuration (app.toml)
+
+These parameters can be changed by validators in their local `app.toml` file and take effect after node restart.
+
+### EVM Configuration
+
+| Parameter | Default | Valid Values | Description |
+|-----------|---------|--------------|-------------|
+| `evm.tracer` | `""` | `"json"`, `"markdown"`, `"struct"`, `"access_list"` | EVM execution tracer |
+| `evm.max-tx-gas-wanted` | `0` (unlimited) | Any uint64 | Maximum gas for a single transaction |
+| `evm.cache-preimage` | `false` | true/false | Enable SHA3 preimage recording |
+| `evm.min-tip` | `0` | Any uint64 | Minimum priority fee (tip) in wei |
+| `evm.geth-metrics-address` | `"127.0.0.1:8100"` | IP:port | Geth metrics server address |
+
+### JSON-RPC Configuration
+
+| Parameter | Default | Valid Values | Description |
+|-----------|---------|--------------|-------------|
+| `json-rpc.enable` | `false` | true/false | Enable JSON-RPC server |
+| `json-rpc.address` | `"127.0.0.1:8545"` | IP:port | HTTP server address |
+| `json-rpc.ws-address` | `"127.0.0.1:8546"` | IP:port | WebSocket server address |
+| `json-rpc.api` | `["eth", "net", "web3"]` | Array of namespaces | Enabled API namespaces |
+| `json-rpc.gas-cap` | `25000000` | Any uint64 | Gas cap for eth_call |
+| `json-rpc.evm-timeout` | `"5s"` | Duration string | Timeout for eth_call |
+| `json-rpc.txfee-cap` | `1.0` | Any float | Transaction fee cap in ether |
+| `json-rpc.filter-cap` | `200` | Any int32 | Maximum number of filters |
+| `json-rpc.feehistory-cap` | `100` | Any int32 | Maximum blocks in fee history |
+| `json-rpc.logs-cap` | `10000` | Any int32 | Maximum logs per query |
+| `json-rpc.block-range-cap` | `10000` | Any int32 | Maximum block range for logs |
+| `json-rpc.http-timeout` | `"30s"` | Duration string | HTTP read/write timeout |
+| `json-rpc.http-idle-timeout` | `"120s"` | Duration string | HTTP idle timeout |
+| `json-rpc.allow-unprotected-txs` | `false` | true/false | Allow non-EIP155 transactions |
+| `json-rpc.batch-request-limit` | `1000` | Any int | Maximum batch size |
+| `json-rpc.batch-response-max-size` | `25000000` | Any int | Maximum batch response bytes |
+| `json-rpc.max-open-connections` | `0` (unlimited) | Any int | Connection limit |
+| `json-rpc.enable-indexer` | `false` | true/false | Enable custom indexer |
+| `json-rpc.metrics-address` | `"127.0.0.1:6065"` | IP:port | Metrics server address |
+| `json-rpc.ws-origins` | `["127.0.0.1", "localhost"]` | Array of origins | Allowed WebSocket origins |
+| `json-rpc.allow-insecure-unlock` | `true` | true/false | Allow account unlocking via HTTP |
+| `json-rpc.enable-profiling` | `false` | true/false | Enable debug profiling |
+
+#### Available JSON-RPC Namespaces
+
+- `web3`: Web3 specific methods
+- `eth`: Ethereum JSON-RPC methods
+- `net`: Network information
+- `txpool`: Transaction pool inspection
+- `debug`: Debugging methods (use with caution)
+- `personal`: Account management (use with caution)
+- `miner`: Mining methods (limited functionality)
+
+### TLS Configuration
+
+| Parameter | Default | Valid Values | Description |
+|-----------|---------|--------------|-------------|
+| `tls.certificate-path` | `""` | File path | TLS certificate (.pem) |
+| `tls.key-path` | `""` | File path | TLS private key (.pem) |
+
+### Standard Cosmos SDK Configuration
+
+Standard Cosmos SDK configurations in app.toml (API, gRPC, etc.) remain unchanged.
+
+---
+
+## Governance Modifiable Parameters
+
+These parameters can be changed through governance proposals after chain launch:
+
+### Standard Parameters (Immediately Effective)
+- VM Module: `extra_eips`, `active_static_precompiles`, `evm_channels`, `access_control`, `history_serve_window`
+- Fee Market: All parameters
+- ERC20: All parameters
+- Standard Cosmos SDK module parameters
+
+### Sensitive Parameters (Require Careful Coordination)
+- `evm_chain_id` - Affects replay protection, requires validator coordination
+- Token configuration (denom, decimals) - Core economic parameters, typically not changed
+- Ethereum fork activation blocks/timestamps - Requires coordinated activation
+
+---
+
+## Custom EIPs and Extensions
+
+Teams can implement custom EIPs by:
+1. Creating activator functions in `eips/` directory
+2. Registering in `DefaultCosmosEVMActivators` map
+3. Adding EIP number to `extra_eips` in genesis
+
+Example:
+```go
+// x/vm/types/activators.go
+var DefaultCosmosEVMActivators = map[int]func(*vm.JumpTable){
+    9999: myCustomEIP9999,
+}
+```
+
+---
+
+## Best Practices
+
+1. **Decimal Configuration**: Use 18 decimals for simplest EVM compatibility
+2. **Precompiles**: Only enable needed precompiles to reduce attack surface
+3. **Access Control**: Start with permissionless, add restrictions as needed
+4. **JSON-RPC**: Enable only required namespaces for security
+5. **Gas Configuration**: Set appropriate gas caps to prevent DoS
+6. **Fork Activation**: Coordinate fork activation heights with validators
+
+## Configuration Examples
+
+### Minimal Production Configuration
+```toml
+# app.toml
+[evm]
+min-tip = 1000000000  # 1 gwei minimum tip
+
+[json-rpc]
+enable = true
+api = ["eth", "net", "web3"]
+address = "0.0.0.0:8545"
+gas-cap = 50000000
+allow-unprotected-txs = false
+```
+
+### Development Configuration
+```toml
+# app.toml
+[evm]
+tracer = "json"
+
+[json-rpc]
+enable = true
+api = ["eth", "net", "web3", "txpool", "debug", "personal"]
+address = "0.0.0.0:8545"
+ws-address = "0.0.0.0:8546"
+allow-unprotected-txs = true
+enable-indexer = true
+```
+
+---
+
+## Additional Resources
+
+- [Official Documentation](https://evm.cosmos.network/)
+- [Cosmos SDK Documentation](https://docs.cosmos.network/)
+- [GitHub Repository](https://github.com/cosmos/evm)

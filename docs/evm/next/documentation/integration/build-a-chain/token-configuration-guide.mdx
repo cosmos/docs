@@ -1,0 +1,210 @@
+# Token Configuration Guide
+
+## Overview
+
+Token configuration is one of the most critical decisions when launching your chain. This guide explains how Cosmos EVM handles token configuration through bank metadata and VM parameters, and the implications of different decimal precision choices.
+
+## How Token Configuration Works
+
+Cosmos EVM derives token configuration from two sources:
+
+1. **Bank Module Metadata**: Defines the token denominations and decimal precision
+2. **VM Module Parameters**: Specifies which bank denom to use as the native EVM token
+
+During initialization, the VM module's `SetGlobalConfigVariables` function:
+1. Reads bank metadata for the specified `evm_denom`
+2. Extracts decimal precision from the denom units
+3. Creates `EvmCoinInfo` with appropriate extended denom
+4. Stores this configuration in VM keeper state
+
+## Decimal Precision Choices
+
+### 18 Decimal Configuration (Recommended for Simplicity)
+
+**Genesis Configuration:**
+```json
+{
+  "bank": {
+    "denom_metadata": [
+      {
+        "description": "The native token with 18 decimals",
+        "denom_units": [
+          {
+            "denom": "atoken",    // Base denomination (18 decimals)
+            "exponent": 0
+          },
+          {
+            "denom": "token",     // Display denomination
+            "exponent": 18
+          }
+        ],
+        "base": "atoken",
+        "display": "token",
+        "name": "Token",
+        "symbol": "TKN"
+      }
+    ]
+  },
+  "vm": {
+    "params": {
+      "evm_denom": "atoken"     // References bank metadata base denom
+      // No extended_denom_options needed
+    }
+  }
+}
+```
+
+**Architecture Benefits:**
+- Direct 1:1 mapping with EVM (no conversion needed)
+- No precision loss or dust accumulation
+- Can use standard Cosmos SDK bank module
+- Remove precisebank module entirely
+- Simplest implementation
+
+**Module Changes Required:**
+```go
+// In app.go, use standard bank instead of precisebank:
+app.EVMKeeper = evmkeeper.NewKeeper(
+    appCodec,
+    keys[evmtypes.StoreKey],
+    tkeys[evmtypes.TransientKey],
+    keys,
+    authtypes.NewModuleAddress(govtypes.ModuleName),
+    app.AccountKeeper,
+    app.BankKeeper,  // Direct bank keeper, not precisebank
+    app.StakingKeeper,
+    // ...
+)
+```
+
+### 6 Decimal Configuration (Common in Cosmos)
+
+**Genesis Configuration:**
+```json
+{
+  "bank": {
+    "denom_metadata": [
+      {
+        "description": "The native token with 6 decimals",
+        "denom_units": [
+          {
+            "denom": "utoken",    // Base denomination (6 decimals)
+            "exponent": 0
+          },
+          {
+            "denom": "token",     // Display denomination
+            "exponent": 6
+          }
+        ],
+        "base": "utoken",
+        "display": "token",
+        "name": "Token",
+        "symbol": "TKN"
+      }
+    ]
+  },
+  "vm": {
+    "params": {
+      "evm_denom": "utoken",    // References bank metadata base denom
+      "extended_denom_options": {
+        "extended_denom": "atoken"  // Required: 18-decimal representation for EVM
+      }
+    }
+  }
+}
+```
+
+**Architecture Requirements:**
+- Requires precisebank module to track fractional amounts
+- Conversion: 1 utoken = 10^12 wei in EVM
+- Precisebank wraps standard bank module
+- Handles dust from decimal conversion
+
+### Other Decimal Configurations
+
+Any decimal precision from 1-18 is supported, but requires careful consideration:
+
+- **2 decimals**: 1 base = 10^16 wei (requires precisebank)
+- **9 decimals**: 1 base = 10^9 wei (requires precisebank)
+- **12 decimals**: 1 base = 10^6 wei (requires precisebank)
+
+## Decision Matrix
+
+| Decimals | Precisebank Required | Complexity | Gas Costs | Recommendation |
+|----------|---------------------|------------|-----------|----------------|
+| 18 | No | Low | Standard | Best for new chains |
+| 6 | Yes | Medium | Slightly higher | Good for Cosmos compatibility |
+| Other | Yes | Medium-High | Varies | Test thoroughly |
+
+## Implementation Steps
+
+### For 18-Decimal Chains
+
+1. **Remove precisebank from app.go:**
+```go
+// Remove these imports:
+// import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+// import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+
+// Remove from module list:
+// precisebanktypes.ModuleName,
+```
+
+2. **Update keeper initialization to use standard bank:**
+```go
+app.EVMKeeper = evmkeeper.NewKeeper(
+    // ... other params
+    app.BankKeeper,  // Use BankKeeper directly
+    // ... other params
+)
+```
+
+3. **Configure genesis with 18-decimal token** (see example above)
+
+### For Non-18 Decimal Chains
+
+1. **Keep precisebank module** in your app.go
+
+2. **Configure extended denom** in VM params:
+```json
+"extended_denom_options": {
+  "extended_denom": "atoken"  // Your 18-decimal representation
+}
+```
+
+3. **Test decimal conversion** thoroughly before launch
+
+## Common Pitfalls
+
+1. **Forgetting extended_denom_options**: Non-18 decimal chains MUST specify extended denom
+2. **Module mismatch**: Using precisebank with 18 decimals adds unnecessary complexity
+3. **Incorrect denom references**: VM params must reference actual bank metadata base denom
+4. **Missing bank metadata**: Bank metadata must be set in genesis
+
+## Testing Your Configuration
+
+```bash
+# After chain initialization, verify coin info
+yourchain query vm coin-info
+
+# Test native token transfer
+yourchain tx bank send validator1 validator2 1000000utoken --fees 1000utoken
+
+# Test EVM transfer (should handle decimal conversion automatically)
+cast send --rpc-url http://localhost:8545 \
+    0xRECIPIENT \
+    --value 1ether \
+    --private-key $PRIVATE_KEY
+
+# Verify balance conversions
+yourchain query bank balances $ADDRESS  # Shows native denomination
+cast balance $ADDRESS                   # Shows wei (18 decimals)
+```
+
+## Key Takeaways
+
+1. **Choose decimal precision early** - it's fundamental to your chain's economics
+2. **18 decimals is simplest** - direct EVM compatibility, no conversion needed
+3. **6 decimals works well** - common in Cosmos, requires precisebank
+4. **Test thoroughly** - decimal conversion affects every transaction
+5. **Document your choice** - ensure all validators and users understand the configuration

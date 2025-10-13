@@ -725,4 +725,127 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
     - `max_gas`: Maximum gas per block (critical for mempool configuration)
 
   </Tab>
+
+  <Tab title="Validator Nodes">
+    Production validator node configuration and security considerations.
+
+    <Warning>
+    **Critical Security Notice:** Validator nodes should NEVER expose RPC/API ports publicly. Only dedicated RPC nodes (non-validators) should serve public traffic.
+    </Warning>
+
+    ## Validator vs RPC Node Architecture
+
+    Production networks should use a two-tier architecture:
+
+    ### Validator Nodes (Private)
+
+    **Purpose:** Block production and consensus participation only
+
+    **Configuration Requirements:**
+    - Disable all public-facing services
+    - Restrict network access to other validators via persistent peers
+    - Do NOT enable JSON-RPC server
+    - Do NOT expose API/gRPC ports publicly
+    - Use firewall rules to block external access
+
+    **Recommended `app.toml` settings:**
+    ```toml
+    [api]
+    enable = false  # Disable REST API
+
+    [grpc]
+    enable = false  # Disable gRPC or bind to localhost only
+    address = "localhost:9090"
+
+    [json-rpc]
+    enable = false  # CRITICAL: Keep JSON-RPC disabled on validators
+
+    [evm]
+    max-tx-gas-wanted = 50000000  # Set reasonable gas limits
+    ```
+
+    **Why this matters:**
+    - **DDoS Protection:** Public RPC access can overwhelm validator resources
+    - **Resource Exhaustion:** Heavy query load impacts block production
+    - **Uptime:** Validators must prioritize consensus participation over serving requests
+    - **Security:** Reduced attack surface for exploits
+    - **Slashing Risk:** Downtime from overload can lead to slashing penalties
+
+    ### RPC Nodes (Public)
+
+    **Purpose:** Serve public API/RPC requests without participating in consensus
+
+    **Configuration Requirements:**
+    - Enable JSON-RPC, API, and WebSocket endpoints
+    - Use load balancers for distribution
+    - Set appropriate rate limits and caps
+    - Can run multiple RPC nodes for redundancy
+    - No validator keys stored
+
+    **Recommended `app.toml` settings:**
+    ```toml
+    [api]
+    enable = true
+    address = "tcp://0.0.0.0:1317"  # Bind to all interfaces
+    max-open-connections = 1000
+
+    [grpc]
+    enable = true
+    address = "0.0.0.0:9090"
+
+    [json-rpc]
+    enable = true
+    address = "0.0.0.0:8545"
+    ws-address = "0.0.0.0:8546"
+    api = "eth,net,web3,txpool"
+
+    # Set resource limits
+    gas-cap = 50000000
+    filter-cap = 200
+    logs-cap = 10000
+    block-range-cap = 10000
+    max-open-connections = 500
+    batch-request-limit = 100
+    ```
+
+    ## Validator Security Checklist
+
+    - [ ] JSON-RPC is disabled on validator nodes
+    - [ ] API/gRPC endpoints not exposed publicly on validators
+    - [ ] Firewall rules restrict validator access to known peers only
+    - [ ] Separate RPC nodes deployed for public access
+    - [ ] Load balancers configured for RPC node redundancy
+    - [ ] Monitoring alerts for validator downtime
+    - [ ] Regular security audits of network architecture
+    - [ ] Validator keys stored securely (preferably HSM)
+    - [ ] SSH access restricted and key-based only
+
+    ## Network Topology Example
+
+    ```
+    Public Internet
+          │
+          ├─── Load Balancer
+          │         │
+          │    ┌────┴────┬────────┐
+          │    │         │        │
+          │  RPC Node  RPC Node  RPC Node
+          │    │         │        │
+          └────┴─────────┴────────┘
+                     │
+          ═══════════════════════════
+          Private Validator Network
+          ═══════════════════════════
+                     │
+          ┌──────────┼──────────┐
+          │          │          │
+    Validator 1  Validator 2  Validator 3
+    (RPC disabled) (RPC disabled) (RPC disabled)
+    ```
+
+    <Note>
+    **State Sync Consideration:** If validators need to quickly sync using state sync, they may temporarily enable RPC on a private network segment to serve snapshots to each other. This should be done on a separate internal interface, never exposed publicly.
+    </Note>
+
+  </Tab>
 </Tabs>
