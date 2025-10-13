@@ -5,7 +5,9 @@ This guide walks through creating your own blockchain by forking and customizing
 ## Understanding the Cosmos SDK Application Structure
 
 <Info>
-Cosmos EVM is built on the Cosmos SDK, a modular framework for building application-specific blockchains. Understanding this structure helps you customize your chain effectively.
+  Cosmos EVM is built on the Cosmos SDK, a modular framework for building
+  application-specific blockchains. Understanding this structure helps you
+  customize your chain effectively.
 </Info>
 
 A Cosmos SDK application consists of several key components:
@@ -30,6 +32,7 @@ The `evmd` directory contains the example chain implementation that you'll fork 
     ```
 
     The repository structure provides everything needed to build a custom chain. The `evmd` directory contains the example implementation you'll modify.
+
   </Tab>
 
   <Tab title="Rename Application">
@@ -45,6 +48,7 @@ The `evmd` directory contains the example chain implementation that you'll fork 
     ```
 
     Update module paths in `go.mod` to reflect your repository.
+
   </Tab>
 
   <Tab title="Customize Branding">
@@ -58,7 +62,8 @@ The `evmd` directory contains the example chain implementation that you'll fork 
 ## Core Configuration Parameters
 
 <Warning>
-Some parameters must be set before genesis and cannot be changed later without significant migration effort. Choose carefully based on your requirements.
+  Some parameters must be set before genesis and cannot be changed later without
+  significant migration effort. Choose carefully based on your requirements.
 </Warning>
 
 ### Chain Identity Configuration
@@ -91,6 +96,7 @@ These fundamental parameters define your chain's identity and must be configured
 
     This affects how addresses appear:
     - `cosmos1abc...` becomes `yourchain1abc...`
+
   </Accordion>
 
   <Accordion title="HD Wallet Configuration" id="hd-wallet-configuration">
@@ -103,6 +109,7 @@ These fundamental parameters define your chain's identity and must be configured
         Bip44CoinType uint32 = 60
     )
     ```
+
   </Accordion>
 
   <Accordion title="Chain IDs" id="chain-ids">
@@ -116,19 +123,24 @@ These fundamental parameters define your chain's identity and must be configured
     **EVM Chain ID** (number): Set in genesis (see below)
     - Must be unique to avoid replay attacks
     - Register at [chainlist.org](https://chainlist.org) for public chains
+
   </Accordion>
 </AccordionGroup>
 
 ### Token Economics Configuration
 
 <Note>
-The precisebank module is optional and only required for non-18 decimal tokens. If your native token uses 18 decimals (matching EVM standard), you can replace precisebank with the standard Cosmos SDK bank module for simpler architecture.
+  The precisebank module is optional and only required for non-18 decimal
+  tokens. If your native token uses 18 decimals (matching EVM standard), you can
+  replace precisebank with the standard Cosmos SDK bank module for simpler
+  architecture.
 </Note>
 
 <Accordion title="Replacing Precisebank with Standard Bank Module (18-decimal chains)" id="replacing-precisebank-with-standard-bank-module-18-decimal-chains">
 For chains using 18-decimal tokens natively, replace precisebank with the standard bank module:
 
 **In `yourchain/app.go`:**
+
 ```go
 import (
     // Remove precisebank imports
@@ -207,15 +219,18 @@ genesisModuleOrder := []string{
 ```
 
 **Benefits of removing precisebank for 18-decimal chains:**
+
 - Simpler architecture with one less module
 - Direct 1:1 mapping between native token and EVM representation
 - Reduced complexity in balance conversions
 - Standard Cosmos SDK bank operations
 
 **When precisebank IS required (non-18 decimal tokens):**
+
 - 6-decimal tokens: Tracks fractional amounts in EVM (1 utoken = 10^12 wei)
 - 12-decimal tokens: Handles 10^6 wei conversions
 - Any non-18: Prevents dust accumulation from precision differences
+
 </Accordion>
 
 Native token configuration is set in genesis through a combination of bank module metadata and VM parameters. The VM module reads this configuration during initialization and stores it as `EvmCoinInfo` in its state:
@@ -265,18 +280,18 @@ Native token configuration is set in genesis through a combination of bank modul
         "description": "The native staking token for evmd.",
         "denom_units": [
           {
-            "denom": "atest",     // Base denomination (18 decimals = atto prefix)
+            "denom": "atest", // Base denomination (18 decimals = atto prefix)
             "exponent": 0,
             "aliases": ["attotest"]
           },
           {
-            "denom": "test",      // Display denomination
-            "exponent": 18,       // 18 decimals from base
+            "denom": "test", // Display denomination
+            "exponent": 18, // 18 decimals from base
             "aliases": []
           }
         ],
-        "base": "atest",         // Base denom with 18 decimals
-        "display": "test",       // Human-readable name
+        "base": "atest", // Base denom with 18 decimals
+        "display": "test", // Human-readable name
         "name": "Test Token",
         "symbol": "TEST"
       }
@@ -284,7 +299,7 @@ Native token configuration is set in genesis through a combination of bank modul
   },
   "evm": {
     "params": {
-      "evm_denom": "atest"      // References bank metadata base denom
+      "evm_denom": "atest" // References bank metadata base denom
       // No extended_denom_options needed for 18-decimal chains
     }
   }
@@ -311,9 +326,11 @@ jq '.app_state["evm"]["params"]["active_static_precompiles"]=["0x000000000000000
 jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 jq '.app_state.erc20.token_pairs=[{contract_owner:1,erc20_address:"0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",denom:"atest",enabled:true}]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 ```
+
 </CodeGroup>
 
 The VM module's `SetGlobalConfigVariables` function (called during PreBlock) reads this configuration and:
+
 1. Fetches bank metadata for the specified `evm_denom`
 2. Extracts decimal precision from the denom units
 3. Creates `EvmCoinInfo` with appropriate extended denom:
@@ -328,8 +345,10 @@ The VM module's `SetGlobalConfigVariables` function (called during PreBlock) rea
 - **Other values**: Test conversion logic thoroughly with precisebank
 
 **Module Selection Based on Decimals:**
+
 - `decimals: 18` → Use standard `x/bank` module
 - `decimals: 6` or other → Use `x/precisebank` wrapper around bank
+
 </Tip>
 
 ## Genesis Configuration
@@ -375,12 +394,14 @@ The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain
 </CodeGroup>
 
 **Key Parameters:**
+
 - `evm_denom`: Must match the base denomination in bank metadata
 - `active_static_precompiles`: Enable only the precompiles you need
 - `access_control`: Use numeric values (0=permissionless, 1=restricted, 2=permissioned)
 - `extended_denom_options`: Required only for non-18 decimal chains
 
 **Note**: The EVM chain ID and Ethereum fork configuration are currently set as global variables during initialization and cannot be directly configured in genesis. To customize these, modify the default values in `x/vm/types/chain_config.go` before building.
+
 </Accordion>
 
 ### Available Precompiles
@@ -429,12 +450,13 @@ The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain
 {
   "feemarket": {
     "params": {
-      "no_base_fee": true,  // Disable EIP-1559
+      "no_base_fee": true, // Disable EIP-1559
       "min_gas_price": "1000000000"
     }
   }
 }
 ```
+
 </CodeGroup>
 
 ### Standard Cosmos Modules
@@ -542,67 +564,89 @@ The `app.toml` file contains node-specific settings that can be changed without 
 ###############################################################################
 
 [json-rpc]
+
 # Enable JSON-RPC server
+
 enable = true
 
 # Address to bind the HTTP server
+
 address = "0.0.0.0:8545"
 
 # Address to bind WebSocket server
+
 ws-address = "0.0.0.0:8546"
 
 # API namespaces to enable
+
 # Available: web3, eth, personal, net, txpool, debug, miner
+
 api = ["eth", "net", "web3", "txpool"]
 
 # Gas cap for eth_call/estimateGas (0=default)
+
 gas-cap = 25000000
 
 # Timeout for eth_call
+
 evm-timeout = "5s"
 
 # Transaction fee cap (in ether)
+
 txfee-cap = 1.0
 
 # Maximum number of filters
+
 filter-cap = 200
 
 # Maximum blocks for fee history
+
 feehistory-cap = 100
 
 # Maximum logs per query
+
 logs-cap = 10000
 
 # Maximum block range for eth_getLogs
+
 block-range-cap = 10000
 
 # HTTP server timeouts
+
 http-timeout = "30s"
 http-idle-timeout = "120s"
 
 # Allow non-EIP155 signed transactions
+
 allow-unprotected-txs = false
 
 # Batch request settings
+
 batch-request-limit = 1000
 batch-response-max-size = 25000000
 
 # Connection limit (0 = unlimited)
+
 max-open-connections = 0
 
 # Enable custom indexer
+
 enable-indexer = false
 
 # Metrics server
+
 metrics-address = "127.0.0.1:6065"
 
 # WebSocket allowed origins
+
 ws-origins = ["localhost", "127.0.0.1"]
 
 # Dangerous: only for development
+
 allow-insecure-unlock = false
 enable-profiling = false
-```
+
+````
 </Accordion>
 
 ### EVM Configuration
@@ -623,7 +667,7 @@ min-tip = 1000000000
 
 # Geth metrics server
 geth-metrics-address = "127.0.0.1:8100"
-```
+````
 
 ## Creating the Genesis Validator Set
 
@@ -639,22 +683,26 @@ Each validator must generate their operator keys:
 yourchain init validator-1 --chain-id yourchain-1
 
 # Create operator key
+
 yourchain keys add validator --keyring-backend file
 
 # Get validator consensus public key
+
 yourchain tendermint show-validator
 
 # Create genesis transaction
+
 yourchain genesis gentx validator \
-  1000000000000ustake \
-  --chain-id yourchain-1 \
-  --commission-rate 0.10 \
-  --commission-max-rate 0.20 \
-  --commission-max-change-rate 0.01 \
-  --min-self-delegation 1 \
-  --keyring-backend file \
-  --gas-prices 0.025ustake
-```
+ 1000000000000ustake \
+ --chain-id yourchain-1 \
+ --commission-rate 0.10 \
+ --commission-max-rate 0.20 \
+ --commission-max-change-rate 0.01 \
+ --min-self-delegation 1 \
+ --keyring-backend file \
+ --gas-prices 0.025ustake
+
+````
 
 ```bash coordinator-setup.sh
 # Genesis coordinator runs
@@ -664,13 +712,16 @@ yourchain init genesis-node --chain-id yourchain-1
 yourchain genesis add-genesis-account validator1-address 1000000000000ustake
 yourchain genesis add-genesis-account validator2-address 1000000000000ustake
 # ... repeat for all validators
-```
+````
+
 </CodeGroup>
 
 ### Collecting Genesis Transactions
 
 <Warning>
-The genesis coordinator must be trusted as they will create the final genesis file. Consider using a multi-signature setup or trusted third party for production networks.
+  The genesis coordinator must be trusted as they will create the final genesis
+  file. Consider using a multi-signature setup or trusted third party for
+  production networks.
 </Warning>
 
 <Tabs>
@@ -685,6 +736,7 @@ The genesis coordinator must be trusted as they will create the final genesis fi
     yourchain genesis collect-gentxs
     yourchain genesis validate-genesis
     ```
+
   </Tab>
 
   <Tab title="GitHub Coordination">
@@ -694,6 +746,7 @@ The genesis coordinator must be trusted as they will create the final genesis fi
     2. Validators submit PRs with their gentx files
     3. Verify validator identities before merging
     4. Generate final genesis from collected transactions
+
   </Tab>
 
   <Tab title="Automated Tools">
@@ -708,6 +761,7 @@ The genesis coordinator must be trusted as they will create the final genesis fi
 
     yourchain genesis collect-gentxs
     ```
+
   </Tab>
 </Tabs>
 
@@ -716,11 +770,13 @@ The genesis coordinator must be trusted as they will create the final genesis fi
 Once the genesis file is complete with all validator transactions:
 
 1. **Calculate genesis hash** for verification:
+
    ```bash
    sha256sum ~/.yourchain/config/genesis.json
    ```
 
 2. **Distribute to all validators** who replace their local genesis:
+
    ```bash
    # Each validator downloads and verifies
    curl -O https://genesis.yourchain.com/genesis.json
@@ -752,6 +808,7 @@ Once the genesis file is complete with all validator transactions:
     max_num_inbound_peers = 100
     max_num_outbound_peers = 100
     ```
+
   </Accordion>
 
   <Accordion title="Launch Coordination" id="launch-coordination">
@@ -779,6 +836,7 @@ Once the genesis file is complete with all validator transactions:
       --evm.tracer "" \
       --log_level info
     ```
+
   </Accordion>
 </AccordionGroup>
 
@@ -795,6 +853,7 @@ After launch, monitor these critical metrics:
     # Monitor block time
     yourchain query block | jq .block.header.time
     ```
+
   </Tab>
 
   <Tab title="Validator Set">
@@ -805,6 +864,7 @@ After launch, monitor these critical metrics:
     # Check voting power distribution
     yourchain query tendermint-validator-set
     ```
+
   </Tab>
 
   <Tab title="Network Peers">
@@ -815,6 +875,7 @@ After launch, monitor these critical metrics:
     # Monitor peer count
     curl http://localhost:26657/net_info | jq '.result.n_peers'
     ```
+
   </Tab>
 </Tabs>
 
@@ -846,6 +907,7 @@ yourchain tx gov submit-proposal param-change proposal.json \
   --chain-id yourchain-1 \
   --keyring-backend file
 ```
+
 </CodeGroup>
 
 ### Software Upgrades
@@ -858,10 +920,10 @@ For breaking changes requiring new binary versions:
 const UpgradeName = "v1.0.0-to-v2.0.0"
 
 func (app EVMD) RegisterUpgradeHandlers() {
-    app.UpgradeKeeper.SetUpgradeHandler(
-        UpgradeName,
-        func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
-            sdkCtx := sdk.UnwrapSDKContext(ctx)
+app.UpgradeKeeper.SetUpgradeHandler(
+UpgradeName,
+func(ctx context.Context, \_ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+sdkCtx := sdk.UnwrapSDKContext(ctx)
 
             // Perform any state migrations here
             // For example, setting bank metadata for token configuration:
@@ -886,8 +948,10 @@ func (app EVMD) RegisterUpgradeHandlers() {
             return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
         },
     )
+
 }
-```
+
+````
 
 **2. Propose upgrade** via governance:
 ```bash
@@ -897,11 +961,12 @@ yourchain tx gov submit-proposal software-upgrade v1.0.0-to-v2.0.0 \
     --upgrade-height 1000000 \
     --from validator \
     --chain-id yourchain-1
-```
+````
 
 **3. Validators prepare** by installing new binary before upgrade height
 
 **4. Automatic upgrade** at specified height using Cosmovisor or manual restart
+
 </Accordion>
 
 ## Advanced Customization
@@ -912,6 +977,7 @@ yourchain tx gov submit-proposal software-upgrade v1.0.0-to-v2.0.0 \
 The choice between standard bank and precisebank affects your entire token architecture:
 
 **Standard Bank Module (18-decimal chains):**
+
 ```go
 // Module initialization order in app.go
 genesisModuleOrder := []string{
@@ -955,6 +1021,7 @@ app.EVMKeeper = evmkeeper.NewKeeper(
 ```
 
 **Precisebank Module (non-18 decimal chains):**
+
 ```go
 // Module initialization order (current evmd implementation)
 genesisModuleOrder := []string{
@@ -1001,16 +1068,19 @@ app.EVMKeeper = evmkeeper.NewKeeper(
 ```
 
 **Key Differences:**
+
 - **18-decimal**: EVM interacts directly with bank module
 - **Non-18 decimal**: EVM interacts through precisebank wrapper
 - **Genesis order**: Precisebank must initialize after bank but before modules that use it
 - **Keeper dependencies**: VM keeper takes different keeper type based on decimal configuration
+
 </Accordion>
 
 ### Custom Precompiles
 
 <Note>
-Teams can implement custom precompiled contracts for chain-specific functionality.
+  Teams can implement custom precompiled contracts for chain-specific
+  functionality.
 </Note>
 
 Create custom precompiles by:
@@ -1089,13 +1159,14 @@ Create custom precompiles by:
     - Monitor for unusual activity or governance proposals
   </Accordion>
 
-  <Accordion title="Performance Optimization" icon="gauge">
-    - Adjust block size and gas limits based on network capacity
-    - Configure appropriate peer connections
-    - Use SSDs for validator nodes
-    - Monitor and adjust mempool settings
-    - Consider pruning strategies for long-term sustainability
-  </Accordion>
+{" "}
+
+<Accordion title="Performance Optimization" icon="gauge">
+  - Adjust block size and gas limits based on network capacity - Configure
+  appropriate peer connections - Use SSDs for validator nodes - Monitor and
+  adjust mempool settings - Consider pruning strategies for long-term
+  sustainability
+</Accordion>
 
   <Accordion title="Network Stability" icon="heart-pulse">
     - Start with conservative parameters
