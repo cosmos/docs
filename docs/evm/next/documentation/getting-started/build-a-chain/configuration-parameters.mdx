@@ -41,34 +41,39 @@ The token configuration is derived from:
 **Important**: The decimal precision affects how balances are represented in the EVM and which modules you need:
 
 **Common configurations:**
-- **18 decimals**: Direct 1:1 mapping with EVM
-  - Use standard Cosmos SDK `x/bank` module
-  - Remove `x/precisebank` module entirely
+- **18 decimals (DEFAULT)**: Direct 1:1 mapping with EVM
+  - Uses standard Cosmos SDK `x/bank` module by default
+  - No additional modules required
   - Simplest architecture (recommended)
 
 - **6 decimals**: Common in Cosmos ecosystem
-  - Requires `x/precisebank` module for fractional tracking
+  - Must add `x/precisebank` module for fractional tracking
   - Precisebank wraps standard bank module
   - Handles conversion: 1 utoken = 10^12 wei
 
 - **Other values**:
-  - Requires `x/precisebank` module
+  - Must add `x/precisebank` module
   - Test conversion logic thoroughly
   - Consider implications for UI/UX
 
-**Module replacement for 18-decimal chains:**
+**Module addition for non-18 decimal chains:**
 ```go
-// Remove from app.go:
-// import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
-// import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+// Add to app.go:
+import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
 
-// Use standard bank instead:
-import bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+// Initialize PreciseBankKeeper:
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    keys[precisebanktypes.StoreKey],
+    app.BankKeeper,
+    app.AccountKeeper,
+)
 
-// Update VM keeper to use bank directly:
+// Update VM keeper to use precisebank:
 app.VMKeeper = evmkeeper.NewKeeper(
     // ...
-    app.BankKeeper,  // Instead of app.PrecisebankKeeper
+    app.PreciseBankKeeper,  // Use PreciseBankKeeper wrapper
     // ...
 )
 ```

@@ -57,13 +57,13 @@ During initialization, the VM module's `SetGlobalConfigVariables` function:
 **Architecture Benefits:**
 - Direct 1:1 mapping with EVM (no conversion needed)
 - No precision loss or dust accumulation
-- Can use standard Cosmos SDK bank module
-- Remove precisebank module entirely
-- Simplest implementation
+- Uses standard Cosmos SDK bank module by default
+- No additional modules required
+- Simplest implementation - this is the default configuration
 
-**Module Changes Required:**
+**Module Configuration (Default):**
 ```go
-// In app.go, use standard bank instead of precisebank:
+// No changes needed - the default configuration already uses standard bank:
 app.EVMKeeper = evmkeeper.NewKeeper(
     appCodec,
     keys[evmtypes.StoreKey],
@@ -71,7 +71,7 @@ app.EVMKeeper = evmkeeper.NewKeeper(
     keys,
     authtypes.NewModuleAddress(govtypes.ModuleName),
     app.AccountKeeper,
-    app.BankKeeper,  // Direct bank keeper, not precisebank
+    app.BankKeeper,  // Uses bank keeper directly by default
     app.StakingKeeper,
     // ...
 )
@@ -115,10 +115,11 @@ app.EVMKeeper = evmkeeper.NewKeeper(
 ```
 
 **Architecture Requirements:**
-- Requires precisebank module to track fractional amounts
+- Requires adding precisebank module to track fractional amounts
 - Conversion: 1 utoken = 10^12 wei in EVM
 - Precisebank wraps standard bank module
 - Handles dust from decimal conversion
+- See [Adding Precisebank Module](/docs/evm/next/documentation/getting-started/build-a-chain/building-your-chain-guide#adding-precisebank-module-for-non-18-decimal-chains) for implementation
 
 ### Other Decimal Configurations
 
@@ -138,46 +139,63 @@ Any decimal precision from 1-18 is supported, but requires careful consideration
 
 ## Implementation Steps
 
-### For 18-Decimal Chains
+### For 18-Decimal Chains (Default)
 
-1. **Remove precisebank from app.go:**
-```go
-// Remove these imports:
-// import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
-// import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+1. **No module changes required** - the default configuration already uses standard bank
 
-// Remove from module list:
-// precisebanktypes.ModuleName,
-```
+2. **Configure genesis with 18-decimal token** (see example above)
 
-2. **Update keeper initialization to use standard bank:**
+3. **Verify bank keeper is used directly:**
 ```go
 app.EVMKeeper = evmkeeper.NewKeeper(
     // ... other params
-    app.BankKeeper,  // Use BankKeeper directly
+    app.BankKeeper,  // Should use BankKeeper directly (default)
     // ... other params
 )
 ```
 
-3. **Configure genesis with 18-decimal token** (see example above)
-
 ### For Non-18 Decimal Chains
 
-1. **Keep precisebank module** in your app.go
+1. **Add precisebank module to your app.go:**
+```go
+// Add these imports:
+import "github.com/cosmos/evm/x/precisebank"
+import precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+import precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
 
-2. **Configure extended denom** in VM params:
+// Add to module list:
+precisebanktypes.ModuleName,
+```
+
+2. **Initialize PreciseBankKeeper and use it for EVM:**
+```go
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    keys[precisebanktypes.StoreKey],
+    app.BankKeeper,
+    app.AccountKeeper,
+)
+
+app.EVMKeeper = evmkeeper.NewKeeper(
+    // ... other params
+    app.PreciseBankKeeper,  // Use PreciseBankKeeper instead
+    // ... other params
+)
+```
+
+3. **Configure extended denom** in VM params:
 ```json
 "extended_denom_options": {
   "extended_denom": "atoken"  // Your 18-decimal representation
 }
 ```
 
-3. **Test decimal conversion** thoroughly before launch
+4. **Test decimal conversion** thoroughly before launch
 
 ## Common Pitfalls
 
 1. **Forgetting extended_denom_options**: Non-18 decimal chains MUST specify extended denom
-2. **Module mismatch**: Using precisebank with 18 decimals adds unnecessary complexity
+2. **Module mismatch**: Adding precisebank to 18 decimals adds unnecessary complexity
 3. **Incorrect denom references**: VM params must reference actual bank metadata base denom
 4. **Missing bank metadata**: Bank metadata must be set in genesis
 

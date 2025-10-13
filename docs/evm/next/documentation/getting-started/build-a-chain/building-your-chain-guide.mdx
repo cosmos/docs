@@ -33,9 +33,9 @@ The `evmd` directory contains the example chain implementation that you'll fork 
 
     The repository structure provides everything needed to build a custom chain. The `evmd` directory contains the example implementation you'll modify.
 
-  </Tab>
+</Tab>
 
-  <Tab title="Rename Application">
+<Tab title="Rename Application">
     Replace `evmd` references throughout the codebase with your chain's name:
 
     ```bash
@@ -49,9 +49,9 @@ The `evmd` directory contains the example chain implementation that you'll fork 
 
     Update module paths in `go.mod` to reflect your repository.
 
-  </Tab>
+</Tab>
 
-  <Tab title="Customize Branding">
+<Tab title="Customize Branding">
     Update application metadata in `yourchain/cmd/yourchain/cmd/root.go`:
     - Application name
     - Default home directory
@@ -74,7 +74,7 @@ These fundamental parameters define your chain's identity and must be configured
   <Accordion title="Bech32 Address Prefix" id="bech32-address-prefix">
     Configure in `config/config.go`:
 
-    ```go
+```go
     const (
         // Bech32Prefix defines the Bech32 prefix for accounts
         Bech32Prefix = "yourchain"  // Change from "cosmos"
@@ -92,25 +92,25 @@ These fundamental parameters define your chain's identity and must be configured
         // Bech32PrefixConsPub defines the Bech32 prefix of a consensus node public key
         Bech32PrefixConsPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus + sdk.PrefixPublic
     )
-    ```
+```
 
     This affects how addresses appear:
     - `cosmos1abc...` becomes `yourchain1abc...`
 
-  </Accordion>
+</Accordion>
 
   <Accordion title="HD Wallet Configuration" id="hd-wallet-configuration">
     Set the BIP44 coin type for hardware wallet compatibility in `crypto/hd/hdpath.go`:
 
-    ```go
+```go
     const (
         // Bip44CoinType satisfies EIP84 for Ethereum compatibility
         // Use 60 for Ethereum compatibility or register your own
         Bip44CoinType uint32 = 60
     )
-    ```
+```
 
-  </Accordion>
+</Accordion>
 
   <Accordion title="Chain IDs" id="chain-ids">
     You'll work with two different chain IDs:
@@ -124,64 +124,62 @@ These fundamental parameters define your chain's identity and must be configured
     - Must be unique to avoid replay attacks
     - Register at [chainlist.org](https://chainlist.org) for public chains
 
-  </Accordion>
+</Accordion>
 </AccordionGroup>
 
 ### Token Economics Configuration
 
 <Note>
-  The precisebank module is optional and only required for non-18 decimal
-  tokens. If your native token uses 18 decimals (matching EVM standard), you can
-  replace precisebank with the standard Cosmos SDK bank module for simpler
-  architecture.
+  **Default Configuration**: Cosmos EVM now uses 18 decimals by default with the
+  standard bank module. The precisebank module is only needed for chains using
+  non-18 decimal tokens (like 6 decimals).
 </Note>
 
-<Accordion title="Replacing Precisebank with Standard Bank Module (18-decimal chains)" id="replacing-precisebank-with-standard-bank-module-18-decimal-chains">
-For chains using 18-decimal tokens natively, replace precisebank with the standard bank module:
+<Accordion title="Adding Precisebank Module for Non-18 Decimal Chains" id="adding-precisebank-module-for-non-18-decimal-chains">
+For chains using 6-decimal or other non-18 decimal tokens, you need to add the precisebank module to handle fractional amounts:
 
 **In `yourchain/app.go`:**
 
 ```go
 import (
-    // Remove precisebank imports
-    // "github.com/cosmos/evm/x/precisebank"
-    // precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
-    // precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+    // Add precisebank imports
+    "github.com/cosmos/evm/x/precisebank"
+    precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+    precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
 
     // Standard bank is already imported
     bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
     banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
-// In app struct, remove PreciseBankKeeper
-type EVMD struct {
+// In app struct, add PreciseBankKeeper
+type YourApp struct {
     // ... other keepers
-    BankKeeper    bankkeeper.Keeper  // Standard bank keeper
-    // PreciseBankKeeper precisebankkeeper.Keeper // Remove this line
-    EVMKeeper     *evmkeeper.Keeper
+    BankKeeper        bankkeeper.Keeper
+    PreciseBankKeeper precisebankkeeper.Keeper  // Add this line
+    EVMKeeper         *evmkeeper.Keeper
     // ... other keepers
 }
 
 // In NewApp function:
-// 1. Remove precisebank store key
+// 1. Add precisebank store key
 keys := storetypes.NewKVStoreKeys(
     // ... other keys
     evmtypes.StoreKey,
     feemarkettypes.StoreKey,
     erc20types.StoreKey,
-    // precisebanktypes.StoreKey, // Remove this line
+    precisebanktypes.StoreKey,  // Add this line
 )
 
-// 2. Skip PreciseBankKeeper initialization
-// Remove these lines:
-// app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
-//     appCodec,
-//     keys[precisebanktypes.StoreKey],
-//     app.BankKeeper,
-//     app.AccountKeeper,
-// )
+// 2. Initialize PreciseBankKeeper after BankKeeper
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    keys[precisebanktypes.StoreKey],
+    app.BankKeeper,
+    app.AccountKeeper,
+)
 
-// 3. Update EVMKeeper to use BankKeeper directly
+// 3. Update EVMKeeper to use PreciseBankKeeper instead of BankKeeper
 app.EVMKeeper = evmkeeper.NewKeeper(
     appCodec,
     keys[evmtypes.StoreKey],
@@ -189,7 +187,7 @@ app.EVMKeeper = evmkeeper.NewKeeper(
     keys,
     authtypes.NewModuleAddress(govtypes.ModuleName),
     app.AccountKeeper,
-    app.BankKeeper,  // Use BankKeeper instead of PreciseBankKeeper
+    app.PreciseBankKeeper,  // Use PreciseBankKeeper instead of BankKeeper
     app.StakingKeeper,
     app.FeeMarketKeeper,
     &app.ConsensusParamsKeeper,
@@ -198,35 +196,37 @@ app.EVMKeeper = evmkeeper.NewKeeper(
     tracer,
 )
 
-// 4. Remove precisebank from ModuleManager
+// 4. Add precisebank to ModuleManager
 app.ModuleManager = module.NewManager(
     // ... other modules
+    precisebank.NewAppModule(app.PreciseBankKeeper, app.AccountKeeper), // Add this line
     vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, app.AccountKeeper.AddressCodec()),
     feemarket.NewAppModule(app.FeeMarketKeeper),
     erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
-    // precisebank.NewAppModule(...) // Remove this line
 )
 
-// 5. Remove from genesis order
+// 5. Add to genesis order (MUST be after bank and before vm)
 genesisModuleOrder := []string{
     // ... other modules
+    banktypes.ModuleName,
+    precisebanktypes.ModuleName,  // Add after bank, before vm
     evmtypes.ModuleName,
     feemarkettypes.ModuleName,
     erc20types.ModuleName,
-    // precisebanktypes.ModuleName, // Remove this line
     // ... rest
 }
 ```
 
-**Benefits of removing precisebank for 18-decimal chains:**
-• Simpler architecture with one less module
-• Direct 1:1 mapping between native token and EVM representation
-• Reduced complexity in balance conversions
-• Standard Cosmos SDK bank operations
+**Why precisebank is required for non-18 decimal tokens:**
+• **6-decimal tokens**: Tracks fractional amounts in EVM (1 utoken = 10^12 wei)
+• **12-decimal tokens**: Handles 10^6 wei conversions
+• **Prevents dust**: Ensures no loss of fractional amounts during conversions
+• **Wraps bank module**: Provides seamless integration while tracking remainders
 
-**When precisebank IS required (non-18 decimal tokens):**
-• 6-decimal tokens: Tracks fractional amounts in EVM (1 utoken = 10^12 wei)
-• 12-decimal tokens: Handles 10^6 wei conversions
+**If using 18 decimals (default):**
+• No changes needed - standard bank module handles everything
+• Direct 1:1 mapping between native token and EVM representation
+• Simpler architecture without extra module complexity
 • Any non-18: Prevents dust accumulation from precision differences
 
 </Accordion>
@@ -338,13 +338,14 @@ The VM module's `SetGlobalConfigVariables` function (called during PreBlock) rea
 
 <Tip>
 **Decimal Precision Guidelines:**
-• **18 decimals**: Direct EVM compatibility, replace precisebank with standard bank module
-• **6 decimals**: Common in Cosmos, requires precisebank for fractional amounts
+• **18 decimals**: Direct EVM compatibility, uses standard bank module by default
+• **6 decimals**: Common in Cosmos, requires adding precisebank for fractional amounts
 • **Other values**: Test conversion logic thoroughly with precisebank
 
 **Module Selection Based on Decimals:**
 • `decimals: 18` → Use standard `x/bank` module
 • `decimals: 6` or other → Use `x/precisebank` wrapper around bank
+
 </Tip>
 
 ## Genesis Configuration
@@ -431,6 +432,7 @@ Understanding the difference between precompiles and predeployed contracts is cr
 **Precompiles** - Native Go implementations exposed as EVM contracts at specific addresses (0x0100-0x0806). These provide gas-efficient access to Cosmos SDK modules.
 
 **Predeployed Contracts** - Regular Solidity contracts deployed at genesis to standard addresses. These include essential infrastructure like Create2, Multicall3, and Permit2.
+
 </Info>
 
 ### Configuring Precompiles
@@ -489,15 +491,16 @@ Precompiles must be explicitly enabled in your genesis configuration. The defaul
 <Accordion title="Default Predeployed Contracts" id="predeployed-contracts">
 The evmd example chain includes these predeployed contracts by default:
 
-| Contract | Address | Description |
-|----------|---------|-------------|
-| **Create2** | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | Deterministic contract deployment |
-| **Multicall3** | `0xcA11bde05977b3631167028862bE2a173976CA11` | Batch multiple calls in one transaction |
-| **Permit2** | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Token permit and transfer management |
-| **Safe Factory** | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | Deploy Safe multisig contracts |
-| **EIP-2935** | `0x0b` | Historical block hash storage |
+| Contract         | Address                                      | Description                             |
+| ---------------- | -------------------------------------------- | --------------------------------------- |
+| **Create2**      | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | Deterministic contract deployment       |
+| **Multicall3**   | `0xcA11bde05977b3631167028862bE2a173976CA11` | Batch multiple calls in one transaction |
+| **Permit2**      | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Token permit and transfer management    |
+| **Safe Factory** | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | Deploy Safe multisig contracts          |
+| **EIP-2935**     | `0x0b`                                       | Historical block hash storage           |
 
 These are configured in `x/vm/types/preinstall.go` and automatically included when using the evmd example genesis.
+
 </Accordion>
 
 <Tabs>
@@ -535,6 +538,7 @@ These are configured in `x/vm/types/preinstall.go` and automatically included wh
     - Use standard addresses when possible (e.g., Create2 should always be at its standard address)
     - Test thoroughly as these contracts are immutable after genesis
     </Warning>
+
   </Tab>
 
   <Tab title="No Preinstalls">
@@ -551,6 +555,7 @@ These are configured in `x/vm/types/preinstall.go` and automatically included wh
     <Note>
     Removing default preinstalls may break ecosystem compatibility. Many tools expect Create2 and Multicall3 at their standard addresses.
     </Note>
+
   </Tab>
 </Tabs>
 
@@ -568,12 +573,12 @@ To add your own predeployed contracts at genesis:
     ```
   </Step>
 
-  <Step title="Choose Address">
-    Select a deployment address that won't conflict:
-    - Avoid precompile range (0x0001-0x0FFF)
-    - Check for ecosystem standards
-    - Consider using Create2 for deterministic addresses
-  </Step>
+{" "}
+<Step title="Choose Address">
+  Select a deployment address that won't conflict: - Avoid precompile range
+  (0x0001-0x0FFF) - Check for ecosystem standards - Consider using Create2 for
+  deterministic addresses
+</Step>
 
   <Step title="Add to Genesis">
     Add the contract to your genesis configuration:
@@ -709,11 +714,7 @@ To add your own predeployed contracts at genesis:
 
 ### Initial Token Distribution
 
-<div id="initial-token-distribution">
-
 Add initial account balances in the `bank` section:
-
-</div>
 
 ```json
 {
@@ -904,10 +905,10 @@ yourchain genesis add-genesis-account validator2-address 1000000000000ustake
 
 <Note>
   The genesis coordinator combines signed validator transactions but cannot
-  modify them without invalidating signatures. It's still good practice to:
-  - Verify the final genesis.json hash before starting your node
-  - Ensure all expected validators are included
-  - Confirm token allocations match expectations
+  modify them without invalidating signatures. It's still good practice to: -
+  Verify the final genesis.json hash before starting your node - Ensure all
+  expected validators are included - Confirm token allocations match
+  expectations
 </Note>
 
 <Tabs>
@@ -1162,9 +1163,9 @@ yourchain tx gov submit-proposal software-upgrade v1.0.0-to-v2.0.0 \
 ### Module Architecture Decisions
 
 <Accordion title="Bank vs Precisebank Module Architecture">
-The choice between standard bank and precisebank affects your entire token architecture:
+The choice between standard bank and precisebank depends on your token's decimal precision:
 
-**Standard Bank Module (18-decimal chains):**
+**Standard Bank Module (DEFAULT - 18-decimal chains):**
 
 ```go
 // Module initialization order in app.go
@@ -1180,7 +1181,7 @@ genesisModuleOrder := []string{
     evmtypes.ModuleName,
     feemarkettypes.ModuleName,
     erc20types.ModuleName,
-    // precisebanktypes.ModuleName removed for 18-decimal chains
+    // No precisebank needed for 18-decimal chains
     ibctransfertypes.ModuleName,
     genutiltypes.ModuleName,
     evidencetypes.ModuleName,
@@ -1208,10 +1209,10 @@ app.EVMKeeper = evmkeeper.NewKeeper(
 )
 ```
 
-**Precisebank Module (non-18 decimal chains):**
+**Precisebank Module (OPTIONAL - for non-18 decimal chains):**
 
 ```go
-// Module initialization order (current evmd implementation)
+// Module initialization order with precisebank
 genesisModuleOrder := []string{
     authtypes.ModuleName,
     banktypes.ModuleName,
@@ -1224,7 +1225,7 @@ genesisModuleOrder := []string{
     evmtypes.ModuleName,
     feemarkettypes.ModuleName,
     erc20types.ModuleName,
-    precisebanktypes.ModuleName,  // Included for non-18 decimal chains
+    precisebanktypes.ModuleName,  // Added for non-18 decimal chains
     ibctransfertypes.ModuleName,
     // ... rest of modules
 }
@@ -1257,9 +1258,9 @@ app.EVMKeeper = evmkeeper.NewKeeper(
 
 **Key Differences:**
 
-- **18-decimal**: EVM interacts directly with bank module
-- **Non-18 decimal**: EVM interacts through precisebank wrapper
-- **Genesis order**: Precisebank must initialize after bank but before modules that use it
+- **18-decimal (default)**: EVM interacts directly with bank module, simpler architecture
+- **Non-18 decimal**: EVM interacts through precisebank wrapper to handle fractional amounts
+- **Genesis order**: When using precisebank, it must initialize after bank but before modules that use it
 - **Keeper dependencies**: VM keeper takes different keeper type based on decimal configuration
 
 </Accordion>
