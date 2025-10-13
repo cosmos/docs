@@ -1,6 +1,7 @@
-# Building Your Custom Chain with Cosmos EVM
-
-This guide walks through creating your own blockchain by forking and customizing the Cosmos EVM project. We'll cover the entire process from initial fork to running network, including parameter configuration, genesis setup, and validator coordination.
+---
+title: "Building Your Custom Chain with Cosmos EVM"
+description: "Create your own blockchain by forking and customizing the Cosmos EVM referece chain. Covers the entire process from initial fork to running network, including parameter configuration, genesis setup, and validator coordination."
+---
 
 ## Understanding the Cosmos SDK Application Structure
 
@@ -72,57 +73,93 @@ These fundamental parameters define your chain's identity and must be configured
 
 <AccordionGroup>
   <Accordion title="Bech32 Address Prefix" id="bech32-address-prefix">
-    Configure in `config/config.go`:
+    **File Location**: [`config/config.go`](https://github.com/cosmos/evm/blob/main/config/config.go#L62)
+
+**What It Does**: Defines the human-readable prefix for all addresses on your chain, used for account addresses, validator addresses, and consensus addresses.
+
+**Valid Values**: Any alphanumeric string (lowercase recommended). Common examples:
+• `cosmos`, `osmosis`, `juno`, `noble`, `yourchain`
+
+**Configuration**:
 
 ```go
-    const (
-        // Bech32Prefix defines the Bech32 prefix for accounts
-        Bech32Prefix = "yourchain"  // Change from "cosmos"
+const (
+    // Bech32Prefix defines the Bech32 prefix for accounts
+    Bech32Prefix = "yourchain"  // Line 62 - Change from "cosmos"
 
-        // Bech32PrefixAccAddr defines the Bech32 prefix of an account's address
-        Bech32PrefixAccAddr = Bech32Prefix
-        // Bech32PrefixAccPub defines the Bech32 prefix of an account's public key
-        Bech32PrefixAccPub = Bech32Prefix + sdk.PrefixPublic
-        // Bech32PrefixValAddr defines the Bech32 prefix of a validator's operator address
-        Bech32PrefixValAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator
-        // Bech32PrefixValPub defines the Bech32 prefix of a validator's operator public key
-        Bech32PrefixValPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator + sdk.PrefixPublic
-        // Bech32PrefixConsAddr defines the Bech32 prefix of a consensus node address
-        Bech32PrefixConsAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus
-        // Bech32PrefixConsPub defines the Bech32 prefix of a consensus node public key
-        Bech32PrefixConsPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus + sdk.PrefixPublic
-    )
+    // Generated prefixes (do not modify these)
+    Bech32PrefixAccAddr = Bech32Prefix  // yourchain1...
+    Bech32PrefixAccPub = Bech32Prefix + sdk.PrefixPublic  // yourchainpub1...
+    Bech32PrefixValAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator  // yourchainvaloper1...
+    Bech32PrefixValPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator + sdk.PrefixPublic  // yourchainvaloperpub1...
+    Bech32PrefixConsAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus  // yourchainvalcons1...
+    Bech32PrefixConsPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus + sdk.PrefixPublic  // yourchainvalconspub1...
+)
 ```
 
-    This affects how addresses appear:
-    - `cosmos1abc...` becomes `yourchain1abc...`
+**Impact**:
+• User account addresses: `yourchain1abc...`
+• Validator addresses: `yourchainvaloper1abc...`
+• Cannot be changed after genesis without breaking all addresses
 
 </Accordion>
 
   <Accordion title="HD Wallet Configuration" id="hd-wallet-configuration">
-    Set the BIP44 coin type for hardware wallet compatibility in `crypto/hd/hdpath.go`:
+    **File Location**: [`crypto/hd/hdpath.go`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L9)
+
+**What It Does**: Sets the BIP44 coin type for hierarchical deterministic wallet derivation. This affects how hardware wallets (Ledger, Trezor) and software wallets derive addresses from seed phrases.
+
+**Valid Values**:
+• `60` - Ethereum coin type (default, EIP-84 compliant) - **Recommended for EVM compatibility**
+• `118` - Cosmos coin type (for pure Cosmos chains)
+• Custom registered coin type from [SLIP-0044](https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+
+**Configuration**:
 
 ```go
-    const (
-        // Bip44CoinType satisfies EIP84 for Ethereum compatibility
-        // Use 60 for Ethereum compatibility or register your own
-        Bip44CoinType uint32 = 60
-    )
+var (
+    // Bip44CoinType satisfies EIP84 for Ethereum compatibility
+    Bip44CoinType uint32 = 60  // Line 9 - Use 60 for EVM, 118 for Cosmos
+
+    // BIP44HDPath is automatically set based on coin type
+    BIP44HDPath = ethaccounts.DefaultBaseDerivationPath.String()  // m/44'/60'/0'/0
+)
 ```
+
+**Impact**:
+• Determines HD wallet derivation path
+• Affects hardware wallet compatibility
+• Must match user expectations (use 60 for EVM-focused chains)
 
 </Accordion>
 
   <Accordion title="Chain IDs" id="chain-ids">
-    You'll work with two different chain IDs:
+    **What It Does**: Your chain uses TWO different chain IDs for different purposes.
 
-    **Cosmos Chain ID** (string): Set during initialization
-    ```bash
-    yourchain init mynode --chain-id yourchain-1
-    ```
+**1. Cosmos Chain ID** (string format):
+• **What**: Identifies your chain in the Cosmos ecosystem for IBC and governance
+• **Format**: `{name}-{version}` (e.g., `osmosis-1`, `noble-1`, `yourchain-1`)
+• **Where**: Set during initialization via CLI
+• **Can Change**: Yes, through coordinated network upgrade
 
-    **EVM Chain ID** (number): Set in genesis (see below)
-    - Must be unique to avoid replay attacks
-    - Register at [chainlist.org](https://chainlist.org) for public chains
+```bash
+yourchain init mynode --chain-id yourchain-1
+```
+
+**2. EVM Chain ID** (uint64 number):
+• **What**: EIP-155 replay protection for Ethereum transactions
+• **Format**: Unsigned 64-bit integer (e.g., `262144`, `1`, `137`)
+• **Where**: Set in genesis `vm.chain_config.chain_id`
+• **Can Change**: No, changing breaks Ethereum transaction replay protection
+• **Registry**: Register at [chainlist.org](https://chainlist.org) for public chains
+
+**Reserved EVM Chain IDs**:
+• `1` - Ethereum Mainnet
+• `137` - Polygon
+• `262144` - Cosmos EVM default (testing only)
+• `1-999` - Reserved by Ethereum Foundation
+
+**Recommendation**: Choose EVM Chain ID > 1000000 for production to avoid conflicts.
 
 </Accordion>
 </AccordionGroup>
@@ -136,7 +173,11 @@ These fundamental parameters define your chain's identity and must be configured
 </Note>
 
 <Accordion title="Adding Precisebank Module for Non-18 Decimal Chains" id="adding-precisebank-module-for-non-18-decimal-chains">
-For chains using 6-decimal or other non-18 decimal tokens, you need to add the precisebank module to handle fractional amounts:
+For chains using 6-decimal or other non-18 decimal tokens, you need to add the precisebank module to handle fractional amounts.
+
+<Info>
+For comprehensive PreciseBank Module documentation including mathematical foundations, state management, and complete examples, see the [PreciseBank Module Documentation](/evm/next/documentation/getting-started/build-a-chain/modules/precisebank-module).
+</Info>
 
 **In `yourchain/app.go`:**
 
@@ -321,6 +362,8 @@ jq '.app_state["bank"]["denom_metadata"]=[{"description":"The native staking tok
 jq '.app_state["evm"]["params"]["active_static_precompiles"]=["0x0000000000000000000000000000000000000100","0x0000000000000000000000000000000000000400","0x0000000000000000000000000000000000000800","0x0000000000000000000000000000000000000801","0x0000000000000000000000000000000000000802","0x0000000000000000000000000000000000000803","0x0000000000000000000000000000000000000804","0x0000000000000000000000000000000000000805", "0x0000000000000000000000000000000000000806", "0x0000000000000000000000000000000000000807"]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 
 # Set up ERC20 native token representation
+# For details on ERC20 module configuration, see:
+# /evm/next/documentation/getting-started/build-a-chain/modules/erc20-module
 jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 jq '.app_state.erc20.token_pairs=[{contract_owner:1,erc20_address:"0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",denom:"atest",enabled:true}]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 ```
@@ -354,50 +397,233 @@ The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain
 
 ### VM Module Parameters
 
-<Accordion title="Complete VM Configuration" id="vm-module-parameters">
-<CodeGroup>
-```json genesis.json
-{
-  "vm": {
-    "params": {
-      "evm_denom": "ustake",  // Must match bank metadata base denom
-      "extra_eips": [],        // Additional EIPs to activate
-      "active_static_precompiles": [
-        "0x0000000000000000000000000000000000000800", // Staking
-        "0x0000000000000000000000000000000000000801", // Distribution
-        "0x0000000000000000000000000000000000000804"  // Bank
-      ],
-      "evm_channels": [],      // IBC channels connected to EVM chains
-      "access_control": {
-        "create": {
-          "access_type": 0,     // 0=permissionless, 1=restricted, 2=permissioned
-          "access_control_list": []
-        },
-        "call": {
-          "access_type": 0,     // 0=permissionless, 1=restricted, 2=permissioned
-          "access_control_list": []
-        }
-      },
-      "history_serve_window": "8192",
-      "extended_denom_options": {
-        "extended_denom": "astake"  // Only for non-18 decimal chains
-      }
-    },
-    "accounts": [],  // EVM genesis accounts (optional)
-    "preinstalls": []  // Pre-deployed contracts (optional)
+**File Location**: Genesis file at `~/.yourchain/config/genesis.json` under `app_state.vm.params`
+
+**Code Reference**: [`x/vm/types/params.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go)
+
+<Info>
+For comprehensive VM Module documentation including all configuration methods, parameter details, and integration examples, see the [VM Module Documentation](/evm/next/documentation/getting-started/build-a-chain/modules/vm-module).
+</Info>
+
+<Accordion title="Complete VM Parameter Reference" id="vm-module-parameters">
+
+<AccordionGroup>
+<Accordion title="evm_denom" icon="coins">
+**What It Does**: Specifies which bank module denomination to use as the native EVM token.
+
+**Type**: `string`
+
+**Valid Values**: Must match a base denomination from bank metadata (`app_state.bank.denom_metadata[].base`)
+
+**Examples**:
+• `"atest"` - 18 decimal token
+• `"utest"` - 6 decimal token
+• `"ustake"` - 6 decimal token
+• Any custom bank denom
+
+**Default**: `"uatom"` (see [`x/vm/types/params.go:21`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21))
+
+```json
+"evm_denom": "ustake"
+```
+</Accordion>
+
+<Accordion title="extra_eips" icon="code">
+**What It Does**: Enables additional Ethereum Improvement Proposals beyond the default fork activations.
+
+**Type**: `[]int64` (array of EIP numbers)
+
+**Valid Values**: Only EIPs that are activatable in go-ethereum. Check available EIPs at runtime with `vm.ActivateableEips()`
+
+**Common EIPs**:
+• `2200` - Net gas metering
+• `2929` - Gas cost increases for state access opcodes
+• `3198` - BASEFEE opcode
+• `3529` - Reduction in refunds
+• `3541` - Reject new contract code starting with 0xEF byte
+
+**Default**: `[]` (empty - all EIPs come from fork config)
+
+**Code Reference**: [`x/vm/types/params.go:182-200`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L182-L200)
+
+```json
+"extra_eips": [2200, 2929]
+```
+
+**Validation**: Automatically checks if EIP is valid and not duplicate
+</Accordion>
+
+<Accordion title="active_static_precompiles" icon="puzzle">
+**What It Does**: Enables specific Cosmos module precompiles accessible from Solidity.
+
+**Type**: `[]string` (array of hex addresses)
+
+**Valid Values**: Must be from available precompile addresses (see [`x/vm/types/precompiles.go:4-15`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go#L4-L15))
+
+**Available Addresses**:
+• `"0x0000000000000000000000000000000000000100"` - P256 cryptography
+• `"0x0000000000000000000000000000000000000400"` - Bech32 conversion
+• `"0x0000000000000000000000000000000000000800"` - Staking operations
+• `"0x0000000000000000000000000000000000000801"` - Distribution/rewards
+• `"0x0000000000000000000000000000000000000802"` - ICS20 (IBC transfers)
+• `"0x0000000000000000000000000000000000000803"` - Vesting accounts
+• `"0x0000000000000000000000000000000000000804"` - Bank transfers
+• `"0x0000000000000000000000000000000000000805"` - Governance
+• `"0x0000000000000000000000000000000000000806"` - Slashing info
+
+**Default**: `[]` (none enabled)
+
+```json
+"active_static_precompiles": [
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000800"
+]
+```
+
+**Security Note**: Only enable precompiles your chain needs to reduce attack surface
+</Accordion>
+
+<Accordion title="evm_channels" icon="network">
+**What It Does**: Lists IBC channel IDs that connect to other EVM-compatible chains (like Injective or Cronos) for special IBC token handling.
+
+**Type**: `[]string` (array of IBC channel identifiers)
+
+**Valid Values**: Valid IBC channel IDs (format: `channel-N` where N is a number)
+
+**Default**: `[]` (empty)
+
+```json
+"evm_channels": ["channel-0", "channel-5"]
+```
+
+**Validation**: Checks IBC channel identifier format (see [`x/vm/types/params.go:80-96`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L80-L96))
+</Accordion>
+
+<Accordion title="access_control" icon="shield">
+**What It Does**: Controls who can deploy smart contracts (`create`) and call existing contracts (`call`).
+
+**Type**: Object with `create` and `call` fields
+
+**Access Types** (from [`x/vm/types/access_control.pb.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/access_control.pb.go)):
+• `0` - `AccessTypePermissionless`: Anyone can perform the action
+• `1` - `AccessTypeRestricted`: Block addresses in the list
+• `2` - `AccessTypePermissioned`: Only addresses in the list allowed
+
+**Default**: `AccessTypePermissionless` for both
+
+```json
+"access_control": {
+  "create": {
+    "access_type": 0,  // 0=permissionless, 1=restricted, 2=permissioned
+    "access_control_list": []  // Hex addresses
+  },
+  "call": {
+    "access_type": 0,
+    "access_control_list": []
   }
 }
 ```
-</CodeGroup>
 
-**Key Parameters:**
+**Example - Permissioned Contract Deployment**:
+```json
+"create": {
+  "access_type": 2,  // Only allowlist can deploy
+  "access_control_list": [
+    "0x1234567890123456789012345678901234567890",
+    "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+  ]
+}
+```
 
-- `evm_denom`: Must match the base denomination in bank metadata
-- `active_static_precompiles`: Enable only the precompiles you need
-- `access_control`: Use numeric values (0=permissionless, 1=restricted, 2=permissioned)
-- `extended_denom_options`: Required only for non-18 decimal chains
+**Validation**: See [`x/vm/types/params.go:140-180`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L140-L180)
+</Accordion>
 
-**Note**: The EVM chain ID and Ethereum fork configuration are currently set as global variables during initialization and cannot be directly configured in genesis. To customize these, modify the default values in `x/vm/types/chain_config.go` before building.
+<Accordion title="history_serve_window" icon="clock">
+**What It Does**: Number of historical blocks to keep for historical state queries (affects disk usage and query capabilities).
+
+**Type**: `uint64` (string in JSON)
+
+**Valid Values**: Any positive integer
+
+**Default**: `8192` (same as EIP-2935)
+
+**Impact**:
+• Higher values: More historical data, larger disk usage
+• Lower values: Less disk usage, limited historical queries
+• `0`: No historical state (only current block)
+
+```json
+"history_serve_window": "8192"
+```
+
+**Recommendation**: Use `8192` for standard chains, increase for archive nodes
+</Accordion>
+
+<Accordion title="extended_denom_options" icon="expand">
+**What It Does**: Specifies the 18-decimal EVM representation for non-18 decimal native tokens.
+
+**Type**: Object with `extended_denom` field
+
+**When Required**:
+• **18-decimal chains**: NOT required (EVM denom = base denom)
+• **6-decimal chains**: REQUIRED (e.g., `utoken` → `atoken`)
+• **Other decimals**: REQUIRED with precisebank module
+
+**Valid Values**: Any string that represents the 18-decimal denomination
+
+**Common Patterns**:
+• 6-decimal `utoken` → 18-decimal `atoken` (atto-prefix)
+• 6-decimal `ustake` → 18-decimal `astake`
+
+```json
+"extended_denom_options": {
+  "extended_denom": "astake"  // 18-decimal EVM representation
+}
+```
+
+**Omit for 18-decimal chains**:
+```json
+// For 18-decimal chains, either omit or set to null
+"extended_denom_options": null
+```
+</Accordion>
+</AccordionGroup>
+
+**Complete Configuration Example**:
+
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "evm_denom": "ustake",
+        "extra_eips": [],
+        "active_static_precompiles": [
+          "0x0000000000000000000000000000000000000100",
+          "0x0000000000000000000000000000000000000400",
+          "0x0000000000000000000000000000000000000800",
+          "0x0000000000000000000000000000000000000804"
+        ],
+        "evm_channels": [],
+        "access_control": {
+          "create": {
+            "access_type": 0,
+            "access_control_list": []
+          },
+          "call": {
+            "access_type": 0,
+            "access_control_list": []
+          }
+        },
+        "history_serve_window": "8192",
+        "extended_denom_options": {
+          "extended_denom": "astake"
+        }
+      }
+    }
+  }
+}
+```
 
 </Accordion>
 
@@ -406,14 +632,14 @@ The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain
 <AccordionGroup>
   <Accordion title="Core Precompiles" icon="cube">
     | Address | Module | Description |
-    |---------|--------|-------------|
+    ||--|-|
     | `0x0100` | P256 | P256 curve cryptographic operations |
     | `0x0400` | Bech32 | Convert between Bech32 and hex addresses |
   </Accordion>
 
   <Accordion title="Cosmos Module Precompiles" icon="coins">
     | Address | Module | Description |
-    |---------|--------|-------------|
+    ||--|-|
     | `0x0800` | Staking | Delegate, undelegate, redelegate |
     | `0x0801` | Distribution | Claim rewards, set withdrawal address |
     | `0x0802` | ICS20 | IBC token transfers |
@@ -492,7 +718,7 @@ Precompiles must be explicitly enabled in your genesis configuration. The defaul
 The evmd example chain includes these predeployed contracts by default:
 
 | Contract         | Address                                      | Description                             |
-| ---------------- | -------------------------------------------- | --------------------------------------- |
+| - | -- |  |
 | **Create2**      | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | Deterministic contract deployment       |
 | **Multicall3**   | `0xcA11bde05977b3631167028862bE2a173976CA11` | Batch multiple calls in one transaction |
 | **Permit2**      | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Token permit and transfer management    |
@@ -610,105 +836,859 @@ To add your own predeployed contracts at genesis:
 
 ### Fee Market Configuration
 
+The fee market module implements EIP-1559 dynamic fee pricing for your chain. Configure these parameters in the `feemarket` section of your genesis file.
+
+**File Location**: Genesis configuration in `~/.evmd/config/genesis.json` under `app_state.feemarket.params`
+**Parameter Defaults**: [x/feemarket/types/params.go](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go)
+
+<Info>
+For comprehensive Fee Market Module documentation including EIP-1559 algorithm details, monitoring, and governance, see the [Fee Market Module Documentation](/evm/next/documentation/getting-started/build-a-chain/modules/feemarket-module).
+</Info>
+
+<AccordionGroup>
+
+<Accordion title="no_base_fee" icon="toggle-off">
+
+**What It Does**: Disables EIP-1559 dynamic base fee mechanism. When `true`, the chain uses only `min_gas_price` as a fixed minimum fee.
+
+**Type**: `bool`
+
+**Valid Values**:
+- `false` - Enable EIP-1559 with dynamic base fee (recommended)
+- `true` - Disable EIP-1559, use fixed min_gas_price only
+
+**Default**: `false` (see [params.go:21](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L21))
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false  // Enable EIP-1559
+    }
+  }
+}
+```
+
+**Impact**:
+- When disabled (false), base fee adjusts dynamically based on block utilization
+- When enabled (true), behaves like pre-EIP-1559 Ethereum with fixed minimum gas price
+- Disabling EIP-1559 simplifies fee structure but loses congestion-based pricing benefits
+
+</Accordion>
+
+<Accordion title="base_fee" icon="coins">
+
+**What It Does**: Sets the initial base fee per gas in wei. This is the starting point for EIP-1559 fee calculations.
+
+**Type**: `string` (decimal number representing wei)
+
+**Valid Values**: Any non-negative decimal value in wei
+
+**Common Values**:
+- `"1000000000"` (1 gwei) - Standard starting point
+- `"10000000000"` (10 gwei) - Higher initial fee for congested chains
+- `"100000000"` (0.1 gwei) - Lower initial fee for testing
+
+**Default**: `"1000000000"` (1 gwei, see [params.go:13](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L13))
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "base_fee": "1000000000"  // 1 gwei
+    }
+  }
+}
+```
+
+**Impact**:
+- Sets floor for transaction fees at launch
+- Adjusts up/down based on block fullness after enable_height
+- Should align with expected network usage and token economics
+
+**Validation**: Must be non-negative (see [params.go:66-68](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L66-L68))
+
+</Accordion>
+
+<Accordion title="base_fee_change_denominator" icon="chart-line">
+
+**What It Does**: Controls how quickly the base fee can change per block. Higher values = slower adjustment.
+
+**Type**: `uint32`
+
+**Valid Values**: Any positive integer (cannot be 0)
+
+**Common Values**:
+- `8` - Standard EIP-1559 (max ±12.5% per block)
+- `50` - Slower adjustment (max ±2% per block)
+- `4` - Faster adjustment (max ±25% per block)
+
+**Default**: `8` (standard EIP-1559)
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "base_fee_change_denominator": 8  // Max 12.5% change per block
+    }
+  }
+}
+```
+
+**Impact**:
+- Formula: `max_change = base_fee / denominator`
+- Higher denominator = more stable fees, slower response to congestion
+- Lower denominator = more volatile fees, faster response to congestion
+- Standard Ethereum uses 8 for balanced responsiveness
+
+**Validation**: Cannot be 0 (see [params.go:62-64](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L62-L64))
+
+</Accordion>
+
+<Accordion title="elasticity_multiplier" icon="expand">
+
+**What It Does**: Defines maximum block gas limit as a multiple of target gas. Allows blocks to temporarily exceed target during high demand.
+
+**Type**: `uint32`
+
+**Valid Values**: Any positive integer (cannot be 0)
+
+**Common Values**:
+- `2` - Standard EIP-1559 (block can be 2x target)
+- `3` - More elastic (block can be 3x target)
+- `1` - No elasticity (block limited to target)
+
+**Default**: `2` (standard EIP-1559)
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "elasticity_multiplier": 2  // Block gas limit = 2 × target gas
+    }
+  }
+}
+```
+
+**Impact**:
+- Higher multiplier allows larger temporary throughput spikes
+- Block gas limit = target_gas × elasticity_multiplier
+- When blocks exceed target, base fee increases; when below target, base fee decreases
+- Standard Ethereum uses 2 for balanced elasticity
+
+**Validation**: Cannot be 0 (see [params.go:74-76](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L74-L76))
+
+</Accordion>
+
+<Accordion title="enable_height" icon="hourglass-start">
+
+**What It Does**: Block height at which EIP-1559 base fee mechanism activates. Useful for coordinated mainnet upgrades.
+
+**Type**: `int64`
+
+**Valid Values**: Any non-negative integer
+
+**Common Values**:
+- `0` - Enable from genesis (recommended for new chains)
+- `100000` - Enable at specific future height for coordinated activation
+
+**Default**: `0` (enabled from genesis, see [params.go:19](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L19))
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "enable_height": 0  // Enable from genesis
+    }
+  }
+}
+```
+
+**Impact**:
+- Before this height, base fee mechanism is inactive
+- After this height, base fee adjusts dynamically
+- Allows chains to launch with fixed fees then upgrade to dynamic pricing
+
+**Validation**: Cannot be negative (see [params.go:70-72](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L70-L72))
+
+</Accordion>
+
+<Accordion title="min_gas_price" icon="gauge-min">
+
+**What It Does**: Sets a global minimum gas price floor in native token decimals. Provides absolute minimum fee even if base fee drops lower.
+
+**Type**: `string` (decimal value)
+
+**Valid Values**: Any non-negative decimal value
+
+**Common Values**:
+- `"0"` - No minimum floor (rely on base fee only)
+- `"1000000000"` - 1 gwei minimum floor
+- `"10000000000"` - 10 gwei minimum floor
+
+**Default**: `"0"` (disabled, see [params.go:17](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L17))
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "min_gas_price": "0"  // No minimum floor
+    }
+  }
+}
+```
+
+**Impact**:
+- When base fee < min_gas_price, min_gas_price is used instead
+- Prevents fee races to zero during low usage periods
+- Often set to 0 to rely purely on EIP-1559 dynamics
+
+**Validation**: Must be non-negative (see [params.go:89-98](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L89-L98))
+
+</Accordion>
+
+<Accordion title="min_gas_multiplier" icon="percentage">
+
+**What It Does**: Fraction of base fee to use as the effective minimum gas price. Alternative to fixed min_gas_price.
+
+**Type**: `string` (decimal value between 0 and 1)
+
+**Valid Values**: Decimal between `0` and `1` (inclusive)
+
+**Common Values**:
+- `"0.5"` - Minimum is 50% of base fee
+- `"0.8"` - Minimum is 80% of base fee
+- `"0"` - No multiplier-based minimum
+
+**Default**: `"0.5"` (50%, see [params.go:15](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L15))
+
+**Configuration**:
+```json
+{
+  "feemarket": {
+    "params": {
+      "min_gas_multiplier": "0.5"  // Min = 50% of base fee
+    }
+  }
+}
+```
+
+**Impact**:
+- Creates dynamic minimum that scales with base fee
+- Effective minimum = max(min_gas_price, base_fee × min_gas_multiplier)
+- Prevents accepting transactions far below current base fee
+
+**Validation**: Must be between 0 and 1 inclusive (see [params.go:101-114](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L101-L114))
+
+</Accordion>
+
+</AccordionGroup>
+
+**Complete Configuration Example**:
+
 <CodeGroup>
-```json EIP-1559-enabled.json
+```json EIP-1559 Enabled (Recommended)
 {
   "feemarket": {
     "params": {
       "no_base_fee": false,
-      "base_fee": "1000000000",
-      "base_fee_change_denominator": 8,
-      "elasticity_multiplier": 2,
-      "enable_height": 0,
-      "min_gas_price": "1000000000",
-      "min_gas_multiplier": "0.5"
+      "base_fee": "1000000000",              // 1 gwei starting base fee
+      "base_fee_change_denominator": 8,      // Standard EIP-1559 adjustment
+      "elasticity_multiplier": 2,            // Standard EIP-1559 elasticity
+      "enable_height": 0,                    // Enable from genesis
+      "min_gas_price": "0",                  // No fixed floor
+      "min_gas_multiplier": "0.5"            // 50% of base fee minimum
     }
   }
 }
 ```
 
-```json Simple-fee.json
+```json Simple Fixed Fee
 {
   "feemarket": {
     "params": {
-      "no_base_fee": true, // Disable EIP-1559
-      "min_gas_price": "1000000000"
+      "no_base_fee": true,                   // Disable EIP-1559
+      "min_gas_price": "1000000000",         // Fixed 1 gwei minimum
+      "min_gas_multiplier": "0"              // No multiplier needed
     }
   }
 }
 ```
 
+```json High Stability Configuration
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false,
+      "base_fee": "10000000000",             // 10 gwei start
+      "base_fee_change_denominator": 50,     // Slow adjustment (±2%/block)
+      "elasticity_multiplier": 3,            // More elastic blocks
+      "enable_height": 0,
+      "min_gas_price": "5000000000",         // 5 gwei absolute floor
+      "min_gas_multiplier": "0.8"            // 80% of base fee minimum
+    }
+  }
+}
+```
+</CodeGroup>
+
+### Ethereum Fork Configuration
+
+The `chain_config` defines which Ethereum hard fork features are active on your chain. This controls EVM opcode availability and gas costs.
+
+**File Location**: Genesis configuration in `~/.evmd/config/genesis.json` under `app_state.vm.chain_config`
+**Parameter Defaults**: [x/vm/types/chain_config.go:57-108](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go#L57-L108)
+
+<Warning>
+**Default Behavior**: All Ethereum forks through Prague are enabled at genesis (block/timestamp 0). This gives you full Ethereum compatibility out-of-the-box.
+
+**When to Customize**: Only modify fork activations if you need to:
+- Delay fork activation for coordinated network upgrade
+- Disable specific opcodes for security/compatibility reasons
+- Match fork schedule of a specific Ethereum network
+
+For most chains, the defaults are appropriate.
+</Warning>
+
+<AccordionGroup>
+
+<Accordion title="Fork Types: Block vs Timestamp" icon="clock">
+
+**Block-Based Forks** (Pre-Merge):
+Forks activate when block height reaches specified value. Used for all forks before The Merge.
+
+**Time-Based Forks** (Post-Merge):
+Forks activate when block timestamp reaches specified Unix timestamp. Used for Shanghai, Cancun, Prague, and future forks.
+
+**Configuration Format**:
+```json
+{
+  "vm": {
+    "chain_config": {
+      "homestead_block": "0",      // Block-based (string int)
+      "shanghai_time": "0",         // Time-based (string Unix timestamp)
+      "osaka_time": null            // Not activated (null or negative)
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Active Forks (Default Enabled)" icon="check">
+
+These forks are enabled at genesis by default ([chain_config.go:62-103](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go#L62-L103)):
+
+**Block-Based Forks** (all at block 0):
+| Fork | Block Parameter | Key Changes |
+||-|-|
+| **Homestead** | `homestead_block` | Basic contract functionality |
+| **DAO Fork** | `dao_fork_block` | DAO rescue (support enabled) |
+| **EIP-150** | `eip150_block` | Gas cost changes for I/O operations |
+| **EIP-155** | `eip155_block` | Replay protection (simple signing) |
+| **EIP-158** | `eip158_block` | State clearing, account cleanup |
+| **Byzantium** | `byzantium_block` | REVERT opcode, STATICCALL |
+| **Constantinople** | `constantinople_block` | Bitwise shifting, CREATE2 |
+| **Petersburg** | `petersburg_block` | Constantinople fix |
+| **Istanbul** | `istanbul_block` | ChainID opcode, cheaper gas |
+| **MuirGlacier** | `muir_glacier_block` | Difficulty bomb delay |
+| **Berlin** | `berlin_block` | BASEFEE opcode, access lists |
+| **London** | `london_block` | EIP-1559 fee market |
+| **ArrowGlacier** | `arrow_glacier_block` | Difficulty bomb delay |
+| **GrayGlacier** | `gray_glacier_block` | Difficulty bomb delay |
+| **MergeNetsplit** | `merge_netsplit_block` | Merge transition marker |
+
+**Time-Based Forks** (all at timestamp 0):
+| Fork | Time Parameter | Key Changes |
+|||-|
+| **Shanghai** | `shanghai_time` | PUSH0 opcode, warm COINBASE |
+| **Cancun** | `cancun_time` | Transient storage (TSTORE/TLOAD), blob transactions, EIP-2935 block hash history |
+| **Prague** | `prague_time` | EIP-7702 account abstraction, updated blob config |
+
+</Accordion>
+
+<Accordion title="Future Forks (Disabled)" icon="circle">
+
+These forks are not yet activated by default and are set to `nil` ([chain_config.go:104-105](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go#L104-L105)):
+
+| Fork | Parameter | Status |
+||--|--|
+| **Osaka** | `osaka_time` | Future Ethereum fork (not finalized) |
+| **Verkle** | `verkle_time` | Verkle tree state transition (research) |
+
+**To Activate Future Fork**:
+```json
+{
+  "vm": {
+    "chain_config": {
+      "osaka_time": "1700000000"  // Unix timestamp when fork activates
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Customizing Fork Activation" icon="sliders">
+
+**Delay Fork Activation**:
+```json
+{
+  "vm": {
+    "chain_config": {
+      "chain_id": "262144",
+      "homestead_block": "0",
+      "london_block": "0",
+      "shanghai_time": "1704067200",    // Activate Shanghai at specific time
+      "cancun_time": "1710000000",      // Activate Cancun later
+      "prague_time": null               // Don't activate Prague yet
+    }
+  }
+}
+```
+
+**Disable Specific Fork** (not recommended):
+```json
+{
+  "vm": {
+    "chain_config": {
+      "istanbul_block": null,           // Skip Istanbul features
+      "berlin_block": "1000000"         // Activate Berlin at block 1M
+    }
+  }
+}
+```
+
+**Validation**:
+- Forks must activate in chronological order (see [chain_config.go:190](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go#L190))
+- Block/timestamp values cannot be negative (see [chain_config.go:196-209](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go#L196-L209))
+- `nil` or negative values disable the fork
+
+</Accordion>
+
+<Accordion title="Special Fields" icon="gear">
+
+**dao_fork_support**:
+- **Type**: `bool`
+- **Default**: `true`
+- **Purpose**: Whether to support the DAO rescue fork (historical Ethereum event)
+- **Recommendation**: Leave as `true` for Ethereum compatibility
+
+**denom** and **decimals** (Deprecated):
+- These fields in chain_config are deprecated
+- Use `vm.params.evm_denom` and bank metadata instead
+- Present for backward compatibility only
+
+</Accordion>
+
+</AccordionGroup>
+
+**Complete Configuration Example**:
+
+<CodeGroup>
+```json Default (All Forks Enabled)
+{
+  "vm": {
+    "chain_config": {
+      "chain_id": "262144",
+      "denom": "",
+      "decimals": "0",
+      "homestead_block": "0",
+      "dao_fork_block": "0",
+      "dao_fork_support": true,
+      "eip150_block": "0",
+      "eip155_block": "0",
+      "eip158_block": "0",
+      "byzantium_block": "0",
+      "constantinople_block": "0",
+      "petersburg_block": "0",
+      "istanbul_block": "0",
+      "muir_glacier_block": "0",
+      "berlin_block": "0",
+      "london_block": "0",
+      "arrow_glacier_block": "0",
+      "gray_glacier_block": "0",
+      "merge_netsplit_block": "0",
+      "shanghai_time": "0",
+      "cancun_time": "0",
+      "prague_time": "0",
+      "osaka_time": null,
+      "verkle_time": null
+    }
+  }
+}
+```
+
+```json Staged Fork Rollout
+{
+  "vm": {
+    "chain_config": {
+      "chain_id": "262144",
+      "homestead_block": "0",
+      "dao_fork_block": "0",
+      "dao_fork_support": true,
+      "eip150_block": "0",
+      "eip155_block": "0",
+      "eip158_block": "0",
+      "byzantium_block": "0",
+      "constantinople_block": "0",
+      "petersburg_block": "0",
+      "istanbul_block": "0",
+      "muir_glacier_block": "0",
+      "berlin_block": "0",
+      "london_block": "0",
+      "arrow_glacier_block": "0",
+      "gray_glacier_block": "0",
+      "merge_netsplit_block": "0",
+      "shanghai_time": "0",
+      "cancun_time": "1735689600",      // Jan 1, 2025
+      "prague_time": "1767225600",      // Jan 1, 2026
+      "osaka_time": null,
+      "verkle_time": null
+    }
+  }
+}
+```
 </CodeGroup>
 
 ### Standard Cosmos Modules
 
-<Tabs>
-  <Tab title="Staking">
-    ```json
-    {
-      "staking": {
-        "params": {
-          "unbonding_time": "1814400s",  // 21 days
-          "max_validators": 100,
-          "max_entries": 7,
-          "bond_denom": "ustake"  // Must match your base denom
-        }
-      }
-    }
-    ```
-  </Tab>
+Configure standard Cosmos SDK modules that provide staking, governance, token inflation, and fee distribution functionality.
 
-  <Tab title="Governance">
-    ```json
-    {
-      "gov": {
-        "params": {
-          "min_deposit": [{
-            "denom": "ustake",
-            "amount": "10000000"
-          }],
-          "max_deposit_period": "172800s",
-          "voting_period": "172800s"
-        }
-      }
-    }
-    ```
-  </Tab>
+**File Location**: Genesis configuration in `~/.evmd/config/genesis.json` under `app_state.<module>.params`
+**Documentation**: [Cosmos SDK Modules](https://docs.cosmos.network/main/build/modules)
 
-  <Tab title="Distribution">
-    ```json
-    {
-      "distribution": {
-        "params": {
-          "community_tax": "0.020000000000000000",
-          "base_proposer_reward": "0.000000000000000000",
-          "bonus_proposer_reward": "0.000000000000000000"
-        }
-      }
-    }
-    ```
-  </Tab>
+<AccordionGroup>
 
-  <Tab title="Mint">
-    ```json
-    {
-      "mint": {
-        "minter": {
-          "inflation": "0.130000000000000000",
-          "annual_provisions": "0.000000000000000000"
-        },
-        "params": {
-          "mint_denom": "ustake",
-          "inflation_rate_change": "0.130000000000000000",
-          "inflation_max": "0.200000000000000000",
-          "inflation_min": "0.070000000000000000",
-          "goal_bonded": "0.670000000000000000"
-        }
-      }
+<Accordion title="Staking Module" icon="coins">
+
+The staking module handles validator delegation, undelegation, and slashing parameters.
+
+**Genesis Path**: `app_state.staking.params`
+**Module Docs**: [x/staking](https://docs.cosmos.network/main/build/modules/staking)
+
+**Parameters**:
+
+**unbonding_time**:
+- **What It Does**: Time required for tokens to fully undelegate before being withdrawable
+- **Type**: `string` (duration with suffix like "s" for seconds)
+- **Valid Values**: Any positive duration (typically days)
+- **Common Values**:
+  - `"1814400s"` - 21 days (Cosmos Hub standard)
+  - `"604800s"` - 7 days (faster for testnets)
+  - `"2592000s"` - 30 days (longer security period)
+- **Impact**: Longer unbonding time = more security but less liquidity for delegators
+- **Recommendation**: 21 days is industry standard for mainnets
+
+**max_validators**:
+- **What It Does**: Maximum number of active validators in the consensus set
+- **Type**: `uint32`
+- **Valid Values**: Any positive integer (typically 50-300)
+- **Common Values**:
+  - `100` - Balanced decentralization
+  - `175` - Cosmos Hub active set
+  - `50` - Smaller chains or testnets
+- **Impact**: More validators = more decentralization but higher overhead
+- **Consideration**: Must balance security, performance, and decentralization
+
+**max_entries**:
+- **What It Does**: Maximum simultaneous unbonding/redelegation entries per delegator-validator pair
+- **Type**: `uint32`
+- **Valid Values**: Typically 5-10
+- **Default**: `7` (Cosmos SDK standard)
+- **Impact**: Limits how many concurrent unbonding operations a user can have
+- **Recommendation**: Use default unless you have specific UX requirements
+
+**bond_denom**:
+- **What It Does**: The denomination used for staking (bonding) to validators
+- **Type**: `string`
+- **Valid Values**: Must match a denomination from bank metadata
+- **Critical**: **MUST match your base denom** (e.g., `atest` for 18 decimals, `ustake` for 6 decimals)
+- **Impact**: This is the token validators stake and delegators delegate
+- **Example**: If your base denom is `atest`, set `"bond_denom": "atest"`
+
+**Configuration Example**:
+```json
+{
+  "staking": {
+    "params": {
+      "unbonding_time": "1814400s",     // 21 days
+      "max_validators": 100,             // 100 active validators
+      "max_entries": 7,                  // 7 concurrent unbondings
+      "bond_denom": "atest",             // Must match your base denom
+      "historical_entries": 10000,       // Historical entries for IBC
+      "min_commission_rate": "0.050000000000000000"  // 5% minimum commission
     }
-    ```
-  </Tab>
-</Tabs>
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Governance Module" icon="landmark">
+
+The governance module enables on-chain parameter changes and community proposals.
+
+**Genesis Path**: `app_state.gov.params`
+**Module Docs**: [x/gov](https://docs.cosmos.network/main/build/modules/governance)
+
+**Parameters**:
+
+**min_deposit**:
+- **What It Does**: Minimum deposit required for a proposal to enter voting period
+- **Type**: Array of coin objects `[{"denom": "string", "amount": "string"}]`
+- **Valid Values**: Any amount in base denomination
+- **Common Values**:
+  - `[{"denom": "ustake", "amount": "10000000"}]` - 10 tokens (6 decimals)
+  - `[{"denom": "atest", "amount": "10000000000000000000"}]` - 10 tokens (18 decimals)
+- **Impact**: Higher deposit = spam protection, but may limit community participation
+- **Must Match**: Denom must match your bond_denom
+
+**expedited_min_deposit**:
+- **What It Does**: Higher deposit for expedited proposals (faster voting)
+- **Type**: Array of coin objects
+- **Typical**: 4-5x the standard min_deposit
+- **Example**: `[{"denom": "atest", "amount": "50000000000000000000"}]` - 50 tokens
+
+**max_deposit_period**:
+- **What It Does**: Time window for reaching min_deposit before proposal is rejected
+- **Type**: `string` (duration)
+- **Common Values**:
+  - `"172800s"` - 2 days (Cosmos Hub)
+  - `"604800s"` - 7 days (longer window)
+- **Impact**: Longer period gives more time to crowdfund deposits
+
+**voting_period**:
+- **What It Does**: Duration of voting once proposal enters voting period
+- **Type**: `string` (duration)
+- **Common Values**:
+  - `"172800s"` - 2 days (fast decisions)
+  - `"1209600s"` - 14 days (Cosmos Hub)
+- **Impact**: Longer period ensures participation, shorter enables faster upgrades
+- **Recommendation**: 7-14 days for mainnet, 1-2 days for testnets
+
+**expedited_voting_period**:
+- **What It Does**: Faster voting period for expedited proposals
+- **Type**: `string` (duration)
+- **Typical**: 1/7th of normal voting_period
+- **Example**: `"86400s"` - 24 hours
+
+**quorum**:
+- **What It Does**: Minimum percentage of bonded tokens that must vote
+- **Type**: `string` (decimal between 0 and 1)
+- **Common Values**:
+  - `"0.334000000000000000"` - 33.4% (Cosmos Hub)
+  - `"0.400000000000000000"` - 40% (higher participation requirement)
+- **Impact**: Higher quorum = harder to pass proposals but more representative
+
+**threshold**:
+- **What It Does**: Minimum percentage of Yes votes (excluding abstain) to pass
+- **Type**: `string` (decimal between 0 and 1)
+- **Standard**: `"0.500000000000000000"` - 50% majority
+
+**veto_threshold**:
+- **What It Does**: Percentage of NoWithVeto votes needed to veto (and burn deposits)
+- **Type**: `string` (decimal between 0 and 1)
+- **Standard**: `"0.334000000000000000"` - 33.4%
+- **Impact**: Protects against malicious proposals
+
+**Configuration Example**:
+```json
+{
+  "gov": {
+    "params": {
+      "min_deposit": [{"denom": "atest", "amount": "10000000000000000000"}],
+      "expedited_min_deposit": [{"denom": "atest", "amount": "50000000000000000000"}],
+      "max_deposit_period": "172800s",        // 2 days
+      "voting_period": "1209600s",            // 14 days
+      "expedited_voting_period": "86400s",    // 1 day
+      "quorum": "0.334000000000000000",       // 33.4%
+      "threshold": "0.500000000000000000",    // 50%
+      "expedited_threshold": "0.667000000000000000",  // 66.7% for expedited
+      "veto_threshold": "0.334000000000000000",       // 33.4%
+      "min_initial_deposit_ratio": "0.200000000000000000",  // 20% initial deposit
+      "burn_vote_quorum": false,
+      "burn_proposal_deposit_prevote": false,
+      "burn_vote_veto": true                  // Burn deposits on veto
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Mint Module" icon="circle-dollar-sign">
+
+The mint module controls token inflation and block reward minting.
+
+**Genesis Path**: `app_state.mint.minter` and `app_state.mint.params`
+**Module Docs**: [x/mint](https://docs.cosmos.network/main/build/modules/mint)
+
+**Minter State**:
+
+**inflation**:
+- **What It Does**: Current inflation rate (changes dynamically based on bonded ratio)
+- **Type**: `string` (decimal between 0 and 1)
+- **Initial Value**: Typically set to your starting inflation rate
+- **Example**: `"0.130000000000000000"` - 13% annual inflation
+
+**annual_provisions**:
+- **What It Does**: Auto-calculated based on total supply and inflation
+- **Type**: `string` (decimal)
+- **Genesis Value**: `"0.000000000000000000"` - will be calculated after chain starts
+- **Note**: This value is computed automatically, don't need to set manually
+
+**Parameters**:
+
+**mint_denom**:
+- **What It Does**: Denomination of tokens to mint as block rewards
+- **Type**: `string`
+- **Critical**: **MUST match your bond_denom** (same as staking module)
+- **Example**: `"atest"` for 18 decimals, `"ustake"` for 6 decimals
+
+**inflation_rate_change**:
+- **What It Does**: Maximum annual change in inflation rate
+- **Type**: `string` (decimal)
+- **Common Values**:
+  - `"0.130000000000000000"` - 13% max change (Cosmos Hub)
+  - `"0.200000000000000000"` - 20% faster adjustment
+- **Impact**: Higher value = inflation adjusts faster to meet goal_bonded target
+
+**inflation_max**:
+- **What It Does**: Maximum annual inflation rate ceiling
+- **Type**: `string` (decimal between 0 and 1)
+- **Common Values**:
+  - `"0.200000000000000000"` - 20% maximum (Cosmos Hub)
+  - `"0.100000000000000000"` - 10% for lower inflation chains
+- **Impact**: Caps maximum inflation regardless of bonded ratio
+
+**inflation_min**:
+- **What It Does**: Minimum annual inflation rate floor
+- **Type**: `string` (decimal between 0 and 1)
+- **Common Values**:
+  - `"0.070000000000000000"` - 7% minimum (Cosmos Hub)
+  - `"0.000000000000000000"` - 0% for no minimum
+- **Impact**: Ensures minimum block rewards even at high bonded ratios
+
+**goal_bonded**:
+- **What It Does**: Target percentage of tokens that should be bonded (staked)
+- **Type**: `string` (decimal between 0 and 1)
+- **Common Values**:
+  - `"0.670000000000000000"` - 67% target (Cosmos Hub)
+  - `"0.500000000000000000"` - 50% for more liquid chains
+- **How It Works**:
+  - If bonded ratio < goal: inflation increases (incentivize staking)
+  - If bonded ratio > goal: inflation decreases (reduce selling pressure)
+
+**blocks_per_year**:
+- **What It Does**: Expected number of blocks per year (for inflation calculation)
+- **Type**: `uint64`
+- **Calculation**: `(365.25 * 24 * 60 * 60) / block_time_seconds`
+- **Common Values**:
+  - `6311520` - For ~5 second blocks
+  - `3155760` - For ~10 second blocks
+- **Note**: Adjust based on your actual block time
+
+**Configuration Example**:
+```json
+{
+  "mint": {
+    "minter": {
+      "inflation": "0.130000000000000000",           // Starting at 13%
+      "annual_provisions": "0.000000000000000000"    // Auto-calculated
+    },
+    "params": {
+      "mint_denom": "atest",                         // Must match bond_denom
+      "inflation_rate_change": "0.130000000000000000",  // 13% max change/year
+      "inflation_max": "0.200000000000000000",       // 20% ceiling
+      "inflation_min": "0.070000000000000000",       // 7% floor
+      "goal_bonded": "0.670000000000000000",         // 67% target bonded
+      "blocks_per_year": "6311520"                   // ~5 second blocks
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Distribution Module" icon="hand-coins">
+
+The distribution module manages fee distribution to validators, delegators, and community pool.
+
+**Genesis Path**: `app_state.distribution.params`
+**Module Docs**: [x/distribution](https://docs.cosmos.network/main/build/modules/distribution)
+
+**Parameters**:
+
+**community_tax**:
+- **What It Does**: Percentage of block rewards and fees sent to community pool
+- **Type**: `string` (decimal between 0 and 1)
+- **Common Values**:
+  - `"0.020000000000000000"` - 2% to community pool (Cosmos Hub)
+  - `"0.100000000000000000"` - 10% for chains with active governance
+  - `"0.000000000000000000"` - 0% to disable community pool funding
+- **Impact**: Funds governance-controlled treasury for ecosystem development
+- **Remaining**: (100% - community_tax) goes to validators and delegators
+
+**base_proposer_reward** (Deprecated):
+- **Type**: `string` (decimal)
+- **Standard**: `"0.000000000000000000"` - Set to 0 (deprecated in recent SDK versions)
+- **Note**: Modern chains use only block rewards from mint module
+
+**bonus_proposer_reward** (Deprecated):
+- **Type**: `string` (decimal)
+- **Standard**: `"0.000000000000000000"` - Set to 0 (deprecated in recent SDK versions)
+- **Note**: Proposer bonus now handled differently in consensus
+
+**withdraw_addr_enabled**:
+- **What It Does**: Allow delegators to set a different address for reward withdrawal
+- **Type**: `bool`
+- **Common Values**:
+  - `true` - Allow reward forwarding (standard)
+  - `false` - Disable for security (rare)
+- **Impact**: Enables features like auto-compounding services
+- **Recommendation**: Leave `true` for flexibility
+
+**Configuration Example**:
+```json
+{
+  "distribution": {
+    "params": {
+      "community_tax": "0.020000000000000000",        // 2% to community pool
+      "base_proposer_reward": "0.000000000000000000", // Deprecated
+      "bonus_proposer_reward": "0.000000000000000000", // Deprecated
+      "withdraw_addr_enabled": true                    // Allow reward forwarding
+    }
+  }
+}
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+**Token Denomination Consistency**:
+
+<Warning>
+**Critical Configuration Requirement**: The following denominations MUST all match:
+
+- `staking.params.bond_denom` - What validators stake
+- `mint.params.mint_denom` - What gets minted as rewards
+- `gov.params.min_deposit[0].denom` - What's deposited for governance
+- `bank.denom_metadata[0].base` - Base denomination in metadata
+
+All four must use the same base denom (e.g., `atest` for 18 decimals or `ustake` for 6 decimals).
+
+See the [Token Configuration Guide](/docs/evm/next/documentation/getting-started/build-a-chain/token-configuration-guide) for complete details on setting up token economics.
+
+For detailed information about the ERC20 module that handles token representation between Cosmos and EVM, see the [ERC20 Module Documentation](/evm/next/documentation/getting-started/build-a-chain/modules/erc20-module).
+</Warning>
 
 ### Initial Token Distribution
 
@@ -850,54 +1830,15 @@ min-tip = 1000000000
 geth-metrics-address = "127.0.0.1:8100"
 ````
 
-## Creating the Genesis Validator Set
+## Genesis Coordination for Multi-Validator Networks
 
-A production network requires multiple validators for decentralization and fault tolerance. The process involves collecting genesis transactions from each validator and combining them into the final genesis file.
+A production network requires multiple validators for decentralization and fault tolerance. The genesis coordinator must collect signed genesis transactions (gentx files) from each validator and combine them into the final genesis file.
 
-### Validator Key Generation
+<Note>
+For detailed validator setup instructions including key generation and operational security, please refer to the [Validator Nodes Guide](/docs/evm/next/documentation/getting-started/node-configuration#validator-nodes).
+</Note>
 
-Each validator must generate their operator keys:
-
-<CodeGroup>
-```bash validator-setup.sh
-# Each validator runs these commands
-yourchain init validator-1 --chain-id yourchain-1
-
-# Create operator key
-
-yourchain keys add validator --keyring-backend file
-
-# Get validator consensus public key
-
-yourchain tendermint show-validator
-
-# Create genesis transaction
-
-yourchain genesis gentx validator \
- 1000000000000ustake \
- --chain-id yourchain-1 \
- --commission-rate 0.10 \
- --commission-max-rate 0.20 \
- --commission-max-change-rate 0.01 \
- --min-self-delegation 1 \
- --keyring-backend file \
- --gas-prices 0.025ustake
-
-````
-
-```bash coordinator-setup.sh
-# Genesis coordinator runs
-yourchain init genesis-node --chain-id yourchain-1
-
-# Add accounts for all validators
-yourchain genesis add-genesis-account validator1-address 1000000000000ustake
-yourchain genesis add-genesis-account validator2-address 1000000000000ustake
-# ... repeat for all validators
-````
-
-</CodeGroup>
-
-### Collecting Genesis Transactions
+### Collecting Genesis Transactions from Validators
 
 <Note>
   The genesis coordinator combines signed validator transactions but cannot
@@ -1039,13 +1980,13 @@ After launch, monitor these critical metrics:
 
   </Tab>
 
-  <Tab title="Validator Set">
+  <Tab title="Consensus">
     ```bash
-    # Check active validators
-    yourchain query staking validators --output json | jq '.validators[] | {moniker: .description.moniker, status: .status}'
+    # Check consensus state
+    yourchain status | jq .sync_info.catching_up
 
-    # Check voting power distribution
-    yourchain query tendermint-validator-set
+    # View active validator count
+    yourchain query staking validators --output json | jq '.validators | length'
     ```
 
   </Tab>
@@ -1336,27 +2277,29 @@ Create custom precompiles by:
 <AccordionGroup>
   <Accordion title="Security Considerations" icon="shield">
     - Enable only necessary precompiles to minimize attack surface
-    - Use hardware security modules (HSM) for validator keys
     - Implement proper key management procedures
     - Regular security audits for custom modifications
     - Monitor for unusual activity or governance proposals
+    - Carefully review governance proposals before voting
   </Accordion>
 
 {" "}
 
 <Accordion title="Performance Optimization" icon="gauge">
-  - Adjust block size and gas limits based on network capacity - Configure
-  appropriate peer connections - Use SSDs for validator nodes - Monitor and
-  adjust mempool settings - Consider pruning strategies for long-term
-  sustainability
+  - Adjust block size and gas limits based on network capacity
+  - Configure appropriate peer connections for node operators
+  - Monitor and adjust mempool settings (see [Mempool Integration](/evm/next/documentation/getting-started/build-a-chain/modules/mempool-integration))
+  - Consider pruning strategies for long-term sustainability
+  - Use appropriate storage solutions for node infrastructure
 </Accordion>
 
   <Accordion title="Network Stability" icon="heart-pulse">
     - Start with conservative parameters
     - Gradually increase limits through governance
-    - Maintain validator diversity (geography, infrastructure)
-    - Implement monitoring and alerting
+    - Encourage geographic and infrastructure diversity among network participants
+    - Implement monitoring and alerting systems
     - Plan for emergency response procedures
+    - Document upgrade procedures clearly
   </Accordion>
 </AccordionGroup>
 

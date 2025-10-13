@@ -38,7 +38,7 @@ Add the following configuration in your `NewApp` constructor:
 if evmtypes.GetChainConfig() != nil {
     mempoolConfig := &evmmempool.EVMMempoolConfig{
         AnteHandler:   app.GetAnteHandler(),
-        BlockGasLimit: 100_000_000,
+        BlockGasLimit: 100_000_000, // or 0 to use default
     }
 
     evmMempool := evmmempool.NewExperimentalEVMMempool(
@@ -81,10 +81,12 @@ The `EVMMempoolConfig` struct provides several configuration options for customi
 
 ### Minimal Configuration
 
+For most use cases, the minimal configuration is sufficient:
+
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // 100M gas limit
+    BlockGasLimit: 100_000_000, // or 0 to use default
 }
 ```
 
@@ -115,6 +117,7 @@ type EVMMempoolConfig struct {
 #### Defaults and Fallbacks
 
 - If `BlockGasLimit` is `0`, the mempool uses a fallback of `100_000_000` gas.
+- If `LegacyPoolConfig` is not provided, defaults from `legacypool.DefaultConfig` are used.
 - If `CosmosPoolConfig` is not provided, a default `PriorityNonceMempool` is created with:
   - Priority = `(fee_amount / gas_limit)` in the chain bond denom
   - Comparator = big-int comparison (higher is selected first)
@@ -126,12 +129,36 @@ type EVMMempoolConfig struct {
 
 **Breaking Change:** Pre-built pools replaced with configuration objects
 
+PR [#496](https://github.com/cosmos/evm/pull/496) replaced pre-built pools with configs in `EVMMempoolConfig`:
+
+- **Removed:** `TxPool *txpool.TxPool`, `CosmosPool sdkmempool.ExtMempool`
+- **Added:** `LegacyPoolConfig *legacypool.Config`, `CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]`
+
+#### Minimal Setups: Nothing to Change
+
+If you use the default mempool wiring (no custom pools), your existing code continues to work:
+
+```go
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000, // or 0 to use default
+}
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
+    app.txConfig, app.clientCtx, mempoolConfig
+)
+```
+
+#### Advanced Setups: Migrate Your Customizations
+
+If you built custom pools yourself, replace them with configuration objects:
+
 **Before (v0.4.x):**
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     TxPool:     customTxPool,      // ← REMOVED
     CosmosPool: customCosmosPool,  // ← REMOVED
-    AnteHandler: app.GetAnteHandler(),
+    AnteHandler:   app.GetAnteHandler(),
     BlockGasLimit: 100_000_000,
 }
 ```
@@ -139,18 +166,29 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 **After (v0.5.0):**
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
-    LegacyPoolConfig: &legacypool.Config{     // ← NEW
-        AccountSlots: 16,
-        GlobalSlots:  5120,
-        PriceLimit:   1,
-        // ... other config options
-    },
-    CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{ // ← NEW
-        TxPriority: customPriorityConfig,
-    },
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000,
+    LegacyPoolConfig: &legacyCfg,  // ← NEW (or nil for defaults)
+    CosmosPoolConfig: &cosmosCfg,  // ← NEW (or nil for defaults)
+    AnteHandler:      app.GetAnteHandler(),
+    BlockGasLimit:    100_000_000,
 }
+```
+
+### Custom Legacy Pool Configuration
+
+Customize EVM transaction pool parameters:
+
+```go
+// EVM legacy txpool tuning
+legacyCfg := legacypool.DefaultConfig
+legacyCfg.PriceLimit = 2              // Minimum gas price (wei)
+legacyCfg.PriceBump = 15              // 15% price bump to replace
+legacyCfg.AccountSlots = 32           // Slots per account
+legacyCfg.GlobalSlots = 10240         // Total executable slots
+legacyCfg.AccountQueue = 128          // Non-executable per account
+legacyCfg.GlobalQueue = 2048          // Total non-executable
+legacyCfg.Lifetime = 6 * time.Hour    // Max queue time
+
+mempoolConfig.LegacyPoolConfig = &legacyCfg
 ```
 
 ### Custom Cosmos Mempool Configuration
@@ -159,37 +197,44 @@ The mempool uses a `PriorityNonceMempool` for Cosmos transactions by default. Yo
 
 ```go
 // Define custom priority calculation for Cosmos transactions
-priorityConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{
-    TxPriority: sdkmempool.TxPriority[math.Int]{
-        GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
-            feeTx, ok := tx.(sdk.FeeTx)
-            if !ok {
-                return math.ZeroInt()
-            }
+cosmosCfg := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
+cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
+    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+        feeTx, ok := tx.(sdk.FeeTx)
+        if !ok {
+            return math.ZeroInt()
+        }
 
-            // Get fee in bond denomination
-            bondDenom := "test" // or your chain's bond denom
-            fee := feeTx.GetFee()
-            found, coin := fee.Find(bondDenom)
-            if !found {
-                return math.ZeroInt()
-            }
+        // Get fee in bond denomination
+        bondDenom := "uatom" // or your chain's bond denom
+        fee := feeTx.GetFee()
+        found, coin := fee.Find(bondDenom)
+        if !found {
+            return math.ZeroInt()
+        }
 
-            // Calculate gas price: fee_amount / gas_limit
-            gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
-            return gasPrice
-        },
-        Compare: func(a, b math.Int) int {
-            return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
-        },
-        MinValue: math.ZeroInt(),
+        // Calculate gas price: fee_amount / gas_limit
+        gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
+        return gasPrice
     },
+    Compare: func(a, b math.Int) int {
+        return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
+    },
+    MinValue: math.ZeroInt(),
 }
 
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:      app.GetAnteHandler(),
-    BlockGasLimit:    100_000_000,
-    CosmosPoolConfig: &priorityConfig, // Pass config instead of pre-built pool
+mempoolConfig.CosmosPoolConfig = &cosmosCfg
+```
+
+### Custom Broadcast Function
+
+Override the default broadcast behavior for promoted EVM transactions:
+
+```go
+// Custom EVM broadcast (optional)
+mempoolConfig.BroadcastTxFn = func(txs []*ethtypes.Transaction) error {
+    // Custom logic for broadcasting promoted transactions
+    return nil
 }
 ```
 

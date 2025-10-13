@@ -1,6 +1,6 @@
 ---
 title: "Migration: v0.4.x to v0.5.0"
-description: "Comprehensive guide for upgrading Cosmos EVM from v0.4.x to v0.5.0, including breaking changes and new features"
+description: "Upgrading Cosmos EVM from v0.4.x to v0.5.0, including breaking changes and new features"
 ---
 
 <Warning>
@@ -156,10 +156,10 @@ func NewAvailableStaticPrecompiles(
     // Staking precompile - keeper interface
 -   stakingPrecompile, err := stakingprecompile.NewPrecompile(stakingKeeper, ...)
 +   stakingPrecompile, err := stakingprecompile.NewPrecompile(
-+       common.StakingKeeper(stakingKeeper), 
++       common.StakingKeeper(stakingKeeper),
 +       // ... other params
 +   )
-    
+
     return precompiles
 }
 ```
@@ -198,12 +198,12 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
     BlockGasLimit: 100_000_000, // or 0 for default
 }
 evmMempool := evmmempool.NewExperimentalEVMMempool(
-    app.CreateQueryContext, 
-    logger, 
-    app.EVMKeeper, 
-    app.FeeMarketKeeper, 
-    app.txConfig, 
-    app.clientCtx, 
+    app.CreateQueryContext,
+    logger,
+    app.EVMKeeper,
+    app.FeeMarketKeeper,
+    app.txConfig,
+    app.clientCtx,
     mempoolConfig
 )
 ```
@@ -261,10 +261,10 @@ func (d MyCustomDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool,
 -   evm := d.evmKeeper.NewEVM(ctx, ...)
 -   stateDB := evm.StateDB
 -   balance := stateDB.GetBalance(address)
-    
+
     // Use keeper method instead
 +   balance := d.evmKeeper.GetBalance(ctx, address)
-    
+
     return next(ctx, tx, simulate)
 }
 ```
@@ -302,7 +302,7 @@ The global mempool registry has been removed in favor of direct injection.
 ```diff JSON-RPC Server Update expandable
 // server/start.go or equivalent
 - mempool.SetGlobalEVMMempool(evmMempool)
-  
+
   jsonRPCServer, err := jsonrpc.StartJSONRPC(
       ctx,
       clientCtx,
@@ -324,7 +324,7 @@ func NewCustomBackend(
 +   mempool *evmmempool.ExperimentalEVMMempool,
 ) *CustomBackend {
 -   mempool := mempool.GetGlobalEVMMempool()
-    
+
     return &CustomBackend{
         mempool: mempool,
         // ... other fields
@@ -342,7 +342,7 @@ EIP-7702 enables externally owned accounts to temporarily execute smart contract
 
 **What's New:**
 - **SetCodeTx Transaction Type:** New transaction type supporting code delegation
-- **Authorization Signatures:** Signed permissions for code delegation  
+- **Authorization Signatures:** Signed permissions for code delegation
 - **Temporary Execution:** EOAs can execute contract logic for single transactions
 - **Account Abstraction:** Multi-sig, time-locks, automated strategies
 
@@ -358,7 +358,7 @@ const authorization = await signAuthorization({
 }, wallet);
 
 const tx = {
-    type: 4, // SetCodeTxType  
+    type: 4, // SetCodeTxType
     authorizationList: [authorization],
     to: wallet.address,
     data: multicall.interface.encodeFunctionData("batchCall", [calls]),
@@ -530,13 +530,13 @@ func TestV050Migration(t *testing.T) {
     }
     mempool := evmmempool.NewExperimentalEVMMempool(...)
     require.NotNil(t, mempool)
-    
+
     // Test precompile interfaces
     bankPrecompile, err := bankprecompile.NewPrecompile(
         common.BankKeeper(bankKeeper),
     )
     require.NoError(t, err)
-    
+
     // Test parameter validation
     params := vmtypes.NewParams(...)
     require.Equal(t, uint64(8192), params.HistoryServeWindow)
