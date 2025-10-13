@@ -1,567 +1,590 @@
----
-title: "VM"
-description: "Ethereum Virtual Machine execution environment for Cosmos SDK"
-icon: "microchip"
+# VM Module Reference
+
+The VM module (`x/vm`) is the core EVM implementation that enables Ethereum compatibility on Cosmos chains. It provides the EVM runtime, state management, precompiled contracts, and transaction processing.
+
+## Module Overview
+
+**Purpose**: Execute Ethereum smart contracts and process EVM transactions within the Cosmos SDK framework
+
+**Key Functionality**:
+- EVM state transitions and transaction execution
+- Ethereum fork activation management (Homestead, Berlin, London, Shanghai, Cancun, Prague, etc.)
+- Native precompiled contracts for Cosmos module access
+- EVM-to-Cosmos and Cosmos-to-EVM account bridging
+- Gas metering and fee handling
+- Historical state queries with configurable retention
+
+**Source Code**: [x/vm](https://github.com/cosmos/evm/tree/main/x/vm)
+**Parameter Defaults**: [x/vm/types/params.go](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go)
+
 ---
 
-The `x/vm` module from [cosmos/evm](https://github.com/cosmos/evm) provides a fully compatible Ethereum Virtual Machine execution environment as a Cosmos SDK module.
+## Configuration Methods
 
-<Note>
-  For conceptual understanding of EVM architecture and design, see [EVM Architecture](/docs/evm/next/documentation/concepts/overview).
-</Note>
+The VM module can be configured through genesis.json before chain launch. Here are the three primary methods:
+
+### Method 1: Direct JSON Editing
+
+Edit `~/.evmd/config/genesis.json` directly:
+
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "evm_denom": "atest",
+        "extra_eips": [3855],
+        "active_static_precompiles": ["0x0000000000000000000000000000000000000800"],
+        "access_control": {
+          "create": {"access_type": 0},
+          "call": {"access_type": 0}
+        }
+      }
+    }
+  }
+}
+```
+
+### Method 2: Using jq Command-Line Tool
+
+Programmatically modify genesis using jq (as seen in [local_node.sh](https://github.com/cosmos/evm/blob/main/local_node.sh#L234-L249)):
+
+```bash
+# Set evm_denom
+jq '.app_state["vm"]["params"]["evm_denom"]="atest"' genesis.json > tmp.json && mv tmp.json genesis.json
+
+# Enable all precompiles (matches x/vm/types/precompiles.go:22-32)
+jq '.app_state["vm"]["params"]["active_static_precompiles"]=[
+  "0x0000000000000000000000000000000000000100",  # P256
+  "0x0000000000000000000000000000000000000400",  # Bech32
+  "0x0000000000000000000000000000000000000800",  # Staking
+  "0x0000000000000000000000000000000000000801",  # Distribution
+  "0x0000000000000000000000000000000000000802",  # ICS20
+  "0x0000000000000000000000000000000000000803",  # Vesting
+  "0x0000000000000000000000000000000000000804",  # Bank
+  "0x0000000000000000000000000000000000000805",  # Governance
+  "0x0000000000000000000000000000000000000806"   # Slashing
+]' genesis.json > tmp.json && mv tmp.json genesis.json
+
+# Enable extra EIP
+jq '.app_state["vm"]["params"]["extra_eips"]=[3855]' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+### Method 3: Using genesis CLI Commands
+
+Some parameters can be set through CLI commands (though most VM params require genesis.json editing):
+
+```bash
+# Genesis file is created with:
+evmd init <moniker> --chain-id <chain-id>
+
+# Then manually edit genesis.json for VM params
+# No direct CLI command for VM param modification
+```
+
+---
 
 ## Parameters
 
-The module parameters control EVM behavior and access policies ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/evm.proto)):
+### evm_denom
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `evm_denom` | string | `"atest"` | Token denomination for EVM transactions (18 decimals) |
-| `extra_eips` | []int64 | `[]` | Additional EIPs to activate beyond hard fork defaults |
-| `active_static_precompiles` | []string | `[]` | Activated static precompile addresses |
-| `evm_channels` | []string | `[]` | IBC channel IDs for EVM-compatible chains |
-| `access_control` | AccessControl | Permissionless | Permission policy for EVM operations |
-| `history_serve_window` | uint64 | `8192` | Historical block hash depth for EIP-2935 (v0.5.0+) |
+**What It Does**: Specifies which bank module denomination to use as the native EVM token (gas token).
 
-<Warning>
-**Breaking Change in v0.5.0:** The `allow_unprotected_txs` parameter has been removed from consensus parameters. Non-EIP155 transaction acceptance is now configured per-node in `app.toml` under `[json-rpc].allow-unprotected-txs`.
-</Warning>
+**Type**: `string`
 
-### Parameter Details
+**Valid Values**: Must match a base denomination from bank metadata configuration
 
-<Expandable title="evm_denom">
-Defines the token used for gas and value transfers in EVM:
-- Must be registered in bank module
-- Should have 18 decimal precision
-- Used for all EVM operations (gas, transfers, contracts)
-- Example: `"atest"`, `"aevmos"`, `"wei"`
-</Expandable>
+**Default**: `"uatom"` ([params.go:21](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21))
 
-<Expandable title="extra_eips">
-Activates additional EIPs beyond fork defaults:
-
-| EIP | Description | Gas Impact |
-|-----|-------------|------------|
-| 1344 | ChainID opcode | Minimal |
-| 1884 | Repricing for trie-size-dependent opcodes | Increases SLOAD |
-| 2200 | Structured definitions for net gas metering | Variable |
-| 2929 | Gas cost for state access opcodes | Increases cold access |
-| 3198 | BASEFEE opcode | Minimal |
-| 3529 | Reduction in refunds | Reduces max refund |
-| 3855 | PUSH0 instruction | New opcode |
-</Expandable>
-
-<Expandable title="history_serve_window (v0.5.0+)">
-Controls EIP-2935 historical block hash storage depth:
-
-**Purpose:** Enables smart contracts to access historical block hashes via `BLOCKHASH` opcode
-**Range:** Must be > 0, recommended ≤ 8192 for optimal performance
-**Storage Impact:** Higher values increase node storage requirements
-
-**Configuration Examples:**
-```json
-{
-  "history_serve_window": 8192   // Default: full EIP-2935 compatibility
-}
+**Configuration**:
+```bash
+# Using jq
+jq '.app_state["vm"]["params"]["evm_denom"]="atest"' genesis.json > tmp.json && mv tmp.json genesis.json
 ```
 
 ```json
 {
-  "history_serve_window": 1024   // Performance optimized: reduced storage
-}
-```
-
-```json  
-{
-  "history_serve_window": 16384  // Extended history: maximum compatibility
-}
-```
-
-**Smart Contract Usage:**
-```solidity
-contract HistoryExample {
-    function getRecentBlockHash(uint256 blockNumber) public view returns (bytes32) {
-        // Works for blocks within history_serve_window range
-        return blockhash(blockNumber);
+  "vm": {
+    "params": {
+      "evm_denom": "atest"
     }
-}
-```
-</Expandable>
-
-<Expandable title="access_control">
-Granular control over contract operations:
-
-```go
-type AccessControl struct {
-    Create AccessControlType  // Contract deployment
-    Call   AccessControlType  // Contract execution
+  }
 }
 ```
 
-**Access Types:**
-- `PERMISSIONLESS`: Open access, list = blacklist
-- `RESTRICTED`: No access, list ignored
-- `PERMISSIONED`: Limited access, list = whitelist
-</Expandable>
+**Critical Requirements**:
+- **MUST match** `bank.denom_metadata[0].base`
+- **MUST match** `staking.params.bond_denom`
+- **MUST match** `mint.params.mint_denom`
 
-## Configuration Profiles
+**Impact**: This is the token users pay for EVM gas, displayed in MetaMask balances, and used for all EVM operations.
 
-<Tabs>
-  <Tab title="Ethereum Compatible">
-    ```json
-    {
-      "evm_denom": "atest",
-      "extra_eips": [3855],
+**Examples**:
+- `"atest"` - For 18 decimal token (atto prefix: 10^18)
+- `"ustake"` - For 6 decimal token (micro prefix: 10^6)
+
+**Common Errors**:
+- Mismatch with bank metadata causes EVM transactions to fail
+- Wrong decimal places leads to incorrect balance displays
+
+---
+
+### extra_eips
+
+**What It Does**: Enables additional Ethereum Improvement Proposals beyond the default fork activations.
+
+**Type**: `[]int64` (array of EIP numbers)
+
+**Valid Values**: Any activatable EIP number
+
+**Default**: `[]` (empty - all EIPs come from chain_config fork configuration) ([params.go:22](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L22))
+
+**Configuration**:
+```bash
+# Using jq
+jq '.app_state["vm"]["params"]["extra_eips"]=[3855, 2929]' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "vm": {
+    "params": {
+      "extra_eips": [3855, 2929]
+    }
+  }
+}
+```
+
+**Common EIPs**:
+| EIP | Description | Typical Use Case |
+|-----|-------------|------------------|
+| 3855 | PUSH0 instruction | Gas optimization for contracts |
+| 2200 | Net gas metering for SSTORE | Reduces gas costs |
+| 2929 | Gas cost increases for state access | Security hardening |
+| 3198 | BASEFEE opcode | EIP-1559 base fee queries |
+| 3529 | Reduction in refunds | Gas accounting changes |
+
+**Validation**: Checked against list of activatable EIPs ([params.go:182-200](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L182-L200))
+
+**Impact**:
+- Enables opcodes/features not in your default fork configuration
+- Useful for testing upcoming Ethereum features
+- Can break compatibility if not carefully managed
+
+**Recommendation**: Leave empty unless you need specific EIPs for custom contracts or testing
+
+---
+
+### active_static_precompiles
+
+**What It Does**: List of precompiled contract addresses to enable for Cosmos module access from EVM.
+
+**Type**: `[]string` (array of hex addresses)
+
+**Valid Values**: Addresses from the available precompiles list ([precompiles.go:4-15](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go#L4-L15))
+
+**Default**: `[]` (empty - no precompiles enabled) ([params.go:23](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L23))
+
+**Configuration**:
+```bash
+# Using jq - Enable all precompiles (from local_node.sh:243)
+jq '.app_state["vm"]["params"]["active_static_precompiles"]=[
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000400",
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000801",
+  "0x0000000000000000000000000000000000000802",
+  "0x0000000000000000000000000000000000000803",
+  "0x0000000000000000000000000000000000000804",
+  "0x0000000000000000000000000000000000000805",
+  "0x0000000000000000000000000000000000000806"
+]' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "vm": {
+    "params": {
       "active_static_precompiles": [
         "0x0000000000000000000000000000000000000100",
-        "0x0000000000000000000000000000000000000400"
-      ],
-      "evm_channels": [],
-      "access_control": {
-        "create": {"access_type": "PERMISSIONLESS", "access_control_list": []},
-        "call": {"access_type": "PERMISSIONLESS", "access_control_list": []}
-      },
-      "history_serve_window": 8192
+        "0x0000000000000000000000000000000000000400",
+        "0x0000000000000000000000000000000000000800"
+      ]
     }
-    ```
-  </Tab>
-  <Tab title="Permissioned">
-    <Expandable title="View permissioned configuration">
-    ```json
-    {
-      "evm_denom": "atoken",
-      "extra_eips": [],
-      "active_static_precompiles": [
-        "0x0000000000000000000000000000000000000804"
-      ],
-      "evm_channels": [],
+  }
+}
+```
+
+**Available Precompiles**:
+
+| Address | Name | Module | Description |
+|---------|------|--------|-------------|
+| `0x0100` | P256 | Cryptography | P256 elliptic curve operations |
+| `0x0400` | Bech32 | Addressing | Convert between Bech32 and hex addresses |
+| `0x0800` | Staking | x/staking | Delegate, undelegate, redelegate operations |
+| `0x0801` | Distribution | x/distribution | Claim staking rewards, set withdrawal address |
+| `0x0802` | ICS20 | IBC Transfer | IBC token transfers via EVM |
+| `0x0803` | Vesting | x/vesting | Vesting account operations |
+| `0x0804` | Bank | x/bank | Native Cosmos token transfers |
+| `0x0805` | Gov | x/gov | Submit and vote on governance proposals |
+| `0x0806` | Slashing | x/slashing | Query validator slashing info |
+
+**Production Recommendations**:
+- **Enable only needed precompiles** for security and gas efficiency
+- **Commonly enabled**: 0x0100 (P256), 0x0400 (Bech32), 0x0800 (Staking), 0x0804 (Bank)
+- **IBC chains**: Also enable 0x0802 (ICS20)
+- **Governance participation**: Enable 0x0805 (Gov)
+
+**Security Note**: Each enabled precompile increases attack surface. Only enable precompiles your applications will actually use.
+
+**Default evmd Example**: Enables ALL precompiles for development convenience ([local_node.sh:243](https://github.com/cosmos/evm/blob/main/local_node.sh#L243))
+
+---
+
+### evm_channels
+
+**What It Does**: Whitelisted IBC channel IDs that the ICS20 precompile can use for token transfers.
+
+**Type**: `[]string` (array of channel IDs)
+
+**Valid Values**: Channel IDs matching format `channel-{N}` where N is a non-negative integer
+
+**Default**: `[]` (empty - no channels whitelisted) ([params.go:24](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L24))
+
+**Configuration**:
+```json
+{
+  "vm": {
+    "params": {
+      "evm_channels": ["channel-0", "channel-5", "channel-42"]
+    }
+  }
+}
+```
+
+**Validation**: Each channel must match regex pattern ([params.go:80-96](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L80-96))
+
+**Impact**:
+- Restricts which IBC channels the ICS20 precompile (0x0802) can transfer tokens through
+- Empty list means ICS20 precompile cannot perform any IBC transfers
+- Provides security control over cross-chain token movements
+
+**When to Configure**:
+- Only needed if you enable ICS20 precompile (0x0802)
+- Set after establishing IBC connections with other chains
+- Update via governance when adding new IBC routes
+
+**Example Use Case**: Enable IBC transfers only to trusted chains via specific channels
+
+---
+
+### access_control
+
+**What It Does**: Defines permission model for contract deployment (CREATE/CREATE2) and contract calls.
+
+**Type**: Object with `create` and `call` fields, each containing `access_type` and optional `access_control_list`
+
+**Valid Values**:
+- **access_type**: `0` (Permissionless), `1` (Restricted), `2` (Permissioned)
+- **access_control_list**: Array of addresses (only used with Restricted or Permissioned)
+
+**Default**: Permissionless for both ([params.go:30-48](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L30-L48))
+
+**Configuration**:
+```json
+{
+  "vm": {
+    "params": {
       "access_control": {
         "create": {
-          "access_type": "PERMISSIONED",
-          "access_control_list": ["0x1234...", "0xABCD..."]
+          "access_type": 2,
+          "access_control_list": [
+            "0x1234567890123456789012345678901234567890",
+            "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+          ]
         },
-        "call": {"access_type": "PERMISSIONLESS", "access_control_list": []}
-      },
-      "history_serve_window": 4096
-    }
-    ```
-    </Expandable>
-  </Tab>
-  <Tab title="High Security">
-    ```json
-    {
-      "evm_denom": "asecure",
-      "extra_eips": [],
-      "active_static_precompiles": [],
-      "evm_channels": [],
-      "access_control": {
-        "create": {"access_type": "RESTRICTED", "access_control_list": []},
         "call": {
-          "access_type": "PERMISSIONED",
-          "access_control_list": ["0xTrustedContract"]
+          "access_type": 0
         }
-      },
-      "history_serve_window": 1024
+      }
     }
-    ```
-  </Tab>
-</Tabs>
+  }
+}
+```
 
-## Chain Configuration
+**Access Types**:
 
-Hard fork activation schedule ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/evm.proto#L86-L218)):
+**Type 0 - Permissionless** (Default):
+- Anyone can perform the operation
+- Standard Ethereum behavior
+- Recommended for public chains
 
-| Fork | Default | Type | Opcodes/Features Added |
-|------|---------|------|------------------------|
-| `homestead_block` | 0 | Block | DELEGATECALL |
-| `byzantium_block` | 0 | Block | REVERT, RETURNDATASIZE, STATICCALL |
-| `constantinople_block` | 0 | Block | CREATE2, EXTCODEHASH, SHL/SHR/SAR |
-| `istanbul_block` | 0 | Block | CHAINID, SELFBALANCE |
-| `berlin_block` | 0 | Block | Access lists (EIP-2929, 2930) |
-| `london_block` | 0 | Block | BASEFEE, EIP-1559 |
-| `shanghai_time` | 0 | Timestamp | PUSH0 |
-| `cancun_time` | 0 | Timestamp | Transient storage, blob transactions |
-| `prague_time` | nil | Timestamp | TBD |
-| `verkle_time` | nil | Timestamp | Verkle trees |
+**Type 1 - Restricted**:
+- Everyone EXCEPT addresses in access_control_list can perform operation
+- Blacklist model
+- Useful for blocking specific malicious actors
 
-## Static Precompiles
+**Type 2 - Permissioned**:
+- ONLY addresses in access_control_list can perform operation
+- Whitelist model
+- Useful for private/consortium chains or phased launches
 
-Precompiled contracts at fixed addresses ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/vm/types/precompiles.go)):
+**Common Configurations**:
 
-| Address | Contract | Gas Cost | Description |
-|---------|----------|----------|-------------|
-| `0x0000...0100` | **P256** | 3000 | P256 curve verification |
-| `0x0000...0400` | **Bech32** | 5000 | Bech32 address encoding |
-| `0x0000...0800` | **Staking** | Variable | Delegation operations |
-| `0x0000...0801` | **Distribution** | Variable | Reward claims |
-| `0x0000...0802` | **ICS20** | Variable | IBC transfers |
-| `0x0000...0803` | **Vesting** | Variable | Vesting account ops |
-| `0x0000...0804` | **Bank** | Variable | Token transfers |
-| `0x0000...0805` | **Gov** | Variable | Governance voting |
-| `0x0000...0806` | **Slashing** | Variable | Validator slashing info |
-
-### Activation
-
-```bash
-# Via genesis
+**Public Chain (Default)**:
+```json
 {
-  "active_static_precompiles": [
-    "0x0000000000000000000000000000000000000804",
-    "0x0000000000000000000000000000000000000800"
-  ]
-}
-
-# Via governance proposal
-evmd tx gov submit-proposal update-params-proposal.json
-```
-
-## Messages
-
-### MsgEthereumTx
-
-Primary message for EVM transactions ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/vm/v1/tx.proto)):
-
-```protobuf
-message MsgEthereumTx {
-  google.protobuf.Any data = 1;  // Transaction data (Legacy/AccessList/DynamicFee)
-  string hash = 3;                // Transaction hash
-  string from = 4;                // Sender address (derived from signature)
+  "create": {"access_type": 0},
+  "call": {"access_type": 0}
 }
 ```
 
-**Validation Requirements:**
-- Valid signature matching `from` address
-- Sufficient balance for gas + value
-- Correct nonce (account sequence)
-- Gas limit ≥ intrinsic gas
-
-### MsgUpdateParams
-
-Governance message for parameter updates:
-
-```protobuf
-message MsgUpdateParams {
-  string authority = 1;  // Must be governance module
-  Params params = 2;     // New parameters
+**Permissioned Deployment, Public Usage**:
+```json
+{
+  "create": {
+    "access_type": 2,
+    "access_control_list": ["0x..."]
+  },
+  "call": {"access_type": 0}
 }
 ```
 
-## State
+**Validation**: Enforced in ([params.go:140-180](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L140-L180))
 
-### Persistent State
+**Impact**:
+- Controls who can deploy contracts (important for chain security)
+- Controls who can call existing contracts (rarely restricted)
+- Can be updated via governance proposals after launch
 
-| Key Prefix | Description | Value Type |
-|------------|-------------|------------|
-| `0x01` | Parameters | `Params` |
-| `0x02` | Contract code | `[]byte` |
-| `0x03` | Contract storage | `[32]byte` |
+**Recommendation**: Use Type 0 (Permissionless) for public EVM chains to maintain Ethereum compatibility
 
-### Transient State
+---
 
-| Key Prefix | Description | Value Type | Lifetime |
-|------------|-------------|------------|----------|
-| `0x01` | Transaction logs | `[]Log` | Per block |
-| `0x02` | Block bloom | `[256]byte` | Per block |
-| `0x03` | Tx index | `uint64` | Per block |
-| `0x04` | Log size | `uint64` | Per block |
-| `0x05` | Gas used | `uint64` | Per tx |
+### history_serve_window
 
-## Events
+**What It Does**: Number of recent blocks to keep for historical EVM queries (eth_getBlockByNumber, eth_getLogs, etc.).
 
-### Transaction Events
+**Type**: `uint64`
 
-| Event | Attributes | When Emitted |
-|-------|------------|--------------|
-| `ethereum_tx` | `amount`, `recipient`, `contract`, `txHash`, `txIndex`, `txGasUsed` | Every EVM transaction |
-| `tx_log` | `txLog` (JSON) | When contracts emit events |
-| `message` | `sender`, `action="ethereum"`, `module="evm"` | Every message |
+**Valid Values**: Any non-negative integer
 
-### Block Events
+**Default**: `8192` blocks ([params.go:50](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L50))
 
-| Event | Attributes | When Emitted |
-|-------|------------|--------------|
-| `block_bloom` | `bloom` (hex) | End of each block with EVM txs |
-
-## Queries
-
-### gRPC
-
-<Expandable title="View complete Query service interface">
-```protobuf
-service Query {
-  // Account queries
-  rpc Account(QueryAccountRequest) returns (QueryAccountResponse);
-  rpc CosmosAccount(QueryCosmosAccountRequest) returns (QueryCosmosAccountResponse);
-  rpc ValidatorAccount(QueryValidatorAccountRequest) returns (QueryValidatorAccountResponse);
-  
-  // State queries
-  rpc Balance(QueryBalanceRequest) returns (QueryBalanceResponse);
-  rpc Storage(QueryStorageRequest) returns (QueryStorageResponse);
-  rpc Code(QueryCodeRequest) returns (QueryCodeResponse);
-  
-  // Module queries
-  rpc Params(QueryParamsRequest) returns (QueryParamsResponse);
-  rpc Config(QueryConfigRequest) returns (QueryConfigResponse);
-  
-  // EVM operations
-  rpc EthCall(EthCallRequest) returns (MsgEthereumTxResponse);
-  rpc EstimateGas(EthCallRequest) returns (EstimateGasResponse);
-  
-  // Debugging
-  rpc TraceTx(QueryTraceTxRequest) returns (QueryTraceTxResponse);
-  rpc TraceBlock(QueryTraceBlockRequest) returns (QueryTraceBlockResponse);
-  
-  // Fee queries
-  rpc BaseFee(QueryBaseFeeRequest) returns (QueryBaseFeeResponse);
-  rpc GlobalMinGasPrice(QueryGlobalMinGasPriceRequest) returns (QueryGlobalMinGasPriceResponse);
-}
-```
-</Expandable>
-
-### CLI
-
-<CodeGroup>
-
-```bash Query-Account
-# Query EVM account
-evmd query vm account 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
-
-# Query Cosmos address
-evmd query vm cosmos-account 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
-```
-
-```bash Query-State
-# Query balance
-evmd query vm balance 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0
-
-# Query storage slot
-evmd query vm storage 0xContractAddress 0xStorageKey
-
-# Query contract code
-evmd query vm code 0xContractAddress
-```
-
-```bash Query-Config
-# Query module parameters
-evmd query vm params
-
-# Query EVM config
-evmd query vm config
-```
-
-```bash Debug
-# Trace transaction
-evmd query vm trace-tx 0xTxHash
-
-# Trace block
-evmd query vm trace-block 12345
-```
-
-</CodeGroup>
-
-## JSON-RPC
-
-### Supported Methods
-
-<Tabs>
-  <Tab title="eth namespace">
-    | Method | Description |
-    |--------|-------------|
-    | `eth_accounts` | List accounts |
-    | `eth_blockNumber` | Current block number |
-    | `eth_call` | Execute call without tx |
-    | `eth_chainId` | Get chain ID |
-    | `eth_createAccessList` | Generate access list for tx optimization (v0.5.0+) |
-    | `eth_estimateGas` | Estimate gas usage (optimized in v0.5.0+) |
-    | `eth_gasPrice` | Current gas price |
-    | `eth_getBalance` | Get account balance |
-    | `eth_getBlockByHash` | Get block by hash |
-    | `eth_getBlockByNumber` | Get block by number |
-    | `eth_getCode` | Get contract code |
-    | `eth_getLogs` | Get filtered logs |
-    | `eth_getStorageAt` | Get storage value |
-    | `eth_getTransactionByHash` | Get tx by hash |
-    | `eth_getTransactionCount` | Get account nonce |
-    | `eth_getTransactionReceipt` | Get tx receipt (enhanced with max_used_gas in v0.5.0+) |
-    | `eth_sendRawTransaction` | Submit signed tx |
-    | `eth_syncing` | Sync status |
-  </Tab>
-  <Tab title="web3 namespace">
-    | Method | Description |
-    |--------|-------------|
-    | `web3_clientVersion` | Client version |
-    | `web3_sha3` | Keccak-256 hash |
-  </Tab>
-  <Tab title="net namespace">
-    | Method | Description |
-    |--------|-------------|
-    | `net_version` | Network ID |
-    | `net_listening` | Node accepting connections |
-    | `net_peerCount` | Number of peers |
-  </Tab>
-  <Tab title="debug namespace">
-    | Method | Description |
-    |--------|-------------|
-    | `debug_traceTransaction` | Detailed tx trace |
-    | `debug_traceBlockByNumber` | Trace all txs in block |
-    | `debug_traceBlockByHash` | Trace all txs by hash |
-    | `debug_getBadBlocks` | Get invalid blocks |
-    | `debug_storageRangeAt` | Get storage range |
-    | `debug_intermediateRoots` | Get intermediate state roots |
-  </Tab>
-</Tabs>
-
-## Hooks
-
-Post-transaction processing interface ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/vm/types/interfaces.go)):
-
-```go
-type EvmHooks interface {
-    PostTxProcessing(
-        ctx sdk.Context,
-        msg core.Message,
-        receipt *ethtypes.Receipt,
-    ) error
+**Configuration**:
+```json
+{
+  "vm": {
+    "params": {
+      "history_serve_window": 8192
+    }
+  }
 }
 ```
 
-### Registration
+**Impact**:
 
-```go
-// In app.go
-app.EvmKeeper = app.EvmKeeper.SetHooks(
-    vmkeeper.NewMultiEvmHooks(
-        app.Erc20Keeper.Hooks(),
-        app.CustomKeeper.Hooks(),
-    ),
-)
+**Storage**:
+- Larger window = more disk space required
+- Smaller window = less disk space usage
+- Each block stores EVM state diffs and receipts
+
+**Query Capability**:
+- Queries beyond history_serve_window will fail
+- Block explorers need sufficient history for user queries
+- DeFi analytics may require longer history
+
+**Performance**:
+- Very large windows can slow down state pruning
+- Affects database size and sync time
+
+**Common Values**:
+- `8192` - Default (roughly 11 hours at 5s blocks)
+- `100000` - Extended history (roughly 5.8 days at 5s blocks)
+- `1000000` - Full history (roughly 58 days at 5s blocks)
+- `0` - No history retention (not recommended for RPC nodes)
+
+**Recommendations**:
+- **Archive Nodes**: Set to very large number or 0 (unlimited)
+- **RPC Nodes**: 100,000 - 1,000,000 blocks
+- **Validator Nodes**: Can use default 8192 (validators don't serve RPC)
+
+**Related**: Works with EIP-2935 for historical block hash access
+
+---
+
+### extended_denom_options
+
+**What It Does**: Enables 18-decimal EVM representation for non-18-decimal Cosmos tokens. Required for 6-decimal tokens like ustake.
+
+**Type**: `[]ExtendedDenomOption` - Array of objects mapping Cosmos denoms to EVM extended denoms
+
+**Valid Values**: Each entry must have a valid denom pair following the extended denom pattern
+
+**Default**: `[]` (empty - no extended denoms) ([params.go:25](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L25))
+
+**Configuration**:
+```json
+{
+  "vm": {
+    "params": {
+      "extended_denom_options": [
+        {
+          "native_denom": "ustake",
+          "extended_denom": "astake"
+        }
+      ]
+    }
+  }
+}
 ```
 
-### Use Cases
-- Process EVM events in Cosmos modules
-- Bridge EVM logs to Cosmos events
-- Trigger native module actions from contracts
-- Custom indexing and monitoring
+**When Required**:
+- **18 decimals**: NOT required - standard bank module works
+- **6 decimals**: REQUIRED - must add extended_denom_options
+- **Other decimals**: REQUIRED - must add extended_denom_options
 
-## Gas Configuration
+**Extended Denom Patterns**:
+- `u` prefix (micro, 10^6) → `a` prefix (atto, 10^18): `ustake` → `astake`
+- `n` prefix (nano, 10^9) → `a` prefix (atto, 10^18): `ntoken` → `atoken`
+- Any other → add `evm` prefix: `stake` → `evmstake`
 
-### Gas Consumption Mapping
+**How It Works**:
+1. Native 6-decimal token: `ustake` (smallest unit)
+2. Extended 18-decimal representation: `astake` (for EVM)
+3. 1 ustake = 10^12 astake
+4. PreciseBank module handles fractional conversions
 
-| Operation | EVM Gas | Cosmos Gas | Notes |
-|-----------|---------|------------|-------|
-| Basic ops | 3-5 | 3-5 | 1:1 mapping |
-| SLOAD | 2100 | 2100 | Cold access |
-| SSTORE | 20000 | 20000 | New value |
-| CREATE | 32000 | 32000 | Contract deploy |
-| Precompile | Variable | Variable | Set per precompile |
-
-### Gas Refunds
-
-Maximum refund: 50% of gas used (after London)
-
-```go
-refund = min(gasUsed/2, gasRefund)
-finalGasUsed = gasUsed - refund
+**Example: 6 Decimal Token**:
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "evm_denom": "ustake",
+        "extended_denom_options": [
+          {
+            "native_denom": "ustake",
+            "extended_denom": "astake"
+          }
+        ]
+      }
+    }
+  }
+}
 ```
 
-## Best Practices
+**Related Configuration**: Requires [PreciseBank Module](/docs/evm/next/documentation/cosmos-sdk/modules/precisebank) to be included in app.go
 
-### Chain Integration
+**See Also**: [Token Configuration Guide](/docs/evm/next/documentation/getting-started/build-a-chain/token-configuration-guide) for complete decimal configuration details
 
-1. **Precompile Selection**
-   - Only enable necessary precompiles
-   - Test gas costs in development
-   - Monitor usage patterns
+---
 
-2. **Access Control**
-   - Start restrictive, open gradually
-   - Use governance for changes
-   - Monitor blacklist/whitelist events
+## Complete Configuration Example
 
-3. **Fork Planning**
-   ```json
-   {
-     "shanghai_time": "1681338455",  // Test first
-     "cancun_time": "1710338455"     // Delay for safety
-   }
-   ```
-
-### Contract Development
-
-1. **Gas Optimization**
-   ```solidity
-   // Cache storage reads
-   uint256 cached = storageVar;
-   // Use cached instead of storageVar
-   
-   // Pack structs
-   struct Packed {
-       uint128 a;
-       uint128 b;  // Single slot
-   }
-   ```
-
-2. **Precompile Usage**
-   ```solidity
-   IBank bank = IBank(0x0000000000000000000000000000000000000804);
-   uint256 balance = bank.balances(msg.sender, "atest");
-   ```
-
-### dApp Integration
-
-1. **Provider Setup**
-   ```javascript
-   const provider = new ethers.JsonRpcProvider(
-       "http://localhost:8545",
-       { chainId: 9000, name: "evmos" }
-   );
-   ```
-
-2. **Error Handling**
-   ```javascript
-   try {
-       await contract.method();
-   } catch (error) {
-       if (error.code === 'CALL_EXCEPTION') {
-           // Handle revert
-       }
-   }
-   ```
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "out of gas" | Insufficient gas limit | Increase gas limit or optimize contract |
-| "nonce too low" | Stale nonce | Query current nonce, retry |
-| "insufficient funds" | Low balance | Ensure balance > value + (gasLimit × gasPrice) |
-| "contract creation failed" | CREATE disabled or restricted | Check access_control settings |
-| "precompile not active" | Precompile not in active list | Enable via governance |
-
-### Debug Commands
+Based on [local_node.sh](https://github.com/cosmos/evm/blob/main/local_node.sh#L234-L249):
 
 ```bash
-# Check EVM parameters
-evmd query vm params
+#!/bin/bash
 
-# Trace failed transaction
-evmd query vm trace-tx 0xFailedTxHash
+GENESIS="$HOME/.evmd/config/genesis.json"
+TMP_GENESIS="$HOME/.evmd/config/tmp_genesis.json"
 
-# Check account state
-evmd query vm account 0xAddress
+# Set EVM denomination
+jq '.app_state["vm"]["params"]["evm_denom"]="atest"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Enable all precompiles for development
+jq '.app_state["vm"]["params"]["active_static_precompiles"]=[
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000400",
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000801",
+  "0x0000000000000000000000000000000000000802",
+  "0x0000000000000000000000000000000000000803",
+  "0x0000000000000000000000000000000000000804",
+  "0x0000000000000000000000000000000000000805",
+  "0x0000000000000000000000000000000000000806"
+]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Validate genesis
+evmd genesis validate-genesis --home "$HOME/.evmd"
 ```
 
-## References
+Or in genesis.json directly:
 
-### Source Code
-- [VM Module Implementation](https://github.com/cosmos/evm/tree/v0.4.1/x/vm)
-- [StateDB](https://github.com/cosmos/evm/tree/v0.4.1/x/vm/statedb)
-- [Precompiles](https://github.com/cosmos/evm/tree/v0.4.1/precompiles)
-- [AnteHandlers](https://github.com/cosmos/evm/tree/v0.4.1/ante)
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "evm_denom": "atest",
+        "extra_eips": [],
+        "active_static_precompiles": [
+          "0x0000000000000000000000000000000000000100",
+          "0x0000000000000000000000000000000000000400",
+          "0x0000000000000000000000000000000000000800",
+          "0x0000000000000000000000000000000000000801",
+          "0x0000000000000000000000000000000000000802",
+          "0x0000000000000000000000000000000000000803",
+          "0x0000000000000000000000000000000000000804",
+          "0x0000000000000000000000000000000000000805",
+          "0x0000000000000000000000000000000000000806"
+        ],
+        "evm_channels": [],
+        "access_control": {
+          "create": {
+            "access_type": 0
+          },
+          "call": {
+            "access_type": 0
+          }
+        },
+        "history_serve_window": 8192,
+        "extended_denom_options": []
+      },
+      "chain_config": {
+        "chain_id": "9001",
+        "homestead_block": "0",
+        "dao_fork_block": "0",
+        "dao_fork_support": true,
+        "eip150_block": "0",
+        "eip155_block": "0",
+        "eip158_block": "0",
+        "byzantium_block": "0",
+        "constantinople_block": "0",
+        "petersburg_block": "0",
+        "istanbul_block": "0",
+        "muir_glacier_block": "0",
+        "berlin_block": "0",
+        "london_block": "0",
+        "arrow_glacier_block": "0",
+        "gray_glacier_block": "0",
+        "merge_netsplit_block": "0",
+        "shanghai_time": "0",
+        "cancun_time": "0",
+        "prague_time": "0"
+      }
+    }
+  }
+}
+```
 
-### Related Documentation
-- [EVM Architecture](/docs/evm/next/documentation/concepts/overview) - Conceptual overview
-- [Fee Market Module](/docs/evm/next/documentation/cosmos-sdk/modules/feemarket) - EIP-1559 implementation
-- [ERC20 Module](/docs/evm/next/documentation/cosmos-sdk/modules/erc20) - Token conversions
+---
+
+## Related Documentation
+
+- [Building Your Chain Guide](/docs/evm/next/documentation/getting-started/build-a-chain/building-your-chain-guide) - Main configuration walkthrough
+- [Chain Customization Checklist](/docs/evm/next/documentation/getting-started/build-a-chain/chain-customization-checklist) - Complete parameter checklist
+- [Token Configuration Guide](/docs/evm/next/documentation/getting-started/build-a-chain/token-configuration-guide) - Token decimals and evm_denom setup
+- [Fee Market Module](/docs/evm/next/documentation/cosmos-sdk/modules/feemarket) - EIP-1559 fee configuration
+- [local_node.sh](https://github.com/cosmos/evm/blob/main/local_node.sh) - Reference implementation
+
+---
+
+## Source Code References
+
+- **Module Implementation**: [x/vm](https://github.com/cosmos/evm/tree/main/x/vm)
+- **Parameter Types**: [x/vm/types/params.go](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go)
+- **Precompile Addresses**: [x/vm/types/precompiles.go](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go)
+- **Chain Config**: [x/vm/types/chain_config.go](https://github.com/cosmos/evm/blob/main/x/vm/types/chain_config.go)
+- **Genesis Setup**: [local_node.sh](https://github.com/cosmos/evm/blob/main/local_node.sh)
