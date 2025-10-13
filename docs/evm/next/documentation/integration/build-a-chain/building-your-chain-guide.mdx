@@ -427,6 +427,186 @@ The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain
   </Accordion>
 </AccordionGroup>
 
+## Precompiles vs Predeployed Contracts
+
+<Info>
+Understanding the difference between precompiles and predeployed contracts is crucial for properly configuring your chain:
+
+**Precompiles** - Native Go implementations exposed as EVM contracts at specific addresses (0x0100-0x0806). These provide gas-efficient access to Cosmos SDK modules.
+
+**Predeployed Contracts** - Regular Solidity contracts deployed at genesis to standard addresses. These include essential infrastructure like Create2, Multicall3, and Permit2.
+</Info>
+
+### Configuring Precompiles
+
+Precompiles must be explicitly enabled in your genesis configuration. The default evmd example enables ALL precompiles, but production chains should only enable what they need:
+
+<Tabs>
+  <Tab title="Enable Specific Precompiles">
+    ```json
+    {
+      "app_state": {
+        "evm": {
+          "params": {
+            "active_static_precompiles": [
+              "0x0000000000000000000000000000000000000100",  // P256
+              "0x0000000000000000000000000000000000000400",  // Bech32
+              "0x0000000000000000000000000000000000000800",  // Staking
+              "0x0000000000000000000000000000000000000804"   // Bank
+            ]
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Enable All Precompiles">
+    ```go
+    // In your custom genesis.go
+    func NewEVMGenesisState() *evmtypes.GenesisState {
+        evmGenState := evmtypes.DefaultGenesisState()
+        // Enable ALL available precompiles (not recommended for production)
+        evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+        return evmGenState
+    }
+    ```
+  </Tab>
+
+  <Tab title="Disable All Precompiles">
+    ```json
+    {
+      "app_state": {
+        "evm": {
+          "params": {
+            "active_static_precompiles": []
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Configuring Predeployed Contracts
+
+<Accordion title="Default Predeployed Contracts" id="predeployed-contracts">
+The evmd example chain includes these predeployed contracts by default:
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| **Create2** | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | Deterministic contract deployment |
+| **Multicall3** | `0xcA11bde05977b3631167028862bE2a173976CA11` | Batch multiple calls in one transaction |
+| **Permit2** | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Token permit and transfer management |
+| **Safe Factory** | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | Deploy Safe multisig contracts |
+| **EIP-2935** | `0x0b` | Historical block hash storage |
+
+These are configured in `x/vm/types/preinstall.go` and automatically included when using the evmd example genesis.
+</Accordion>
+
+<Tabs>
+  <Tab title="Use Default Preinstalls">
+    ```go
+    // In evmd/genesis.go
+    func NewEVMGenesisState() *evmtypes.GenesisState {
+        evmGenState := evmtypes.DefaultGenesisState()
+        evmGenState.Preinstalls = evmtypes.DefaultPreinstalls  // Includes all default contracts
+        return evmGenState
+    }
+    ```
+  </Tab>
+
+  <Tab title="Custom Preinstalls">
+    ```json
+    {
+      "app_state": {
+        "evm": {
+          "preinstalls": [
+            {
+              "name": "MyCustomContract",
+              "address": "0x1234567890123456789012345678901234567890",
+              "code": "0x608060405234801561001057600080fd5b50..."  // Contract bytecode
+            }
+          ]
+        }
+      }
+    }
+    ```
+
+    <Warning>
+    When adding custom predeployed contracts:
+    - Ensure the address doesn't conflict with existing contracts
+    - Use standard addresses when possible (e.g., Create2 should always be at its standard address)
+    - Test thoroughly as these contracts are immutable after genesis
+    </Warning>
+  </Tab>
+
+  <Tab title="No Preinstalls">
+    ```json
+    {
+      "app_state": {
+        "evm": {
+          "preinstalls": []
+        }
+      }
+    }
+    ```
+
+    <Note>
+    Removing default preinstalls may break ecosystem compatibility. Many tools expect Create2 and Multicall3 at their standard addresses.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Adding Custom Predeployed Contracts
+
+To add your own predeployed contracts at genesis:
+
+<Steps>
+  <Step title="Compile Contract">
+    Compile your Solidity contract to get the deployment bytecode:
+    ```bash
+    solc --bin MyContract.sol
+    # Or with Hardhat
+    npx hardhat compile
+    ```
+  </Step>
+
+  <Step title="Choose Address">
+    Select a deployment address that won't conflict:
+    - Avoid precompile range (0x0001-0x0FFF)
+    - Check for ecosystem standards
+    - Consider using Create2 for deterministic addresses
+  </Step>
+
+  <Step title="Add to Genesis">
+    Add the contract to your genesis configuration:
+    ```go
+    // In your custom genesis.go
+    var CustomPreinstalls = append(evmtypes.DefaultPreinstalls, evmtypes.Preinstall{
+        Name:    "MyContract",
+        Address: "0xYourChosenAddress",
+        Code:    "0xDeploymentBytecode",
+    })
+    ```
+  </Step>
+
+  <Step title="Verify Deployment">
+    After chain initialization, verify the contract is deployed:
+    ```bash
+    # Check contract code
+    curl -X POST http://localhost:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "method": "eth_getCode",
+        "params": ["0xYourChosenAddress", "latest"],
+        "id": 1
+      }'
+    ```
+  </Step>
+</Steps>
+
 ### Fee Market Configuration
 
 <CodeGroup>
