@@ -1,5 +1,5 @@
 ---
-title: "Building Your Custom Chain with Cosmos EVM"
+title: "Build A Custom Chain"
 description: "Create your own blockchain by forking and customizing the Cosmos EVM referece chain. Covers the entire process from initial fork to running network, including parameter configuration, genesis setup, and validator coordination."
 ---
 
@@ -54,11 +54,39 @@ The `evmd` directory contains the example chain implementation that you'll fork 
 
 <Tab title="Customize Branding">
     Update application metadata in `yourchain/cmd/yourchain/cmd/root.go`:
-    - Application name
-    - Default home directory
-    - CLI descriptions and help text
+
+    ```go
+    // Update these constants
+    const (
+        NodeDir = ".yourchain"  // Change from ".evmd"
+    )
+
+    // In initRootCmd()
+    rootCmd := &cobra.Command{
+        Use:   "yourchain",  // Change from "evmd"
+        Short: "Your Chain Daemon",  // Update description
+        Long:  `Your custom blockchain built with Cosmos EVM`,  // Update description
+    }
+    ```
+
+    **Other files to update**:
+    - `Makefile` - Build targets and binary names
+    - `README.md` - Documentation and installation instructions
+    - `go.mod` - Module path to your repository
+    - `*.proto` files - Package names if creating custom modules
   </Tab>
 </Tabs>
+
+<Note>
+**Post-Fork Checklist**:
+- [ ] Repository cloned and `evmd` directory renamed
+- [ ] All Go imports updated to new module path
+- [ ] go.mod updated with new module name
+- [ ] Makefile updated with new binary name
+- [ ] README and documentation updated
+- [ ] Run `go mod tidy` to verify dependencies
+- [ ] Test build with `make build`
+</Note>
 
 ## Core Configuration Parameters
 
@@ -66,6 +94,21 @@ The `evmd` directory contains the example chain implementation that you'll fork 
   Some parameters must be set before genesis and cannot be changed later without
   significant migration effort. Choose carefully based on your requirements.
 </Warning>
+
+<Tip>
+**Quick Reference**: For a complete list of all configurable parameters with defaults and validation rules, see [Configuration Parameters](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-parameters).
+</Tip>
+
+<Note>
+**Configuration Workflow**:
+1. **Pre-Genesis**: Configure these parameters in code (Bech32 prefix, BIP44 coin type)
+2. **Initialize**: Run `yourchain init <moniker> --chain-id <chain-id>` to create initial genesis
+3. **Customize Genesis**: Edit `~/.yourchain/config/genesis.json` with your parameters
+4. **Runtime Config**: Configure `~/.yourchain/config/app.toml` for node operations
+5. **Launch**: Start the chain with coordinated genesis
+
+This section covers step 1 (Pre-Genesis). See [Genesis Configuration](#genesis-configuration) for steps 2-3.
+</Note>
 
 ### Chain Identity Configuration
 
@@ -393,7 +436,24 @@ The VM module's `SetGlobalConfigVariables` function (called during PreBlock) rea
 
 ## Genesis Configuration
 
-The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain parameters and state. After initialization with `yourchain init`, customize these sections:
+After completing the pre-genesis configuration in code, initialize your chain to create the default genesis file:
+
+```bash
+# Initialize your chain (creates ~/.yourchain/config/ directory)
+yourchain init <moniker> --chain-id yourchain-1
+
+# This creates:
+# - ~/.yourchain/config/genesis.json (chain parameters and initial state)
+# - ~/.yourchain/config/app.toml (node runtime configuration)
+# - ~/.yourchain/config/config.toml (CometBFT configuration)
+# - ~/.yourchain/data/ (blockchain data directory)
+```
+
+The genesis file (`~/.yourchain/config/genesis.json`) contains all initial chain parameters and state. After initialization, customize these sections:
+
+<Tip>
+**Working Example**: The [`local_node.sh`](https://github.com/cosmos/evm/blob/main/local_node.sh#L234-L248) script in the Cosmos EVM repository shows a complete working example of genesis configuration using `jq` commands. Refer to this script for real-world configuration patterns.
+</Tip>
 
 ### VM Module Parameters
 
@@ -1714,7 +1774,11 @@ Add initial account balances in the `bank` section:
 
 ## Runtime Configuration (app.toml)
 
-The `app.toml` file contains node-specific settings that can be changed without affecting consensus:
+The `app.toml` file contains node-specific settings that can be changed without affecting consensus. These are node-operator configurations that don't require network-wide coordination.
+
+<Info>
+For complete `app.toml` configuration details, see the [Node Configuration Documentation](/docs/evm/next/documentation/getting-started/node-configuration). The sections below show key settings for chain builders.
+</Info>
 
 ### JSON-RPC Configuration
 
@@ -2307,4 +2371,46 @@ Create custom precompiles by:
 
 Building a custom chain with Cosmos EVM provides the flexibility to create an application-specific blockchain with full EVM compatibility. The modular architecture allows you to enable only the features you need while maintaining the security and decentralization of the Cosmos ecosystem.
 
-Remember to thoroughly test your configuration in a testnet environment before launching your mainnet, and consider engaging with the Cosmos EVM community for support and best practices.
+### Next Steps
+
+After completing this guide, you should have:
+- ✓ Forked and renamed the Cosmos EVM reference implementation
+- ✓ Configured your chain's identity (Bech32 prefix, BIP44 coin type, Chain IDs)
+- ✓ Set up token economics (decimals, denoms, extended denom options)
+- ✓ Configured all genesis parameters (VM, Fee Market, Precompiles, Cosmos modules)
+- ✓ Set up runtime configuration (app.toml)
+- ✓ Coordinated genesis with validators
+- ✓ Launched your network
+
+**Recommended Next Actions**:
+
+1. **Test Thoroughly**: Run a private testnet to verify all configurations before mainnet launch
+2. **Review Module Docs**: Deep dive into module-specific documentation:
+   - [VM Module](/evm/next/documentation/getting-started/build-a-chain/modules/vm-module) - Precompiles and EVM parameters
+   - [Fee Market Module](/evm/next/documentation/getting-started/build-a-chain/modules/feemarket-module) - EIP-1559 tuning and monitoring
+   - [ERC20 Module](/evm/next/documentation/getting-started/build-a-chain/modules/erc20-module) - Token representation and IBC integration
+   - [PreciseBank Module](/evm/next/documentation/getting-started/build-a-chain/modules/precisebank-module) - Fractional balance handling (if using non-18 decimals)
+   - [Mempool Integration](/evm/next/documentation/getting-started/build-a-chain/modules/mempool-integration) - Transaction prioritization
+
+3. **Set Up Infrastructure**:
+   - Configure monitoring and alerting systems
+   - Set up RPC nodes separate from validators (see [Node Configuration](/docs/evm/next/documentation/getting-started/node-configuration))
+   - Implement backup and disaster recovery procedures
+
+4. **Security Hardening**:
+   - Conduct security audits of any custom modifications
+   - Review access control configurations
+   - Test upgrade procedures on testnet
+
+5. **Community Engagement**:
+   - Register your chain on [chainlist.org](https://chainlist.org)
+   - Update ecosystem documentation
+   - Engage with the Cosmos EVM community for support
+
+**Additional Resources**:
+- [Chain Customization Checklist](/docs/evm/next/documentation/getting-started/build-a-chain/chain-customization-checklist) - Step-by-step verification
+- [Configuration Parameters](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-parameters) - Complete parameter reference
+- [Token Configuration Guide](/docs/evm/next/documentation/getting-started/build-a-chain/token-configuration-guide) - Detailed token setup
+- [Development Environment](/docs/evm/next/documentation/getting-started/development-environment) - Local development setup
+
+Remember to thoroughly test your configuration in a testnet environment before launching your mainnet. Consider engaging with the Cosmos EVM community for support and staying updated on best practices.
