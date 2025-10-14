@@ -16,9 +16,8 @@ The reference implementation (`evmd`) comes with these defaults:
 | Configuration | Default Value | Customizable |
 |---------------|---------------|--------------|
 | **Binary Name** | `evmd` | ✓ Yes (rename) |
-| **Cosmos Chain ID** | `cosmos_262144-1` | ✓ Yes (genesis) |
-| **EVM Chain ID** | `262144` | ✓ Yes (genesis) |
-| **Custom Opcodes** | None | ✓ Yes (advanced) |
+| **Cosmos Chain ID** | User-defined (string) | ✓ Yes (genesis) |
+| **EVM Chain ID** | `262144` | ✓ Yes (app.toml) |
 | **Token Pairs** | 1 (native token) | ✓ Yes (genesis) |
 | **Denomination** | `atest` (18 decimals) | ✓ Yes (genesis) |
 | **EVM Permissioning** | Permissionless | ✓ Yes (genesis) |
@@ -89,156 +88,149 @@ After renaming, your binary will be `yourchain` instead of `evmd`. All CLI comma
 
 ## 2. Cosmos Chain ID
 
-**What It Is**: The unique identifier for your blockchain in the Cosmos ecosystem. Used for IBC connections and governance.
+**What It Is**: The unique string identifier for your blockchain in the Cosmos ecosystem. Used for CometBFT consensus, IBC connections, and governance.
 
-**Default**: `cosmos_262144-1`
+**Format**: `{name}-{version}` (e.g., `mychain-1`, `testnet-2`)
 
-**Format**: `{name}_{evmChainID}-{version}`
+<Warning>
+The Cosmos chain ID and EVM chain ID are **completely separate** identifiers that serve different purposes and have no relationship to each other.
+</Warning>
 
 ### How to Change
 
 Set during chain initialization:
 
 ```bash
-yourchain init mynode --chain-id yourchain_262144-1
+yourchain init mynode --chain-id mychain-1
 ```
 
 **Recommended Formats**:
-- Testnet: `yourchain_262144-1`
-- Mainnet: `yourchain-1` (after registering a unique EVM chain ID)
+- Mainnet: `mychain-1` (increment version for major upgrades)
+- Testnet: `mychain-testnet-1`
+- Local: Any unique string
 
-<Note>
-The Cosmos chain ID is separate from the EVM chain ID. The format `name_evmChainID-version` helps maintain consistency between both IDs, but it's not required.
-</Note>
+**Important**: The Cosmos chain ID can be **any string**. While the format `{name}-{number}` is canonical for IBC client upgrades, you have full flexibility in choosing your identifier.
 
 ### Changing After Genesis
 
-While technically possible through a coordinated upgrade, changing the Cosmos chain ID requires all nodes to update and restart simultaneously. Plan your chain ID carefully before launch.
+The Cosmos chain ID can be changed during coordinated chain upgrades. The version number (e.g., `-1`, `-2`) is typically incremented when consensus-breaking changes occur.
 
 ---
 
 ## 3. EVM Chain ID
 
-**What It Is**: The EIP-155 chain ID used for Ethereum transaction replay protection.
+**What It Is**: The EIP-155 integer used for Ethereum transaction replay protection. This is what Ethereum wallets (MetaMask, etc.) use to identify your network.
 
 **Default**: `262144`
 
-**Where Configured**: Retrieved from app options in `app.go`
+**Important**: The EVM chain ID is **completely independent** from the Cosmos chain ID and has no relationship to it.
 
 ### How to Change
 
 <Warning>
-The EVM chain ID **cannot** be changed after genesis without breaking transaction replay protection. Choose carefully before launch.
+The EVM chain ID **cannot** be changed after genesis without breaking transaction replay protection and wallet compatibility. Choose carefully before launch.
 </Warning>
 
-The EVM chain ID is retrieved from app options in `app.go`:
-
-```go
-// evmd/app.go line ~216
-evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
-```
-
-You can set it via CLI flag when starting the chain:
-```bash
-yourchain start --evm.chain-id 262144
-```
-
-Or configure it in `app.toml`:
+Configure it in `app.toml`:
 ```toml
 [evm]
 chain-id = 262144
 ```
 
+Or via CLI flag when starting the chain:
+```bash
+yourchain start --evm.chain-id 262144
+```
+
 ### Choosing an EVM Chain ID
+
+**Choose any integer that isn't already taken on [chainlist.org](https://chainlist.org)**
 
 <AccordionGroup>
 <Accordion title="Reserved IDs">
-**Avoid these ranges**:
+**Avoid these**:
 - `1` - Ethereum Mainnet
-- `2-10` - Ethereum testnets
-- `1-999` - Generally reserved by Ethereum Foundation
 - `137` - Polygon
-- Common production chains - Check [chainlist.org](https://chainlist.org)
+- `56` - BNB Chain
+- Check [chainlist.org](https://chainlist.org) for all registered chains
 </Accordion>
 
 <Accordion title="Testing">
 **For local development and testnets**:
 - Use `262144` (evmd default)
-- Or any high number unlikely to conflict
+- Or any unique high number
 - No registration needed
 </Accordion>
 
 <Accordion title="Production">
 **For mainnet launches**:
-- Choose a unique ID > 1,000,000
+- Choose a unique integer not in use
 - Register at [chainlist.org](https://chainlist.org)
-- Verify no conflicts with existing chains
-- Document your choice publicly
+- Verify no conflicts
+- Document publicly
 </Accordion>
 </AccordionGroup>
 
 ---
 
-## 4. Custom Opcodes
+## 4. EIP Integration
 
-**What It Is**: Custom EVM operations beyond standard Ethereum opcodes.
+**What It Is**: Enable additional Ethereum Improvement Proposals (EIPs) that aren't activated by default in the EVM configuration.
 
-**Default**: None
+**Default**: Empty list (no extra EIPs enabled)
 
-<Note>
-Custom opcodes are an advanced feature. Most chains should use standard Ethereum opcodes with the optional `extra_eips` parameter instead.
-</Note>
+### How to Configure
 
-### Adding Extra EIPs
-
-Instead of custom opcodes, enable additional Ethereum Improvement Proposals:
+Enable additional EIPs in genesis:
 
 ```json
 {
   "app_state": {
     "vm": {
       "params": {
-        "extra_eips": [2200, 2929, 3198]
+        "extra_eips": []
       }
     }
   }
 }
 ```
 
-**Common EIPs**:
-- `2200` - Net gas metering
-- `2929` - Gas cost increases for state access
-- `3198` - BASEFEE opcode
-- `3529` - Reduction in refunds
+<Note>
+The `extra_eips` parameter allows enabling standard Ethereum EIPs that aren't included in the default chain configuration. Most chains can leave this empty and use the standard EVM feature set.
+</Note>
 
-<Accordion title="Implementing Custom Opcodes (Advanced)">
-For teams that need custom EVM functionality:
+### When to Use Extra EIPs
 
-1. Create activator functions in your chain's `eips/` directory
-2. Register in the activators map
-3. Add to `extra_eips` in genesis
+<Tabs>
+<Tab title="Standard Configuration">
+**Most chains should use the default empty configuration**:
 
-```go
-// yourchain/eips/custom.go
-func ActivateMyCustomOpcode(jt *vm.JumpTable) {
-    // Define custom opcode behavior
-}
-
-// Register in activators
-var CustomActivators = map[int]func(*vm.JumpTable){
-    9999: ActivateMyCustomOpcode,
-}
-```
-
-Then in genesis:
 ```json
 {
-  "extra_eips": [9999]
+  "extra_eips": []
 }
 ```
 
-This is rarely needed - consider if standard EVM functionality meets your needs first.
-</Accordion>
+The default EVM configuration includes all commonly-used Ethereum features up through the Cancun upgrade.
+</Tab>
+
+<Tab title="Advanced Features">
+**Enable specific EIPs if your chain requires them**:
+
+For example, to enable additional EIP-1153 (transient storage):
+```json
+{
+  "extra_eips": [1153]
+}
+```
+
+Only add EIPs if you have a specific technical requirement for functionality not in the default configuration.
+</Tab>
+</Tabs>
+
+<Warning>
+Only enable EIPs that you understand and have tested thoroughly. Enabling incompatible or experimental EIPs can cause consensus failures or security vulnerabilities.
+</Warning>
 
 ---
 
@@ -894,7 +886,7 @@ The `local_node.sh` script performs all the configuration steps automatically. H
 <Accordion title="Genesis Modifications" icon="file-code">
 The script modifies `genesis.json` to configure:
 
-- **Chain ID**: Sets to `cosmos_262144-1`
+- **Cosmos Chain ID**: Sets a development chain ID
 - **Token denomination**: Configures `atest` (18 decimals) across all modules
 - **Bank metadata**: Sets up denom metadata with proper exponents
 - **Precompiles**: Enables all 9 static precompiles by default
