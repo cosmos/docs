@@ -1,50 +1,18 @@
 ---
 title: "Migration: v0.4.x to v0.5.0"
-------
+---
 
-<Warning>
-**This migration contains breaking changes that require code updates**
+## 0) Prep
 
-v0.5.0 introduces significant changes to precompile interfaces, VM parameters, mempool architecture, and ante handlers. Review all breaking changes before upgrading.
-</Warning>
-
-## Breaking Changes Summary
-
-- [VM Parameters](#vm-parameter-changes): `allow_unprotected_txs` removed, `history_serve_window` added
-- [Precompile Interfaces](#precompile-interface-changes): All constructors now use keeper interfaces
-- [Mempool Architecture](#mempool-changes): Configuration-based approach replaces pre-built pools
-- [Ante Handler Optimization](#ante-handler-changes): EVM instance removal and performance improvements
-- [Global Mempool Removal](#global-mempool-removal): Direct injection replaces singleton pattern
-
-## New Features
-
-- [EIP-7702 Support](#eip-7702-eoa-code-delegation): EOA code delegation for account abstraction
-- [EIP-2935 Support](#eip-2935-block-hash-storage): Block hash storage implementation
-- [eth_createAccessList](#new-rpc-methods): Access list creation RPC method
-- [Performance Optimizations](#performance-improvements): Gas estimation and state management improvements
+- Create a branch: `git switch -c upgrade/evm-v0.5`.
+- Ensure a clean build + tests green pre-upgrade.
+- Snapshot your current params/genesis for comparison later.
 
 ---
 
-## 0) Preparation
+## 1) Dependency bumps (go.mod)
 
-Create an upgrade branch and prepare your environment:
-
-```bash
-git switch -c upgrade/evm-v0.5
-go test ./...
-evmd export > pre-upgrade-genesis.json
-```
-
----
-
-## 1) Dependency Updates
-
-### Update go.mod
-
-```diff
-- github.com/cosmos/evm v0.4.1
-+ github.com/cosmos/evm v0.5.0
-```
+- Bump `github.com/cosmos/evm` to v0.5.0 and run:
 
 ```bash
 go mod tidy
@@ -52,593 +20,316 @@ go mod tidy
 
 ---
 
-## 2) VM Parameter Changes
+## 2) Fix `"github.com/cosmos/evm/types" imports`
 
-### BREAKING: allow_unprotected_txs Parameter Removed
+`v0.5.0` removes `github.com/cosmos/evm/types` and moves files to their folders, respective to function.
+For a complete list of changes, refer to [this PR](https://github.com/cosmos/evm/pull/639). The
+following list includes references within `evmd` that have been moved.
 
-The `allow_unprotected_txs` parameter has been removed from VM module parameters. Non-EIP-155 transaction acceptance is now managed per-node.
+### Summary of import changes in `evmd`:
 
-**Migration Required:**
-
-1. **Update Genesis Files:**
-
+**Removed import:**
 ```diff
-{
-  "app_state": {
-    "vm": {
-      "params": {
-        "evm_denom": "atest",
-        "extra_eips": [],
--       "allow_unprotected_txs": false,
-        "evm_channels": [],
-        "access_control": {...},
-        "active_static_precompiles": [...],
-+       "history_serve_window": 8192
-      }
-    }
-  }
-}
+- cosmosevmtypes "github.com/cosmos/evm/types"
 ```
 
-2. **Update Parameter Validation:**
-
-If you have custom parameter validation logic, remove references to `allow_unprotected_txs`:
-
+**Added imports:**
 ```diff
-// Remove any code referencing AllowUnprotectedTxs
-- if !params.AllowUnprotectedTxs {
--   // validation logic
-- }
++ antetypes "github.com/cosmos/evm/ante/types"
++ evmaddress "github.com/cosmos/evm/encoding/address"
++ "github.com/cosmos/evm/utils"
 ```
 
-### NEW: history_serve_window Parameter
+### Detailed mapping of moved items:
 
-Added for EIP-2935 block hash storage support.
+- **`AttoPowerReduction`** → moved to `"github.com/cosmos/evm/utils"`
+  ```diff
+  - sdk.DefaultPowerReduction = cosmosevmtypes.AttoPowerReduction
+  + sdk.DefaultPowerReduction = utils.AttoPowerReduction
+  ```
 
-- **Default value:** `8192` blocks
-- **Purpose:** Controls how many historical block hashes to serve
-- **Range:** Must be > 0, recommended ≤ 8192 for optimal performance
+- **`HasDynamicFeeExtensionOption`** → moved to `"github.com/cosmos/evm/ante/types"`
+  ```diff
+  - ExtensionOptionChecker: cosmosevmtypes.HasDynamicFeeExtensionOption,
+  + ExtensionOptionChecker: antetypes.HasDynamicFeeExtensionOption,
+  ```
+
+- **Address Codec functions** → new package `"github.com/cosmos/evm/encoding/address"`
+
+  Use `evmaddress.NewEvmCodec()` for address codec initialization:
+  ```go
+  app.AccountKeeper = authkeeper.NewAccountKeeper(
+      appCodec,
+      runtime.NewKVStoreService(keys[authtypes.StoreKey]),
+      authtypes.ProtoBaseAccount,
+      evmconfig.GetMaccPerms(),
+      evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
+      sdk.GetConfig().GetBech32AccountAddrPrefix(),
+      authAddr,
+  )
+  ```
+
+- **`Bip44CoinType`, `BIP44HDPath`** → moved to `"github.com/cosmos/evm/crypto/hd"`
+
+- **`GenesisState`** → removed as a duplicate object can be found in the `evmd` folder and a testing version is in `"github.com/cosmos/evm/testutil"`
 
 ---
 
-## 3) Precompile Interface Changes
+## 3) App wiring in `app.go`
 
-### BREAKING: Constructor Interface Updates
+### Mempool
 
-All precompile constructors now accept keeper interfaces instead of concrete implementations for better decoupling.
+#### Minimal setups: nothing to change
 
-**New Interface Definitions:**
+If you use the default mempool wiring (no custom pools), your existing code continues to work. If `BlockGasLimit` is 0, it defaults to `100_000_000`. If `BroadCastTxFn` is not set, it's also set to a default value.
 
-```go New Interface Definitions expandable
-// precompiles/common/interfaces.go
-type BankKeeper interface {
-    IterateAccountBalances(ctx context.Context, account sdk.AccAddress, cb func(coin sdk.Coin) bool)
-    GetBalance(ctx context.Context, addr sdk.AccAddress, denom string) sdk.Coin
-    SendCoins(ctx context.Context, fromAddr sdk.AccAddress, toAddr sdk.AccAddress, amt sdk.Coins) error
-    // ... other methods
-}
-
-type StakingKeeper interface {
-    BondDenom(ctx context.Context) (string, error)
-    GetDelegatorValidators(ctx context.Context, delegatorAddr sdk.AccAddress, maxRetrieve uint32) (stakingtypes.Validators, error)
-    // ... other methods
-}
-```
-
-**Migration Steps:**
-
-1. **Update Precompile Assembly:**
-
-```diff Precompile Assembly Update expandable
-// evmd/precompiles.go or app/precompiles.go
-func NewAvailableStaticPrecompiles(
-    // ... other params
-) map[common.Address]vm.PrecompiledContract {
-    precompiles := make(map[common.Address]vm.PrecompiledContract)
-
-    // Bank precompile - interface now required
--   bankPrecompile, err := bankprecompile.NewPrecompile(bankKeeper, ...)
-+   bankPrecompile, err := bankprecompile.NewPrecompile(
-+       common.BankKeeper(bankKeeper), // Cast to interface
-+       // ... other params
-+   )
-
-    // Distribution precompile - simplified parameters
--   distributionPrecompile, err := distributionprecompile.NewPrecompile(
--       distributionKeeper, stakingKeeper, authzKeeper, cdc, options.AddressCodec
--   )
-+   distributionPrecompile, err := distributionprecompile.NewPrecompile(
-+       common.DistributionKeeper(distributionKeeper),
-+       cdc, options.AddressCodec
-+   )
-
-    // Staking precompile - keeper interface
--   stakingPrecompile, err := stakingprecompile.NewPrecompile(stakingKeeper, ...)
-+   stakingPrecompile, err := stakingprecompile.NewPrecompile(
-+       common.StakingKeeper(stakingKeeper),
-+       // ... other params
-+   )
-
-    return precompiles
-}
-```
-
-2. **Update Custom Precompiles:**
-
-If you have custom precompiles, update their constructors to accept interfaces:
-
-```diff
-// Custom precompile constructor
-- func NewMyPrecompile(bankKeeper bankkeeper.Keeper, stakingKeeper stakingkeeper.Keeper) (*MyPrecompile, error) {
-+ func NewMyPrecompile(bankKeeper common.BankKeeper, stakingKeeper common.StakingKeeper) (*MyPrecompile, error) {
-    return &MyPrecompile{
-        bankKeeper:    bankKeeper,
-        stakingKeeper: stakingKeeper,
-    }, nil
-}
-```
-
----
-
-## 4) Mempool Changes
-
-### Configuration-Based Architecture
-
-The mempool now uses configuration objects instead of pre-built pools for better flexibility.
-
-**Migration for Standard Setups:**
-
-If you use default mempool configuration, minimal changes are needed:
-
-```go Standard Mempool Setup expandable
-// Existing code continues to work
+```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
     AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // or 0 for default
+    BlockGasLimit: 100_000_000, // or 0 to use default
 }
 evmMempool := evmmempool.NewExperimentalEVMMempool(
-    app.CreateQueryContext,
-    logger,
-    app.EVMKeeper,
-    app.FeeMarketKeeper,
-    app.txConfig,
-    app.clientCtx,
-    mempoolConfig
+    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper, app.txConfig, app.clientCtx, mempoolConfig
 )
 ```
 
-**Migration for Advanced Setups:**
+#### Advanced setups: migrate your customizations
 
-If you previously built custom pools:
+PR [#496](https://github.com/cosmos/evm/pull/496) replaced pre-built pools with configs in `EVMMempoolConfig`:
 
-```diff Advanced Mempool Configuration expandable
+- Replace pools with configs
+  - Removed: `TxPool *txpool.TxPool`, `CosmosPool sdkmempool.ExtMempool`
+  - Added: `LegacyPoolConfig *legacypool.Config`, `CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]`
+
+If you built custom pools yourself:
+
+```diff
  mempoolConfig := &evmmempool.EVMMempoolConfig{
--   TxPool:        customTxPool,
--   CosmosPool:    customCosmosPool,
-+   LegacyPoolConfig: &legacypool.Config{
-+       PriceLimit: 2,
-+       // ... other legacy pool settings
-+   },
-+   CosmosPoolConfig: &sdkmempool.PriorityNonceMempoolConfig[math.Int]{
-+       TxPriority: sdkmempool.TxPriority[math.Int]{
-+           GetTxPriority: customPriorityFunc,
-+           Compare: math.IntComparator,
-+           MinValue: math.ZeroInt(),
-+       },
-+   },
+-   TxPool:     customTxPool,
+-   CosmosPool: customCosmosPool,
++   LegacyPoolConfig: &legacyCfg,  // or nil for defaults
++   CosmosPoolConfig: &cosmosCfg,  // or nil for defaults
    AnteHandler:      app.GetAnteHandler(),
-   BroadcastTxFn:    customBroadcastFunc, // optional
-   BlockGasLimit:    100_000_000,
+   BroadCastTxFn:    myBroadcast, // optional
  }
 ```
 
----
+Example custom configs:
 
-## 5) Ante Handler Changes
+```go
+// EVM legacy txpool tuning
+legacyCfg := legacypool.DefaultConfig
+legacyCfg.PriceLimit = 2
+mempoolConfig.LegacyPoolConfig = &legacyCfg
 
-### Performance Optimizations
+// Cosmos priority mempool tuning
+cosmosCfg := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
+cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
+    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+        // Custom priority function
+    },
+    Compare:  func(a, b math.Int) int { return a.BigInt().Cmp(b.BigInt()) },
+    MinValue: math.ZeroInt(),
+}
+mempoolConfig.CosmosPoolConfig = &cosmosCfg
 
-The ante handler system has been optimized to remove unnecessary EVM instance creation.
+// Custom EVM broadcast (optional)
+mempoolConfig.BroadCastTxFn = func(txs []*ethtypes.Transaction) error { return nil }
+```
 
-**What Changed:**
-- `CanTransfer` ante decorator no longer creates StateDB instances
-- EVM instance removal improves performance for balance checks
-- Signature verification optimizations
+#### New Configuration Options
 
-**Migration Impact:**
-- **Standard setups:** No changes required
-- **Custom ante handlers:** Verify compatibility with new `CanTransfer` behavior
+PR [#698](https://github.com/cosmos/evm/pull/698) adds new configuration options for the EVM mempool that can be set via `app.toml` or CLI flags. These options allow fine-tuning of the EVM legacy pool behavior.
 
-**Custom Ante Handler Updates:**
+##### Configuration via `app.toml`
 
-If you have custom ante handlers that depend on EVM instance creation during balance checks:
+The following mempool configuration options are now available in `app.toml` under the `[evm.mempool]` section:
+
+```toml
+[evm.mempool]
+# PriceLimit is the minimum gas price to enforce for acceptance into the pool (in wei)
+price-limit = 1
+
+# PriceBump is the minimum price bump percentage to replace an already existing transaction (nonce)
+price-bump = 10
+
+# AccountSlots is the number of executable transaction slots guaranteed per account
+account-slots = 16
+
+# GlobalSlots is the maximum number of executable transaction slots for all accounts
+global-slots = 5120
+
+# AccountQueue is the maximum number of non-executable transaction slots permitted per account
+account-queue = 64
+
+# GlobalQueue is the maximum number of non-executable transaction slots for all accounts
+global-queue = 1024
+
+# Lifetime is the maximum amount of time non-executable transaction are queued
+lifetime = "3h0m0s"
+```
+
+##### Configuration via CLI Flags
+
+These options can also be set via CLI flags:
+
+- `--evm.mempool.price-limit` (default: 1)
+- `--evm.mempool.price-bump` (default: 10)
+- `--evm.mempool.account-slots` (default: 16)
+- `--evm.mempool.global-slots` (default: 5120)
+- `--evm.mempool.account-queue` (default: 64)
+- `--evm.mempool.global-queue` (default: 1024)
+- `--evm.mempool.lifetime` (default: 3h0m0s)
+
+##### Cosmos Mempool Max Transactions
+
+A new flag `--mempool.max-txs` allows limiting the maximum number of transactions in the Cosmos mempool. Set to 0 or -1 for unbounded (default: 0).
+
+##### Simplified Mempool Setup
+
+The mempool configuration can now be handled by a helper function. If you prefer to use the configuration from `app.toml` and CLI flags, you can refactor your mempool setup:
+
+```go
+// Before: Manual configuration in app.go
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: blockGasLimit,
+    MinTip:        minTip,
+}
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
+    app.txConfig, app.clientCtx, mempoolConfig,
+)
+
+// After: Using helper function (optional)
+// See evmd/mempool.go for reference implementation
+if err := app.configureEVMMempool(appOpts, logger); err != nil {
+    panic(fmt.Sprintf("failed to configure EVM mempool: %s", err.Error()))
+}
+```
+
+The helper function reads configuration from `appOpts` and applies defaults where needed. Note that `NewExperimentalEVMMempool` now takes an additional `cosmosPoolMaxTx` parameter.
+
+### Default Precompiles
+
+Default precompiles have been moved to `/evm/precompiles/types/defaults.go` and the function name was
+changed to `DefaultStaticPrecompiles`. The function signature has also changed, and now takes pointers
+as inputs for the `Erc20Keeper` and `TransferKeeper`. Finally, the `WithStaticPrecompiles` builder
+function can now happen *alongside the keeper instantiation*, and not after. The new wiring is shown below:
+
+```go
+	app.EVMKeeper = evmkeeper.NewKeeper(
+		appCodec, keys[evmtypes.StoreKey], tkeys[evmtypes.TransientKey], keys,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		app.AccountKeeper,
+		app.PreciseBankKeeper,
+		app.StakingKeeper,
+		app.FeeMarketKeeper,
+		&app.ConsensusParamsKeeper,
+		&app.Erc20Keeper,
+		tracer,
+	).WithStaticPrecompiles(
+		precompiletypes.DefaultStaticPrecompiles(
+			*app.StakingKeeper,
+			app.DistrKeeper,
+			app.PreciseBankKeeper,
+			&app.Erc20Keeper, // UPDATED
+			&app.TransferKeeper, // UPDATED
+			app.IBCKeeper.ChannelKeeper,
+			app.GovKeeper,
+			app.SlashingKeeper,
+			appCodec,
+		),
+	)
+```
+
+### Denom Configs
+
+[#661](https://github.com/cosmos/evm/pull/661) removes the instantiation of chain configs via app.go
+and moves them to state or genesis.
+It is critical to remove any use of EvmAppOptions as calling the configurator will panic the chain
+at runtime during startup.
+
+#### EVM Chain ID
+
+The EVM chain ID is now retrieved directly from `appOpts` instead of being passed as a parameter. In `app.go`, the chain ID is obtained using:
+
+```go
+evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
+```
+
+See `evmd/app.go:216` for the reference implementation.
+
+#### Function Signature Changes
+
+In `app.go`, remove evmChainID and evmAppOptions from the NewApp signature.
 
 ```diff
-// Custom ante handler example
-func (d MyCustomDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
-    // Balance checking now optimized - no EVM instance creation
--   evm := d.evmKeeper.NewEVM(ctx, ...)
--   stateDB := evm.StateDB
--   balance := stateDB.GetBalance(address)
-
-    // Use keeper method instead
-+   balance := d.evmKeeper.GetBalance(ctx, address)
-
-    return next(ctx, tx, simulate)
-}
+// NewExampleApp returns a reference to an initialized EVMD.
+func NewExampleApp(
+	logger log.Logger,
+	db dbm.DB,
+	traceStore io.Writer,
+	loadLatest bool,
+	appOpts servertypes.AppOptions,
+-	evmChainID uint64,
+-	evmAppOptions evmconfig.EVMOptionsFn,
+	baseAppOptions ...func(*baseapp.BaseApp),
+) *EVMD {
 ```
 
-#### Field Mapping (v0.4.x → v0.5.0)
+Afterwards, fix any reference to the function by removing the inputs.
 
-- Removed fields:
-  - `TxPool` (pre-built EVM pool)
-  - `CosmosPool` (pre-built Cosmos pool)
+Then, remove any reference of evmAppOptions being called:
 
-- New/Replacement fields:
-  - `LegacyPoolConfig` (configure legacy EVM txpool behavior)
-  - `CosmosPoolConfig` (configure Cosmos `PriorityNonceMempool` behavior)
-  - `BlockGasLimit` (required; `0` uses fallback `100_000_000`)
-  - `BroadcastTxFn` (optional callback; defaults to broadcasting via `clientCtx`)
-  - `MinTip` (optional minimum tip for EVM selection)
+`app.go`
+```diff
+-	if err := evmAppOptions(evmChainID); err != nil {
+-		panic(err)
+-	}
+```
+
+`root.go`
+```diff
+- noOpEvmAppOptions := func(_ uint64) error {
+-		return nil
+-	}
+```
+```diff
+- if initClientCtx.ChainID != "" {
+-		if err := config.EvmAppOptions(config.EVMChainID); err != nil {
+-			panic(err)
+-		}
+-	}
+```
+
+`evmd_config.go`, `chain_id.go`, `config.go`, `constants.go` have been moved to
+`github.com/cosmos/evm/config` and may be removed to your repo.
+
+#### UpgradeHandler
+
+As the configs have been moved to state and genesis, you must include an UpgradeHandler if your chain does
+not satisfy the following conditions.
+1. Your EVM Denom set in the `x/vm` params must have `DenomMetadata` registered for it in `x/bank`.
+2. Your EVM Denom must have a display denom associated with it in `DenomMetadata`.
+   1. The display denom for the EVM Denom must have an accurate decimal value (i.e. for `uatom`, `atom` must have a decimal value of 6.
+3. Your chain is an 18-decimal chain.
+
+In your UpgradeHandler:
+
+- **If your chain does not have DenomMetadata set for the EVM Denom, you must include it.**
+- **If your chain's EVM denom is *not* 18 decimals, you must add ExtendedDenomOptions to your `x/vm` params.**
+
+Please refer to the [upgrade example](https://github.com/cosmos/evm/blob/0995962c2fd77a7a23e93001d5a531abbb1b61e5/evmd/upgrades.go) for more information.
 
 ---
 
-## 6) Global Mempool Removal
-
-### BREAKING: Singleton Pattern Eliminated
-
-The global mempool registry has been removed in favor of direct injection.
-
-**What Was Removed:**
-- `mempool.SetGlobalEVMMempool()`
-- `mempool.GetGlobalEVMMempool()`
-- Global mempool singleton pattern
-
-**Migration Steps:**
-
-1. **Update JSON-RPC Server Initialization:**
-
-```diff JSON-RPC Server Update expandable
-// server/start.go or equivalent
-- mempool.SetGlobalEVMMempool(evmMempool)
-
-  jsonRPCServer, err := jsonrpc.StartJSONRPC(
-      ctx,
-      clientCtx,
-      logger.With("module", "jsonrpc"),
-+     evmMempool, // Pass mempool directly
-      config,
-      indexer,
-  )
-```
-
-2. **Update RPC Backend:**
-
-If you have custom RPC backends:
-
-```diff Custom RPC Backend Update expandable
-// Custom RPC backend
-func NewCustomBackend(
-    // ... other params
-+   mempool *evmmempool.ExperimentalEVMMempool,
-) *CustomBackend {
--   mempool := mempool.GetGlobalEVMMempool()
-
-    return &CustomBackend{
-        mempool: mempool,
-        // ... other fields
-    }
-}
-```
-
----
-
-## 7) EIP-7702 EOA Code Delegation
-
-### NEW FEATURE: Account Abstraction for EOAs
-
-EIP-7702 enables externally owned accounts to temporarily execute smart contract code through authorization lists.
-
-**What's New:**
-- **SetCodeTx Transaction Type:** New transaction type supporting code delegation
-- **Authorization Signatures:** Signed permissions for code delegation
-- **Temporary Execution:** EOAs can execute contract logic for single transactions
-- **Account Abstraction:** Multi-sig, time-locks, automated strategies
-
-**Implementation:** [`x/vm/keeper/state_transition.go:426+`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L426)
-
-**Usage Example:**
-```javascript
-// Enable EOA to execute as multicall contract
-const authorization = await signAuthorization({
-    chainId: 9000,
-    address: multicallContractAddress,
-    nonce: await wallet.getNonce(),
-}, wallet);
-
-const tx = {
-    type: 4, // SetCodeTxType
-    authorizationList: [authorization],
-    to: wallet.address,
-    data: multicall.interface.encodeFunctionData("batchCall", [calls]),
-    gasLimit: 500000,
-};
-
-await wallet.sendTransaction(tx);
-```
-
-**Developer Impact:**
-- **Enhanced Wallets:** EOAs can have programmable features
-- **Better UX:** Batched operations, custom validation logic
-- **Account Abstraction:** Multi-sig and advanced security features
-- **No Migration:** Existing EOAs enhanced without changes
-
----
-
-## 8) EIP-2935 Block Hash Storage
-
-### NEW FEATURE: Historical Block Hash Access
-
-EIP-2935 provides standardized access to historical block hashes via contract storage.
-
-**What's New:**
-- `BLOCKHASH` opcode now queries contract storage for historical hashes
-- New `history_serve_window` parameter controls storage depth
-- Compatible with Ethereum's EIP-2935 specification
-
-**Configuration:**
-
-```go
-// Genesis parameter
-"history_serve_window": 8192  // Default: 8192 blocks
-```
-
-**Usage for Developers:**
-
-```solidity
-// Smart contract can now reliably access historical block hashes
-contract HistoryExample {
-    function getRecentBlockHash(uint256 blockNumber) public view returns (bytes32) {
-        // Works for blocks within history_serve_window range
-        return blockhash(blockNumber);
-    }
-}
-```
-
-**Performance Considerations:**
-- Larger `history_serve_window` values increase storage requirements
-- Default of 8192 provides good balance of utility and performance
-- Values > 8192 may impact node performance
-
----
-
-## 8) New RPC Methods
-
-### eth_createAccessList
-
-New JSON-RPC method for creating access lists to optimize transaction costs.
-
-**Usage:**
+## 3) Build & quick tests
 
 ```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  --data '{
-    "jsonrpc": "2.0",
-    "method": "eth_createAccessList",
-    "params": [{
-      "to": "0x...",
-      "data": "0x...",
-      "gas": "0x...",
-      "gasPrice": "0x..."
-    }, "latest"],
-    "id": 1
-  }' \
-  http://localhost:8545
+go build ./...
 ```
 
-**Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "accessList": [
-      {
-        "address": "0x...",
-        "storageKeys": ["0x..."]
-      }
-    ],
-    "gasUsed": "0x..."
-  }
-}
-```
-
----
-
-## 9) Performance Improvements
-
-### Gas Estimation Optimization
-
-- **Short-circuit plain transfers:** Simple ETH transfers now bypass complex gas estimation
-- **Optimistic bounds:** Uses `MaxUsedGas` for better initial estimates
-- **Result:** Significantly faster `eth_estimateGas` performance
-
-### State Management
-
-- **Reduced EVM instances:** Fewer unnecessary EVM instance creations
-- **Storage optimizations:** Empty storage checks implemented per EIP standards
-- **Block notifications:** Improved timing prevents funding errors
-
-### Mempool Enhancements
-
-- **Nonce gap handling:** Better error handling for transaction sequencing
-- **Configuration flexibility:** Tunable parameters for different network conditions
-
----
-
-## 10) Testing Your Migration
-
-### Pre-Upgrade Checklist
-
-```bash Pre-Upgrade Checklist expandable
-# 1. Backup current state
-evmd export > pre-upgrade-state.json
-
-# 2. Document existing parameters
-evmd query vm params > pre-upgrade-params.json
-
-# 3. Note active precompiles
-evmd query erc20 token-pairs > pre-upgrade-token-pairs.json
-```
-
-### Post-Upgrade Verification
-
-```bash Post-Upgrade Verification expandable
-# 1. Verify node starts successfully
-evmd start
-
-# 2. Test EVM functionality
-cast send --rpc-url http://localhost:8545 --private-key $PRIVATE_KEY \
-  0x... "transfer(address,uint256)" 0x... 1000
-
-# 3. Verify new RPC methods
-curl -X POST \
-  -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_createAccessList","params":[...],"id":1}' \
-  http://localhost:8545
-
-# 4. Test precompile functionality
-cast call 0x... "balanceOf(address)" 0x... --rpc-url http://localhost:8545
-
-# 5. Verify EIP-2935 support
-cast call --rpc-url http://localhost:8545 \
-  $CONTRACT_ADDRESS "getBlockHash(uint256)" $BLOCK_NUMBER
-```
-
-### Integration Tests
-
-```go Integration Test Example expandable
-// Example integration test
-func TestV050Migration(t *testing.T) {
-    // Test mempool configuration
-    config := &evmmempool.EVMMempoolConfig{
-        AnteHandler:   anteHandler,
-        BlockGasLimit: 100_000_000,
-    }
-    mempool := evmmempool.NewExperimentalEVMMempool(...)
-    require.NotNil(t, mempool)
-
-    // Test precompile interfaces
-    bankPrecompile, err := bankprecompile.NewPrecompile(
-        common.BankKeeper(bankKeeper),
-    )
-    require.NoError(t, err)
-
-    // Test parameter validation
-    params := vmtypes.NewParams(...)
-    require.Equal(t, uint64(8192), params.HistoryServeWindow)
-    require.False(t, hasAllowUnprotectedTxs(params)) // Should be removed
-}
-```
-
----
-
-## 11) Rollback Plan
-
-If issues arise during migration:
-
-```bash
-# 1. Stop the upgraded node
-systemctl stop evmd
-
-# 2. Restore pre-upgrade binary
-cp evmd-v0.4.1 /usr/local/bin/evmd
-
-# 3. Restore pre-upgrade genesis (if needed)
-cp pre-upgrade-genesis.json ~/.evmd/config/genesis.json
-
-# 4. Restart with previous version
-systemctl start evmd
-```
-
----
-
-## 12) Common Migration Issues
-
-### Issue: Precompile Constructor Errors
-
-```
-error: cannot use bankKeeper (type bankkeeper.Keeper) as type common.BankKeeper
-```
-
-**Solution:** Cast concrete keepers to interfaces:
-
-```go
-bankPrecompile, err := bankprecompile.NewPrecompile(
-    common.BankKeeper(bankKeeper), // Add interface cast
-)
-```
-
-### Issue: Genesis Validation Failure
-
-```
-error: unknown field 'allow_unprotected_txs' in vm params
-```
-
-**Solution:** Remove the parameter from genesis:
-
-```bash
-# Update genesis.json to remove allow_unprotected_txs
-# Add history_serve_window with default value 8192
-```
-
-### Issue: Mempool Initialization Panic
-
-```
-panic: config must not be nil
-```
-
-**Solution:** Always provide mempool configuration:
-
-```go
-config := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000,
-}
-```
-
-### Issue: Global Mempool Access
-
-```
-error: undefined: mempool.GetGlobalEVMMempool
-```
-
-**Solution:** Pass mempool directly instead of using global access:
-
-```go
-// Pass mempool as parameter
-func NewRPCService(mempool *evmmempool.ExperimentalEVMMempool) {
-    // Use injected mempool
-}
-```
-
----
-
-## 13) Summary
-
-v0.5.0 introduces significant improvements in performance, EVM compatibility, and code architecture:
-
-- **EIP-2935** enables reliable historical block hash access
-- **Precompile interfaces** improve modularity and testing
-- **Mempool optimizations** provide better configurability
-- **Performance improvements** reduce gas estimation latency
-- **New RPC methods** enhance developer experience
-
-Review all breaking changes carefully and test thoroughly before deploying to production.
-
-For additional support, refer to:
-- [Precompiles Documentation](../smart-contracts/precompiles/overview)
-- [EVM Compatibility Guide](../evm-compatibility/overview)
-- [Performance Optimization Guide](../concepts/performance)
+Smoke test on a single node:
+- Send a few EVM txs; confirm promotion/broadcast (or your `BroadCastTxFn`).
+- Send Cosmos txs; confirm ordering reflects your `CosmosPoolConfig` (if customized).
