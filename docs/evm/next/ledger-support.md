@@ -148,7 +148,7 @@ const txBytes = txRaw.message.serializeBinary();
 await client.broadcastTx(txBytes);
 ```
 
-See the [test web app](./test-webapp) for a complete working example.
+See the test web app in the evm repository for a complete working example.
 
 ## Why This Approach?
 
@@ -188,10 +188,10 @@ See the [test web app](./test-webapp) for a complete working example.
 ## Reference Implementation
 
 - **CLI Tool**: See `scripts/test_ledger_manual.sh` in the evm repo
-- **Web App**: See [test-webapp](./test-webapp) for browser integration
+- **Web App**: See test-webapp in the evm repository for browser integration
 
 ## Further Reading
 
 - [EIP-712 Specification](https://eips.ethereum.org/EIPS/eip-712)
-- [EIP Compatibility](./eip-compatibility)
+- [EIP Compatibility](/docs/evm/next/documentation/evm-compatibility/eip-reference)
 - [Ledger Ethereum App Documentation](https://github.com/LedgerHQ/app-ethereum)
