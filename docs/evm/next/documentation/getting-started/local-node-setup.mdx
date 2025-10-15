@@ -1,9 +1,12 @@
 ---
-title: 'Local Node Setup'
-description: 'Complete guide to using the local_node.sh script for rapid development and testing'
+title: 'Local Testnet'
+description: 'Quickly test and iterate over your ideas using a local network, customized to your needs.'
 ---
 
-The `local_node.sh` script is a powerful development tool that quickly sets up a fully-configured local blockchain node for testing and development. It provides a complete testing environment with pre-funded accounts, optimized consensus parameters, and all necessary APIs enabled.
+The `local_node.sh` script can quickly set up a preconfigured local blockchain, complete with pre-funded accounts, streamlined consensus parameters, and all available endpoints exposed. This is ideal for development, testing, and experimentation.
+If that setup is suitable for your needs, you can just run the script from the root of the repository.
+If your needs are more complex, you can adjust the script or use it as a reference for your own setup.
+
 
 ## Overview
 
@@ -22,7 +25,7 @@ This makes it ideal for:
 
 ## Quick Start
 
-The simplest way to start a local node:
+Run the script as-is:
 
 ```bash
 cd /path/to/evm
@@ -30,15 +33,15 @@ cd /path/to/evm
 ```
 
 This will:
-1. Build and install the `evmd` binary
-2. Create a new chain in `~/.evmd`
-3. Set up 4 pre-funded development accounts (dev0-dev3)
-4. Start the node with all APIs enabled
+- Build and install the `evmd` binary
+- Create a new chain in `~/.evmd`
+- Set up 4 pre-funded development accounts (dev0-dev3)
+- Start the node with all APIs enabled
 
 <Note>
 The script requires `jq` to be installed. If you don't have it:
 - macOS: `brew install jq`
-- Linux: `apt-get install jq` or `yum install jq`
+- Linux: `apt install jq` or `yum install jq`
 </Note>
 
 ## Command-Line Options
@@ -78,17 +81,7 @@ Create extra pre-funded accounts beyond the default four:
 ./local_node.sh --additional-users 10
 ```
 
-Generated mnemonics are saved to `~/.evmd/mnemonics.yaml` by default.
-
-<CodeGroup>
-```bash Standard usage
-./local_node.sh --additional-users 5
-```
-
-```bash Custom mnemonic output
-./local_node.sh --additional-users 5 --mnemonic-file ./my-keys.yaml
-```
-</CodeGroup>
+Generated mnemonics are saved to `~/.evmd/mnemonics.yaml`.
 
 ### Custom Mnemonics
 
@@ -129,7 +122,7 @@ The script sets up a chain with these default values:
 
 ### Pre-Funded Development Accounts
 
-Four development accounts are created by default, each funded with `1000000000000000000000atest` (1,000,000 TEST tokens):
+Four development accounts are created by default, each funded with `1000000000000000000000atest` (1,000 TEST tokens):
 
 <Accordion title="dev0 - Primary Test Account">
 **Mnemonic:**
@@ -246,18 +239,22 @@ All standard precompiles are enabled:
 
 ```json
 [
-  "0x0000000000000000000000000000000000000100",  // Distribution
-  "0x0000000000000000000000000000000000000400",  // Staking
-  "0x0000000000000000000000000000000000000800",  // Bank
-  "0x0000000000000000000000000000000000000801",  // IBC Transfer
-  "0x0000000000000000000000000000000000000802",  // ERC20
-  "0x0000000000000000000000000000000000000803",  // P256 Verify
-  "0x0000000000000000000000000000000000000804",  // Wasm
-  "0x0000000000000000000000000000000000000805",  // ICS20
-  "0x0000000000000000000000000000000000000806",  // Staking V2
-  "0x0000000000000000000000000000000000000807"   // Address Codec
+  "0x0000000000000000000000000000000000000100",  // P256
+  "0x0000000000000000000000000000000000000400",  // Bech32
+  "0x0000000000000000000000000000000000000800",  // Staking
+  "0x0000000000000000000000000000000000000801",  // Distribution
+  "0x0000000000000000000000000000000000000802",  // ICS20
+  "0x0000000000000000000000000000000000000803",  // Vesting
+  "0x0000000000000000000000000000000000000804",  // Bank
+  "0x0000000000000000000000000000000000000805",  // Governance
+  "0x0000000000000000000000000000000000000806",  // Slashing
+  "0x0000000000000000000000000000000000000807"   // [UNDEFINED - script error]
 ]
 ```
+
+<Warning>
+The address `0x807` is included in the script but does not correspond to any precompile in the codebase.
+</Warning>
 
 ### Governance Parameters
 
@@ -349,84 +346,35 @@ evmd start \
 | `debug` | Debugging methods (debug_traceTransaction, etc.) |
 | `web3` | Web3 utilities |
 
-## Use Cases
+## Customizing the Local Node Script
 
-### Testing Configuration Changes
+The `local_node.sh` script is designed for easy modification to test different chain configurations. All customizations are made by editing the script directly before running.
 
-When customizing your chain, use the local node to validate changes:
+### Script Variables
 
-```bash
-# Edit genesis or config
-vim ~/.evmd/config/genesis.json
+Edit at the top of `local_node.sh`:
 
-# Restart with new config
-./local_node.sh -y
-```
+| Variable | Line | Default | Purpose |
+|----------|------|---------|---------|
+| `CHAINID` | 3 | `9001` | EVM chain ID (overridable via `CHAIN_ID` env var) |
+| `MONIKER` | 4 | `localtestnet` | Node identifier |
+| `LOGLEVEL` | 11 | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `BASEFEE` | 15 | `10000000` | Initial EIP-1559 base fee |
 
-### Smart Contract Development
-
-The pre-funded accounts and fast block times make contract iteration quick:
-
-```bash
-# Start node
-./local_node.sh
-
-# In another terminal, deploy with Hardhat/Foundry
-npx hardhat run scripts/deploy.js --network localhost
-```
-
-### Integration Testing
-
-Create multiple test accounts for complex scenarios:
-
-```bash
-# Create 20 test accounts
-./local_node.sh -y --additional-users 16
-
-# Accounts dev0-dev19 are now available
-```
-
-### Debugging Chain Issues
-
-Use debug builds and enabled debug APIs:
-
-```bash
-# Start with debugging enabled
-./local_node.sh -y --remote-debugging
-
-# Use debug RPC methods
-curl -X POST --data '{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["0x..."],"id":1}' http://localhost:8545
-```
-
-### Rapid Prototyping
-
-Skip rebuilding when testing application changes:
-
-```bash
-# First run - builds and starts
-./local_node.sh
-
-# Stop node, make app changes, restart without rebuilding
-./local_node.sh --no-install
-```
-
-## Advanced Configuration
-
-### Custom Chain ID
-
-Override the default chain ID:
-
-```bash
+<CodeGroup>
+```bash Environment variable
 export CHAIN_ID=1234
 ./local_node.sh
 ```
 
-### Custom Home Directory
+```bash Edit script
+# Edit local_node.sh lines 11 and 15:
+LOGLEVEL="debug"
+BASEFEE=1000000
 
-```bash
-export CHAINDIR="$HOME/my-test-chain"
 ./local_node.sh
 ```
+</CodeGroup>
 
 ### Validator Configuration
 
@@ -435,6 +383,538 @@ The validator account is created with:
 - Funded with: `100000000000000000000000000atest` (100M TEST)
 - Self-delegation: `1000000000000000000000atest` (1000 TEST)
 - Mnemonic: `gesture inject test cycle original hollow...` (see script)
+
+### Genesis Parameter Customization
+
+The script modifies `genesis.json` to configure the chain. To customize parameters:
+
+1. **Open the script**: Edit `/path/to/evm/local_node.sh` in your text editor
+2. **Locate the genesis customization section**: Lines 233-255 contain `jq` commands that modify `genesis.json`
+3. **Add or modify `jq` commands**: Insert your customizations in this section
+4. **Run the script**: Execute `./local_node.sh -y` to apply changes
+
+Below are commonly adjusted parameters with specific instructions on where and how to modify them.
+
+<Tabs>
+<Tab title="EVM Modules">
+
+#### x/vm (EVM) Module
+
+Core EVM behavior. Modified in genesis customization section (lines 238-245):
+
+<AccordionGroup>
+<Accordion title="EVM Denomination">
+
+The denomination used for gas payments and EVM state transitions.
+
+**Where to modify:** Lines 238 and 245 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find lines 238 and 245 (both set `evm_denom`)
+3. Change `"atest"` to your desired denomination
+4. Save and run `./local_node.sh -y`
+
+**Default (18-decimal token):**
+```bash
+jq '.app_state["evm"]["params"]["evm_denom"]="atest"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+**For 6-decimal token:**
+```bash
+jq '.app_state["evm"]["params"]["evm_denom"]="utest"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+<Note>
+With 6-decimal base denoms like `utest`, the `x/precisebank` module automatically extends precision to 18 decimals for EVM compatibility.
+</Note>
+</Accordion>
+
+<Accordion title="Active Static Precompiles">
+
+Controls which precompiled contracts are enabled.
+
+**Where to modify:** Line 243 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find line 243 (the `active_static_precompiles` array)
+3. Add or remove addresses from the array
+4. Ensure addresses remain sorted in ascending order
+5. Save and run `./local_node.sh -y`
+
+**Available Precompiles:**
+
+| Address | Precompile | Purpose |
+|---------|------------|---------|
+| `0x...0100` | P256 | secp256r1 signature verification |
+| `0x...0400` | Bech32 | Address format conversion |
+| `0x...0800` | Staking | Validator and delegation operations |
+| `0x...0801` | Distribution | Staking rewards withdrawal |
+| `0x...0802` | ICS20 | IBC token transfers |
+| `0x...0803` | Vesting | Vesting account operations |
+| `0x...0804` | Bank | Native token balance queries |
+| `0x...0805` | Governance | On-chain governance |
+| `0x...0806` | Slashing | Validator slashing management |
+
+```bash expandable title="Example: All Precompiles (edit line 243)"
+jq '.app_state["evm"]["params"]["active_static_precompiles"]=[
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000400",
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000801",
+  "0x0000000000000000000000000000000000000802",
+  "0x0000000000000000000000000000000000000803",
+  "0x0000000000000000000000000000000000000804",
+  "0x0000000000000000000000000000000000000805",
+  "0x0000000000000000000000000000000000000806"
+]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+```bash
+# Example: Only staking and bank (edit line 243)
+jq '.app_state["evm"]["params"]["active_static_precompiles"]=[
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000804"
+]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+<Warning>
+Addresses must be sorted in ascending order. The script currently includes `0x807` which is not defined in the codebase.
+</Warning>
+</Accordion>
+
+<Accordion title="Extra EIPs">
+
+Additional Ethereum Improvement Proposals to enable.
+
+**Where to modify:** Add after line 245 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 245 (after the second `evm_denom` setting), add a new line
+3. Insert the `jq` command below with your desired EIP numbers
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Example: Enable EIP-3855 (PUSH0) and EIP-3860 (Limit initcode)
+jq '.app_state["evm"]["params"]["extra_eips"]=[3855, 3860]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+</Accordion>
+
+<Accordion title="Access Control">
+
+Permission policy for contract creation and calls.
+
+**Where to modify:** Add after line 245 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 245, add new lines for access control configuration
+3. Insert one of the `jq` commands below depending on your needs
+4. Save and run `./local_node.sh -y`
+
+**Access Types:**
+- `ACCESS_TYPE_PERMISSIONLESS`: No restrictions
+- `ACCESS_TYPE_RESTRICTED`: Operation blocked for everyone
+- `ACCESS_TYPE_PERMISSIONED`: Only whitelisted addresses allowed
+
+```bash expandable title="Access Control Examples"
+# Permissionless (default - no changes needed)
+jq '.app_state["evm"]["params"]["access_control"]={
+  "create": {"access_type": "ACCESS_TYPE_PERMISSIONLESS", "access_control_list": []},
+  "call": {"access_type": "ACCESS_TYPE_PERMISSIONLESS", "access_control_list": []}
+}' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Restrict contract creation entirely
+jq '.app_state["evm"]["params"]["access_control"]["create"]["access_type"]="ACCESS_TYPE_RESTRICTED"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Whitelist specific addresses for contract creation
+jq '.app_state["evm"]["params"]["access_control"]["create"]={
+  "access_type": "ACCESS_TYPE_PERMISSIONED",
+  "access_control_list": ["0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101"]
+}' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+</Accordion>
+
+<Accordion title="History Serve Window">
+
+Number of historical blocks available for EIP-2935 block hash queries.
+
+**Where to modify:** Add after line 245 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 245, add a new line
+3. Insert the `jq` command below with your desired window size
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Default: 8192 blocks
+jq '.app_state["evm"]["params"]["history_serve_window"]=8192' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Example: Increase for more historical data
+jq '.app_state["evm"]["params"]["history_serve_window"]=100000' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+</Accordion>
+</AccordionGroup>
+
+#### x/erc20 Module
+
+Native Cosmos token to ERC20 token conversion.
+
+<AccordionGroup>
+<Accordion title="Native Precompiles">
+
+Native tokens exposed as ERC20 contracts at fixed addresses.
+
+**Where to modify:** Line 247 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find line 247 (`native_precompiles` array)
+3. Modify the array to include your token addresses
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Default: TEST token at special address
+jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+</Accordion>
+
+<Accordion title="Token Pairs">
+
+Registered mappings between Cosmos denoms and ERC20 addresses.
+
+**Where to modify:** Line 248 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find line 248 (`token_pairs` array)
+3. Modify the array to match your denomination and ERC20 address
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Default: Register native token
+jq '.app_state.erc20.token_pairs=[{
+  contract_owner: 1,
+  erc20_address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+  denom: "atest",
+  enabled: true
+}]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+</Accordion>
+
+<Accordion title="Module Parameters">
+
+**Where to modify:** Add after line 248 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 248, add a new line
+3. Insert the `jq` command below
+4. Save and run `./local_node.sh -y`
+
+```bash
+jq '.app_state.erc20.params={
+  "enable_erc20": true,
+  "permissionless_registration": false
+}' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `enable_erc20` | Enable/disable ERC20 token conversions |
+| `permissionless_registration` | Allow permissionless ERC20 registration |
+</Accordion>
+</AccordionGroup>
+
+#### x/feemarket Module
+
+EIP-1559 fee mechanism.
+
+**Where to modify:** Add after line 250 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 250 (the `max_gas` setting), add new lines
+3. Insert the `jq` command below with your fee market configuration
+4. Save and run `./local_node.sh -y`
+
+```bash expandable title="Fee Market Configuration"
+jq '.app_state.feemarket.params={
+  "no_base_fee": false,
+  "base_fee_change_denominator": 8,
+  "elasticity_multiplier": 2,
+  "enable_height": 0,
+  "base_fee": "10000000",
+  "min_gas_price": "0.0",
+  "min_gas_multiplier": "0.5"
+}' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `no_base_fee` | `false` | Disable base fee calculation (forces to 0) |
+| `base_fee_change_denominator` | `8` | Bounds base fee change between blocks |
+| `elasticity_multiplier` | `2` | Max gas = block target × this value |
+| `base_fee` | `10000000` | Initial base fee for EIP-1559 |
+| `min_gas_price` | `0.0` | Minimum gas price floor |
+| `min_gas_multiplier` | `0.5` | Minimum gas charged based on limit |
+
+</Tab>
+
+<Tab title="Staking & Slashing">
+
+#### x/staking Module
+
+Proof-of-Stake consensus and validator operations.
+
+**Where to modify:** Add after line 250 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 250, add new lines for staking parameters
+3. Insert the `jq` commands below for parameters you want to customize
+4. Save and run `./local_node.sh -y`
+
+```bash expandable title="Staking Parameters"
+# Unbonding time (default: 1814400s = 21 days)
+jq '.app_state.staking.params.unbonding_time="300s"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Max validators (default: 100)
+jq '.app_state.staking.params.max_validators=50' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Min commission rate (default: 0%)
+jq '.app_state.staking.params.min_commission_rate="0.050000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Max entries (default: 7)
+jq '.app_state.staking.params.max_entries=10' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Historical entries (default: 10000)
+jq '.app_state.staking.params.historical_entries=1000' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `unbonding_time` | Time for tokens to unbond before withdrawal |
+| `max_validators` | Maximum active validator set size |
+| `min_commission_rate` | Minimum commission validators must charge |
+| `max_entries` | Max unbonding/redelegation entries per pair |
+| `historical_entries` | Historical info entries kept |
+
+#### x/slashing Module
+
+Validator penalties for misbehavior.
+
+**Where to modify:** Add after line 250 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 250, add new lines for slashing parameters
+3. Insert the `jq` commands below for parameters you want to customize
+4. Save and run `./local_node.sh -y`
+
+```bash expandable title="Slashing Parameters"
+# Slash fraction for double signing (default: 0.05 = 5%)
+jq '.app_state.slashing.params.slash_fraction_double_sign="0.100000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Slash fraction for downtime (default: 0.01 = 1%)
+jq '.app_state.slashing.params.slash_fraction_downtime="0.005000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Downtime jail duration (default: 600s)
+jq '.app_state.slashing.params.downtime_jail_duration="60s"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Signed blocks window (default: 100)
+jq '.app_state.slashing.params.signed_blocks_window="1000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Min signed per window (default: 0.5 = 50%)
+jq '.app_state.slashing.params.min_signed_per_window="0.900000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `slash_fraction_double_sign` | Stake slashed for equivocation |
+| `slash_fraction_downtime` | Stake slashed for extended downtime |
+| `downtime_jail_duration` | Jail time for downtime infraction |
+| `signed_blocks_window` | Window for downtime tracking |
+| `min_signed_per_window` | Minimum blocks signed to avoid jail |
+
+</Tab>
+
+<Tab title="Governance & Economics">
+
+#### x/gov Module
+
+On-chain governance proposals and voting.
+
+**Where to modify:** Lines 253-255 in `local_node.sh` (already configured), or add after line 250 for additional params
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Lines 253-255 already modify governance periods with `sed` commands - edit these values directly
+3. For additional parameters (deposit, quorum, threshold), add `jq` commands after line 250
+4. Save and run `./local_node.sh -y`
+
+```bash expandable title="Governance Parameters"
+# Voting period (ALREADY AT LINE 254 - edit directly)
+sed -i.bak 's/"voting_period": "172800s"/"voting_period": "10s"/g' "$GENESIS"
+
+# Expedited voting period (ALREADY AT LINE 255 - edit directly)
+sed -i.bak 's/"expedited_voting_period": "86400s"/"expedited_voting_period": "5s"/g' "$GENESIS"
+
+# Max deposit period (ALREADY AT LINE 253 - edit directly)
+sed -i.bak 's/"max_deposit_period": "172800s"/"max_deposit_period": "60s"/g' "$GENESIS"
+
+# Additional parameters (ADD AFTER LINE 250):
+# Minimum deposit amount
+jq '.app_state.gov.params.min_deposit=[{"denom":"atest","amount":"1000000000000000000"}]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Quorum (default: 0.334 = 33.4%)
+jq '.app_state.gov.params.quorum="0.500000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Threshold (default: 0.5 = 50%)
+jq '.app_state.gov.params.threshold="0.667000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `voting_period` | Duration of voting period |
+| `expedited_voting_period` | Duration for expedited proposals |
+| `max_deposit_period` | Time to reach minimum deposit |
+| `min_deposit` | Minimum deposit to enter voting |
+| `quorum` | Minimum participation for validity |
+| `threshold` | Minimum yes votes to pass |
+
+#### x/mint Module
+
+Token inflation and minting.
+
+**Where to modify:** Add after line 250 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 250, add new lines for mint parameters
+3. Insert the `jq` commands below for parameters you want to customize
+4. Save and run `./local_node.sh -y`
+
+```bash expandable title="Mint Parameters"
+# Inflation max (default: 0.20 = 20%)
+jq '.app_state.mint.params.inflation_max="0.100000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Inflation min (default: 0.07 = 7%)
+jq '.app_state.mint.params.inflation_min="0.050000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Inflation rate change (default: 0.13 = 13%)
+jq '.app_state.mint.params.inflation_rate_change="0.080000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Goal bonded ratio (default: 0.67 = 67%)
+jq '.app_state.mint.params.goal_bonded="0.500000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Blocks per year (default: 6311520)
+jq '.app_state.mint.params.blocks_per_year="31557600"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `inflation_max` | Maximum annual inflation rate |
+| `inflation_min` | Minimum annual inflation rate |
+| `inflation_rate_change` | Max inflation change per year |
+| `goal_bonded` | Target bonded token ratio |
+| `blocks_per_year` | Expected blocks per year |
+
+#### x/distribution Module
+
+Staking rewards distribution.
+
+**Where to modify:** Add after line 250 in `local_node.sh`
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. After line 250, add new lines for distribution parameters
+3. Insert the `jq` commands below
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Community tax (default: 0.02 = 2%)
+jq '.app_state.distribution.params.community_tax="0.100000000000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Withdraw address enabled (default: true)
+jq '.app_state.distribution.params.withdraw_addr_enabled=false' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `community_tax` | Percentage of rewards to community pool |
+| `withdraw_addr_enabled` | Allow setting custom withdrawal addresses |
+
+</Tab>
+
+<Tab title="Block & Consensus">
+
+#### Block Parameters
+
+**Where to modify:** Line 250 in `local_node.sh` (already configured)
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find line 250 (sets `max_gas`)
+3. Edit the value `"10000000"` to your desired gas limit
+4. Save and run `./local_node.sh -y`
+
+```bash
+# Default modified to 10M gas (edit line 250 directly)
+jq '.consensus.params.block.max_gas="10000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Example: High throughput (100M gas)
+jq '.consensus.params.block.max_gas="100000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Example: Unlimited gas (use with caution)
+jq '.consensus.params.block.max_gas="-1"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+#### Consensus Timeouts
+
+**Where to modify:** Lines 261-268 in `local_node.sh` (already configured)
+
+**How to modify:**
+1. Open `local_node.sh` in your editor
+2. Find lines 261-268 (contains `sed` commands modifying `config.toml`)
+3. Edit the timeout values in these `sed` commands directly
+4. Save and run `./local_node.sh -y`
+
+<Note>
+These modify `config.toml` (not `genesis.json`). The `timeout_commit` parameter determines block time.
+</Note>
+
+```bash expandable title="Consensus Timeout Configuration"
+# Block proposal timeout (LINE 261 - currently set to 2s)
+sed -i.bak 's/timeout_propose = "3s"/timeout_propose = "1s"/g' "$CONFIG_TOML"
+
+# Commit timeout = block time (LINE 267 - currently set to 1s)
+sed -i.bak 's/timeout_commit = "5s"/timeout_commit = "500ms"/g' "$CONFIG_TOML"
+
+# Prevote timeout (LINE 263 - currently set to 500ms)
+sed -i.bak 's/timeout_prevote = "1s"/timeout_prevote = "250ms"/g' "$CONFIG_TOML"
+
+# Precommit timeout (LINE 265 - currently set to 500ms)
+sed -i.bak 's/timeout_precommit = "1s"/timeout_precommit = "250ms"/g' "$CONFIG_TOML"
+
+# Timeout deltas (LINES 262, 264, 266 - currently set to 200ms)
+sed -i.bak 's/timeout_propose_delta = "500ms"/timeout_propose_delta = "100ms"/g' "$CONFIG_TOML"
+sed -i.bak 's/timeout_prevote_delta = "500ms"/timeout_prevote_delta = "100ms"/g' "$CONFIG_TOML"
+sed -i.bak 's/timeout_precommit_delta = "500ms"/timeout_precommit_delta = "100ms"/g' "$CONFIG_TOML"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `timeout_propose` | Time to propose a block |
+| `timeout_commit` | Time before starting next height (determines block time) |
+| `timeout_prevote` | Time for prevote step |
+| `timeout_precommit` | Time for precommit step |
+
+</Tab>
+</Tabs>
 
 ## Connecting to the Local Node
 
@@ -491,46 +971,6 @@ http://localhost:1317
 ```
 ws://localhost:8546
 ```
-
-## Troubleshooting
-
-### "jq not installed"
-
-Install jq for your platform:
-- macOS: `brew install jq`
-- Ubuntu/Debian: `sudo apt-get install jq`
-- CentOS/RHEL: `sudo yum install jq`
-
-### "Address already in use"
-
-Another node or service is using the ports. Either:
-1. Stop the conflicting service
-2. Change the ports in `~/.evmd/config/app.toml` and `config.toml`
-
-### "Failed to capture mnemonic"
-
-When using `--additional-users`, if mnemonic generation fails:
-1. Check `evmd keys add` works manually
-2. Ensure sufficient disk space
-3. Verify keyring backend is accessible
-
-### Node Won't Start
-
-Check the logs for errors:
-```bash
-# View most recent logs
-tail -f ~/.evmd/evmd.log
-
-# Or run with verbose logging
-LOG_LEVEL=debug ./local_node.sh
-```
-
-### Genesis Validation Failed
-
-If genesis validation fails:
-1. Delete the chain directory: `rm -rf ~/.evmd`
-2. Ensure you're using the correct evmd version
-3. Check for jq installation issues
 
 ## Security Considerations
 

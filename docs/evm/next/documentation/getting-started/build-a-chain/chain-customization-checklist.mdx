@@ -164,8 +164,8 @@ var (
 - Base denom: `utoken` (micro-token, 10^-6)
 - Display denom: `token`
 - Exponent: 6
-- **MUST integrate PreciseBank module**
-- **MUST configure `extended_denom_options` in VM params**
+- Requires PreciseBank module integration
+- Requires `extended_denom_options` configuration in VM params
 
 **Additional Setup Required**:
 
@@ -240,8 +240,8 @@ const (
 - During `evmd init`: Value is written to `~/.evmd/config/app.toml` as `evm-chain-id`
 - During node startup: Read from app.toml to initialize EVM encoding
 
-**⚠️ CRITICAL**:
-- Must be set BEFORE running `evmd init`
+**Notes**:
+- Must be set before running `evmd init`
 - Cannot be changed after genesis
 - Changing breaks all transaction signatures
 - Must rebuild binary after changing
@@ -252,6 +252,126 @@ grep 'evm-chain-id' ~/.yourchain/config/app.toml
 ```
 
 **Source**: [config/config.go:77-78](https://github.com/cosmos/evm/blob/main/config/config.go#L77-L78)
+
+</Accordion>
+
+<Accordion title="Configure default token denomination in source code">
+
+**What This Does**: Changes hardcoded default token denominations in the source code so that generated configuration files use your chosen token denomination instead of "aatom"/"atom".
+
+<Warning>
+This step must be completed before running `evmd init` and before building the binary. The default denominations are compiled into the binary and cannot be changed after initialization without rebuilding.
+</Warning>
+
+**Why This is Necessary**:
+
+Three source files contain default denomination values that are used when generating configuration files. If you skip this step, your `app.toml` will contain `minimum-gas-prices = "0aatom"` instead of your intended denomination.
+
+**Files to Modify**:
+
+**1. Configuration Template** (`/server/config/migration/v0.50-app.toml:11`)
+
+**Default**:
+```toml
+minimum-gas-prices = "0aatom"
+```
+
+**Change to** (example using "atoken"):
+```toml
+minimum-gas-prices = "0atoken"
+```
+
+**2. EVM Module Defaults** (`/x/vm/types/params.go:21-25`)
+
+**Default**:
+```go
+var (
+    DefaultEVMDenom = "uatom"
+    DefaultEVMExtendedDenom = "aatom"
+    DefaultEVMDisplayDenom = "atom"
+)
+```
+
+**Change to**:
+```go
+var (
+    DefaultEVMDenom = "atoken"          // Base EVM denomination
+    DefaultEVMExtendedDenom = "atoken"  // Extended denomination (if using PreciseBank)
+    DefaultEVMDisplayDenom = "token"    // Human-readable display name
+)
+```
+
+**3. Example Chain Constants** (`/config/constants.go:5-8`)
+
+**Default**:
+```go
+const (
+    ExampleChainDenom = "aatom"
+    ExampleDisplayDenom = "atom"
+)
+```
+
+**Change to**:
+```go
+const (
+    ExampleChainDenom = "atoken"      // Your base denomination
+    ExampleDisplayDenom = "token"     // Your display denomination
+)
+```
+
+**Quick Setup Commands**:
+
+```bash
+# 1. Edit configuration template
+sed -i '' 's/minimum-gas-prices = "0aatom"/minimum-gas-prices = "0atoken"/' \
+  server/config/migration/v0.50-app.toml
+
+# 2. Edit EVM module defaults (manual edit recommended)
+# Open x/vm/types/params.go and change lines 21-25 to use "atoken" and "token"
+
+# 3. Edit example constants (manual edit recommended)
+# Open config/constants.go and change lines 5-8 to use "atoken" and "token"
+
+# 4. Verify changes
+grep "minimum-gas-prices" server/config/migration/v0.50-app.toml
+grep "DefaultEVM" x/vm/types/params.go
+grep "ExampleChain" config/constants.go
+
+# 5. Rebuild binary to apply changes
+make build
+```
+
+**Verification After Build and Init**:
+
+```bash
+# Initialize node
+./build/yourchain init testnode --chain-id mychain-1 --home /tmp/test-home
+
+# Verify correct denomination in generated app.toml
+grep "minimum-gas-prices" /tmp/test-home/config/app.toml
+# Should output: minimum-gas-prices = "0atoken"
+```
+
+**Token Denomination Guidelines**:
+
+For **18-decimal tokens** (recommended for EVM chains):
+- Base denom: `atoken` (atto-token, 10^-18)
+- Display denom: `token`
+- Example: 1 token = 1,000,000,000,000,000,000 atoken
+
+For **6-decimal tokens** (Cosmos SDK standard):
+- Base denom: `utoken` (micro-token, 10^-6)
+- Display denom: `token`
+- Note: Also requires PreciseBank module integration
+
+**Common Prefixes**:
+- `a` prefix: atto (10^-18) - Use with 18-decimal tokens
+- `u` prefix: micro (10^-6) - Use with 6-decimal tokens
+
+**Source References**:
+- [server/config/migration/v0.50-app.toml:11](https://github.com/cosmos/evm/blob/main/server/config/migration/v0.50-app.toml#L11)
+- [x/vm/types/params.go:21-25](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21-L25)
+- [config/constants.go:5-8](https://github.com/cosmos/evm/blob/main/config/constants.go#L5-L8)
 
 </Accordion>
 
@@ -288,7 +408,7 @@ jq '.chain_id = "mychain-1"' ~/.yourchain/config/genesis.json > tmp && mv tmp ge
 - Testnet: `mychain-testnet-1`
 - Devnet: `mychain-dev-1`
 
-**Important**: Can be any string, but `{name}-{number}` format is canonical for IBC client upgrades
+**Notes**: Can be any string, but `{name}-{number}` format is canonical for IBC client upgrades
 
 </Accordion>
 
@@ -384,7 +504,7 @@ jq '.app_state.bank.denom_metadata=[{
 - `name`: Full token name
 - `symbol`: Ticker symbol
 
-**⚠️ CRITICAL**: The `base` denom MUST match:
+**Notes**: The `base` denom must match:
 - `app_state.evm.params.evm_denom`
 - `app_state.staking.params.bond_denom`
 - `app_state.mint.params.mint_denom`
@@ -421,7 +541,7 @@ jq '.app_state.evm.params.evm_denom = "atoken"' genesis.json > tmp && mv tmp gen
 }
 ```
 
-**⚠️ MUST MATCH**: `app_state.bank.denom_metadata[0].base`
+**Notes**: Must match `app_state.bank.denom_metadata[0].base`
 
 **Source**: [x/vm/types/params.go:21](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21)
 
@@ -464,9 +584,9 @@ jq '.app_state.evm.params.extended_denom_options = {
 - EVM sees: `atoken` (18 decimals)
 - PreciseBank handles conversion
 
-**⚠️ CRITICAL**: Must also integrate PreciseBank module in `app.go`
-
-**Not Needed If**: Using 18 decimals (standard EVM setup)
+**Notes**:
+- Must also integrate PreciseBank module in `app.go`
+- Not needed if using 18 decimals (standard EVM setup)
 
 **Source**: [x/vm/types/params.go:76](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L76)
 
@@ -526,7 +646,7 @@ jq '.app_state.evm.params.active_static_precompiles = [
 ]' genesis.json > tmp && mv tmp genesis.json
 ```
 
-**⚠️ Important**: Array must be sorted for determinism
+**Notes**: Array must be sorted for determinism
 
 **Source**: [x/vm/types/precompiles.go:22-32](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go#L22-L32)
 
@@ -668,9 +788,9 @@ jq '.app_state.evm.params.extra_eips = [1153, 3855]' genesis.json > tmp && mv tm
 }
 ```
 
-**⚠️ Note**: EIPs must be activatable. Invalid EIPs will cause validation to fail.
-
-**Most Common Use Case**: Leave empty and use defaults
+**Notes**:
+- EIPs must be activatable - invalid EIPs will cause validation to fail
+- Most common use case: Leave empty and use defaults
 
 **Source**: [x/vm/types/params.go:33](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L33)
 
@@ -780,7 +900,7 @@ jq '.app_state.erc20.native_precompiles = ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeee
 }
 ```
 
-**⚠️ Must Match**: The `erc20_address` in `token_pairs`
+**Notes**: Must match the `erc20_address` in `token_pairs`
 
 </Accordion>
 
@@ -923,6 +1043,28 @@ jq '.app_state.feemarket.params = {
 jq '.app_state.staking.params.bond_denom = "atoken"' genesis.json > tmp && mv tmp genesis.json
 ```
 
+**Set Unbonding Time**:
+
+The unbonding period is how long tokens remain locked after a user initiates unstaking. During this time, validators remain accountable and can be slashed for misbehavior that occurred while bonded.
+
+**Set Custom Unbonding Time**:
+```bash
+jq '.app_state.staking.params.unbonding_time = "1814400s"' genesis.json > tmp && mv tmp genesis.json
+```
+
+**Example Values**:
+- `"120s"` = 2 minutes
+- `"86400s"` = 1 day
+- `"604800s"` = 7 days
+- `"1814400s"` = 21 days (Cosmos standard)
+- `"2419200s"` = 28 days
+
+**Set Max Validators**:
+
+```bash
+jq '.app_state.staking.params.max_validators = 100' genesis.json > tmp && mv tmp genesis.json
+```
+
 **Complete Configuration**:
 
 ```json
@@ -934,19 +1076,152 @@ jq '.app_state.staking.params.bond_denom = "atoken"' genesis.json > tmp && mv tm
         "unbonding_time": "1814400s",
         "max_validators": 100,
         "max_entries": 7,
-        "historical_entries": 10000
+        "historical_entries": 10000,
+        "min_commission_rate": "0.000000000000000000"
       }
     }
   }
 }
 ```
 
-**Parameters**:
-- `bond_denom`: Must match your base denomination
-- `unbonding_time`: Time to wait for unstaking (default: `"1814400s"` = 21 days)
-- `max_validators`: Maximum active validators (default: 100)
-- `max_entries`: Max unbonding/redelegation entries per delegator
-- `historical_entries`: Historical info entries to keep
+**Parameters Explained**:
+
+**1. `bond_denom`** (string)
+- Must match your base denomination from bank metadata
+- Example: `"atoken"`
+
+**2. `unbonding_time`** (duration string)
+- Time tokens remain locked after unstaking is initiated
+- During this period, tokens can still be slashed for validator misbehavior
+- Format: Go duration string (e.g., `"1814400s"`)
+- **Security vs Usability**: Longer periods increase security but reduce user flexibility
+
+**3. `max_validators`** (uint32)
+- Maximum number of validators in the active set
+- Only top N validators by voting power participate in consensus
+- Common values: 50, 100, 125, 150, 175
+- Higher = more decentralized but potentially slower consensus
+
+**4. `max_entries`** (uint32)
+- Maximum concurrent unbonding/redelegation operations per delegator-validator pair
+- Default: 7
+- Prevents spam attacks on the unbonding queue
+
+**5. `historical_entries`** (uint32)
+- Number of historical validator set entries to keep
+- Used for IBC light client verification
+- Default: 10000
+- Higher = more storage but better IBC compatibility
+
+**6. `min_commission_rate`** (decimal string)
+- Minimum commission rate validators must charge
+- Default: `"0.000000000000000000"` (0%)
+- Example: `"0.050000000000000000"` = 5% minimum commission
+
+</Accordion>
+
+<Accordion title="Configure slashing parameters (downtime, double-sign penalties)">
+
+**What This Does**: Configures penalties for validator misbehavior including downtime and double-signing
+
+**Genesis Path**: `app_state.slashing.params`
+
+**Complete Configuration**:
+
+```json
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "signed_blocks_window": "100",
+        "min_signed_per_window": "0.500000000000000000",
+        "downtime_jail_duration": "600s",
+        "slash_fraction_double_sign": "0.050000000000000000",
+        "slash_fraction_downtime": "0.010000000000000000"
+      }
+    }
+  }
+}
+```
+
+**Set Slashing Parameters**:
+
+```bash
+# Downtime detection window
+jq '.app_state.slashing.params.signed_blocks_window = "10000"' genesis.json > tmp && mv tmp genesis.json
+
+# Minimum signing fraction
+jq '.app_state.slashing.params.min_signed_per_window = "0.500000000000000000"' genesis.json > tmp && mv tmp genesis.json
+
+# Jail duration for downtime
+jq '.app_state.slashing.params.downtime_jail_duration = "600s"' genesis.json > tmp && mv tmp genesis.json
+
+# Double-sign penalty
+jq '.app_state.slashing.params.slash_fraction_double_sign = "0.050000000000000000"' genesis.json > tmp && mv tmp genesis.json
+
+# Downtime penalty
+jq '.app_state.slashing.params.slash_fraction_downtime = "0.010000000000000000"' genesis.json > tmp && mv tmp genesis.json
+```
+
+**Parameters Explained**:
+
+**1. `signed_blocks_window`** (int64)
+- Number of blocks used to track validator liveness
+- Validators must sign `min_signed_per_window` within this window or get jailed
+- Example values:
+  - `100` = ~13 minutes at 8s blocks
+  - `10000` = ~22 hours at 8s blocks (Cosmos standard)
+  - `20000` = ~44 hours at 8s blocks
+
+**2. `min_signed_per_window`** (decimal string)
+- Minimum fraction of blocks a validator must sign
+- Default: `"0.500000000000000000"` (50%)
+- Example: With `signed_blocks_window = 10000`, validator must sign at least 5000 blocks
+- Lower values = more lenient, higher = stricter
+
+**3. `downtime_jail_duration`** (duration string)
+- How long a validator is jailed for downtime
+- Jailed validators must manually unjail and cannot earn rewards
+- Example values:
+  - `"60s"` = 1 minute
+  - `"600s"` = 10 minutes (Cosmos standard)
+  - `"3600s"` = 1 hour
+  - `"86400s"` = 1 day
+
+**4. `slash_fraction_double_sign`** (decimal string)
+- Percentage of staked tokens slashed for double-signing
+- Validator is also permanently tombstoned (cannot rejoin)
+- Example values:
+  - `"0.000000000000000000"` = 0% (no penalty)
+  - `"0.050000000000000000"` = 5% (Cosmos standard)
+  - `"0.100000000000000000"` = 10%
+  - `"0.200000000000000000"` = 20%
+
+**5. `slash_fraction_downtime`** (decimal string)
+- Percentage of staked tokens slashed for downtime
+- Less severe than double-signing
+- Example values:
+  - `"0.000000000000000000"` = 0% (no penalty)
+  - `"0.000100000000000000"` = 0.01%
+  - `"0.010000000000000000"` = 1% (Cosmos standard)
+  - `"0.050000000000000000"` = 5%
+
+**How Slashing Works**:
+
+1. **Downtime Detection**:
+   - Chain tracks last `signed_blocks_window` blocks
+   - If validator signs < `min_signed_per_window` fraction → jailed
+   - Validator loses `slash_fraction_downtime` of stake
+   - Must wait `downtime_jail_duration` then manually unjail
+
+2. **Double-Sign Detection**:
+   - If validator signs two different blocks at same height → slashed
+   - Loses `slash_fraction_double_sign` of stake
+   - Permanently tombstoned - cannot ever rejoin as validator
+
+3. **Relationship with Unbonding**:
+   - Tokens remain slashable during entire `unbonding_time` period
+   - Validators remain accountable for misbehavior that occurred while bonded
 
 </Accordion>
 
@@ -960,11 +1235,28 @@ jq '.app_state.staking.params.bond_denom = "atoken"' genesis.json > tmp && mv tm
 jq '.app_state.gov.params.min_deposit[0].denom = "atoken"' genesis.json > tmp && mv tmp genesis.json
 ```
 
-**Set Voting Period** (for testnet):
+**Set Voting Periods**:
+
+<Info>
+The `expedited_voting_period` must be strictly less than `voting_period`. If you change `voting_period`, also adjust `expedited_voting_period` accordingly.
+</Info>
 
 ```bash
-jq '.app_state.gov.params.voting_period = "30s"' genesis.json > tmp && mv tmp genesis.json
+# Set voting period
+jq '.app_state.gov.params.voting_period = "172800s"' genesis.json > tmp && mv tmp genesis.json
+
+# Set expedited voting period (must be < voting_period)
+jq '.app_state.gov.params.expedited_voting_period = "86400s"' genesis.json > tmp && mv tmp genesis.json
 ```
+
+**Example Voting Period Values**:
+- `"30s"` = 30 seconds (requires `expedited_voting_period` < 30s, e.g., "15s")
+- `"3600s"` = 1 hour
+- `"86400s"` = 1 day
+- `"172800s"` = 2 days (Cosmos standard)
+- `"604800s"` = 7 days
+
+**Rule**: `expedited_voting_period < voting_period`
 
 **Complete Configuration**:
 
@@ -981,6 +1273,7 @@ jq '.app_state.gov.params.voting_period = "30s"' genesis.json > tmp && mv tmp ge
         ],
         "max_deposit_period": "172800s",
         "voting_period": "172800s",
+        "expedited_voting_period": "86400s",
         "quorum": "0.334",
         "threshold": "0.5",
         "veto_threshold": "0.334"
@@ -992,8 +1285,9 @@ jq '.app_state.gov.params.voting_period = "30s"' genesis.json > tmp && mv tmp ge
 
 **Parameters**:
 - `min_deposit`: Minimum deposit to submit proposal
-- `max_deposit_period`: `"172800s"` = 2 days
-- `voting_period`: `"172800s"` = 2 days (use `"30s"` for testing)
+- `max_deposit_period`: `"172800s"` = 2 days (Cosmos standard)
+- `voting_period`: `"172800s"` = 2 days (Cosmos standard)
+- `expedited_voting_period`: `"86400s"` = 1 day (must be < `voting_period`)
 - `quorum`: Minimum participation (`"0.334"` = 33.4%)
 - `threshold`: Minimum yes votes (`"0.5"` = 50%)
 - `veto_threshold`: Veto threshold (`"0.334"` = 33.4%)
@@ -1244,15 +1538,9 @@ jq '.app_state.genutil.gen_txs | length' genesis.json
 
 ## Runtime Configuration
 
-Edit `~/.yourchain/config/app.toml` on each node:
-
-<Warning>
-**Validator Security**: Validator nodes should NOT expose RPC/API ports publicly. Only RPC nodes (non-validators) should have these ports open.
-</Warning>
+Edit `~/.yourchain/config/app.toml`:
 
 <AccordionGroup>
-
-### For RPC Nodes Only
 
 <Accordion title="Configure JSON-RPC (HTTP and WebSocket endpoints)">
 
@@ -1373,7 +1661,7 @@ min-tip = 0
 - `0`: Accept all transactions
 - `1000000000`: Require at least 1 gwei tip
 
-⚠️ **IMPORTANT**: The `evm-chain-id` value in app.toml is for reference only. It was set during `evmd init` from your code. To change it, you must modify `config/config.go:78` and rebuild the binary BEFORE running init.
+**Notes**: The `evm-chain-id` value in app.toml is for reference only. It was set during `evmd init` from your code. To change it, you must modify `config/config.go:78` and rebuild the binary before running init.
 
 </Accordion>
 
@@ -1473,58 +1761,6 @@ account-slots = 8
 
 </Accordion>
 
-<Accordion title="Configure TLS for HTTPS access (optional)">
-
-**Section**: `[tls]`
-
-**Configuration**:
-
-```toml
-[tls]
-# Path to TLS certificate
-certificate-path = "/path/to/cert.pem"
-
-# Path to TLS private key
-key-path = "/path/to/key.pem"
-```
-
-**Setup Steps**:
-
-**1. Generate Certificate** (self-signed for testing):
-
-```bash
-openssl req -x509 -newkey rsa:4096 \
-  -keyout key.pem \
-  -out cert.pem \
-  -days 365 \
-  -nodes \
-  -subj "/CN=yourchain.example.com"
-```
-
-**2. Update app.toml**:
-
-```toml
-[tls]
-certificate-path = "/home/user/.yourchain/config/cert.pem"
-key-path = "/home/user/.yourchain/config/key.pem"
-```
-
-**3. Test**:
-
-```bash
-curl https://localhost:8545 \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  --insecure  # only for self-signed cert testing
-```
-
-**Production**: Use Let's Encrypt or proper CA-signed certificate
-
-</Accordion>
-
-### For All Nodes
-
 <Accordion title="Configure minimum gas prices">
 
 **Configuration**:
@@ -1597,6 +1833,45 @@ persistent_peers = "7c90e16c@192.168.1.100:26656,abc123de@192.168.1.101:26656,de
 ```bash
 # Check connected peers
 curl localhost:26657/net_info | jq '.result.peers'
+```
+
+</Accordion>
+
+<Accordion title="Configure client chain-id (required before node startup)">
+
+**What This Does**: Sets the chain-id in client configuration for CLI operations and node startup validation.
+
+**File**: `~/.yourchain/config/client.toml`
+
+**Command**:
+
+```bash
+yourchain config set client chain-id <chain-id> --home <home-dir>
+```
+
+**Example**:
+```bash
+evmd config set client chain-id mychain-1 --home ~/.evmd
+```
+
+**Why This is Required**:
+
+The `yourchain init` command writes the chain-id to `genesis.json` but not to `client.toml`. However, the node reads the chain-id from `client.toml` at startup (see `config/chain_id.go`). If this doesn't match the chain-id in `genesis.json`, the node will fail to start with:
+
+```
+error during handshake: error on replay: invalid chain-id on InitChain
+```
+
+**Verification**:
+
+```bash
+# Verify chain-id matches genesis.json
+jq '.chain_id' ~/.yourchain/config/genesis.json
+# Output: "mychain-1"
+
+# Verify chain-id is set in client.toml
+grep 'chain-id' ~/.yourchain/config/client.toml
+# Output: chain-id = "mychain-1"
 ```
 
 </Accordion>
@@ -1676,14 +1951,14 @@ cat genesis_hash.txt
 jq -S -c . ~/.yourchain/config/genesis.json | shasum -a 256
 
 # Compare with published hash
-# They MUST match exactly
+# They must match exactly
 ```
 
 **4. All Validators Confirm**:
 - Report matching hash
-- Proceed only when ALL validators confirm
+- Proceed only when all validators confirm
 
-**⚠️ CRITICAL**: Even one character difference means different genesis state. All validators must have IDENTICAL files.
+**Notes**: Even one character difference means different genesis state. All validators must have identical files.
 
 </Accordion>
 
@@ -1768,9 +2043,9 @@ Time until genesis: 29m 45s
 
 **6. Chain Automatically Starts at Genesis Time**
 
-**Important**:
+**Notes**:
 - All validators must use same genesis_time
-- Start nodes BEFORE genesis_time
+- Start nodes before genesis_time
 - Chain waits until genesis_time to begin
 
 </Accordion>
@@ -1849,213 +2124,9 @@ curl http://localhost:8545 \
 
 </AccordionGroup>
 
-## Post-Launch Operations
+---
 
-<AccordionGroup>
-
-<Accordion title="Set up monitoring and alerting">
-
-**Recommended Tools**:
-
-**1. Prometheus + Grafana**
-
-Enable metrics in config.toml:
-```toml
-[instrumentation]
-prometheus = true
-prometheus_listen_addr = ":26660"
-```
-
-**2. Tenderduty** (Validator monitoring)
-
-Install:
-```bash
-git clone https://github.com/blockpane/tenderduty
-cd tenderduty
-go install
-```
-
-**3. Monitor Key Metrics**:
-
-- Block production rate (~6s per block)
-- Validator uptime
-- Missed blocks (slashing risk)
-- Peer connections
-- Disk usage
-- Memory usage
-- RPC latency
-
-**4. Set Alerts For**:
-
-- Missed blocks > 5
-- Validator jailed
-- Disk > 80% full
-- Out of sync (> 10 blocks behind)
-- RPC downtime
-- Abnormal gas prices
-
-**Example Alert** (Prometheus):
-```yaml
-- alert: ValidatorMissedBlocks
-  expr: missed_blocks > 5
-  for: 5m
-  annotations:
-    summary: "Validator missing blocks"
-```
-
-</Accordion>
-
-<Accordion title="Understand governance parameter updates">
-
-**What Can Be Changed**:
-
-**VM Module Parameters** (via governance):
-- `active_static_precompiles`
-- `access_control`
-- `extra_eips`
-- `history_serve_window`
-
-**Fee Market Parameters**:
-- `base_fee`
-- `base_fee_change_denominator`
-- `elasticity_multiplier`
-- `min_gas_price`
-- `no_base_fee`
-
-**Standard Cosmos Parameters**:
-- Staking (unbonding_time, max_validators)
-- Governance (voting_period, quorum)
-- Distribution (community_tax)
-
-**Submit Parameter Change**:
-
-```bash
-# Create proposal JSON
-cat > proposal.json <<EOF
-{
-  "messages": [
-    {
-      "@type": "/cosmos.params.v1beta1.MsgUpdateParams",
-      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
-      "params": {
-        "base_fee": "2000000000"
-      }
-    }
-  ],
-  "metadata": "Change base fee to 2 gwei",
-  "deposit": "10000000000000000000atoken",
-  "title": "Increase Base Fee",
-  "summary": "Proposal to increase base fee from 1 gwei to 2 gwei"
-}
-EOF
-
-# Submit proposal
-yourchain tx gov submit-proposal proposal.json \
-  --from validator1 \
-  --chain-id mychain-1 \
-  --fees 1000000000000000000atoken
-```
-
-**Vote on Proposal**:
-
-```bash
-yourchain tx gov vote 1 yes \
-  --from validator1 \
-  --chain-id mychain-1
-```
-
-</Accordion>
-
-<Accordion title="Plan for software upgrades">
-
-**Upgrade Process**:
-
-**1. Monitor Releases**:
-- Watch [cosmos/evm releases](https://github.com/cosmos/evm/releases)
-- Review changelogs
-- Check for security patches
-
-**2. Test on Testnet**:
-- Deploy upgrade to testnet first
-- Verify compatibility
-- Test all features
-
-**3. Create Upgrade Proposal**:
-
-```bash
-# Example upgrade proposal
-cat > upgrade-proposal.json <<EOF
-{
-  "messages": [
-    {
-      "@type": "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade",
-      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
-      "plan": {
-        "name": "v0.5.0",
-        "height": "1000000",
-        "info": "Upgrade to v0.5.0"
-      }
-    }
-  ],
-  "metadata": "Upgrade to v0.5.0",
-  "deposit": "10000000000000000000atoken",
-  "title": "Upgrade to v0.5.0",
-  "summary": "Security fixes and new features"
-}
-EOF
-
-yourchain tx gov submit-proposal upgrade-proposal.json \
-  --from validator1 \
-  --chain-id mychain-1
-```
-
-**4. Implement Upgrade Handler**:
-
-Create `app/upgrades/v0_5_0/upgrades.go`:
-
-```go
-package v0_5_0
-
-import (
-    sdk "github.com/cosmos/cosmos-sdk/types"
-    "github.com/cosmos/cosmos-sdk/types/module"
-    upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
-)
-
-func CreateUpgradeHandler(
-    mm *module.Manager,
-    configurator module.Configurator,
-) upgradetypes.UpgradeHandler {
-    return func(ctx sdk.Context, plan upgradetypes.Plan, vm module.VersionMap) (module.VersionMap, error) {
-        // Custom upgrade logic here
-        return mm.RunMigrations(ctx, configurator, vm)
-    }
-}
-```
-
-Register in `app/app.go`:
-
-```go
-import v0_5_0 "github.com/your-org/your-chain/app/upgrades/v0_5_0"
-
-app.UpgradeKeeper.SetUpgradeHandler(
-    "v0.5.0",
-    v0_5_0.CreateUpgradeHandler(app.mm, app.configurator),
-)
-```
-
-**5. Execute Upgrade**:
-- Chain automatically halts at upgrade height
-- Validators swap binaries
-- Chain resumes with new version
-
-**Resources**:
-- [Upgrade Handlers Guide](/docs/evm/next/documentation/migrations/upgrade-handlers)
-- [Migration Guides](/docs/evm/next/documentation/migrations/migration-v0.4-to-v0.5)
-
-</Accordion>
-
-</AccordionGroup>
+**Your chain is now running!** Validators can begin processing transactions and the network is operational.
 
 ## Quick Reference
 

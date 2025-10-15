@@ -57,9 +57,121 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
       Transactions with tips below this value may be rejected. Set to 0 to disable filtering.
 
       **Flag:** `EVMMinTip`
-      **Source:** `config/server_app_options.go:GetMinTip()`
+      **Source:** `server/config/config.go:150`
       **Type:** Converted to `uint256.Int` internally
     </ParamField>
+
+    <ParamField body="geth-metrics-address" type="string" default="127.0.0.1:8100">
+      Address for go-ethereum metrics server.
+
+      Emits EVM-specific metrics in Prometheus format on a separate server from Cosmos SDK metrics.
+
+      **Source:** `server/config/config.go:152`
+      **New in:** v0.5.0
+    </ParamField>
+
+  </Tab>
+
+  <Tab title="Mempool">
+    EVM mempool configuration for transaction pool management.
+
+    <Info>
+    **New in v0.5.0**: Mempool configuration is now fully exposed in `app.toml` and can be adjusted without code changes. Previously, these settings were hardcoded.
+    </Info>
+
+    <ParamField body="price-limit" type="number" default="1">
+      Minimum gas price to enforce for acceptance into the pool (in wei).
+
+      Transactions with gas prices below this value are rejected from the mempool.
+
+      **Source:** `server/config/config.go:160`
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="price-bump" type="number" default="10">
+      Minimum price bump percentage to replace an already existing transaction (nonce).
+
+      When replacing a transaction with the same nonce, the new transaction must have a gas price at least this percentage higher.
+
+      **Source:** `server/config/config.go:162`
+      **Example:** `10` = require 10% higher gas price
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="account-slots" type="number" default="16">
+      Number of executable transaction slots guaranteed per account.
+
+      Each account is guaranteed to have this many pending transactions in the executable queue.
+
+      **Source:** `server/config/config.go:164`
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="global-slots" type="number" default="5120">
+      Maximum number of executable transaction slots for all accounts.
+
+      Total capacity for all pending executable transactions across all accounts (4096 + 1024 = 5120).
+
+      **Source:** `server/config/config.go:166`
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="account-queue" type="number" default="64">
+      Maximum number of non-executable transaction slots permitted per account.
+
+      For transactions with gaps in nonce sequence (future transactions).
+
+      **Source:** `server/config/config.go:168`
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="global-queue" type="number" default="1024">
+      Maximum number of non-executable transaction slots for all accounts.
+
+      Total capacity for queued (non-executable) transactions across all accounts.
+
+      **Source:** `server/config/config.go:170`
+      **Validation:** Must be at least 1
+    </ParamField>
+
+    <ParamField body="lifetime" type="string" default="3h0m0s">
+      Maximum amount of time non-executable transactions are queued.
+
+      Transactions that remain non-executable longer than this duration are removed from the mempool.
+
+      **Source:** `server/config/config.go:172`
+      **Format:** Go duration string (e.g., `"1h30m"`, `"30m0s"`, `"24h0m0s"`)
+      **Validation:** Must be at least 1ns
+    </ParamField>
+
+    ### Configuration Examples
+
+    **High-Throughput Chain:**
+    ```toml
+    [evm.mempool]
+    global-slots = 10240
+    global-queue = 2048
+    price-limit = 100000000  # 0.1 gwei minimum
+    lifetime = "6h0m0s"
+    ```
+
+    **Low-Resource Node:**
+    ```toml
+    [evm.mempool]
+    global-slots = 2048
+    global-queue = 512
+    lifetime = "1h0m0s"
+    account-slots = 8
+    ```
+
+    **Strict Spam Protection:**
+    ```toml
+    [evm.mempool]
+    price-limit = 1000000000  # 1 gwei minimum
+    price-bump = 25           # 25% replacement cost
+    lifetime = "30m0s"
+    account-slots = 4
+    ```
 
   </Tab>
 
@@ -229,13 +341,6 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
       **Source:** `server/config/config.go:159`
     </ParamField>
 
-    <ParamField body="fix-revert-gas-refund-height" type="number" default="0">
-      Chain-specific upgrade height for gas refund fix.
-
-      Set to 0 to disable.
-
-      **Source:** `server/config/config.go:193`
-    </ParamField>
   </Tab>
 
   <Tab title="Runtime Flags">
@@ -554,6 +659,33 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
     # MinTip defines the minimum priority fee for the mempool.
     min-tip = 0
 
+    # Geth metrics server address
+    geth-metrics-address = "127.0.0.1:8100"
+
+    # Mempool configuration for EVM transactions
+    [evm.mempool]
+
+    # PriceLimit is the minimum gas price to enforce for acceptance into the pool (in wei)
+    price-limit = 1
+
+    # PriceBump is the minimum price bump percentage to replace an already existing transaction (nonce)
+    price-bump = 10
+
+    # AccountSlots is the number of executable transaction slots guaranteed per account
+    account-slots = 16
+
+    # GlobalSlots is the maximum number of executable transaction slots for all accounts
+    global-slots = 5120
+
+    # AccountQueue is the maximum number of non-executable transaction slots permitted per account
+    account-queue = 64
+
+    # GlobalQueue is the maximum number of non-executable transaction slots for all accounts
+    global-queue = 1024
+
+    # Lifetime is the maximum amount of time non-executable transaction are queued
+    lifetime = "3h0m0s"
+
     ###############################################################################
     ###                           JSON RPC Configuration                        ###
     ###############################################################################
@@ -622,9 +754,6 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
     # Prometheus metrics path: /debug/metrics/prometheus
     metrics-address = "127.0.0.1:6065"
 
-    # Upgrade height for fix of revert gas refund logic when transaction reverted.
-    fix-revert-gas-refund-height = 0
-
     # Maximum number of requests in a batch.
     batch-request-limit = 1000
 
@@ -648,13 +777,19 @@ Configure EVM-specific settings in `~/.evmd/config/app.toml`. This guide covers 
     ```
 
     <Note>
-      **Lines (130-233):** are EVM-specific configuration sections added by Cosmos EVM
+      **Lines (130-260):** are EVM-specific configuration sections added by Cosmos EVM
 
       **Lines (1-129):** are Base Cosmos SDK parameters
 
+      **Key EVM sections:**
+      - `[evm]`: EVM runtime settings (lines 645-670)
+      - `[evm.mempool]`: Mempool configuration (lines 672-694, **new in v0.5.0**)
+      - `[json-rpc]`: Ethereum JSON-RPC server (lines 700-747)
+      - `[tls]`: TLS configuration (lines 753-760)
+
       **Template sources:**
       - SDK config: `cosmos-sdk/server/config/toml.go`
-      - EVM config: `evm/server/config/toml.go:4-116`
+      - EVM config: `evm/server/config/toml.go`
     </Note>
   </Tab>
 
