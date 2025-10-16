@@ -165,8 +165,8 @@ find . -type f -name "*.go" -exec sed -i '' \
 
 # 4. Update go.mod module path
 # Edit go.mod manually to change:
-# FROM: module github.com/cosmos/evm
-# TO:   module github.com/your-org/your-chain
+# From: module github.com/cosmos/evm
+# To:   module github.com/your-org/your-chain
 
 # 5. Update Makefile
 sed -i '' 's/evmd/yourchain/g' Makefile
@@ -194,10 +194,10 @@ find . -type f -name "*.go" -exec sed -i '' \
 
 **3. Update `go.mod` module declaration:**
 ```go expandable
-// FROM:
+// From:
 module github.com/cosmos/evm
 
-// TO:
+// To:
 module github.com/your-org/your-chain
 ```
 
@@ -427,58 +427,46 @@ make build
 
 **Default**: `262144`
 
-**File Location**: [`server/config/config.go:65`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L64-L65)
+**File Location**: [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L78)
 
 **Why Change It**: Must be unique for your network to prevent transaction replay attacks.
 
 <Warning>
-The EVM Chain ID **cannot** be changed after genesis without breaking all transaction signatures and wallet compatibility. Choose carefully before launch.
+The EVM Chain ID must be set in source code **before building your binary**. It cannot be changed after your binary is built, as it's compiled into the chain configuration. Choose carefully before building.
 </Warning>
 
 <Tabs>
-<Tab title="Option 1: Set in Source (Before Init)">
-Edit `server/config/config.go` and change the `DefaultEVMChainID` value:
+<Tab title="Configuration Steps">
+**1. Edit `config/config.go` and change the `EVMChainID` constant:**
 
 ```go expandable
-// DefaultEVMChainID is the default EVM Chain ID if one is not provided
-DefaultEVMChainID = 123456  // Change to your unique chain ID
+const (
+    // ... other constants ...
+
+    // EVMChainID defines the EIP-155 replay-protection chain id for the current ethereum chain config.
+    EVMChainID = 123456  // Change from 262144 to your unique chain ID
+)
 ```
 
-**After changing, rebuild:**
+**2. Rebuild the binary:**
 ```bash expandable
 make build
 ```
 
-**Then initialize (your custom chain ID will be written to app.toml):**
+**3. Initialize your chain:**
 ```bash expandable
 ./build/yourchain init mynode --chain-id mychain-1
 ```
 
-**Verify it was set correctly:**
+**4. Verify the chain ID was set correctly:**
 ```bash expandable
 grep 'evm-chain-id' ~/.yourchain/config/app.toml
 # Should show: evm-chain-id = 123456
 ```
-</Tab>
 
-<Tab title="Option 2: Edit After Init">
-Alternatively, just edit `app.toml` directly after running init:
-
-```bash expandable
-# Initialize with default
-yourchain init mynode --chain-id mychain-1
-
-# Then edit app.toml
-# Change evm-chain-id = 262144 to your desired chain ID
-```
-
-**Edit `~/.yourchain/config/app.toml`:**
-```toml expandable
-[evm]
-evm-chain-id = 123456  # Your unique chain ID
-```
-
-**This approach is simpler if you're only changing the chain ID without other source code modifications.**
+<Warning>
+Do not edit `app.toml` to change the EVM chain ID after initialization. The chain ID must be set in source code before building. Editing app.toml will not properly configure the chain.
+</Warning>
 </Tab>
 
 <Tab title="Choosing a Chain ID">
@@ -545,7 +533,7 @@ const tx = {
 </Tab>
 </Tabs>
 
-**Source**: [config/config.go:77-78](https://github.com/cosmos/evm/blob/main/config/config.go#L77-L78)
+**Source**: [config/config.go:78](https://github.com/cosmos/evm/blob/main/config/config.go#L78)
 
 
 
@@ -729,10 +717,10 @@ This step must be completed **before** running `yourchain init`. The defaults ar
 
 **Change:**
 ```toml expandable
-# FROM:
+# From:
 minimum-gas-prices = "0aatom"
 
-# TO:
+# To:
 minimum-gas-prices = "0atoken"
 ```
 
@@ -741,14 +729,14 @@ minimum-gas-prices = "0atoken"
 
 **Change:**
 ```go expandable
-// FROM:
+// From:
 var (
     DefaultEVMDenom = "uatom"
     DefaultEVMExtendedDenom = "aatom"
     DefaultEVMDisplayDenom = "atom"
 )
 
-// TO:
+// To:
 var (
     DefaultEVMDenom = "atoken"          // Your base denom
     DefaultEVMExtendedDenom = "atoken"  // Same if 18 decimals
@@ -761,13 +749,13 @@ var (
 
 **Change:**
 ```go expandable
-// FROM:
+// From:
 const (
     ExampleChainDenom = "aatom"
     ExampleDisplayDenom = "atom"
 )
 
-// TO:
+// To:
 const (
     ExampleChainDenom = "atoken"
     ExampleDisplayDenom = "token"
@@ -2081,4 +2069,3 @@ Continue to [Runtime Configuration & Network Launch](/docs/evm/next/documentatio
 - Command cheatsheets
 - Configuration examples
 - Default values table
-- Troubleshooting guide
