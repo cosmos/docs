@@ -1,13 +1,16 @@
 ---
 title: 'ADR 64: ABCI 2.0 Integration (Phase II)'
+description: >-
+  2023-01-17: Initial Draft (@alexanderbez) 2023-04-06: Add upgrading section
+  (@alexanderbez) 2023-04-10: Simplify vote extension state persistence
+  (@alexanderbez)
 ---
+
 ## Changelog
 
 * 2023-01-17: Initial Draft (@alexanderbez)
 * 2023-04-06: Add upgrading section (@alexanderbez)
 * 2023-04-10: Simplify vote extension state persistence (@alexanderbez)
-* 2023-07-07: Revise vote extension state persistence (@alexanderbez)
-* 2023-08-24: Revise vote extension power calculations and staking interface (@davidterpay)
 
 ## Status
 
@@ -16,7 +19,7 @@ ACCEPTED
 ## Abstract
 
 This ADR outlines the continuation of the efforts to implement ABCI++ in the Cosmos
-SDK outlined in [ADR 060: ABCI 1.0 (Phase I)](/docs/sdk/vnext/build/architecture/adr-060-abci-1.0).
+SDK outlined in [ADR 060: ABCI 1.0 (Phase I)](./docs/sdk/next/build/architecture/adr-060-abci-1.0.mdx).
 
 Specifically, this ADR outlines the design and implementation of ABCI 2.0, which
 includes `ExtendVote`, `VerifyVoteExtension` and `FinalizeBlock`.
@@ -26,7 +29,7 @@ includes `ExtendVote`, `VerifyVoteExtension` and `FinalizeBlock`.
 ABCI 2.0 continues the promised updates from ABCI++, specifically three additional
 ABCI methods that the application can implement in order to gain further control,
 insight and customization of the consensus process, unlocking many novel use-cases
-that were previously not possible. We describe these three new methods below:
+that previously not possible. We describe these three new methods below:
 
 ### `ExtendVote`
 
@@ -104,19 +107,18 @@ vote extensions.
 We propose the following new handlers for applications to implement:
 
 ```go
-type ExtendVoteHandler func(sdk.Context, abci.ExtendVoteRequest)
+type ExtendVoteHandler func(sdk.Context, abci.RequestExtendVote)
 
-abci.ExtendVoteResponse
-type VerifyVoteExtensionHandler func(sdk.Context, abci.VerifyVoteExtensionRequest)
+abci.ResponseExtendVote
+type VerifyVoteExtensionHandler func(sdk.Context, abci.RequestVerifyVoteExtension)
 
-abci.VerifyVoteExtensionResponse
+abci.ResponseVerifyVoteExtension
 ```
 
-An ephemeral context and state will be supplied to both handlers. The
-context will contain relevant metadata such as the block height and block hash.
-The state will be a cached version of the committed state of the application and
-will be discarded after the execution of the handler, this means that both handlers
-get a fresh state view and no changes made to it will be written.
+A new execution state, `voteExtensionState`, will be introduced and provided as
+the `Context` that is supplied to both handlers. It will contain relevant metadata
+such as the block height and block hash. Note, `voteExtensionState` is never
+committed and will exist as ephemeral state only in the context of a single block.
 
 If an application decides to implement `ExtendVoteHandler`, it must return a
 non-nil `ResponseExtendVote.VoteExtension`.
@@ -125,7 +127,7 @@ Recall, an implementation of `ExtendVoteHandler` does NOT need to be determinist
 however, given a set of vote extensions, `VerifyVoteExtensionHandler` must be
 deterministic, otherwise the chain may suffer from liveness faults. In addition,
 recall CometBFT proceeds in rounds for each height, so if a decision cannot be
-made about a block proposal at a given height, CometBFT will proceed to the
+made about about a block proposal at a given height, CometBFT will proceed to the
 next round and thus will execute `ExtendVote` and `VerifyVoteExtension` again for
 the new round for each validator until 2/3 valid pre-commits can be obtained.
 
@@ -151,9 +153,9 @@ type VoteExtensionHandler struct {
 // a vote extension, such as fetching a series of prices for supported assets.
 func (h VoteExtensionHandler)
 
-ExtendVoteHandler(ctx sdk.Context, req abci.ExtendVoteRequest)
+ExtendVoteHandler(ctx sdk.Context, req abci.RequestExtendVote)
 
-abci.ExtendVoteResponse {
+abci.ResponseExtendVote {
     prices := GetPrices(ctx, h.mk.Assets())
 
 bz, err := EncodePrices(h.cdc, prices)
@@ -166,7 +168,7 @@ bz, err := EncodePrices(h.cdc, prices)
 	// NOTE: Vote extensions can be overridden since we can timeout in a round.
 	SetPrices(h.state, req, bz)
 
-return abci.ExtendVoteResponse{
+return abci.ResponseExtendVote{
     VoteExtension: bz
 }
 }
@@ -176,14 +178,14 @@ return abci.ExtendVoteResponse{
 // within some valid range of our prices.
 func (h VoteExtensionHandler)
 
-VerifyVoteExtensionHandler(ctx sdk.Context, req abci.VerifyVoteExtensionRequest)
+VerifyVoteExtensionHandler(ctx sdk.Context, req abci.RequestVerifyVoteExtension)
 
-abci.VerifyVoteExtensionResponse {
+abci.ResponseVerifyVoteExtension {
     prices, err := DecodePrices(h.cdc, req.VoteExtension)
     if err != nil {
     log("failed to decode vote extension", "err", err)
 
-return abci.VerifyVoteExtensionResponse{
+return abci.ResponseVerifyVoteExtension{
     Status: REJECT
 }
 	
@@ -191,7 +193,7 @@ return abci.VerifyVoteExtensionResponse{
     if err := ValidatePrices(h.state, req, prices); err != nil {
     log("failed to validate vote extension", "prices", prices, "err", err)
 
-return abci.VerifyVoteExtensionResponse{
+return abci.ResponseVerifyVoteExtension{
     Status: REJECT
 }
 	
@@ -202,7 +204,7 @@ return abci.VerifyVoteExtensionResponse{
 	// NOTE: Vote extensions can be overridden since we can timeout in a round.
 	SetPrices(h.state, req, req.VoteExtension)
 
-return abci.VerifyVoteExtensionResponse{
+return abci.ResponseVerifyVoteExtension{
     Status: ACCEPT
 }
 }
@@ -245,7 +247,7 @@ a default signature verification method which applications can use:
 
 ```go expandable
 type ValidatorStore interface {
-    GetPubKeyByConsAddr(context.Context, sdk.ConsAddress) (cmtprotocrypto.PublicKey, error)
+    GetValidatorByConsAddr(sdk.Context, cryptotypes.Address) (cryptotypes.PubKey, error)
 }
 
 // ValidateVoteExtensions is a function that an application can execute in
@@ -255,26 +257,23 @@ func (app *BaseApp)
 ValidateVoteExtensions(ctx sdk.Context, currentHeight int64, extCommit abci.ExtendedCommitInfo)
 
 error {
-    votingPower := 0
-    totalVotingPower := 0
     for _, vote := range extCommit.Votes {
-    totalVotingPower += vote.Validator.Power
     if !vote.SignedLastBlock || len(vote.VoteExtension) == 0 {
     continue
 }
-    valConsAddr := sdk.ConsAddress(vote.Validator.Address)
+    valConsAddr := cmtcrypto.Address(vote.Validator.Address)
 
-pubKeyProto, err := valStore.GetPubKeyByConsAddr(ctx, valConsAddr)
+validator, err := app.validatorStore.GetValidatorByConsAddr(ctx, valConsAddr)
     if err != nil {
-    return fmt.Errorf("failed to get public key for validator %s: %w", valConsAddr, err)
+    return fmt.Errorf("failed to get validator %s for vote extension", valConsAddr)
+}
+
+cmtPubKey, err := validator.CmtConsPublicKey()
+    if err != nil {
+    return fmt.Errorf("failed to convert public key: %w", err)
 }
     if len(vote.ExtensionSignature) == 0 {
     return fmt.Errorf("received a non-empty vote extension with empty signature for validator %s", valConsAddr)
-}
-
-cmtPubKey, err := cryptoenc.PubKeyFromProto(pubKeyProto)
-    if err != nil {
-    return fmt.Errorf("failed to convert validator %X public key: %w", valConsAddr, err)
 }
     cve := cmtproto.CanonicalVoteExtension{
     Extension: vote.VoteExtension,
@@ -291,13 +290,8 @@ extSignBytes, err := cosmosio.MarshalDelimited(&cve)
     return errors.New("received vote with invalid signature")
 }
 
-votingPower += vote.Validator.Power
-}
-    if (votingPower / totalVotingPower) < threshold {
-    return errors.New("not enough voting power for the vote extensions")
-}
-
 return nil
+}
 }
 ```
 
@@ -315,26 +309,44 @@ decision based on the vote extensions.
 #### Vote Extension Persistence
 
 In certain contexts, it may be useful or necessary for applications to persist
-data derived from vote extensions. In order to facilitate this use case, we propose
-to allow app developers to define a pre-Blocker hook which will be called
-at the very beginning of `FinalizeBlock`, i.e. before `BeginBlock` (see below).
+data derived from vote extensions. In order to facilitate this use case, we
+propose to allow application developers to manually retrieve the `finalizeState`
+context (see [`FinalizeBlock`](#finalizeblock-1) below). Using this context,
+state can be directly written to `finalizeState`, which will be used during
+`FinalizeBlock` and eventually committed to the application state. Note, since
+`ProcessProposal` can timeout and thus require another round of consensus, we
+will reset `finalizeState` in the beginning of `ProcessProposal`.
 
-Note, we cannot allow applications to directly write to the application state
-during `ProcessProposal` because during replay, CometBFT will NOT call `ProcessProposal`,
-which would result in an incomplete state view.
+A `ProcessProposal` handler could look like the following:
 
-```go
-func (a MyApp)
+```go expandable
+func (h MyHandler)
 
-PreBlocker(ctx sdk.Context, req *abci.FinalizeBlockRequest)
+ProcessProposalHandler()
 
-error {
-    voteExts := GetVoteExtensions(ctx, req.Txs)
+sdk.ProcessProposalHandler {
+    return func(ctx sdk.Context, req abci.RequestProcessProposal)
+
+abci.ResponseProcessProposal {
+    for _, txBytes := range req.Txs {
+			_, err := h.app.ProcessProposalVerifyTx(txBytes)
+    if err != nil {
+    return abci.ResponseProcessProposal{
+    Status: abci.ResponseProcessProposal_REJECT
+}
 	
-	// Process and perform some compute on vote extensions, storing any resulting
-	// state.
-    if err a.processVoteExtensions(ctx, voteExts); if err != nil {
-    return err
+}
+	
+}
+    fCtx := h.app.GetFinalizeState()
+
+		// Any state changes that occur on the provided fCtx WILL be written to state!
+		h.myKeeper.SetVoteExtResult(fCtx, ...)
+
+return abci.ResponseProcessProposal{
+    Status: abci.ResponseProcessProposal_ACCEPT
+}
+	
 }
 }
 ```
@@ -379,21 +391,12 @@ we can come up with new types and names altogether.
 ```go expandable
 func (app *BaseApp)
 
-FinalizeBlock(req abci.FinalizeBlockRequest) (*abci.FinalizeBlockResponse, error) {
-    ctx := ...
-    if app.preBlocker != nil {
-    ctx := app.finalizeBlockState.ctx
-		rsp, err := app.preBlocker(ctx, req)
-    if err != nil {
-    return nil, err
-}
-    if rsp.ConsensusParamsChanged {
-    app.finalizeBlockState.ctx = ctx.WithConsensusParams(app.GetConsensusParams(ctx))
-}
-	
-}
+FinalizeBlock(req abci.RequestFinalizeBlock)
 
-beginBlockResp, err := app.beginBlock(req)
+abci.ResponseFinalizeBlock {
+	// merge any state changes from ProcessProposal into the FinalizeBlock state
+	app.MergeProcessProposalState()
+    beginBlockResp := app.beginBlock(ctx, req)
 
 appendBlockEventAttr(beginBlockResp.Events, "begin_block")
     txExecResults := make([]abci.ExecTxResult, 0, len(req.Txs))
@@ -402,12 +405,11 @@ appendBlockEventAttr(beginBlockResp.Events, "begin_block")
 
 txExecResults = append(txExecResults, result)
 }
-
-endBlockResp, err := app.endBlock(app.finalizeBlockState.ctx)
+    endBlockResp := app.endBlock(ctx, req)
 
 appendBlockEventAttr(beginBlockResp.Events, "end_block")
 
-return abci.FinalizeBlockResponse{
+return abci.ResponseFinalizeBlock{
     TxResults:             txExecResults,
     Events:                joinEvents(beginBlockResp.Events, endBlockResp.Events),
     ValidatorUpdates:      endBlockResp.ValidatorUpdates,
@@ -428,7 +430,7 @@ and rely on existing events, especially since applications will still define
 In order to facilitate existing event functionality, we propose that all `BeginBlock`
 and `EndBlock` events have a dedicated `EventAttribute` with `key=block` and
 `value=begin_block|end_block`. The `EventAttribute` will be appended to each event
-in both `BeginBlock` and `EndBlock` events.
+in both `BeginBlock` and `EndBlock` events\`.
 
 ### Upgrading
 
@@ -501,4 +503,4 @@ continuation of ABCI++ and the general discussion of optimistic execution.
 
 ## References
 
-* [ADR 060: ABCI 1.0 (Phase I)](/docs/sdk/vnext/build/architecture/adr-060-abci-1.0)
+* [ADR 060: ABCI 1.0 (Phase I)](./docs/sdk/next/build/architecture/adr-060-abci-1.0.mdx)

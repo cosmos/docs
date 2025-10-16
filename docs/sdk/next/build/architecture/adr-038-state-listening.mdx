@@ -1,6 +1,7 @@
 ---
 title: 'ADR 038: KVStore state listening'
 ---
+
 ## Changelog
 
 * 11/23/2020: Initial draft
@@ -8,8 +9,7 @@ title: 'ADR 038: KVStore state listening'
 * 10/14/2022:
   * Add `ListenCommit`, flatten the state writes in a block to a single batch.
   * Remove listeners from cache stores, should only listen to `rootmulti.Store`.
-  * Remove `HaltAppOnDeliveryError()`, the errors are propagated by default, the implementations should return nil if they don't want to propagate errors.
-* 26/05/2023: Update with ABCI 2.0
+  * Remove `HaltAppOnDeliveryError()`, the errors are propagated by default, the implementations should return nil if don't want to propogate errors.
 
 ## Status
 
@@ -21,7 +21,7 @@ This ADR defines a set of changes to enable listening to state changes of indivi
 
 ## Context
 
-Currently, KVStore data can be remotely accessed through [Queries](https://docs.cosmos.network/main/build/building-modules/messages-and-queries#queries)
+Currently, KVStore data can be remotely accessed through [Queries](https://github.com/cosmos/cosmos-sdk/blob/master/docs/building-modules/02-messages-and-queries.md#queries)
 which proceed either through Tendermint and the ABCI, or through the gRPC server.
 In addition to these request/response queries, it would be beneficial to have a means of listening to state changes as they occur in real time.
 
@@ -41,7 +41,7 @@ type MemoryListener struct {
     stateCache []StoreKVPair
 }
 
-// NewMemoryListener creates a listener that accumulates the state writes in memory.
+// NewMemoryListener creates a listener that accumulate the state writes in memory.
 func NewMemoryListener() *MemoryListener {
     return &MemoryListener{
 }
@@ -88,7 +88,7 @@ We will configure the `Store` with a `MemoryListener` which will collect state c
 
 ```go expandable
 // Store implements the KVStore interface with listening enabled.
-// Operations are traced on each core KVStore call and written to any of the
+// Operations are traced on each advanced KVStore call and written to any of the
 // underlying listeners with the proper key and operation permissions
 type Store struct {
     parent    types.KVStore
@@ -129,7 +129,7 @@ s.listener.OnWrite(s.parentStoreKey, key, nil, true)
 
 ### MultiStore interface updates
 
-We will update the `CommitMultiStore` interface to allow us to wrap a `MemoryListener` to a specific `KVStore`.
+We will update the `CommitMultiStore` interface to allow us to wrap a `Memorylistener` to a specific `KVStore`.
 Note that the `MemoryListener` will be attached internally by the concrete `rootmulti` implementation.
 
 ```go
@@ -251,17 +251,25 @@ return cachemulti.NewStore(rs.db, cachedStores, rs.keysByName, rs.traceWriter, r
 We will introduce a new `ABCIListener` interface that plugs into the BaseApp and relays ABCI requests and responses
 so that the service can group the state changes with the ABCI requests.
 
-```go
+```go expandable
 // baseapp/streaming.go
 
 // ABCIListener is the interface that we're exposing as a streaming service.
 type ABCIListener interface {
-	// ListenFinalizeBlock updates the streaming service with the latest FinalizeBlock messages
-	ListenFinalizeBlock(ctx context.Context, req abci.FinalizeBlockRequest, res abci.FinalizeBlockResponse)
+    // ListenBeginBlock updates the streaming service with the latest BeginBlock messages
+    ListenBeginBlock(ctx context.Context, req abci.RequestBeginBlock, res abci.ResponseBeginBlock)
 
 error
-	// ListenCommit updates the streaming service with the latest Commit messages and state changes
-	ListenCommit(ctx context.Context, res abci.CommitResponse, changeSet []*StoreKVPair)
+    // ListenEndBlock updates the steaming service with the latest EndBlock messages
+    ListenEndBlock(ctx types.Context, req abci.RequestEndBlock, res abci.ResponseEndBlock)
+
+error
+    // ListenDeliverTx updates the steaming service with the latest DeliverTx messages
+    ListenDeliverTx(ctx context.Context, req abci.RequestDeliverTx, res abci.ResponseDeliverTx)
+
+error
+    // ListenCommit updates the steaming service with the latest Commit messages and state changes
+    ListenCommit(ctx context.Context, res abci.ResponseCommit, changeSet []*store.StoreKVPair)
 
 error
 }
@@ -302,33 +310,107 @@ type BaseApp struct {
 
 #### ABCI Event Hooks
 
-We will modify the `FinalizeBlock` and `Commit` methods to pass ABCI requests and responses
+We will modify the `BeginBlock`, `EndBlock`, `DeliverTx` and `Commit` methods to pass ABCI requests and responses
 to any streaming service hooks registered with the `BaseApp`.
 
 ```go expandable
 func (app *BaseApp)
 
-FinalizeBlock(req abci.FinalizeBlockRequest)
+BeginBlock(req abci.RequestBeginBlock) (res abci.ResponseBeginBlock) {
 
-abci.FinalizeBlockResponse {
-    var abciRes abci.FinalizeBlockResponse
-    defer func() {
-        // call the streaming service hook with the FinalizeBlock messages
+    ...
+
+    // call the streaming service hook with the BeginBlock messages
     for _, abciListener := range app.abciListeners {
-    ctx := app.finalizeState.ctx
+    ctx := app.deliverState.ctx
     blockHeight := ctx.BlockHeight()
     if app.abciListenersAsync {
-    go func(req abci.FinalizeBlockRequest, res abci.FinalizeBlockResponse) {
-    if err := app.abciListener.FinalizeBlock(blockHeight, req, res); err != nil {
-    app.logger.Error("FinalizeBlock listening hook failed", "height", blockHeight, "err", err)
+    go func(req abci.RequestBeginBlock, res abci.ResponseBeginBlock) {
+    if err := app.abciListener.ListenBeginBlock(ctx, req, res); err != nil {
+    app.logger.Error("BeginBlock listening hook failed", "height", blockHeight, "err", err)
+}
+ 
+}(req, res)
+}
+
+else {
+    if err := app.abciListener.ListenBeginBlock(ctx, req, res); err != nil {
+    app.logger.Error("BeginBlock listening hook failed", "height", blockHeight, "err", err)
+    if app.stopNodeOnABCIListenerErr {
+    os.Exit(1)
+}
+ 
+}
+ 
+}
+ 
+}
+
+return res
+}
+```
+
+```go expandable
+func (app *BaseApp)
+
+EndBlock(req abci.RequestEndBlock) (res abci.ResponseEndBlock) {
+
+    ...
+
+    // call the streaming service hook with the EndBlock messages
+    for _, abciListener := range app.abciListeners {
+    ctx := app.deliverState.ctx
+    blockHeight := ctx.BlockHeight()
+    if app.abciListenersAsync {
+    go func(req abci.RequestEndBlock, res abci.ResponseEndBlock) {
+    if err := app.abciListener.ListenEndBlock(blockHeight, req, res); err != nil {
+    app.logger.Error("EndBlock listening hook failed", "height", blockHeight, "err", err)
+}
+ 
+}(req, res)
+}
+
+else {
+    if err := app.abciListener.ListenEndBlock(blockHeight, req, res); err != nil {
+    app.logger.Error("EndBlock listening hook failed", "height", blockHeight, "err", err)
+    if app.stopNodeOnABCIListenerErr {
+    os.Exit(1)
+}
+ 
+}
+ 
+}
+ 
+}
+
+return res
+}
+```
+
+```go expandable
+func (app *BaseApp)
+
+DeliverTx(req abci.RequestDeliverTx)
+
+abci.ResponseDeliverTx {
+    var abciRes abci.ResponseDeliverTx
+    defer func() {
+        // call the streaming service hook with the EndBlock messages
+    for _, abciListener := range app.abciListeners {
+    ctx := app.deliverState.ctx
+    blockHeight := ctx.BlockHeight()
+    if app.abciListenersAsync {
+    go func(req abci.RequestDeliverTx, res abci.ResponseDeliverTx) {
+    if err := app.abciListener.ListenDeliverTx(blockHeight, req, res); err != nil {
+    app.logger.Error("DeliverTx listening hook failed", "height", blockHeight, "err", err)
 }
  
 }(req, abciRes)
 }
 
 else {
-    if err := app.abciListener.ListenFinalizeBlock(blockHeight, req, res); err != nil {
-    app.logger.Error("FinalizeBlock listening hook failed", "height", blockHeight, "err", err)
+    if err := app.abciListener.ListenDeliverTx(blockHeight, req, res); err != nil {
+    app.logger.Error("DeliverTx listening hook failed", "height", blockHeight, "err", err)
     if app.stopNodeOnABCIListenerErr {
     os.Exit(1)
 }
@@ -352,10 +434,10 @@ func (app *BaseApp)
 
 Commit()
 
-abci.CommitResponse {
+abci.ResponseCommit {
 
     ...
-    res := abci.CommitResponse{
+    res := abci.ResponseCommit{
     Data:         commitID.Hash,
     RetainHeight: retainHeight,
 }
@@ -366,7 +448,7 @@ abci.CommitResponse {
     blockHeight := ctx.BlockHeight()
     changeSet := app.cms.PopStateCache()
     if app.abciListenersAsync {
-    go func(res abci.CommitResponse, changeSet []store.StoreKVPair) {
+    go func(res abci.ResponseCommit, changeSet []store.StoreKVPair) {
     if err := app.abciListener.ListenCommit(ctx, res, changeSet); err != nil {
     app.logger.Error("ListenCommit listening hook failed", "height", blockHeight, "err", err)
 }
@@ -414,7 +496,7 @@ var Handshake = plugin.HandshakeConfig{
     MagicCookieValue: "ef78114d-7bdf-411c-868f-347c99a78345",
 }
 
-// ListenerPlugin is the base struct for all kinds of go-plugin implementations
+// ListenerPlugin is the base struc for all kinds of go-plugin implementations
 // It will be included in interfaces of different Plugins
 type ABCIListenerPlugin struct {
     // GRPCPlugin must still implement the Plugin interface
@@ -465,9 +547,18 @@ syntax = "proto3";
 
 message Empty {}
 
-message ListenFinalizeBlockRequest {
-  RequestFinalizeBlock  req = 1;
-  ResponseFinalizeBlock res = 2;
+message ListenBeginBlockRequest {
+  RequestBeginBlock  req = 1;
+  ResponseBeginBlock res = 2;
+}
+message ListenEndBlockRequest {
+  RequestEndBlock  req = 1;
+  ResponseEndBlock res = 2;
+}
+message ListenDeliverTxRequest {
+  int64             block_height = 1;
+  RequestDeliverTx  req          = 2;
+  ResponseDeliverTx res          = 3;
 }
 message ListenCommitRequest {
   int64                block_height = 1;
@@ -477,7 +568,9 @@ message ListenCommitRequest {
 
 // plugin that listens to state changes
 service ABCIListenerService {
-  rpc ListenFinalizeBlock(ListenFinalizeBlockRequest) returns (Empty);
+  rpc ListenBeginBlock(ListenBeginBlockRequest) returns (Empty);
+  rpc ListenEndBlock(ListenEndBlockRequest) returns (Empty);
+  rpc ListenDeliverTx(ListenDeliverTxRequest) returns (Empty);
   rpc ListenCommit(ListenCommitRequest) returns (Empty);
 }
 ```
@@ -486,7 +579,9 @@ service ABCIListenerService {
 ...
 // plugin that doesn't listen to state changes
 service ABCIListenerService {
-  rpc ListenFinalizeBlock(ListenFinalizeBlockRequest) returns (Empty);
+  rpc ListenBeginBlock(ListenBeginBlockRequest) returns (Empty);
+  rpc ListenEndBlock(ListenEndBlockRequest) returns (Empty);
+  rpc ListenDeliverTx(ListenDeliverTxRequest) returns (Empty);
   rpc ListenCommit(ListenCommitRequest) returns (Empty);
 }
 ```
@@ -509,7 +604,33 @@ type GRPCClient struct {
 
 func (m *GRPCClient)
 
-ListenFinalizeBlock(goCtx context.Context, req abci.FinalizeBlockRequest, res abci.FinalizeBlockResponse)
+ListenBeginBlock(ctx context.Context, req abci.RequestBeginBlock, res abci.ResponseBeginBlock)
+
+error {
+    _, err := m.client.ListenBeginBlock(ctx, &ListenBeginBlockRequest{
+    Req: req,
+    Res: res
+})
+
+return err
+}
+
+func (m *GRPCClient)
+
+ListenEndBlock(goCtx context.Context, req abci.RequestEndBlock, res abci.ResponseEndBlock)
+
+error {
+    _, err := m.client.ListenEndBlock(ctx, &ListenEndBlockRequest{
+    Req: req,
+    Res: res
+})
+
+return err
+}
+
+func (m *GRPCClient)
+
+ListenDeliverTx(goCtx context.Context, req abci.RequestDeliverTx, res abci.ResponseDeliverTx)
 
 error {
     ctx := sdk.UnwrapSDKContext(goCtx)
@@ -524,7 +645,7 @@ return err
 
 func (m *GRPCClient)
 
-ListenCommit(goCtx context.Context, res abci.CommitResponse, changeSet []store.StoreKVPair)
+ListenCommit(goCtx context.Context, res abci.ResponseCommit, changeSet []store.StoreKVPair)
 
 error {
     ctx := sdk.UnwrapSDKContext(goCtx)
@@ -545,9 +666,23 @@ type GRPCServer struct {
 
 func (m *GRPCServer)
 
-ListenFinalizeBlock(ctx context.Context, req *ListenFinalizeBlockRequest) (*Empty, error) {
+ListenBeginBlock(ctx context.Context, req *ListenBeginBlockRequest) (*Empty, error) {
     return &Empty{
-}, m.Impl.ListenFinalizeBlock(ctx, req.Req, req.Res)
+}, m.Impl.ListenBeginBlock(ctx, req.Req, req.Res)
+}
+
+func (m *GRPCServer)
+
+ListenEndBlock(ctx context.Context, req *ListenEndBlockRequest) (*Empty, error) {
+    return &Empty{
+}, m.Impl.ListenEndBlock(ctx, req.Req, req.Res)
+}
+
+func (m *GRPCServer)
+
+ListenDeliverTx(ctx context.Context, req *ListenDeliverTxRequest) (*Empty, error) {
+    return &Empty{
+}, m.Impl.ListenDeliverTx(ctx, req.Req, req.Res)
 }
 
 func (m *GRPCServer)
@@ -573,7 +708,7 @@ type ABCIListener struct{
 
 func (m *ABCIListenerPlugin)
 
-ListenFinalizeBlock(ctx context.Context, req abci.FinalizeBlockRequest, res abci.FinalizeBlockResponse)
+ListenBeginBlock(ctx context.Context, req abci.RequestBeginBlock, res abci.ResponseBeginBlock)
 
 error {
     // send data to external system
@@ -581,7 +716,23 @@ error {
 
 func (m *ABCIListenerPlugin)
 
-ListenCommit(ctx context.Context, res abci.CommitResponse, changeSet []store.StoreKVPair)
+ListenEndBlock(ctx context.Context, req abci.RequestBeginBlock, res abci.ResponseBeginBlock)
+
+error {
+    // send data to external system
+}
+
+func (m *ABCIListenerPlugin)
+
+ListenDeliverTxBlock(ctx context.Context, req abci.RequestBeginBlock, res abci.ResponseBeginBlock)
+
+error {
+    // send data to external system
+}
+
+func (m *ABCIListenerPlugin)
+
+ListenCommit(ctx context.Context, res abci.ResponseCommit, changeSet []store.StoreKVPair)
 
 error {
     // send data to external system
@@ -640,7 +791,7 @@ func NewStreamingPlugin(name string, logLevel string) (interface{
 
 We propose a `RegisterStreamingPlugin` function for the App to register `NewStreamingPlugin`s with the App's BaseApp.
 Streaming plugins can be of `Any` type; therefore, the function takes in an interface vs a concrete type.
-For example, we could have plugins of `ABCIListener`, `WasmListener` or `IBCListener`. Note that `RegisterStreamingPlugin` function
+For example, we could have plugins of `ABCIListener`, `WasmListener` or `IBCListener`. Note that `RegisterStreamingPluing` function
 is helper function and not a requirement. Plugin registration can easily be moved from the App to the BaseApp directly.
 
 ```go expandable
@@ -686,14 +837,10 @@ func registerABCIListenerPlugin(
 
 bApp.cms.AddListeners(exposedKeys)
 
-app.SetStreamingManager(
-		storetypes.StreamingManager{
-    ABCIListeners: []storetypes.ABCIListener{
-    abciListener
-},
-    StopNodeOnErr: stopNodeOnErr,
-},
-	)
+bApp.SetStreamingService(abciListener)
+
+bApp.stopNodeOnABCIListenerErr = stopNodeOnErr
+    bApp.abciListenersAsync = async
 }
 ```
 
@@ -853,5 +1000,5 @@ These changes will provide a means of subscribing to KVStore state changes in re
 
 ### Neutral
 
-* Introduces additional—but optional—complexity to configuring and running a cosmos application
+* Introduces additional- but optional- complexity to configuring and running a cosmos application
 * If an application developer opts to use these features to expose data, they need to be aware of the ramifications/risks of that data exposure as it pertains to the specifics of their application

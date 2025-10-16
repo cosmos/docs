@@ -2,6 +2,7 @@
 title: 'ADR 054: Semver Compatible SDK Modules'
 description: '2022-04-27: First draft'
 ---
+
 ## Changelog
 
 * 2022-04-27: First draft
@@ -39,7 +40,7 @@ In order to achieve this, we need to solve the following problems:
    many modules in the SDK independently
 3. pernicious minor version incompatibilities introduced through correctly
    [evolving protobuf schemas](https://developers.google.com/protocol-buffers/docs/proto3#updating)
-   without correct [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering)
+   without correct [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering)
 
 Note that all the following discussion assumes that the proto file versioning and state machine versioning of a module
 are distinct in that:
@@ -149,7 +150,7 @@ with this update and use that for `foo/v2`. But this change is state machine
 breaking for `v1`. It requires changing the `ValidateBasic` method to reject
 the case where `amount` is zero, and it adds the `condition` field which
 should be rejected based
-on [ADR 020 unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering).
+on [ADR 020 unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering).
 So adding these changes as a patch on `v1` is actually incorrect based on semantic
 versioning. Chains that want to stay on `v1` of `foo` should not
 be importing these changes because they are incorrect for `v1.`
@@ -178,9 +179,9 @@ on `v1` or `v2` and dynamically, it could choose to only use `condition` when
 `foo/v2` is available. Even if `bar/v2` were able to perform this check, however,
 how do we know that it is always performing the check properly. Without
 some sort of
-framework-level [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering),
+framework-level [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering),
 it is hard to know whether these pernicious hard to detect bugs are getting into
-our app and a client-server layer such as [ADR 033: Inter-Module Communication](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm)
+our app and a client-server layer such as [ADR 033: Inter-Module Communication](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx)
 may be needed to do this.
 
 ## Solutions
@@ -273,9 +274,9 @@ of care to avoid these sorts of issues.
 
 This approach in and of itself does little to address any potential minor
 version incompatibilities and the
-requisite [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering).
+requisite [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering).
 Likely some sort of client-server routing layer which does this check such as
-[ADR 033: Inter-Module communication](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm)
+[ADR 033: Inter-Module communication](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx)
 is required to make sure that this is done properly. We could then allow
 modules to perform a runtime check given a `MsgClient`, ex:
 
@@ -306,7 +307,7 @@ result in an undesirable performance hit depending on how complex this logic is.
 
 An alternate approach to solving the versioning problem is to change how protobuf code is generated and move modules
 mostly or completely in the direction of inter-module communication as described
-in [ADR 033](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm).
+in [ADR 033](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx).
 In this paradigm, a module could generate all the types it needs internally - including the API types of other modules -
 and talk to other modules via a client-server boundary. For instance, if `bar` needs to talk to `foo`, it could
 generate its own version of `MsgDoSomething` as `bar/internal/foo/v1.MsgDoSomething` and just pass this to the
@@ -325,7 +326,7 @@ to `foo/internal.MsgDoSomething` would be marshaling and unmarshaling in the ADR
 we needed to expose protobuf types in `Keeper` interfaces because the whole point is to try to keep these types
 `internal/` so that we don't end up with all the import version incompatibilities we've described above. However,
 because of the issue with minor version incompatibilities and the need
-for [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering),
+for [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering),
 sticking with the `Keeper` paradigm instead of ADR 033 may be unviable to begin with.
 
 A more performant solution (that could maybe be adapted to work with `Keeper` interfaces) would be to only expose
@@ -375,7 +376,7 @@ approach described in approach A. Either way, types implementing interfaces woul
 with an `InterfaceRegistry` as they are now because there would be no way to retrieve them via the global registry.
 
 In order to simplify access to other modules using ADR 033, a public API module (maybe even one
-[remotely generated by Buf](https://buf.build/docs/bsr/generated-sdks/go/)) could be used by client modules instead
+[remotely generated by Buf](https://docs.buf.build/bsr/remote-generation/go)) could be used by client modules instead
 of requiring to generate all client types internally.
 
 The big downsides of this approach are that it requires big changes to how people use protobuf types and would be a
@@ -411,7 +412,7 @@ and would also need to use special tags and replace directives to make sure that
 versions.
 
 Note, however, that all of these ad-hoc approaches, would be vulnerable to the minor version compatibility issues
-described above unless [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering)
+described above unless [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering)
 is properly addressed.
 
 ### Approach D) Avoid protobuf generated code in public APIs
@@ -461,7 +462,7 @@ Other downsides to this approach are:
 
 The latest **DRAFT** proposal is:
 
-1. we are alignment on adopting [ADR 033](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm) not just as an addition to the
+1. we are alignment on adopting [ADR 033](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx) not just as an addition to the
    framework, but as a core replacement to the keeper paradigm entirely.
 2. the ADR 033 inter-module router will accommodate any variation of approach (A) or (B) given the following rules:
    a. if the client type is the same as the server type then pass it directly through,
@@ -475,7 +476,7 @@ languages, possibly executed within a WASM VM.
 ### Minor API Revisions
 
 To declare minor API revisions of proto files, we propose the following guidelines (which were already documented
-in [cosmos.app.v1alpha module options](/docs/sdk/vnext/build/proto/cosmos/app/v1alpha1/module.proto)):
+in [cosmos.app.v1alpha module options](/docs/sdk/next/proto/cosmos/app/v1alpha1/module.proto)):
 
 * proto packages which are revised from their initial version (considered revision `0`) should include a `package`
 * comment in some .proto file containing the test `Revision N` at the start of a comment line where `N` is the current
@@ -501,7 +502,7 @@ ServiceRevision(ctx context.Context, serviceName string)
 uint64
 ```
 
-Modules could call this using the service name statically generated by the go grpc code generator:
+Modules could all this using the service name statically generated by the go grpc code generator:
 
 ```go
 intermoduleClient.ServiceRevision(ctx, bankv1beta1.Msg_ServiceDesc.ServiceName)
@@ -524,7 +525,7 @@ uint64
 
 ### Unknown Field Filtering
 
-To correctly perform [unknown field filtering](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding#unknown-field-filtering),
+To correctly perform [unknown field filtering](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx#unknown-field-filtering),
 the inter-module router can do one of the following:
 
 * use the `protoreflect` API for messages which support that
@@ -587,7 +588,7 @@ We propose defining these dependencies in the proto options of the module config
 
 We will also need to define how interface methods are defined on types that are serialized as `google.protobuf.Any`'s.
 In light of the desire to support modules in other languages, we may want to think of solutions that will accommodate
-other languages such as plugins described briefly in [ADR 033](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm#internal-methods).
+other languages such as plugins described briefly in [ADR 033](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx#internal-methods).
 
 ### Testing
 
@@ -700,7 +701,7 @@ type IntegrationTestConfig struct {
 }
 
 // Run runs the test function for all combinations of dependency modules.
-func (cfg IntegrationTestConfig)
+func (cfg IntegationTestConfig)
 
 Run(t *testing.T, f func (t *testing.T, f IntegrationTestFixture)) {
     // ...
@@ -794,5 +795,5 @@ Key outstanding discussions if we do adopt that direction are:
 * [Link](https://github.com/cosmos/cosmos-sdk/discussions/10368)
 * [Link](https://github.com/cosmos/cosmos-sdk/pull/11340)
 * [Link](https://github.com/cosmos/cosmos-sdk/issues/11899)
-* [ADR 020](/docs/sdk/vnext/build/architecture/adr-020-protobuf-transaction-encoding)
-* [ADR 033](/docs/sdk/vnext/build/architecture/adr-033-protobuf-inter-module-comm)
+* [ADR 020](./docs/sdk/next/build/architecture/adr-020-protobuf-transaction-encoding.mdx)
+* [ADR 033](./docs/sdk/next/build/architecture/adr-033-protobuf-inter-module-comm.mdx)
