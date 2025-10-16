@@ -425,9 +425,9 @@ make build
 
 **Description**: The EIP-155 chain ID used for Ethereum transaction replay protection.
 
-**Default**: `262144` (in older code) or `999888` (in current config/config.go)
+**Default**: `262144`
 
-**File Location**: [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L77-L78)
+**File Location**: [`server/config/config.go:65`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L64-L65)
 
 **Why Change It**: Must be unique for your network to prevent transaction replay attacks.
 
@@ -436,24 +436,20 @@ The EVM Chain ID **cannot** be changed after genesis without breaking all transa
 </Warning>
 
 <Tabs>
-<Tab title="Configuration">
-Edit `config/config.go` and change the `EVMChainID` constant:
+<Tab title="Option 1: Set in Source (Before Init)">
+Edit `server/config/config.go` and change the `DefaultEVMChainID` value:
 
 ```go expandable
-const (
-    // EVMChainID defines the EIP-155 replay-protection chain id
-    EVMChainID = 123456  // Change to your unique chain ID
-)
+// DefaultEVMChainID is the default EVM Chain ID if one is not provided
+DefaultEVMChainID = 123456  // Change to your unique chain ID
 ```
-
-**This value is used during `yourchain init`** to populate the `evm-chain-id` field in `app.toml`.
 
 **After changing, rebuild:**
 ```bash expandable
 make build
 ```
 
-**Then initialize (the chain ID will be embedded):**
+**Then initialize (your custom chain ID will be written to app.toml):**
 ```bash expandable
 ./build/yourchain init mynode --chain-id mychain-1
 ```
@@ -461,8 +457,28 @@ make build
 **Verify it was set correctly:**
 ```bash expandable
 grep 'evm-chain-id' ~/.yourchain/config/app.toml
-# Should show: evm-chain-id = "123456"
+# Should show: evm-chain-id = 123456
 ```
+</Tab>
+
+<Tab title="Option 2: Edit After Init">
+Alternatively, just edit `app.toml` directly after running init:
+
+```bash expandable
+# Initialize with default
+yourchain init mynode --chain-id mychain-1
+
+# Then edit app.toml
+# Change evm-chain-id = 262144 to your desired chain ID
+```
+
+**Edit `~/.yourchain/config/app.toml`:**
+```toml expandable
+[evm]
+evm-chain-id = 123456  # Your unique chain ID
+```
+
+**This approach is simpler if you're only changing the chain ID without other source code modifications.**
 </Tab>
 
 <Tab title="Choosing a Chain ID">
@@ -889,7 +905,11 @@ The Cosmos Chain ID is typically set during initialization:
 yourchain init mynode --chain-id mychain-1
 ```
 
-This writes the chain ID to both `genesis.json` and `client.toml`.
+This writes the chain ID to `genesis.json`. You must also set it in `client.toml`:
+
+```bash expandable
+yourchain config set client chain-id mychain-1
+```
 </Tab>
 
 <Tab title="Modify After Init">
