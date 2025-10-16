@@ -1,0 +1,326 @@
+---
+title: "Initial Setup"
+description: "Fork the evmd repository and prepare your development environment for building your EVM L1 chain."
+---
+
+This guide walks you through the initial steps of creating your own Cosmos EVM chain, from forking the repository to preparing your development environment. Once complete, you'll be ready to begin configuring your chain's parameters.
+
+## Prerequisites
+
+Building Cosmos EVM requires several tools and dependencies. Installation varies by operating system and architecture.
+
+### Required Dependencies
+
+- **Go 1.22+** - Required for building the blockchain binary
+- **Git** - For version control and repository management
+- **Make** - For using build commands
+- **GCC/Build Tools** - Required for CGo compilation
+- **curl/wget** - For downloading dependencies (usually pre-installed)
+
+### Installation by Platform
+
+<Tabs>
+  <Tab title="macOS (Intel)">
+
+#### Using Homebrew (Recommended)
+
+Install Homebrew if you haven't already:
+
+```bash expandable
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Install the required dependencies:
+
+```bash expandable
+# Install build essentials
+brew install git make gcc
+
+# Install Go
+brew install go@1.22
+
+# Add Go to your PATH (add to ~/.zshrc or ~/.bash_profile)
+echo 'export PATH="/usr/local/opt/go@1.22/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Verify installations:
+
+```bash expandable
+go version      # Should show 1.22 or higher
+git --version
+make --version
+gcc --version
+```
+
+  </Tab>
+  <Tab title="macOS (ARM64/Apple Silicon)">
+
+#### Using Homebrew (Recommended)
+
+Install Homebrew if you haven't already:
+
+```bash expandable
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+<Note>
+After installing Homebrew on Apple Silicon, you may need to add it to your PATH:
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+</Note>
+
+Install the required dependencies:
+
+```bash expandable
+# Install build essentials
+brew install git make gcc
+
+# Install Go
+brew install go@1.22
+
+# Add Go to your PATH (add to ~/.zshrc)
+echo 'export PATH="/opt/homebrew/opt/go@1.22/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Set up Go environment
+mkdir -p $HOME/go/{bin,src,pkg}
+echo 'export GOPATH=$HOME/go' >> ~/.zshrc
+echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Verify installations:
+
+```bash expandable
+go version      # Should show 1.22 or higher
+git --version
+make --version
+gcc --version
+```
+
+  </Tab>
+  <Tab title="Linux (Debian/Ubuntu)">
+
+#### Using APT Package Manager
+
+Update package lists and install build essentials:
+
+```bash expandable
+# Update package lists
+sudo apt update && sudo apt upgrade -y
+
+# Install build essentials and dependencies
+sudo apt install -y build-essential git make gcc curl wget
+```
+
+Install Go 1.22:
+
+```bash expandable
+# Download Go 1.22
+wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+
+# Remove old Go installation (if exists)
+sudo rm -rf /usr/local/go
+
+# Extract and install
+sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+
+# Clean up
+rm go1.22.0.linux-amd64.tar.gz
+
+# Add Go to PATH (add to ~/.bashrc or ~/.profile)
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+echo 'export GOPATH=$HOME/go' >> ~/.bashrc
+echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Create Go workspace directories
+mkdir -p $HOME/go/{bin,src,pkg}
+```
+
+Verify installations:
+
+```bash expandable
+go version      # Should show 1.22 or higher
+git --version
+make --version
+gcc --version
+```
+
+  </Tab>
+  <Tab title="Linux (Arch-based)">
+
+#### Using Pacman Package Manager
+
+Update system and install dependencies:
+
+```bash expandable
+# Update system
+sudo pacman -Syu
+
+# Install build essentials and dependencies
+sudo pacman -S base-devel git go make gcc curl wget
+```
+
+<Note>
+Arch Linux's `go` package is typically very up-to-date. Verify the version meets requirements:
+```bash
+go version  # Should be 1.22 or higher
+```
+If the version is lower, you may need to install from source or use a version manager.
+</Note>
+
+Set up Go environment:
+
+```bash expandable
+# Add Go environment variables (add to ~/.bashrc)
+echo 'export GOPATH=$HOME/go' >> ~/.bashrc
+echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Create Go workspace directories
+mkdir -p $HOME/go/{bin,src,pkg}
+```
+
+Verify installations:
+
+```bash expandable
+go version      # Should show 1.22 or higher
+git --version
+make --version
+gcc --version
+```
+
+  </Tab>
+</Tabs>
+
+### Additional Setup
+
+After installing the base dependencies, configure Git with your identity:
+
+```bash expandable
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+```
+
+## Fork and Clone the Repository
+
+Start by creating your own copy of the evmd repository:
+
+1. **Fork the repository** on GitHub by visiting [github.com/cosmos/evm](https://github.com/cosmos/evm) and clicking the "Fork" button
+
+2. **Clone your forked repository**:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/evm.git
+   cd evm
+   ```
+
+3. **Add upstream remote** to stay synchronized with updates:
+   ```bash
+   git remote add upstream https://github.com/cosmos/evm.git
+   ```
+
+<Note>
+Keeping your fork synchronized with upstream allows you to receive bug fixes, security patches, and new features from the core development team.
+</Note>
+
+## Understanding the Project Structure
+
+The evmd repository is organized into several key directories:
+
+```
+evm/
+├── app/              # Application configuration and module integration
+├── cmd/evmd/         # Binary entrypoint and CLI commands
+├── precompiles/      # EVM precompile implementations
+├── x/                # Custom Cosmos SDK modules
+│   ├── erc20/       # ERC20 token module
+│   ├── evm/         # Core EVM module
+│   └── feemarket/   # EIP-1559 fee market
+├── scripts/          # Utility scripts including local_node.sh
+└── tests/            # Test suites
+```
+
+## Build and Test
+
+Verify your environment is properly set up by building the binary:
+
+```bash
+make install
+```
+
+This compiles the `evmd` binary and installs it to your `$GOPATH/bin` directory. Verify the installation:
+
+```bash
+evmd version
+```
+
+<Tip>
+Before making any changes, it's recommended to run the test suite to ensure everything works correctly:
+
+```bash
+make test
+```
+</Tip>
+
+## Review Key Resources
+
+Before diving into configuration, familiarize yourself with these important resources:
+
+### Security & Audits
+Review the comprehensive [security audits](/docs/evm/next/documentation/overview#audits) conducted on Cosmos EVM (v0.4.x and later). Understanding the audit findings and their resolutions will help you make informed security decisions for your chain.
+
+### Cosmos SDK Modules
+Explore the [Cosmos SDK modules](/docs/evm/next/documentation/cosmos-sdk) that provide core blockchain functionality:
+- **Bank** - Token transfers and balances
+- **Staking** - Validator delegation and rewards
+- **Governance** - On-chain voting and proposals
+- **Slashing** - Validator penalty enforcement
+- **Distribution** - Fee and reward distribution
+
+### Precompiles
+Learn about [precompiled contracts](/docs/evm/next/documentation/smart-contracts/precompiles) that bridge EVM smart contracts with Cosmos SDK functionality. These enable Solidity contracts to interact with native modules for staking, IBC transfers, and more.
+
+## Quick Testing with local_node.sh
+
+The repository includes a development script that launches a fully configured local testnet. This is useful for:
+- Understanding the complete initialization sequence
+- Testing your changes quickly
+- Learning how different parameters affect the chain
+
+Run the script:
+
+```bash expandable
+./local_node.sh -y
+```
+
+This starts a local chain at `http://localhost:8545` that you can connect to with MetaMask or other Ethereum wallets (chain ID: `262144`).
+
+<Note>
+The `local_node.sh` script demonstrates a complete configuration in a single file. While you'll customize these settings for your production chain, reviewing the script provides valuable insight into the initialization sequence. See the [Configuration Reference](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-reference#understanding-local_nodesh) for a detailed explanation.
+</Note>
+
+## Next Steps
+
+With your development environment ready, you're now prepared to begin configuring your chain. The configuration process is divided into three phases:
+
+1. **Pre-Genesis Configuration** - Set chain identity and compile source code customizations
+2. **Genesis Configuration** - Initialize the chain and configure genesis.json parameters
+3. **Runtime Configuration** - Set up node-level settings and launch the network
+
+Proceed to the [Pre-Genesis & Genesis Setup](/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup) guide to begin customizing your chain's identity and parameters.
+
+<Card title="Pre-Genesis & Genesis Setup" href="/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup">
+Configure your chain's identity, parameters, and genesis file
+</Card>
+
+## Additional Configuration Resources
+
+Throughout your configuration journey, refer to these resources:
+
+- **[Configuration Reference](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-reference)** - Comprehensive command reference with examples for different configurations
+- **[EVM Mempool Integration](/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration)** - Advanced mempool customization
+- **[Predeployed Contracts](/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts)** - Deploy standard contracts at genesis
