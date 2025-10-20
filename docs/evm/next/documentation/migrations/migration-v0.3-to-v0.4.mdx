@@ -368,6 +368,97 @@ opts := []Option{
 pcs := NewAvailableStaticPrecompiles(ctx, /* ... keepers ... */, opts...)
 ```
 
+## Additional Breaking Changes (v0.3.1 → v0.4.1)
+
+<Note>
+**Credits**: Thanks to the Mantrachain team for identifying these additional migration requirements.
+</Note>
+
+### CallEVM Signature Change
+
+The `CallEVM` function now requires a `gasCap` parameter of type `*big.Int`. You can pass `nil` for default behavior.
+
+**Function Signature** (from `x/vm/keeper/call_evm.go:20`):
+```go
+func (k Keeper) CallEVM(
+	ctx sdk.Context,
+	abi abi.ABI,
+	from, contract common.Address,
+	commit bool,
+	gasCap *big.Int,  // New parameter
+	method string,
+	args ...interface{},
+) (*types.MsgEthereumTxResponse, error)
+```
+
+**Migration Example** (from `x/erc20/keeper/evm.go:87`):
+
+```diff
+// Before v0.4.x - gasCap parameter didn't exist
+- res, err := k.evmKeeper.CallEVM(ctx, erc20, types.ModuleAddress, contract, false, "decimals")
+
+// After v0.4.x - gasCap parameter required (can be nil)
++ res, err := k.evmKeeper.CallEVM(ctx, erc20, types.ModuleAddress, contract, false, nil, "decimals")
+```
+
+**With Custom Gas Cap**:
+```go
+// If you need to specify a gas cap
+import "math/big"
+
+gasLimit := big.NewInt(100000)
+res, err := k.evmKeeper.CallEVM(ctx, abi, from, contract, false, gasLimit, "balanceOf", account)
+```
+
+**Real usage examples**:
+- `x/erc20/keeper/evm.go:87` - decimals call
+- `x/erc20/keeper/evm.go:143` - balanceOf call
+- `x/ibc/callbacks/keeper/keeper.go:193` - approve call with custom gas cap
+
+### Test Keyring Import Path
+
+The test keyring package has been reorganized into its own subdirectory.
+
+**Import Change**:
+```diff
+- testkeyring "github.com/cosmos/evm/testutil"
++ testkeyring "github.com/cosmos/evm/testutil/keyring"
+```
+
+**Example from Tests** (from `tests/integration/precompiles/erc20/test_setup.go:10`):
+
+```go
+package erc20
+
+import (
+    "github.com/stretchr/testify/suite"
+
+    testkeyring "github.com/cosmos/evm/testutil/keyring"
+)
+
+type PrecompileTestSuite struct {
+    suite.Suite
+    keyring testkeyring.Keyring
+}
+
+func (s *PrecompileTestSuite) SetupTest() {
+    // Create keyring with 2 accounts
+    keyring := testkeyring.New(2)
+
+    // Get addresses for pre-funding
+    options := []network.ConfigOption{
+        network.WithPreFundedAccounts(keyring.GetAllAccAddrs()...),
+    }
+}
+```
+
+**Available Functions** (from `testutil/keyring/keyring.go:58`):
+- `New(nAccs int) Keyring` - Create keyring with n accounts
+- `GetPrivKey(index int)` - Get private key
+- `GetAddr(index int)` - Get Ethereum address
+- `GetAccAddr(index int)` - Get Cosmos SDK address
+- `GetAllAccAddrs()` - Get all SDK addresses
+
 ## Verify before tagging
 
 - `go.mod` has no `replace` lines for `github.com/cosmos/evm`
