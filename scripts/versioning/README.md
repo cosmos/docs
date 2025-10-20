@@ -18,22 +18,45 @@ The versioning system provides:
 ```
 docs/
 ├── evm/
-│   ├── next/                  # Active development (EVM)
-│   │   ├── documentation/
+│   ├── next/                  # Working directory (always contains latest docs)
+│   │   ├── documentation/    # This is where active development happens
 │   │   ├── api-reference/
 │   │   └── changelog/
-│   ├── v0.4.x/               # Frozen version (EVM)
-│   │   ├── .version-frozen
+│   ├── v0.4.x/               # Frozen snapshot (copied from next/)
+│   │   ├── .version-frozen   # Marker file
 │   │   ├── .version-metadata.json
 │   │   ├── documentation/    # Snapshot from docs/evm/next/
 │   │   ├── api-reference/
 │   │   └── changelog/
-│   └── v0.5.0/
+│   └── v0.5.0/               # Another frozen snapshot
 │       └── ...
 ├── sdk/
-│   └── next/                  # Future SDK docs
+│   ├── next/                 # SDK working directory
+│   ├── v0.53/               # SDK frozen snapshots
+│   ├── v0.50/
+│   └── v0.47/
 └── ibc/
-    └── next/                  # Future IBC docs
+    └── next/                 # IBC working directory
+```
+
+#### The "next" Directory Workflow
+
+The `next` directory is the **working directory** for active documentation development:
+
+1. **Development**: All documentation updates happen in `docs/<product>/next/`
+2. **Freezing**: When ready to release, the `next` directory is **copied** to `docs/<product>/<version>/`
+3. **Preservation**: The original `next` directory **remains unchanged** and continues to be the working directory
+4. **Links Updated**: Only the frozen copy has its internal links updated to point to the versioned path
+5. **Continued Work**: After freezing, development continues in `next/` for the upcoming release
+
+**Example workflow:**
+```bash
+# Before freeze: Working on v0.5.0 in docs/evm/next/
+# Run freeze with version v0.5.0
+npm run freeze
+# After freeze:
+#   - docs/evm/v0.5.0/ created (frozen snapshot with updated links)
+#   - docs/evm/next/ unchanged (continues as working directory for v0.6.0)
 ```
 
 ### Navigation Structure
@@ -64,7 +87,15 @@ Docs now use product-specific dropdowns with per-product versions:
 
 ### Versions Registry
 
-The top-level `versions.json` now tracks versions per product (subdirectory under `docs/`). Example:
+The top-level `versions.json` tracks versions per product (subdirectory under `docs/`). Each product configuration includes:
+
+- **versions**: Array of available versions (filesystem is auto-discovered and merged)
+- **defaultVersion**: The default version shown to users (usually "next")
+- **repository**: GitHub repository path for changelog fetching (e.g., "cosmos/evm")
+- **changelogPath**: Path to changelog file in the repository (default: "CHANGELOG.md")
+- **nextDev**: (Optional) Advisory label for the next development version
+
+Example:
 
 ```json
 {
@@ -72,17 +103,40 @@ The top-level `versions.json` now tracks versions per product (subdirectory unde
     "evm": {
       "versions": ["next", "v0.4.x"],
       "defaultVersion": "next",
-      "nextDev": "v0.5.0"
+      "nextDev": "v0.5.0",
+      "repository": "cosmos/evm",
+      "changelogPath": "CHANGELOG.md"
     },
     "sdk": {
       "versions": ["next", "v0.53", "v0.50", "v0.47"],
-      "defaultVersion": "v0.53"
+      "defaultVersion": "next",
+      "repository": "cosmos/cosmos-sdk",
+      "changelogPath": "CHANGELOG.md"
+    },
+    "ibc": {
+      "versions": ["next"],
+      "defaultVersion": "next",
+      "repository": "cosmos/ibc-go",
+      "changelogPath": "CHANGELOG.md"
     }
   }
 }
 ```
 
-Each product can be versioned independently. The version manager auto-detects the freeze version for the selected product from this file; if not found, it prompts for one. The `nextDev` field is advisory and records the next development version label.
+#### Auto-Discovery
+
+The system automatically discovers products and versions at runtime:
+
+1. **Product Discovery**: Scans `./docs/` directory for subdirectories (evm, sdk, ibc, etc.)
+2. **Version Discovery**: Scans each product directory for version folders (next, v0.4.x, v0.53, etc.)
+3. **Intelligent Merging**: Merges discovered versions with configured versions in `versions.json`
+4. **Default Configuration**: Creates sensible defaults for new products not yet in `versions.json`
+
+This means:
+- New products under `./docs/` are automatically recognized
+- Manually created version directories are automatically tracked
+- The `versions.json` file is the source of truth for repository configuration
+- Version arrays are kept in sync with the filesystem
 
 ## Quick Start
 
@@ -185,11 +239,25 @@ npm run release-notes [version|latest] [evm|sdk|ibc]
 - Parses and converts to Mintlify format
 - Updates release notes file in `docs/<subdir>/next/`
 
-**Sources:**
+**Repository Sources:**
 
-- evm → `cosmos/evm`
-- sdk → `cosmos/cosmos-sdk`
-- ibc → `cosmos/ibc-go`
+Release notes are fetched from GitHub repositories configured in `versions.json`:
+
+- **evm** → `cosmos/evm`
+- **sdk** → `cosmos/cosmos-sdk`
+- **ibc** → `cosmos/ibc-go`
+
+**Changelog Format Compatibility:**
+
+All three repositories use similar changelog formats with minor variations:
+
+| Repository | Version Format | Example |
+|------------|----------------|---------|
+| cosmos/evm | `## v0.4.1` | No brackets |
+| cosmos/cosmos-sdk | `## [v0.53.0]` | With brackets |
+| cosmos/ibc-go | `## [v10.4.0]` | With brackets |
+
+The parser handles both formats automatically through flexible regex matching. Sections like "Features", "Bug Fixes", "Improvements" are recognized regardless of case variations.
 
 ### Supporting Scripts
 
