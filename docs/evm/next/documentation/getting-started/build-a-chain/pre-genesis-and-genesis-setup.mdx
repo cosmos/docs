@@ -34,34 +34,34 @@ These parameters are compiled into your binary and must be set before running `y
 
 <Accordion title="View All Pre-Genesis Parameters">
 <CardGroup cols={2}>
-<Card title="Binary Name" href="#binary-name">
+<Card title="Chain Name" href="#chain-name">
 **Default**: `evmd`
-**Common Practice**: `yourchain` (unique name for your project)
+**Modified**: `yourchain` (unique name for your project)
 </Card>
 
 <Card title="Bech32 Address Prefix" href="#bech32-address-prefix">
 **Default**: `cosmos`
-**Common Practice**: Unique prefix for your chain (e.g., `evmos`, `osmosis`)
+**Modified**: Unique prefix for your chain (e.g., `evmos`, `osmosis`)
 </Card>
 
 <Card title="BIP44 Coin Type" href="#bip44-coin-type">
 **Default**: `60` (Ethereum)
-**Common Practice**: `60` for EVM chains, or register unique value
+**Modified**: `60` for EVM chains, or register unique value (not recommended for EVM compatibility reasons)
 </Card>
 
 <Card title="EVM Chain ID" href="#evm-chain-id">
 **Default**: `262144`
-**Common Practice**: Register unique integer at [chainlist.org](https://chainlist.org)
+**Modified**: Unique positive integer (number). Make sure it is not already taken by checking [chainlist.org](https://chainlist.org)
 </Card>
 
 <Card title="Token Decimal Precision" href="#token-decimal-precision">
 **Default**: 18 decimals (EVM standard)
-**Common Practice**: 18 decimals (simpler), 6 decimals (Cosmos standard, requires PreciseBank)
+**Modified**: 18 decimals (simpler), 6 decimals (Cosmos standard, requires PreciseBank)
 </Card>
 
 <Card title="Default Denomination in Source" href="#default-denomination-in-source">
 **Default**: `aatom` / `atom`
-**Common Practice**: Update to your token name before `init`
+**Modified**: Update to your token name before `init`
 </Card>
 </CardGroup>
 </Accordion>
@@ -140,129 +140,258 @@ These parameters are configured in `genesis.json` after initialization:
 
 Confirm these parameters before running `yourchain init`. These parameters are compiled into your binary, and determine how the genesis file is generated.
 
-### Binary Name
+### Chain Name
 
-<Expandable title="Binary Name" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: The name of your compiled blockchain executable.
-
-**Default**: `evmd`
-
-**File Location**: Directory name and all Go imports
-
-**Why Change It**: Brand your chain and avoid confusion with the reference implementation.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | The name of your compiled blockchain executable |
+| **Default** | `evmd` |
+| **File Location** | Directory name and all Go imports |
+| **Why Change It** | Brand your chain and avoid confusion with the reference implementation |
 
 <Tabs>
-<Tab title="Quick Setup">
+<Tab title="Quick Setup (Recommended)">
+
+**Simplest approach using find-and-replace:**
 
 ```bash
 # 1. Navigate to evm repository
 cd /path/to/evm
 
-# 2. Rename binary directory
-mv evmd yourchain
+# 2. IMPORTANT: Create a backup or commit current state
+git add -A
+git commit -m "Pre-rename checkpoint" || echo "Skipping commit (no changes or not a git repo)"
 
-# 3. Update all Go imports
-find . -type f -name "*.go" -exec sed -i '' \
-  's|github.com/cosmos/evm/evmd|github.com/your-org/your-chain/yourchain|g' {} \;
+# 3. Verify you're in the correct directory
+if [ ! -f "go.mod" ] || [ ! -d "evmd" ]; then
+  echo "ERROR: Not in evm repository root. Expected go.mod and evmd/ directory"
+  exit 1
+fi
 
-# 4. Update go.mod module path
-# Edit go.mod manually to change:
-# From: module github.com/cosmos/evm
-# To:   module github.com/your-org/your-chain
+# 4. Use your editor's find-and-replace (VSCode, etc.) to replace:
+#    'evmd' → 'yourchain' (across all files, excluding .git/)
+#    '.evmd' → '.yourchain' (for home directories)
+#
+# OR use sed commands:
+find . -type f ! -path "*/.git/*" ! -path "*/vendor/*" -exec sed -i '' 's/evmd/yourchain/g' {} \;
+find . -type f ! -path "*/.git/*" ! -path "*/vendor/*" -exec sed -i '' 's/\.evmd/.yourchain/g' {} \;
 
-# 5. Update Makefile
-sed -i '' 's/evmd/yourchain/g' Makefile
+# 5. Verify sed completed successfully
+if [ $? -ne 0 ]; then
+  echo "ERROR: Find-and-replace failed. Restore from backup/git"
+  exit 1
+fi
 
-# 6. Tidy and build
+# 6. Manually rename directories and files:
+[ -d "evmd" ] && mv evmd yourchain
+[ -d "yourchain/cmd/evmd" ] && mv yourchain/cmd/evmd yourchain/cmd/yourchain
+[ -f "config/evmd_config.go" ] && mv config/evmd_config.go config/yourchain_config.go
+
+# 7. Update go.mod module path (if changing from cosmos/evm):
+# Edit yourchain/go.mod first line:
+# From: module github.com/cosmos/evm/evmd
+# To:   module github.com/your-org/your-chain/yourchain
+
+# 8. Tidy and build
 go mod tidy
+cd yourchain && go mod tidy && cd ..
+
+# 9. Build to verify everything works
 make build
 
-# 7. Verify
+# 10. Verify binary was created and runs
+if [ ! -f "./build/yourchain" ]; then
+  echo "ERROR: Build failed - binary not found at ./build/yourchain"
+  exit 1
+fi
+
 ./build/yourchain version
+echo "SUCCESS: Binary renamed from evmd to yourchain"
 ```
+
+<Warning>
+**Validation Checklist** before proceeding:
+- ✅ Backup created or changes committed to git
+- ✅ Running from repository root (go.mod present)
+- ✅ `evmd` directory exists before rename
+- ✅ Build succeeds without errors
+- ✅ Binary executes and shows version
+</Warning>
 
 </Tab>
 
-<Tab title="Manual Steps">
-**1. Rename the binary directory:**
+<Tab title="Methodical Approach">
 
+<Expandable title="Step-by-Step Manual Process" defaultOpen={false}>
+
+For those who prefer a careful, step-by-step process with full visibility into each change:
+
+**1. Create backup:**
+```bash
+git add -A
+git commit -m "Pre-rename checkpoint"
+```
+
+**2. Rename the binary directory:**
 ```bash
 mv evmd yourchain
 ```
 
-**2. Update Go imports in all `.go` files:**
-
+**3. Rename command subdirectory:**
 ```bash
+mv yourchain/cmd/evmd yourchain/cmd/yourchain
+```
+
+**4. Rename config file:**
+```bash
+mv config/evmd_config.go config/yourchain_config.go
+```
+
+**5. Update package names in Go files:**
+```bash
+# Change package evmd to package yourchain
+find yourchain -name "*.go" -type f ! -path "*/tests/*" ! -path "*/cmd/*" \
+  -exec sed -i '' 's/^package evmd$/package yourchain/' {} \;
+```
+
+**6. Update all import paths:**
+```bash
+# Update evmd imports to yourchain
 find . -type f -name "*.go" -exec sed -i '' \
   's|github.com/cosmos/evm/evmd|github.com/your-org/your-chain/yourchain|g' {} \;
 ```
 
-**3. Update `go.mod` module declaration:**
-
+**7. Update `yourchain/go.mod`:**
 ```go
-// From:
-module github.com/cosmos/evm
+// Change first line from:
+module github.com/cosmos/evm/evmd
 
 // To:
-module github.com/your-org/your-chain
+module github.com/your-org/your-chain/yourchain
 ```
 
-**4. Update Makefile references:**
-
+**8. Update Makefile:**
 ```bash
 sed -i '' 's/evmd/yourchain/g' Makefile
+sed -i '' 's/\.evmd/.yourchain/g' Makefile
 ```
 
-**5. Run go mod tidy:**
+**9. Update scripts:**
+```bash
+sed -i '' 's/evmd/yourchain/g' local_node.sh
+sed -i '' 's/\.evmd/.yourchain/g' local_node.sh
+find tests -name "*.sh" -exec sed -i '' 's/evmd/yourchain/g' {} \;
+find scripts -name "*.sh" -exec sed -i '' 's/evmd/yourchain/g' {} \;
+```
+
+**10. Update Docker configs:**
+```bash
+sed -i '' 's/evmd/yourchain/g' docker-compose.yml
+mv contrib/images/evmd-env contrib/images/yourchain-env
+sed -i '' 's/evmd/yourchain/g' contrib/images/yourchain-env/Dockerfile
+sed -i '' 's/evmd/yourchain/g' contrib/images/Makefile
+```
+
+**11. Update documentation:**
+```bash
+sed -i '' 's/evmd/yourchain/g' README.md CLAUDE.md
+sed -i '' 's/\.evmd/.yourchain/g' README.md CLAUDE.md
+```
+
+**12. Update home directory references:**
+```bash
+sed -i '' 's/\.evmd/.yourchain/g' config/yourchain_config.go
+```
+
+**13. Tidy modules:**
 ```bash
 go mod tidy
+cd yourchain && go mod tidy && cd ..
 ```
 
-**6. Build and verify:**
-
+**14. Build and verify:**
 ```bash
 make build
+if [ ! -f "./build/yourchain" ]; then
+  echo "ERROR: Build failed"
+  exit 1
+fi
 ./build/yourchain version
+make install
+which yourchain
 ```
+
+**Why use this approach?**
+- Complete visibility into each change
+- Easier to debug if issues arise
+- Educational for understanding project structure
+- Better control for complex customizations
+
+**Most users should use the Quick Setup tab** unless they need to understand each change in detail.
+
+</Expandable>
+
 </Tab>
 
 <Tab title="What Gets Changed">
-The renaming process updates:
+The renaming process updates these components across your codebase:
 
-**Directory Structure:**
+**1. Directories:**
 - `evmd/` → `yourchain/`
 - `evmd/cmd/evmd/` → `yourchain/cmd/yourchain/`
+- `contrib/images/evmd-env/` → `contrib/images/yourchain-env/`
 
-**Go Import Paths:**
+**2. Files:**
+- `config/evmd_config.go` → `config/yourchain_config.go`
 
+**3. Go Code:**
 ```go
-// Before
+// Package names
+package evmd → package yourchain
+
+// Import paths
 import "github.com/cosmos/evm/evmd/cmd"
+→ import "github.com/your-org/your-chain/yourchain/cmd"
 
-// After
-import "github.com/your-org/your-chain/yourchain/cmd"
+// Module declaration (yourchain/go.mod)
+module github.com/cosmos/evm/evmd
+→ module github.com/your-org/your-chain/yourchain
+
+// Home directory references
+".evmd" → ".yourchain"
 ```
 
-**Module Declaration:**
-
-```go
-// go.mod before
-module github.com/cosmos/evm
-
-// go.mod after
-module github.com/your-org/your-chain
-```
-
-**Makefile:**
-
+**4. Build Files:**
 ```makefile
-# Before
-BINARY_NAME := evmd
+# Makefile
+EXAMPLE_BINARY := evmd → EXAMPLE_BINARY := yourchain
+EVMD_DIR := evmd → CRAWD_DIR := yourchain
+test-evmd → test-yourchain
 
-# After
-BINARY_NAME := yourchain
+# Makefile comments and section headers also updated
 ```
+
+**5. Scripts:**
+- `local_node.sh`: All `evmd` → `yourchain`, `$HOME/.evmd` → `$HOME/.yourchain`
+- All test scripts in `tests/` and `scripts/` directories
+- Docker compose files and Dockerfiles
+
+**6. Documentation:**
+- `README.md`
+- `CLAUDE.md`
+- Any project-specific docs
+
+**What Doesn't Change:**
+- Git history (`.git/` directory untouched)
+- External dependencies
+- Core EVM module code (remains in `x/` directories)
+- Pre-built binaries or archives
+
+<Info>
+**Edge Cases**: The renaming process is straightforward because `evmd` doesn't have special meaning in Go syntax or require conditional logic. All replacements are simple text substitutions, making bulk find-and-replace safe and effective.
+</Info>
 </Tab>
 </Tabs>
 
@@ -272,15 +401,14 @@ BINARY_NAME := yourchain
 
 ### Bech32 Address Prefix
 
-<Expandable title="Bech32 Address Prefix" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Your chain's address format (e.g., `cosmos1...`, `evmos1...`, `yourchain1...`).
-
-**Default**: `cosmos`
-
-**File Location**: [`config/config.go:62`](https://github.com/cosmos/evm/blob/main/config/config.go#L60-L74)
-
-**Why Change It**: Create unique, recognizable addresses for your chain.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Your chain's address format (e.g., `cosmos1...`, `evmos1...`, `yourchain1...`) |
+| **Default** | `cosmos` |
+| **File Location** | [`config/config.go:62`](https://github.com/cosmos/evm/blob/main/config/config.go#L60-L74) |
+| **Why Change It** | Create unique, recognizable addresses for your chain |
 
 <Warning>
 Must be changed **before** running `yourchain init`. Changing after genesis requires a hard fork.
@@ -361,15 +489,14 @@ Expected output:
 
 ### BIP44 Coin Type
 
-<Expandable title="BIP44 Coin Type" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: The HD wallet derivation path for key generation according to [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki).
-
-**Default**: `60` (Ethereum)
-
-**File Location**: [`crypto/hd/hdpath.go:9`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L7-L13)
-
-**Why Change It**: For Cosmos SDK chains wanting non-Ethereum derivation paths, or to register a unique coin type.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | The HD wallet derivation path for key generation according to [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki) |
+| **Default** | `60` (Ethereum) |
+| **File Location** | [`crypto/hd/hdpath.go:9`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L7-L13) |
+| **Why Change It** | For Cosmos SDK chains wanting non-Ethereum derivation paths, or to register a unique coin type |
 
 <Tabs>
 <Tab title="Keep Default (Recommended)">
@@ -441,15 +568,14 @@ make build
 
 ### EVM Chain ID
 
-<Expandable title="EVM Chain ID" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: The EIP-155 chain ID used for Ethereum transaction replay protection.
-
-**Default**: `262144`
-
-**File Location**: [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L78)
-
-**Why Change It**: Must be unique for your network to prevent transaction replay attacks.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | The EIP-155 chain ID used for Ethereum transaction replay protection |
+| **Default** | `262144` |
+| **File Location** | [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L78) |
+| **Why Change It** | Must be unique for your network to prevent transaction replay attacks |
 
 <Warning>
 The EVM Chain ID must be set in source code **before building your binary**. It cannot be changed after your binary is built, as it's compiled into the chain configuration. Choose carefully before building.
@@ -564,13 +690,13 @@ const tx = {
 
 ### Token Decimal Precision
 
-<Expandable title="Token Decimal Precision" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Determines whether your native token uses 18 decimals (like ETH) or another precision (like ATOM's 6 decimals).
-
-**Default**: 18 decimals
-
-**Why Choose**: Affects EVM compatibility and module requirements.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Determines whether your native token uses 18 decimals (like ETH) or another precision (like ATOM's 6 decimals) |
+| **Default** | 18 decimals |
+| **Why Choose** | Affects EVM compatibility and module requirements |
 
 <Warning>
 This decision affects your entire architecture and cannot be changed after genesis. Choose based on your compatibility needs.
@@ -725,13 +851,13 @@ app.ModuleManager = module.NewManager(
 
 ### Default Denomination in Source
 
-<Expandable title="Default Denomination in Source" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Default token denominations hardcoded in source files that are used when generating configuration files.
-
-**Default**: `aatom` / `atom`
-
-**Why Change It**: So that generated config files use your token name instead of the default.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Default token denominations hardcoded in source files that are used when generating configuration files |
+| **Default** | `aatom` / `atom` |
+| **Why Change It** | So that generated config files use your token name instead of the default |
 
 <Warning>
 This step must be completed **before** running `yourchain init`. The defaults are compiled into the binary and written to generated files during initialization.
@@ -888,7 +1014,7 @@ Genesis parameters can be modified until you distribute the genesis file to vali
 
 ### Initialize Your Chain
 
-<Expandable title="Initialize Your Chain" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
 <Warning>
 **For Production Chains**: Before running `init`, ensure you have completed all [Pre-Genesis Setup](#pre-genesis-setup) steps, especially [Binary Name](#binary-name) configuration. Organizations deploying their own chain should rename the binary from `evmd` to their own chain name (e.g., `yourchain`) to brand their network and avoid confusion with the reference implementation.
@@ -918,15 +1044,14 @@ Now proceed with genesis configuration below.
 
 ### Cosmos Chain ID
 
-<Expandable title="Cosmos Chain ID" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: The unique string identifier for your blockchain in the Cosmos ecosystem.
-
-**Format**: Flexible string, commonly `{name}-{version}`
-
-**Genesis Location**: Root-level field `chain_id`
-
-**Why Important**: Used for IBC connections, CometBFT consensus, and client identification.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | The unique string identifier for your blockchain in the Cosmos ecosystem |
+| **Format** | Flexible string, commonly `{name}-{version}` |
+| **Genesis Location** | Root-level field `chain_id` |
+| **Why Important** | Used for IBC connections, CometBFT consensus, and client identification |
 
 <Tabs>
 <Tab title="Set During Init">
@@ -1007,15 +1132,14 @@ dev-1
 
 ### Genesis Time
 
-<Expandable title="Genesis Time" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: UTC timestamp when the chain starts producing blocks.
-
-**Format**: RFC3339 timestamp (e.g., `"2024-12-01T00:00:00Z"`)
-
-**Genesis Location**: Root-level field `genesis_time`
-
-**Why Important**: Coordinates synchronized network launch across all validators.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | UTC timestamp when the chain starts producing blocks |
+| **Format** | RFC3339 timestamp (e.g., `"2024-12-01T00:00:00Z"`) |
+| **Genesis Location** | Root-level field `genesis_time` |
+| **Why Important** | Coordinates synchronized network launch across all validators |
 
 **Set the genesis time:**
 
@@ -1044,13 +1168,13 @@ jq '.genesis_time' ~/.yourchain/config/genesis.json
 
 ### Bank Denomination Metadata
 
-<Expandable title="Bank Denomination Metadata" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Your token's base denomination, decimal precision, and display properties.
-
-**Genesis Location**: `app_state.bank.denom_metadata`
-
-**Why Important**: Controls how tokens are displayed and handled across the chain.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Your token's base denomination, decimal precision, and display properties |
+| **Genesis Location** | `app_state.bank.denom_metadata` |
+| **Why Important** | Controls how tokens are displayed and handled across the chain |
 
 <Info>
 **Decimal Precision Decision**: Your choice of 18 vs 6 decimals (configured in [Token Decimal Precision](#token-decimal-precision)) determines the values below. See that section for detailed explanation.
@@ -1125,13 +1249,13 @@ jq '.app_state.gov.params.min_deposit[0].denom' $GENESIS
 
 ### VM Parameters
 
-<Expandable title="VM Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Core EVM module configuration including gas token, extended denom options, and chain behavior.
-
-**Genesis Location**: `app_state.evm.params`
-
-**Why Important**: Defines how the EVM layer interacts with Cosmos SDK.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Core EVM module configuration including gas token, extended denom options, and chain behavior |
+| **Genesis Location** | `app_state.evm.params` |
+| **Why Important** | Defines how the EVM layer interacts with Cosmos SDK |
 
 <Tabs>
 <Tab title="evm_denom (Required)">
@@ -1222,17 +1346,21 @@ jq '.app_state.evm.params.extra_eips = []' \
 
 ### Active Precompiles
 
-<Expandable title="Active Precompiles" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Enabled precompiled contracts that expose Cosmos SDK functionality to EVM smart contracts.
-
-**Genesis Location**: `app_state.evm.params.active_static_precompiles`
-
-**Default**: Empty array (no precompiles enabled)
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Enabled precompiled contracts that expose Cosmos SDK functionality to EVM smart contracts |
+| **Genesis Location** | `app_state.evm.params.active_static_precompiles` |
+| **Default** | Empty array (no precompiles enabled) |
 
 <Info>
 **Learn More**: [Precompiles Overview](/docs/evm/next/documentation/smart-contracts/precompiles/overview) - Complete documentation with Solidity interfaces
 </Info>
+
+<Note>
+This list represents the currently available static precompiles in the codebase. Precompiles are extensible - you can add custom precompiles to your chain. See the [authoritative source](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go) for the latest available precompiles.
+</Note>
 
 <Tabs>
 <Tab title="Available Precompiles">
@@ -1247,7 +1375,6 @@ jq '.app_state.evm.params.extra_eips = []' \
 | `0x0804` | **Bank** | Bank module operations |
 | `0x0805` | **Governance** | Submit/vote on proposals |
 | `0x0806` | **Slashing** | Slashing queries |
-| `0x0807` | **Authz** | Authorization grants |
 </Tab>
 
 <Tab title="Enable All (Recommended)">
@@ -1263,8 +1390,7 @@ jq '.app_state.evm.params.active_static_precompiles = [
   "0x0000000000000000000000000000000000000803",
   "0x0000000000000000000000000000000000000804",
   "0x0000000000000000000000000000000000000805",
-  "0x0000000000000000000000000000000000000806",
-  "0x0000000000000000000000000000000000000807"
+  "0x0000000000000000000000000000000000000806"
 ]' ~/.yourchain/config/genesis.json > tmp && mv tmp ~/.yourchain/config/genesis.json
 ```
 
@@ -1314,13 +1440,13 @@ jq '.app_state.evm.params.active_static_precompiles = []' \
 
 ### ERC20 Module
 
-<Expandable title="ERC20 Module" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Configured token pairs between Cosmos bank denoms and ERC20 representations, implementing Single Token Representation v2 (STRv2).
-
-**Genesis Location**: `app_state.erc20`
-
-**Why Important**: Allows native tokens to be used in EVM contracts as ERC20.
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Configured token pairs between Cosmos bank denoms and ERC20 representations, implementing Single Token Representation v2 (STRv2) |
+| **Genesis Location** | `app_state.erc20` |
+| **Why Important** | Allows native tokens to be used in EVM contracts as ERC20 |
 
 <Info>
 **Learn More**:
@@ -1407,13 +1533,13 @@ jq '.app_state.erc20.params.permissionless_registration = false' \
 
 ### Fee Market (EIP-1559)
 
-<Expandable title="Fee Market (EIP-1559)" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Dynamic fee pricing mechanism based on EIP-1559, controlling how transaction fees adjust based on network congestion.
-
-**Genesis Location**: `app_state.feemarket.params`
-
-**Default**: EIP-1559 enabled with 1 gwei base fee
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Dynamic fee pricing mechanism based on EIP-1559, controlling how transaction fees adjust based on network congestion |
+| **Genesis Location** | `app_state.feemarket.params` |
+| **Default** | EIP-1559 enabled with 1 gwei base fee |
 
 <Info>
 **Learn More**:
@@ -1504,13 +1630,13 @@ jq '.app_state.feemarket.params = {
 
 ### EVM Access Control
 
-<Expandable title="EVM Access Control" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Permissions for deploying and calling smart contracts.
-
-**Genesis Location**: `app_state.evm.params.access_control`
-
-**Default**: Permissionless (anyone can deploy and call contracts)
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Permissions for deploying and calling smart contracts |
+| **Genesis Location** | `app_state.evm.params.access_control` |
+| **Default** | Permissionless (anyone can deploy and call contracts) |
 
 <Tabs>
 <Tab title="Permissionless (Recommended)">
@@ -1590,11 +1716,12 @@ jq '.app_state.evm.params.access_control.create = {
 
 ### Staking Parameters
 
-<Expandable title="Staking Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Staking module behavior, including bond denom, unbonding time, and validator set size.
-
-**Genesis Location**: `app_state.staking.params`
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Staking module behavior, including bond denom, unbonding time, and validator set size |
+| **Genesis Location** | `app_state.staking.params` |
 
 <Tabs>
 <Tab title="Quick Configuration">
@@ -1679,11 +1806,12 @@ jq '.app_state.staking.params.max_validators = 100' \
 
 ### Slashing Parameters
 
-<Expandable title="Slashing Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Thresholds and penalties for validator downtime or misbehavior.
-
-**Genesis Location**: `app_state.slashing.params`
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Thresholds and penalties for validator downtime or misbehavior |
+| **Genesis Location** | `app_state.slashing.params` |
 
 <Tabs>
 <Tab title="Standard Configuration">
@@ -1771,11 +1899,12 @@ jq '.app_state.slashing.params = {
 
 ### Governance Parameters
 
-<Expandable title="Governance Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Settings for on-chain governance including voting periods, quorum, and deposit requirements.
-
-**Genesis Location**: `app_state.gov.params`
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Settings for on-chain governance including voting periods, quorum, and deposit requirements |
+| **Genesis Location** | `app_state.gov.params` |
 
 <Tabs>
 <Tab title="Standard Configuration">
@@ -1864,11 +1993,12 @@ jq '.app_state.gov.params.expedited_voting_period = "86400s"' \
 
 ### Mint Parameters
 
-<Expandable title="Mint Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Token inflation and minting schedule.
-
-**Genesis Location**: `app_state.mint.params`
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Token inflation and minting schedule |
+| **Genesis Location** | `app_state.mint.params` |
 
 <Tabs>
 <Tab title="Configuration">
@@ -1917,11 +2047,12 @@ jq '.app_state.mint.params = {
 
 ### Distribution Parameters
 
-<Expandable title="Distribution Parameters" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-**Description**: Token / reward distribution including community tax and proposer rewards.
-
-**Genesis Location**: `app_state.distribution.params`
+| Parameter | Details |
+|-----------|---------|
+| **Description** | Token / reward distribution including community tax and proposer rewards |
+| **Genesis Location** | `app_state.distribution.params` |
 
 <Tabs>
 <Tab title="Configuration">
@@ -1958,9 +2089,12 @@ jq '.app_state.distribution.params = {
 
 ### Initial Accounts and Validators
 
-<Expandable title="Initial Accounts and Validators" defaultOpen={false}>
+<Expandable title="Full Instructions" defaultOpen={false}>
 
-After configuring all genesis parameters, add initial accounts and collect validator gentxs.
+| Overview | Details |
+|----------|---------|
+| **When** | After configuring all genesis parameters |
+| **Purpose** | Add initial accounts and collect validator gentxs |
 
 <Tabs>
 <Tab title="Add Genesis Accounts">

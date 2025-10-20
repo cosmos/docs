@@ -1,0 +1,3502 @@
+---
+title: "Comprehensive Configuration Reference"
+description: "Complete technical encyclopedia of all configurable parameters in Cosmos EVM - pre-genesis source code settings, genesis parameters, runtime configuration, and node-level parameters."
+---
+
+This reference provides comprehensive documentation for every configurable parameter in Cosmos EVM chains. Parameters are organized by configuration phase and category with complete technical details, defaults, and source code locations.
+
+<Info>
+**Related Documentation:**
+- [Pre-Genesis & Genesis Setup](/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup) - Step-by-step configuration guide
+- [Runtime Configuration & Launch](/docs/evm/next/documentation/getting-started/build-a-chain/runtime-and-launch) - Network launch procedures
+- [Configuration Reference](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-reference) - Quick reference with commands and examples
+</Info>
+
+<Warning>
+This is a technical reference. For step-by-step configuration instructions, see the [Pre-Genesis & Genesis Setup](/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup) guide.
+</Warning>
+
+## Configuration Phase Overview
+
+Cosmos EVM configuration occurs in four distinct phases:
+
+<CardGroup cols={2}>
+<Card title="1. Pre-Genesis (Source Code)" icon="code">
+Parameters compiled into binary before `init`
+- Binary name
+- Bech32 prefix
+- BIP44 coin type
+- EVM chain ID
+- Default denominations
+</Card>
+
+<Card title="2. Genesis Configuration" icon="file-code">
+Parameters set in `genesis.json`
+- Module parameters
+- Initial accounts
+- Validator genesis transactions
+- Network consensus rules
+</Card>
+
+<Card title="3. Runtime Configuration" icon="server">
+Node-specific settings in TOML files
+- `app.toml` - Application settings
+- `config.toml` - CometBFT settings
+- `client.toml` - CLI client settings
+</Card>
+
+<Card title="4. On-Chain Governance" icon="users">
+Parameters changeable after genesis
+- Module parameters via proposals
+- Access control modifications
+- Precompile activation/deactivation
+</Card>
+</CardGroup>
+
+---
+
+## Pre-Genesis Parameters (Source Code)
+
+These parameters must be configured in source code **before** building your binary and running `yourchain init`. Changes after genesis require rebuilding the binary and coordinating a hard fork.
+
+### Binary Name
+
+<Expandable title="Complete Details">
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Name of your compiled blockchain executable |
+| **Default** | `evmd` |
+| **File Locations** | Directory name, all Go imports, Makefile |
+| **When to Configure** | Before first build |
+| **Can Change After Genesis** | Yes, but requires coordinated binary replacement |
+| **Source** | Repository-wide (all files) |
+
+**What It Controls:**
+- Binary executable name (`./build/yourchain`)
+- Installation location (`$GOPATH/bin/yourchain`)
+- CLI command prefix (`yourchain start`, `yourchain init`, etc.)
+- Module import paths
+- Home directory default (`~/.yourchain`)
+
+**Files Affected:**
+- Go package names
+- Import paths in `.go` files
+- Module declaration in `go.mod`
+- Makefile build targets
+- Shell scripts and documentation
+- Docker configurations
+
+**Configuration Method:**
+```bash expandable
+# Rename directory
+mv evmd yourchain
+mv yourchain/cmd/evmd yourchain/cmd/yourchain
+
+# Update all references
+find . -type f -name "*.go" -exec sed -i 's/evmd/yourchain/g' {} \;
+find . -type f -name "*.go" -exec sed -i 's/\.evmd/.yourchain/g' {} \;
+
+# Update go.mod module path
+# Edit: module github.com/your-org/your-chain/yourchain
+
+# Rebuild
+go mod tidy
+make build
+```
+
+**Validation:**
+```bash expandable
+# Verify binary name
+ls ./build/
+# Should show: yourchain
+
+# Verify it runs
+./build/yourchain version
+```
+
+</Expandable>
+
+### Bech32 Address Prefix
+
+<Expandable title="Complete Details">
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Address format prefix for all Cosmos addresses on your chain |
+| **Default** | `cosmos` |
+| **File Location** | [`config/config.go:62`](https://github.com/cosmos/evm/blob/main/config/config.go#L62) |
+| **When to Configure** | Before `yourchain init` |
+| **Can Change After Genesis** | No (requires hard fork and state migration) |
+| **Format** | Lowercase alphanumeric string |
+
+**What It Controls:**
+- Account addresses: `yourchain1...`
+- Account public keys: `yourchainpub1...`
+- Validator operator addresses: `yourchainvaloper1...`
+- Validator operator public keys: `yourchainvaloperpub1...`
+- Consensus addresses: `yourchainvalcons1...`
+- Consensus public keys: `yourchainvalconspub1...`
+
+**Configuration Method:**
+Edit `config/config.go`:
+```go expandable
+const (
+    // Bech32Prefix defines the Bech32 prefix for all accounts
+    Bech32Prefix = "yourchain"
+
+    // Derived prefixes (do not modify these)
+    Bech32PrefixAccAddr = Bech32Prefix
+    Bech32PrefixAccPub = Bech32Prefix + sdk.PrefixPublic
+    Bech32PrefixValAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator
+    Bech32PrefixValPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixOperator + sdk.PrefixPublic
+    Bech32PrefixConsAddr = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus
+    Bech32PrefixConsPub = Bech32Prefix + sdk.PrefixValidator + sdk.PrefixConsensus + sdk.PrefixPublic
+)
+```
+
+**Rebuild Required:**
+```bash expandable
+make build
+./build/yourchain init test --chain-id test-1
+./build/yourchain keys add testkey --keyring-backend test
+# Verify address starts with yourchain1...
+```
+
+**Naming Guidelines:**
+- Use lowercase only
+- Keep it short (3-10 characters)
+- Make it unique and recognizable
+- Avoid conflicts with existing chains
+
+**Examples:**
+- `cosmos` - Cosmos Hub
+- `osmosis` - Osmosis DEX
+- `evmos` - Evmos (EVM on Cosmos)
+- `juno` - Juno Network
+- `yourchain` - Your custom chain
+
+</Expandable>
+
+### BIP44 Coin Type
+
+<Expandable title="Complete Details">
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | HD wallet derivation path coin type per BIP-44 |
+| **Default** | `60` (Ethereum) |
+| **File Location** | [`crypto/hd/hdpath.go:9`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L9) |
+| **When to Configure** | Before `yourchain init` |
+| **Can Change After Genesis** | No (breaks existing wallets) |
+| **Standard** | [SLIP-0044](https://github.com/satoshilabs/slips/blob/master/slip-0044.md) |
+
+**What It Controls:**
+- HD wallet key derivation path: `m/44'/COIN_TYPE'/0'/0/0`
+- Wallet compatibility (MetaMask, Ledger, Keplr)
+- Key generation algorithm
+
+**Configuration Method:**
+Edit `crypto/hd/hdpath.go`:
+```go expandable
+var (
+    // Bip44CoinType satisfies EIP84 for Ethereum compatibility
+    // OR use a registered unique coin type
+    Bip44CoinType uint32 = 60  // Change this value
+
+    // BIP44HDPath is derived from coin type
+    BIP44HDPath = fmt.Sprintf("m/44'/%d'/0'/0/0", Bip44CoinType)
+)
+```
+
+**Common Values:**
+| Coin Type | Chain | Use Case |
+|-----------|-------|----------|
+| `60` | Ethereum | **EVM chains (recommended)** - MetaMask compatible |
+| `118` | Cosmos Hub | Traditional Cosmos SDK chains |
+| `330` | Terra | Terra ecosystem |
+| `529` | Secret Network | Secret Network |
+| `852` | Desmos | Desmos Network |
+
+**Recommendations:**
+- **EVM-compatible chains:** Use `60` for maximum wallet compatibility
+- **Cosmos-focused chains:** Register unique value via SLIP-0044
+- **Hybrid chains:** Use `60` if EVM is primary interface
+
+**Registration Process:**
+1. Check [SLIP-0044 registry](https://github.com/satoshilabs/slips/blob/master/slip-0044.md)
+2. Submit PR to register your coin type
+3. Wait for approval before mainnet launch
+4. Update code with registered number
+
+**Important Notes:**
+- Changing this breaks wallet compatibility
+- Users cannot recover keys with different coin type
+- Hardware wallet support depends on coin type
+- Consider ecosystem compatibility
+
+</Expandable>
+
+### EVM Chain ID
+
+<Expandable title="Complete Details">
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | EIP-155 replay protection chain ID for Ethereum transactions |
+| **Default** | `262144` |
+| **File Location** | [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L78) |
+| **When to Configure** | Before building binary |
+| **Can Change After Genesis** | **No** - breaks transaction replay protection |
+| **Format** | Unsigned integer (uint64) |
+| **Standard** | [EIP-155](https://eips.ethereum.org/EIPS/eip-155) |
+
+**What It Controls:**
+- Transaction signature verification
+- Replay attack protection
+- Wallet network configuration
+- MetaMask/hardware wallet display
+- `eth_chainId` JSON-RPC response
+
+**Configuration Method:**
+Edit `config/config.go`:
+```go expandable
+const (
+    // EVMChainID defines the EIP-155 replay-protection chain ID
+    EVMChainID = 123456  // Change to your unique chain ID
+)
+```
+
+**Build and Verify:**
+```bash expandable
+make build
+./build/yourchain init test --chain-id test-1
+grep 'evm-chain-id' ~/.yourchain/config/app.toml
+# Should show: evm-chain-id = 123456
+```
+
+**Choosing a Chain ID:**
+
+**Reserved IDs (Do Not Use):**
+- `1` - Ethereum Mainnet
+- `137` - Polygon
+- `56` - BNB Chain
+- `43114` - Avalanche C-Chain
+- `10` - Optimism
+- `42161` - Arbitrum One
+- `8453` - Base
+- See [chainlist.org](https://chainlist.org) for complete list
+
+**ID Ranges:**
+- `1-999`: Reserved for major networks
+- `1000-99999`: Public production chains
+- `100000+`: Private/test networks
+
+**Selection Process:**
+1. Visit [chainlist.org](https://chainlist.org)
+2. Search to verify ID is not taken
+3. For mainnet: Submit to chain registry
+4. For testnet/devnet: Use any unused high number
+5. Document publicly before launch
+
+**MetaMask Configuration:**
+Users will configure with this ID:
+```javascript expandable
+{
+  chainId: '0x1E240',  // Hex of your chain ID
+  chainName: 'My Chain',
+  rpcUrls: ['https://rpc.mychain.network'],
+  nativeCurrency: {
+    name: 'Token',
+    symbol: 'TKN',
+    decimals: 18
+  },
+  blockExplorerUrls: ['https://explorer.mychain.network']
+}
+```
+
+**Critical Warnings:**
+- **Never change after genesis** - breaks all signed transactions
+- **Must be unique** - collision causes replay attacks
+- **Register before mainnet** - avoid conflicts
+- **Document prominently** - users need it for wallets
+
+</Expandable>
+
+### Default Denomination in Source
+
+<Expandable title="Complete Details">
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Default token denominations compiled into configuration templates |
+| **Default** | `aatom` (extended), `uatom` (base), `atom` (display) |
+| **When to Configure** | Before `yourchain init` |
+| **Can Change After Genesis** | Yes (in genesis.json), but defaults are already written to generated files |
+
+**What It Controls:**
+- Default values in generated `app.toml`
+- Default values in generated `genesis.json`
+- Module parameter defaults
+- Configuration file templates
+
+**Files to Modify:**
+
+**1. Server Config Template**
+`server/config/migration/v0.50-app.toml:11`
+```toml expandable
+# Change from:
+minimum-gas-prices = "0aatom"
+
+# To:
+minimum-gas-prices = "0atoken"
+```
+**Source:** [`server/config/migration/v0.50-app.toml:11`](https://github.com/cosmos/evm/blob/main/server/config/migration/v0.50-app.toml#L11)
+
+**2. EVM Module Defaults**
+`x/vm/types/params.go:21-25`
+```go expandable
+// Change from:
+var (
+    DefaultEVMDenom = "uatom"
+    DefaultEVMExtendedDenom = "aatom"
+    DefaultEVMDisplayDenom = "atom"
+)
+
+// To (18 decimals):
+var (
+    DefaultEVMDenom = "atoken"
+    DefaultEVMExtendedDenom = "atoken"
+    DefaultEVMDisplayDenom = "token"
+)
+
+// Or (6 decimals):
+var (
+    DefaultEVMDenom = "utoken"
+    DefaultEVMExtendedDenom = "atoken"
+    DefaultEVMDisplayDenom = "token"
+)
+```
+**Source:** [`x/vm/types/params.go:21-25`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21-L25)
+
+**3. Example Constants**
+`config/constants.go:5-8`
+```go expandable
+// Change from:
+const (
+    ExampleChainDenom = "aatom"
+    ExampleDisplayDenom = "atom"
+)
+
+// To:
+const (
+    ExampleChainDenom = "atoken"
+    ExampleDisplayDenom = "token"
+)
+```
+**Source:** [`config/constants.go:5-8`](https://github.com/cosmos/evm/blob/main/config/constants.go#L5-L8)
+
+**Token Denomination Guidelines:**
+
+**For 18-Decimal Tokens:**
+- Base denom: `atoken` (atto-prefix, 10^-18)
+- Extended denom: `atoken` (same as base)
+- Display denom: `token`
+- Example: `1 token = 1,000,000,000,000,000,000 atoken`
+
+**For 6-Decimal Tokens:**
+- Base denom: `utoken` (micro-prefix, 10^-6)
+- Extended denom: `atoken` (for EVM, 10^-18)
+- Display denom: `token`
+- Example: `1 token = 1,000,000 utoken = 1,000,000,000,000,000,000 atoken (in EVM)`
+
+**SI Metric Prefixes:**
+| Prefix | Symbol | Decimals | Example | Common Use |
+|--------|--------|----------|---------|------------|
+| atto | `a` | 18 | `atoken` | EVM chains |
+| femto | `f` | 15 | `ftoken` | Rare |
+| pico | `p` | 12 | `ptoken` | Rare |
+| nano | `n` | 9 | `ntoken` | Some Cosmos chains |
+| micro | `u` | 6 | `uatom` | **Cosmos standard** |
+| milli | `m` | 3 | `mtoken` | Rare |
+
+**Rebuild and Verify:**
+```bash expandable
+make build
+./build/yourchain init test --chain-id test-1
+grep "minimum-gas-prices" ~/.yourchain/config/app.toml
+jq '.app_state.evm.params.evm_denom' ~/.yourchain/config/genesis.json
+```
+
+</Expandable>
+
+---
+
+## Genesis Parameters (genesis.json)
+
+These parameters are configured in `genesis.json` after running `yourchain init`. They can be modified until the genesis file is distributed to validators. After network launch, most can only be changed through governance proposals.
+
+<Note>
+Genesis file location: `~/.yourchain/config/genesis.json`
+</Note>
+
+### Root-Level Parameters
+
+<Expandable title="Complete Details">
+
+**Cosmos Chain ID**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Unique string identifier for the blockchain |
+| **Genesis Location** | Root: `chain_id` |
+| **Default** | User-defined (set during `init`) |
+| **Format** | String |
+| **Can Change After Genesis** | Yes (via coordinated upgrade/hard fork) |
+
+```json expandable
+{
+  "chain_id": "mychain-1"
+}
+```
+
+**Naming Conventions:**
+- Mainnet: `mychain-1`, `mychain-2` (increment for major upgrades)
+- Testnet: `mychain-testnet-1`
+- Devnet: `mychain-devnet-1`, `test-1`
+
+**Important for:**
+- IBC client identification
+- Transaction signing
+- CometBFT consensus
+- Client configuration
+
+---
+
+**Genesis Time**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | UTC timestamp when the chain starts producing blocks |
+| **Genesis Location** | Root: `genesis_time` |
+| **Default** | Auto-generated during `init` |
+| **Format** | RFC3339 timestamp |
+
+```json expandable
+{
+  "genesis_time": "2024-12-01T00:00:00Z"
+}
+```
+
+**Configuration:**
+```bash expandable
+jq '.genesis_time = "2024-12-01T00:00:00Z"' genesis.json > tmp && mv tmp genesis.json
+```
+
+**Timing Recommendations:**
+- Testnet: 1-2 hours ahead
+- Mainnet: 24-48 hours ahead
+- Local dev: Past time (starts immediately)
+
+---
+
+**Initial Height**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Starting block height |
+| **Genesis Location** | Root: `initial_height` |
+| **Default** | `"1"` |
+| **Format** | String (numeric) |
+
+```json expandable
+{
+  "initial_height": "1"
+}
+```
+
+**Use Cases:**
+- Usually `"1"` for new chains
+- Higher for chain upgrades/migrations
+- Maintains block height continuity
+
+</Expandable>
+
+### VM Module Parameters (x/vm)
+
+<Expandable title="Complete Details">
+
+**evm_denom**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Bank denomination used for EVM gas payments |
+| **Genesis Location** | `app_state.evm.params.evm_denom` |
+| **Default** | `"aatom"` (from source defaults) |
+| **Format** | String |
+| **Can Change After Genesis** | Via governance |
+| **Source** | [`x/vm/types/params.go:21`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L21) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "evm_denom": "atoken"
+      }
+    }
+  }
+}
+```
+
+**Configuration:**
+```bash expandable
+jq '.app_state.evm.params.evm_denom = "atoken"' genesis.json > tmp && mv tmp genesis.json
+```
+
+**Must Match:**
+- `app_state.staking.params.bond_denom`
+- `app_state.mint.params.mint_denom`
+- `app_state.gov.params.min_deposit[0].denom`
+- `app_state.bank.denom_metadata[0].base`
+
+---
+
+**extended_denom_options**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Extended denomination for non-18 decimal tokens (enables PreciseBank conversion) |
+| **Genesis Location** | `app_state.evm.params.extended_denom_options` |
+| **Default** | `null` (not used for 18-decimal tokens) |
+| **Required For** | 6-decimal tokens, 8-decimal tokens, any non-18 decimal precision |
+| **Source** | [`x/vm/types/params.go:76`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L76) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "evm_denom": "utoken",
+        "extended_denom_options": {
+          "extended_denom": "atoken"
+        }
+      }
+    }
+  }
+}
+```
+
+**When to Use:**
+- ✅ **Required** for 6-decimal tokens (e.g., `utoken`)
+- ✅ **Required** for 8-decimal tokens (e.g., `sats`)
+- ❌ **Not needed** for 18-decimal tokens (e.g., `atoken`)
+
+**Example (6 decimals):**
+```bash expandable
+jq '.app_state.evm.params.extended_denom_options = {
+  "extended_denom": "atoken"
+}' genesis.json > tmp && mv tmp genesis.json
+```
+
+**Important:**
+- Requires `x/precisebank` module in `app.go`
+- Provides 18-decimal EVM representation
+- Handles fractional conversions automatically
+- See [Precision Handling](/docs/evm/next/documentation/concepts/precision-handling)
+
+---
+
+**history_serve_window**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Number of blocks to keep historical state for queries |
+| **Genesis Location** | `app_state.evm.params.history_serve_window` |
+| **Default** | `8192` blocks (same as EIP-2935) |
+| **Format** | Integer |
+| **Source** | [`x/vm/types/params.go:50`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L50) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "history_serve_window": 8192
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `0` = Unlimited (keep all historical state, growing disk usage)
+- `8192` = ~18 hours at 8s blocks (recommended)
+- `86400` = ~8 days at 8s blocks
+- Higher = More disk space, better historical query support
+
+**Trade-offs:**
+- Higher value → More disk space, supports older queries
+- Lower value → Less disk space, limited historical data
+- `0` → Archive node, maximum compatibility
+
+---
+
+**extra_eips**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Additional Ethereum Improvement Proposals to enable beyond default EVM configuration |
+| **Genesis Location** | `app_state.evm.params.extra_eips` |
+| **Default** | `[]` (empty - use standard EVM feature set) |
+| **Format** | Array of integers |
+| **Source** | [`x/vm/types/params.go:33`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L33) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "extra_eips": []
+      }
+    }
+  }
+}
+```
+
+**When to Use:**
+- Most chains should use empty array `[]`
+- Add specific EIP numbers only if you need features not in default config
+- Example: `[1153, 3855]` to enable specific EIPs
+
+**Example (enabling additional EIPs):**
+```json expandable
+{
+  "extra_eips": [1153]  // Enable transient storage opcodes
+}
+```
+
+**Validation:**
+- EIPs must be activatable via go-ethereum
+- Invalid EIPs cause genesis validation failure
+- See `vm.ValidEip()` for allowed values
+
+---
+
+**active_static_precompiles**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | List of enabled precompiled contracts exposing Cosmos SDK functionality to EVM |
+| **Genesis Location** | `app_state.evm.params.active_static_precompiles` |
+| **Default** | `[]` (empty - no precompiles enabled) |
+| **Format** | Array of hex addresses (must be sorted) |
+| **Can Change After Genesis** | Via governance |
+| **Source** | [`x/vm/types/precompiles.go:22-32`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go#L22-L32) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "active_static_precompiles": [
+          "0x0000000000000000000000000000000000000100",
+          "0x0000000000000000000000000000000000000400",
+          "0x0000000000000000000000000000000000000800",
+          "0x0000000000000000000000000000000000000801",
+          "0x0000000000000000000000000000000000000802",
+          "0x0000000000000000000000000000000000000803",
+          "0x0000000000000000000000000000000000000804",
+          "0x0000000000000000000000000000000000000805",
+          "0x0000000000000000000000000000000000000806"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Available Precompiles:**
+
+| Address | Name | Purpose |
+|---------|------|---------|
+| `0x0100` | P256 | Cryptographic operations for Web3 auth |
+| `0x0400` | Bech32 | Cosmos ↔ Ethereum address conversion |
+| `0x0800` | Staking | Validator staking operations |
+| `0x0801` | Distribution | Reward distribution and claiming |
+| `0x0802` | ICS20 | IBC token transfers |
+| `0x0803` | Vesting | Token vesting operations |
+| `0x0804` | Bank | Bank module operations |
+| `0x0805` | Governance | Submit/vote on proposals |
+| `0x0806` | Slashing | Slashing queries |
+
+**Configuration Examples:**
+
+Enable all precompiles:
+```bash expandable
+jq '.app_state.evm.params.active_static_precompiles = [
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000400",
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000801",
+  "0x0000000000000000000000000000000000000802",
+  "0x0000000000000000000000000000000000000803",
+  "0x0000000000000000000000000000000000000804",
+  "0x0000000000000000000000000000000000000805",
+  "0x0000000000000000000000000000000000000806"
+]' genesis.json > tmp && mv tmp genesis.json
+```
+
+Enable only specific precompiles:
+```json expandable
+{
+  "active_static_precompiles": [
+    "0x0000000000000000000000000000000000000100",  // P256
+    "0x0000000000000000000000000000000000000400",  // Bech32
+    "0x0000000000000000000000000000000000000800",  // Staking
+    "0x0000000000000000000000000000000000000804"   // Bank
+  ]
+}
+```
+
+**Important:**
+- Array must be sorted in ascending order (validation requirement)
+- Can enable/disable via governance after genesis
+- See [Precompiles Overview](/docs/evm/next/documentation/smart-contracts/precompiles/overview)
+
+---
+
+**evm_channels**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | List of IBC channels connecting to EVM chains (for special handling) |
+| **Genesis Location** | `app_state.evm.params.evm_channels` |
+| **Default** | `[]` (empty) |
+| **Format** | Array of IBC channel IDs |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "evm_channels": []
+      }
+    }
+  }
+}
+```
+
+**Use Cases:**
+- Special handling for IBC transfers to/from EVM chains
+- Coordinate with IBC module configuration
+- Usually empty for new chains
+
+**Example:**
+```json expandable
+{
+  "evm_channels": ["channel-0", "channel-5"]
+}
+```
+
+---
+
+**access_control**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Permissions for deploying and calling smart contracts |
+| **Genesis Location** | `app_state.evm.params.access_control` |
+| **Default** | Permissionless (anyone can deploy and call) |
+| **Can Change After Genesis** | Via governance |
+| **Source** | [`x/vm/types/params.go:160-165`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L160-L165) |
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "params": {
+        "access_control": {
+          "create": {
+            "access_type": 0,
+            "access_control_list": []
+          },
+          "call": {
+            "access_type": 0,
+            "access_control_list": []
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Access Types:**
+
+| Type | Value | Behavior | List Usage |
+|------|-------|----------|-----------|
+| Permissionless | `0` | Anyone can perform action | Ignored |
+| Restricted | `1` | Block addresses in list | Blocklist |
+| Permissioned | `2` | Only addresses in list | Allowlist |
+
+**Examples:**
+
+Permissionless (default):
+```json expandable
+{
+  "access_control": {
+    "create": {
+      "access_type": 0,
+      "access_control_list": []
+    },
+    "call": {
+      "access_type": 0,
+      "access_control_list": []
+    }
+  }
+}
+```
+
+Permissioned deployment, open calls:
+```json expandable
+{
+  "access_control": {
+    "create": {
+      "access_type": 2,
+      "access_control_list": [
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      ]
+    },
+    "call": {
+      "access_type": 0,
+      "access_control_list": []
+    }
+  }
+}
+```
+
+Restricted (blocklist):
+```json expandable
+{
+  "access_control": {
+    "create": {
+      "access_type": 1,
+      "access_control_list": [
+        "0xbadaddr1234567890123456789012345678901234"
+      ]
+    },
+    "call": {
+      "access_type": 0,
+      "access_control_list": []
+    }
+  }
+}
+```
+
+</Expandable>
+
+### FeeMarket Module Parameters (x/feemarket)
+
+<Expandable title="Complete Details">
+
+The feemarket module implements EIP-1559 dynamic fee pricing for EVM transactions.
+
+**no_base_fee**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Disables EIP-1559 base fee mechanism |
+| **Genesis Location** | `app_state.feemarket.params.no_base_fee` |
+| **Default** | `false` (EIP-1559 enabled) |
+| **Format** | Boolean |
+| **Source** | [`x/feemarket/types/params.go:21`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L21) |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "no_base_fee": false
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `false` = EIP-1559 enabled (recommended for EVM chains)
+- `true` = Fixed gas pricing (traditional Cosmos style)
+
+---
+
+**base_fee**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Initial base fee per gas in wei |
+| **Genesis Location** | `app_state.feemarket.params.base_fee` |
+| **Default** | `"1000000000"` (1 gwei) |
+| **Format** | String (decimal) |
+| **Source** | [`x/feemarket/types/params.go:13`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L13) |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "base_fee": "1000000000"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"100000000"` = 0.1 gwei (low fee chains)
+- `"1000000000"` = 1 gwei (standard, Ethereum-like)
+- `"10000000000"` = 10 gwei (higher fee chains)
+
+---
+
+**base_fee_change_denominator**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Controls how quickly base fee adjusts (max % change per block = 1/denominator) |
+| **Genesis Location** | `app_state.feemarket.params.base_fee_change_denominator` |
+| **Default** | `8` (±12.5% max change per block) |
+| **Format** | Unsigned 32-bit integer |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "base_fee_change_denominator": 8
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `8` = ±12.5% max change (Ethereum standard)
+- `50` = ±2% max change (slower adjustment)
+- Lower denominator = faster price adjustment
+- Higher denominator = slower, smoother adjustment
+
+---
+
+**elasticity_multiplier**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Determines gas target (target = max_gas / elasticity_multiplier) |
+| **Genesis Location** | `app_state.feemarket.params.elasticity_multiplier` |
+| **Default** | `2` (target is 50% of max gas) |
+| **Format** | Unsigned 32-bit integer |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "elasticity_multiplier": 2
+      }
+    }
+  }
+}
+```
+
+**How It Works:**
+- Block gas usage > target → base fee increases
+- Block gas usage < target → base fee decreases
+- `2` = target is 50% of max block gas (standard)
+
+---
+
+**min_gas_price**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Network-wide minimum gas price floor |
+| **Genesis Location** | `app_state.feemarket.params.min_gas_price` |
+| **Default** | `"0"` (no floor) |
+| **Format** | String (decimal) |
+| **Source** | [`x/feemarket/types/params.go:17`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L17) |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "min_gas_price": "0"
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `"0"` = No minimum floor (standard EIP-1559)
+- `"500000000"` = 0.5 gwei minimum
+- Prevents base fee from dropping too low
+
+---
+
+**min_gas_multiplier**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum gas price as fraction of base fee |
+| **Genesis Location** | `app_state.feemarket.params.min_gas_multiplier` |
+| **Default** | `"0.5"` (50% of base fee) |
+| **Format** | String (decimal, 0-1) |
+| **Source** | [`x/feemarket/types/params.go:15`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L15) |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "min_gas_multiplier": "0.5"
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `"0.5"` = 50% of base fee (standard)
+- `"1.0"` = 100% of base fee (stricter)
+- Must be between 0 and 1
+
+---
+
+**enable_height**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Block height to activate EIP-1559 |
+| **Genesis Location** | `app_state.feemarket.params.enable_height` |
+| **Default** | `0` (enabled from genesis) |
+| **Format** | Integer (int64) |
+| **Source** | [`x/feemarket/types/params.go:19`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L19) |
+
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "enable_height": 0
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `0` = Enabled from genesis (recommended)
+- `> 0` = Activate at specific block height
+
+**Complete Example:**
+```json expandable
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "no_base_fee": false,
+        "base_fee": "1000000000",
+        "base_fee_change_denominator": 8,
+        "elasticity_multiplier": 2,
+        "min_gas_price": "0",
+        "min_gas_multiplier": "0.5",
+        "enable_height": 0
+      }
+    }
+  }
+}
+```
+
+See [EIP-1559 Fee Market](/docs/evm/next/documentation/concepts/eip-1559-feemarket) for detailed explanation.
+
+</Expandable>
+
+### ERC20 Module Parameters (x/erc20)
+
+<Expandable title="Complete Details">
+
+The ERC20 module implements Single Token Representation v2 (STRv2), providing unified token handling across Cosmos and EVM.
+
+**enable_erc20**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Global enable/disable for ERC20 module functionality |
+| **Genesis Location** | `app_state.erc20.params.enable_erc20` |
+| **Default** | `true` |
+| **Format** | Boolean |
+| **Can Change After Genesis** | Via governance |
+| **Source** | [`x/erc20/types/params.go:26`](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go#L26) |
+
+```json expandable
+{
+  "app_state": {
+    "erc20": {
+      "params": {
+        "enable_erc20": true
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `true` = ERC20 module enabled (standard)
+- `false` = Disable all ERC20 functionality
+
+---
+
+**permissionless_registration**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Allow anyone to register new token pairs |
+| **Genesis Location** | `app_state.erc20.params.permissionless_registration` |
+| **Default** | `true` |
+| **Format** | Boolean |
+| **Can Change After Genesis** | Via governance |
+| **Source** | [`x/erc20/types/params.go:27`](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go#L27) |
+
+```json expandable
+{
+  "app_state": {
+    "erc20": {
+      "params": {
+        "permissionless_registration": true
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `true` = Anyone can register token pairs (public DeFi chains)
+- `false` = Only governance can register pairs (controlled environments)
+
+---
+
+**native_precompiles**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | List of ERC20 precompile addresses for native Cosmos tokens |
+| **Genesis Location** | `app_state.erc20.native_precompiles` |
+| **Default** | `[]` |
+| **Format** | Array of hex addresses |
+
+```json expandable
+{
+  "app_state": {
+    "erc20": {
+      "native_precompiles": [
+        "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+      ]
+    }
+  }
+}
+```
+
+**Standard Native Token Address:**
+- `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE` = Native token precompile
+
+---
+
+**token_pairs**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Registered token pairs between Cosmos denoms and ERC20 addresses |
+| **Genesis Location** | `app_state.erc20.token_pairs` |
+| **Default** | `[]` |
+| **Format** | Array of token pair objects |
+
+```json expandable
+{
+  "app_state": {
+    "erc20": {
+      "token_pairs": [
+        {
+          "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "denom": "atoken",
+          "enabled": true,
+          "contract_owner": 1
+        }
+      ]
+    }
+  }
+}
+```
+
+**Token Pair Fields:**
+- `erc20_address` - ERC20 contract address (or precompile address)
+- `denom` - Cosmos bank denomination
+- `enabled` - Whether the pair is active
+- `contract_owner`:
+  - `0` = External owner
+  - `1` = Module owner (standard for native tokens)
+
+**Complete Configuration Example:**
+```json expandable
+{
+  "app_state": {
+    "erc20": {
+      "params": {
+        "enable_erc20": true,
+        "permissionless_registration": true
+      },
+      "native_precompiles": [
+        "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+      ],
+      "token_pairs": [
+        {
+          "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "denom": "atoken",
+          "enabled": true,
+          "contract_owner": 1
+        }
+      ]
+    }
+  }
+}
+```
+
+See [Single Token Representation](/docs/evm/next/documentation/concepts/single-token-representation) and [ERC20 Module](/docs/evm/next/documentation/cosmos-sdk/modules/erc20) for details.
+
+</Expandable>
+
+### Bank Module Parameters
+
+<Expandable title="Complete Details">
+
+**denom_metadata**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Token denomination metadata including units, decimals, and display properties |
+| **Genesis Location** | `app_state.bank.denom_metadata` |
+| **Default** | `[]` |
+| **Format** | Array of metadata objects |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "description": "The native staking and gas token",
+          "denom_units": [
+            {
+              "denom": "atoken",
+              "exponent": 0,
+              "aliases": ["attotoken"]
+            },
+            {
+              "denom": "token",
+              "exponent": 18,
+              "aliases": []
+            }
+          ],
+          "base": "atoken",
+          "display": "token",
+          "name": "My Token",
+          "symbol": "TKN",
+          "uri": "",
+          "uri_hash": ""
+        }
+      ]
+    }
+  }
+}
+```
+
+**Fields:**
+- `description` - Human-readable description
+- `denom_units` - Array of denomination units
+  - `denom` - Unit denomination
+  - `exponent` - Decimal places (0 for base, 6 or 18 for display)
+  - `aliases` - Alternative names
+- `base` - Smallest unit stored on-chain
+- `display` - Human-readable unit
+- `name` - Full token name
+- `symbol` - Ticker symbol
+- `uri` - Optional metadata URI
+- `uri_hash` - Optional hash of metadata
+
+**18-Decimal Configuration:**
+```json expandable
+{
+  "denom_units": [
+    {"denom": "atoken", "exponent": 0, "aliases": ["attotoken"]},
+    {"denom": "token", "exponent": 18, "aliases": []}
+  ],
+  "base": "atoken",
+  "display": "token"
+}
+```
+
+**6-Decimal Configuration:**
+```json expandable
+{
+  "denom_units": [
+    {"denom": "utoken", "exponent": 0, "aliases": ["microtoken"]},
+    {"denom": "token", "exponent": 6, "aliases": []}
+  ],
+  "base": "utoken",
+  "display": "token"
+}
+```
+
+**Important:**
+- `base` must match all module denomination parameters
+- Determines wallet display formatting
+- Cannot have multiple metadata entries with same base denom
+
+</Expandable>
+
+### Staking Module Parameters
+
+<Expandable title="Complete Details">
+
+**bond_denom**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Denomination accepted for staking |
+| **Genesis Location** | `app_state.staking.params.bond_denom` |
+| **Default** | `"stake"` (Cosmos SDK default) |
+| **Format** | String |
+| **Can Change After Genesis** | Via governance (but not recommended) |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "bond_denom": "atoken"
+      }
+    }
+  }
+}
+```
+
+**Must Match:**
+- `app_state.evm.params.evm_denom`
+- `app_state.mint.params.mint_denom`
+- `app_state.bank.denom_metadata[0].base`
+
+---
+
+**unbonding_time**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Duration tokens remain locked after unstaking |
+| **Genesis Location** | `app_state.staking.params.unbonding_time` |
+| **Default** | `"1814400s"` (21 days) |
+| **Format** | Duration string (Go duration format) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "unbonding_time": "1814400s"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"120s"` = 2 minutes (testing only)
+- `"86400s"` = 1 day
+- `"604800s"` = 7 days
+- `"1814400s"` = 21 days (Cosmos standard)
+- `"2419200s"` = 28 days
+
+**Security Considerations:**
+- Longer = More secure (validators accountable for longer period)
+- Shorter = Better UX (faster liquidity)
+- During unbonding, tokens can still be slashed
+
+---
+
+**max_validators**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum number of validators in active set |
+| **Genesis Location** | `app_state.staking.params.max_validators` |
+| **Default** | `100` |
+| **Format** | Unsigned 32-bit integer |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "max_validators": 100
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `50` - Smaller validator set (faster consensus)
+- `100` - Cosmos Hub standard
+- `125`, `150`, `175` - Larger sets (more decentralized)
+
+**Trade-offs:**
+- Higher = More decentralized but potentially slower
+- Lower = Faster consensus but more centralized
+
+---
+
+**max_entries**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum concurrent unbonding/redelegation operations per delegator-validator pair |
+| **Genesis Location** | `app_state.staking.params.max_entries` |
+| **Default** | `7` |
+| **Format** | Unsigned 32-bit integer |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "max_entries": 7
+      }
+    }
+  }
+}
+```
+
+**Purpose:**
+- Prevents spam on unbonding queue
+- Limits simultaneous operations
+- Cosmos SDK standard is `7`
+
+---
+
+**historical_entries**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Number of historical validator set entries to keep |
+| **Genesis Location** | `app_state.staking.params.historical_entries` |
+| **Default** | `10000` |
+| **Format** | Unsigned 32-bit integer |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "historical_entries": 10000
+      }
+    }
+  }
+}
+```
+
+**Purpose:**
+- Required for IBC light client verification
+- Higher = Better IBC compatibility, more storage
+- Lower = Less storage, limited historical queries
+
+---
+
+**min_commission_rate**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum commission rate validators must charge |
+| **Genesis Location** | `app_state.staking.params.min_commission_rate` |
+| **Default** | `"0.000000000000000000"` (0%, no minimum) |
+| **Format** | String (decimal, 18 decimal places) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "staking": {
+      "params": {
+        "min_commission_rate": "0.050000000000000000"
+      }
+    }
+  }
+}
+```
+
+**Values:**
+- `"0.000000000000000000"` = 0% (no minimum)
+- `"0.050000000000000000"` = 5% minimum
+- `"0.100000000000000000"` = 10% minimum
+
+**Purpose:**
+- Prevents race to zero on validator commissions
+- Ensures sustainable validator economics
+- Many chains enforce 5% minimum
+
+</Expandable>
+
+### Slashing Module Parameters
+
+<Expandable title="Complete Details">
+
+**signed_blocks_window**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Number of blocks to track for validator liveness |
+| **Genesis Location** | `app_state.slashing.params.signed_blocks_window` |
+| **Default** | `"10000"` |
+| **Format** | String (integer) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "signed_blocks_window": "10000"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"100"` = ~13 minutes at 8s blocks (testing)
+- `"10000"` = ~22 hours (Cosmos standard)
+- `"20000"` = ~44 hours
+
+---
+
+**min_signed_per_window**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum fraction of blocks validator must sign within window |
+| **Genesis Location** | `app_state.slashing.params.min_signed_per_window` |
+| **Default** | `"0.500000000000000000"` (50%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "min_signed_per_window": "0.500000000000000000"
+      }
+    }
+  }
+}
+```
+
+**Example:**
+- Window = 10000 blocks
+- Min signed = 0.5 (50%)
+- Validator must sign ≥ 5000 blocks
+
+---
+
+**downtime_jail_duration**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Duration validator is jailed for downtime |
+| **Genesis Location** | `app_state.slashing.params.downtime_jail_duration` |
+| **Default** | `"600s"` (10 minutes) |
+| **Format** | Duration string |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "downtime_jail_duration": "600s"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"60s"` = 1 minute
+- `"600s"` = 10 minutes (standard)
+- `"3600s"` = 1 hour
+- `"86400s"` = 1 day
+
+---
+
+**slash_fraction_double_sign**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Percentage of stake slashed for double-signing (equivocation) |
+| **Genesis Location** | `app_state.slashing.params.slash_fraction_double_sign` |
+| **Default** | `"0.050000000000000000"` (5%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "slash_fraction_double_sign": "0.050000000000000000"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"0.050000000000000000"` = 5% (Cosmos standard)
+- `"0.100000000000000000"` = 10%
+- `"0.200000000000000000"` = 20%
+
+**Important:**
+- Double-signing also results in permanent tombstoning
+- Validator cannot rejoin validator set
+
+---
+
+**slash_fraction_downtime**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Percentage of stake slashed for downtime |
+| **Genesis Location** | `app_state.slashing.params.slash_fraction_downtime` |
+| **Default** | `"0.010000000000000000"` (1%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "slashing": {
+      "params": {
+        "slash_fraction_downtime": "0.010000000000000000"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"0.000100000000000000"` = 0.01%
+- `"0.010000000000000000"` = 1% (standard)
+- `"0.050000000000000000"` = 5%
+
+**Note:**
+- Less severe than double-sign slashing
+- Validator can unjail after jail period
+
+</Expandable>
+
+### Governance Module Parameters
+
+<Expandable title="Complete Details">
+
+**min_deposit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum token deposit to submit a governance proposal |
+| **Genesis Location** | `app_state.gov.params.min_deposit` |
+| **Default** | Varies by chain |
+| **Format** | Array of coin objects |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "min_deposit": [
+          {
+            "denom": "atoken",
+            "amount": "10000000000000000000"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Example Values:**
+- 18 decimals: `"10000000000000000000"` = 10 tokens
+- 6 decimals: `"10000000"` = 10 tokens
+
+---
+
+**max_deposit_period**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum time to reach minimum deposit |
+| **Genesis Location** | `app_state.gov.params.max_deposit_period` |
+| **Default** | `"172800s"` (2 days) |
+| **Format** | Duration string |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "max_deposit_period": "172800s"
+      }
+    }
+  }
+}
+```
+
+---
+
+**voting_period**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Duration of voting period for standard proposals |
+| **Genesis Location** | `app_state.gov.params.voting_period` |
+| **Default** | `"172800s"` (2 days) |
+| **Format** | Duration string |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "voting_period": "172800s"
+      }
+    }
+  }
+}
+```
+
+**Common Values:**
+- `"30s"` = 30 seconds (testing/development)
+- `"172800s"` = 2 days
+- `"604800s"` = 7 days
+
+---
+
+**expedited_voting_period**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Shorter voting period for expedited proposals |
+| **Genesis Location** | `app_state.gov.params.expedited_voting_period` |
+| **Default** | `"86400s"` (1 day) |
+| **Format** | Duration string |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "expedited_voting_period": "86400s"
+      }
+    }
+  }
+}
+```
+
+**Important:**
+- Must be < `voting_period`
+- Used for urgent proposals
+
+---
+
+**quorum**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum participation rate for proposal to be valid |
+| **Genesis Location** | `app_state.gov.params.quorum` |
+| **Default** | `"0.334"` (33.4%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "quorum": "0.334"
+      }
+    }
+  }
+}
+```
+
+---
+
+**threshold**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum percentage of Yes votes for proposal to pass |
+| **Genesis Location** | `app_state.gov.params.threshold` |
+| **Default** | `"0.5"` (50%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "threshold": "0.5"
+      }
+    }
+  }
+}
+```
+
+---
+
+**veto_threshold**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Percentage of NoWithVeto votes to reject proposal |
+| **Genesis Location** | `app_state.gov.params.veto_threshold` |
+| **Default** | `"0.334"` (33.4%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "veto_threshold": "0.334"
+      }
+    }
+  }
+}
+```
+
+---
+
+**expedited_threshold**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Higher Yes percentage required for expedited proposals |
+| **Genesis Location** | `app_state.gov.params.expedited_threshold` |
+| **Default** | `"0.667"` (66.7%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "expedited_threshold": "0.667"
+      }
+    }
+  }
+}
+```
+
+---
+
+**expedited_min_deposit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Higher minimum deposit for expedited proposals |
+| **Genesis Location** | `app_state.gov.params.expedited_min_deposit` |
+| **Default** | 5x standard min_deposit |
+| **Format** | Array of coin objects |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "expedited_min_deposit": [
+          {
+            "denom": "atoken",
+            "amount": "50000000000000000000"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+</Expandable>
+
+### Mint Module Parameters
+
+<Expandable title="Complete Details">
+
+**mint_denom**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Denomination of minted tokens (inflation rewards) |
+| **Genesis Location** | `app_state.mint.params.mint_denom` |
+| **Default** | `"stake"` |
+| **Format** | String |
+| **Can Change After Genesis** | Via governance (not recommended) |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "mint_denom": "atoken"
+      }
+    }
+  }
+}
+```
+
+**Must Match:**
+- `app_state.staking.params.bond_denom`
+- `app_state.evm.params.evm_denom`
+
+---
+
+**inflation_rate_change**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum annual change in inflation rate |
+| **Genesis Location** | `app_state.mint.params.inflation_rate_change` |
+| **Default** | `"0.130000000000000000"` (13%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "inflation_rate_change": "0.130000000000000000"
+      }
+    }
+  }
+}
+```
+
+---
+
+**inflation_max**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum annual inflation rate |
+| **Genesis Location** | `app_state.mint.params.inflation_max` |
+| **Default** | `"0.200000000000000000"` (20%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "inflation_max": "0.200000000000000000"
+      }
+    }
+  }
+}
+```
+
+---
+
+**inflation_min**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum annual inflation rate |
+| **Genesis Location** | `app_state.mint.params.inflation_min` |
+| **Default** | `"0.070000000000000000"` (7%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "inflation_min": "0.070000000000000000"
+      }
+    }
+  }
+}
+```
+
+---
+
+**goal_bonded**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Target bonded token ratio |
+| **Genesis Location** | `app_state.mint.params.goal_bonded` |
+| **Default** | `"0.670000000000000000"` (67%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "goal_bonded": "0.670000000000000000"
+      }
+    }
+  }
+}
+```
+
+**How It Works:**
+- Bonded ratio < goal → inflation increases (toward max)
+- Bonded ratio > goal → inflation decreases (toward min)
+- Incentivizes target staking ratio
+
+---
+
+**blocks_per_year**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Expected number of blocks per year for inflation calculations |
+| **Genesis Location** | `app_state.mint.params.blocks_per_year` |
+| **Default** | `"6311520"` (~5 second blocks) |
+| **Format** | String (integer) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "mint": {
+      "params": {
+        "blocks_per_year": "6311520"
+      }
+    }
+  }
+}
+```
+
+**Calculation:**
+- 5s blocks: `31,536,000 / 5 = 6,311,520` blocks/year
+- 8s blocks: `31,536,000 / 8 = 3,942,000` blocks/year
+
+</Expandable>
+
+### Distribution Module Parameters
+
+<Expandable title="Complete Details">
+
+**community_tax**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Percentage of rewards going to community pool |
+| **Genesis Location** | `app_state.distribution.params.community_tax` |
+| **Default** | `"0.020000000000000000"` (2%) |
+| **Format** | String (decimal) |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "distribution": {
+      "params": {
+        "community_tax": "0.020000000000000000"
+      }
+    }
+  }
+}
+```
+
+---
+
+**withdraw_addr_enabled**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Allow delegators to set custom withdraw addresses |
+| **Genesis Location** | `app_state.distribution.params.withdraw_addr_enabled` |
+| **Default** | `true` |
+| **Format** | Boolean |
+| **Can Change After Genesis** | Via governance |
+
+```json expandable
+{
+  "app_state": {
+    "distribution": {
+      "params": {
+        "withdraw_addr_enabled": true
+      }
+    }
+  }
+}
+```
+
+---
+
+**base_proposer_reward** (Deprecated)
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | **Deprecated** - Set to `"0.000000000000000000"` |
+| **Genesis Location** | `app_state.distribution.params.base_proposer_reward` |
+| **Default** | `"0.000000000000000000"` |
+| **Format** | String (decimal) |
+
+```json expandable
+{
+  "app_state": {
+    "distribution": {
+      "params": {
+        "base_proposer_reward": "0.000000000000000000"
+      }
+    }
+  }
+}
+```
+
+---
+
+**bonus_proposer_reward** (Deprecated)
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | **Deprecated** - Set to `"0.000000000000000000"` |
+| **Genesis Location** | `app_state.distribution.params.bonus_proposer_reward` |
+| **Default** | `"0.000000000000000000"` |
+| **Format** | String (decimal) |
+
+```json expandable
+{
+  "app_state": {
+    "distribution": {
+      "params": {
+        "bonus_proposer_reward": "0.000000000000000000"
+      }
+    }
+  }
+}
+```
+
+</Expandable>
+
+---
+
+## Runtime Configuration (TOML Files)
+
+These parameters are configured in TOML files located at `~/.yourchain/config/`. They control node-specific runtime behavior and can be changed by restarting the node.
+
+### app.toml Parameters
+
+Location: `~/.yourchain/config/app.toml`
+
+<Expandable title="Complete Details">
+
+**Base Configuration**
+
+**minimum-gas-prices**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Node-level minimum gas price to accept transactions |
+| **Section** | Root |
+| **Default** | `"0aatom"` |
+| **Format** | `<amount><denom>` |
+| **Can Change** | Yes (restart required) |
+| **Template** | [`server/config/migration/v0.50-app.toml:11`](https://github.com/cosmos/evm/blob/main/server/config/migration/v0.50-app.toml#L11) |
+
+```toml
+minimum-gas-prices = "1000000000atoken"
+```
+
+**Examples:**
+- `"0atoken"` = Accept all transactions
+- `"1000000000atoken"` = 1 gwei minimum (18 decimals)
+- `"1000utoken"` = 0.001 token minimum (6 decimals)
+
+**Purpose:**
+- Protect against spam
+- Ensure validators can cover costs
+- Should align with genesis fee market settings
+
+---
+
+**pruning**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | State pruning strategy |
+| **Section** | Root |
+| **Default** | `"default"` |
+| **Options** | `default`, `nothing`, `everything`, `custom` |
+| **Can Change** | Yes (restart required) |
+
+```toml
+pruning = "default"
+```
+
+**Options:**
+- `"default"` - Keep last 362,880 states, prune at 10 block intervals
+- `"nothing"` - Archive node, keep all historical states
+- `"everything"` - Keep only 2 latest states, prune at 10 block intervals
+- `"custom"` - Use custom `pruning-keep-recent` and `pruning-interval`
+
+---
+
+**pruning-keep-recent** / **pruning-interval**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Custom pruning parameters (only used if `pruning = "custom"`) |
+| **Section** | Root |
+| **Default** | `"0"` / `"0"` |
+| **Format** | Integer |
+
+```toml
+pruning = "custom"
+pruning-keep-recent = "100000"
+pruning-interval = "10"
+```
+
+---
+
+**halt-height** / **halt-time**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Gracefully halt node at specified height or time |
+| **Section** | Root |
+| **Default** | `0` (disabled) |
+| **Format** | Integer (height) / Unix timestamp (time) |
+
+```toml
+halt-height = 0
+halt-time = 0
+```
+
+**Use Cases:**
+- Coordinated chain upgrades
+- Testing and debugging
+- Emergency shutdowns
+
+---
+
+**min-retain-blocks**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum block height offset for CometBFT block pruning |
+| **Section** | Root |
+| **Default** | `0` (no pruning) |
+| **Format** | Integer |
+
+```toml
+min-retain-blocks = 0
+```
+
+**Important:**
+- Only controls CometBFT block pruning
+- Separate from application state pruning
+- Consider unbonding period and snapshots
+
+---
+
+**inter-block-cache**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable inter-block caching |
+| **Section** | Root |
+| **Default** | `true` |
+| **Format** | Boolean |
+
+```toml
+inter-block-cache = true
+```
+
+---
+
+**index-events**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Event types to index (empty = index all) |
+| **Section** | Root |
+| **Default** | `[]` |
+| **Format** | Array of strings |
+
+```toml
+index-events = []
+```
+
+**Example:**
+```toml
+index-events = ["message.sender", "message.recipient"]
+```
+
+---
+
+**iavl-cache-size**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | IAVL tree cache size (in number of nodes) |
+| **Section** | Root |
+| **Default** | `781250` |
+| **Format** | Integer |
+
+```toml
+iavl-cache-size = 781250
+```
+
+---
+
+**iavl-disable-fastnode**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Disable IAVL fast node feature |
+| **Section** | Root |
+| **Default** | `false` |
+| **Format** | Boolean |
+
+```toml
+iavl-disable-fastnode = false
+```
+
+---
+
+**app-db-backend**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Database backend for application and snapshots |
+| **Section** | Root |
+| **Default** | `""` (use CometBFT default) |
+| **Options** | `goleveldb`, `rocksdb`, `pebbledb` |
+
+```toml
+app-db-backend = ""
+```
+
+</Expandable>
+
+### EVM Configuration ([evm] section)
+
+<Expandable title="Complete Details">
+
+**tracer**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | VM tracer type for debugging |
+| **Section** | `[evm]` |
+| **Default** | `""` (no tracing) |
+| **Options** | `""`, `"json"`, `"markdown"`, `"struct"`, `"access_list"` |
+| **Can Change** | Yes (restart required) |
+| **Source** | [`server/config/config.go:56`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L56) |
+
+```toml
+[evm]
+tracer = ""
+```
+
+**Options:**
+- `""` - No tracing (production)
+- `"json"` - Detailed JSON traces (debugging)
+- `"markdown"` - Markdown formatted traces
+- `"struct"` - Structured traces
+- `"access_list"` - Access list tracer
+
+---
+
+**max-tx-gas-wanted**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum gas limit per transaction |
+| **Section** | `[evm]` |
+| **Default** | `0` (unlimited) |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:62`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L62) |
+
+```toml
+max-tx-gas-wanted = 0
+```
+
+**Examples:**
+- `0` - Unlimited (default)
+- `30000000` - 30M gas limit per transaction
+
+---
+
+**cache-preimage**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable tracking of SHA3 preimages in VM |
+| **Section** | `[evm]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:59`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L59) |
+
+```toml
+cache-preimage = false
+```
+
+---
+
+**evm-chain-id**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | EIP-155 replay protection chain ID (read-only, set during init from source code) |
+| **Section** | `[evm]` |
+| **Default** | `262144` (from source) |
+| **Format** | Unsigned 64-bit integer |
+| **Can Change** | **No** - read-only, written during `init` |
+| **Source** | [`server/config/config.go:149`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L149) |
+
+```toml
+evm-chain-id = 262144
+```
+
+**Important:**
+- Automatically written during `yourchain init`
+- Value comes from `config/config.go:78`
+- **Do not manually edit** - change in source code before init instead
+
+---
+
+**min-tip**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum priority fee required for mempool |
+| **Section** | `[evm]` |
+| **Default** | `0` |
+| **Format** | Unsigned 64-bit integer (wei) |
+| **Source** | [`server/config/config.go:68`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L68) |
+
+```toml
+min-tip = 0
+```
+
+**Examples:**
+- `0` - Accept all transactions
+- `1000000000` - Require at least 1 gwei tip
+
+---
+
+**geth-metrics-address**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Address to bind geth metrics server |
+| **Section** | `[evm]` |
+| **Default** | `"127.0.0.1:8100"` |
+| **Format** | `host:port` |
+| **Source** | [`server/config/config.go:71`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L71) |
+
+```toml
+geth-metrics-address = "127.0.0.1:8100"
+```
+
+</Expandable>
+
+### EVM Mempool Configuration ([evm.mempool] section)
+
+<Expandable title="Complete Details">
+
+**price-limit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum gas price to accept into mempool (in wei) |
+| **Section** | `[evm.mempool]` |
+| **Default** | `1` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:179`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L179) |
+
+```toml
+[evm.mempool]
+price-limit = 1
+```
+
+---
+
+**price-bump**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Minimum % price increase to replace transaction with same nonce |
+| **Section** | `[evm.mempool]` |
+| **Default** | `10` (10%) |
+| **Format** | Unsigned 64-bit integer (percentage) |
+| **Source** | [`server/config/config.go:180`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L180) |
+
+```toml
+price-bump = 10
+```
+
+---
+
+**account-slots**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Executable transaction slots guaranteed per account |
+| **Section** | `[evm.mempool]` |
+| **Default** | `16` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:181`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L181) |
+
+```toml
+account-slots = 16
+```
+
+---
+
+**global-slots**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum executable transaction slots for all accounts |
+| **Section** | `[evm.mempool]` |
+| **Default** | `5120` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:182`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L182) |
+
+```toml
+global-slots = 5120
+```
+
+---
+
+**account-queue**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Non-executable transaction slots permitted per account |
+| **Section** | `[evm.mempool]` |
+| **Default** | `64` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:183`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L183) |
+
+```toml
+account-queue = 64
+```
+
+---
+
+**global-queue**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Non-executable transaction slots for all accounts |
+| **Section** | `[evm.mempool]` |
+| **Default** | `1024` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:184`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L184) |
+
+```toml
+global-queue = 1024
+```
+
+---
+
+**lifetime**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum time non-executable transactions stay queued |
+| **Section** | `[evm.mempool]` |
+| **Default** | `"3h0m0s"` (3 hours) |
+| **Format** | Go duration string |
+| **Source** | [`server/config/config.go:185`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L185) |
+
+```toml
+lifetime = "3h0m0s"
+```
+
+**See:** [EVM Mempool Integration](/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration)
+
+</Expandable>
+
+### JSON-RPC Configuration ([json-rpc] section)
+
+<Expandable title="Complete Details">
+
+**enable**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable JSON-RPC server |
+| **Section** | `[json-rpc]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:236`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L236) |
+
+```toml
+[json-rpc]
+enable = true
+```
+
+---
+
+**address**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | HTTP server bind address |
+| **Section** | `[json-rpc]` |
+| **Default** | `"127.0.0.1:8545"` |
+| **Format** | `host:port` |
+| **Source** | [`server/config/config.go:47`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L47) |
+
+```toml
+address = "0.0.0.0:8545"
+```
+
+---
+
+**ws-address**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | WebSocket server bind address |
+| **Section** | `[json-rpc]` |
+| **Default** | `"127.0.0.1:8546"` |
+| **Format** | `host:port` |
+| **Source** | [`server/config/config.go:50`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L50) |
+
+```toml
+ws-address = "0.0.0.0:8546"
+```
+
+---
+
+**api**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | List of JSON-RPC namespaces to enable |
+| **Section** | `[json-rpc]` |
+| **Default** | `["eth", "net", "web3"]` |
+| **Format** | Array of strings |
+| **Source** | [`server/config/config.go:304-310`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L304-L310) |
+
+```toml
+api = ["eth", "net", "web3", "txpool"]
+```
+
+**Available Namespaces:**
+| Namespace | Purpose | Production |
+|-----------|---------|------------|
+| `eth` | Standard Ethereum RPC | ✅ Required |
+| `net` | Network information | ✅ Recommended |
+| `web3` | Web3 client version | ✅ Recommended |
+| `txpool` | Transaction pool inspection | ⚠️ Caution |
+| `debug` | Debug/trace endpoints | ❌ Dev only |
+| `personal` | Account management | ❌ Dev only |
+| `miner` | Mining operations | ❌ Dev only |
+
+**Production:**
+```toml
+api = ["eth", "net", "web3"]
+```
+
+**Development:**
+```toml
+api = ["eth", "net", "web3", "txpool", "debug"]
+```
+
+---
+
+**gas-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Gas limit for eth_call/estimateGas |
+| **Section** | `[json-rpc]` |
+| **Default** | `25000000` |
+| **Format** | Unsigned 64-bit integer |
+| **Source** | [`server/config/config.go:74`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L74) |
+
+```toml
+gas-cap = 25000000
+```
+
+---
+
+**allow-insecure-unlock**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Allow account unlocking when account-related RPCs exposed via HTTP |
+| **Section** | `[json-rpc]` |
+| **Default** | `true` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:77`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L77) |
+
+```toml
+allow-insecure-unlock = false
+```
+
+**Security:**
+- Set to `false` for production
+- Only `true` for local development
+
+---
+
+**evm-timeout**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Timeout for eth_call execution |
+| **Section** | `[json-rpc]` |
+| **Default** | `"5s"` |
+| **Format** | Go duration string |
+| **Source** | [`server/config/config.go:92`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L92) |
+
+```toml
+evm-timeout = "5s"
+```
+
+---
+
+**txfee-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Global tx-fee cap for send transaction (in native token units) |
+| **Section** | `[json-rpc]` |
+| **Default** | `1.0` |
+| **Format** | Float |
+| **Source** | [`server/config/config.go:95`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L95) |
+
+```toml
+txfee-cap = 1.0
+```
+
+---
+
+**filter-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum number of filters that can be created |
+| **Section** | `[json-rpc]` |
+| **Default** | `200` |
+| **Format** | 32-bit integer |
+| **Source** | [`server/config/config.go:80`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L80) |
+
+```toml
+filter-cap = 200
+```
+
+---
+
+**feehistory-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum number of blocks for fee history query |
+| **Section** | `[json-rpc]` |
+| **Default** | `100` |
+| **Format** | 32-bit integer |
+| **Source** | [`server/config/config.go:83`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L83) |
+
+```toml
+feehistory-cap = 100
+```
+
+---
+
+**logs-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum results from single eth_getLogs query |
+| **Section** | `[json-rpc]` |
+| **Default** | `10000` |
+| **Format** | 32-bit integer |
+| **Source** | [`server/config/config.go:86`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L86) |
+
+```toml
+logs-cap = 10000
+```
+
+---
+
+**block-range-cap**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum block range for eth_getLogs query |
+| **Section** | `[json-rpc]` |
+| **Default** | `10000` |
+| **Format** | 32-bit integer |
+| **Source** | [`server/config/config.go:89`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L89) |
+
+```toml
+block-range-cap = 10000
+```
+
+---
+
+**http-timeout**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Read/write timeout for HTTP JSON-RPC server |
+| **Section** | `[json-rpc]` |
+| **Default** | `"30s"` |
+| **Format** | Go duration string |
+| **Source** | [`server/config/config.go:98`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L98) |
+
+```toml
+http-timeout = "30s"
+```
+
+---
+
+**http-idle-timeout**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Idle timeout for HTTP JSON-RPC server |
+| **Section** | `[json-rpc]` |
+| **Default** | `"2m0s"` |
+| **Format** | Go duration string |
+| **Source** | [`server/config/config.go:101`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L101) |
+
+```toml
+http-idle-timeout = "2m0s"
+```
+
+---
+
+**allow-unprotected-txs**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Allow unprotected (non-EIP155) transactions via RPC |
+| **Section** | `[json-rpc]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:104`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L104) |
+
+```toml
+allow-unprotected-txs = false
+```
+
+**Security:**
+- `false` for production (required)
+- `true` only for local development
+
+---
+
+**batch-request-limit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum number of requests in a batch |
+| **Section** | `[json-rpc]` |
+| **Default** | `1000` |
+| **Format** | Integer |
+| **Source** | [`server/config/config.go:108`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L108) |
+
+```toml
+batch-request-limit = 1000
+```
+
+---
+
+**batch-response-max-size**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum bytes returned from batched RPC call |
+| **Section** | `[json-rpc]` |
+| **Default** | `25000000` (25 MB) |
+| **Format** | Integer |
+| **Source** | [`server/config/config.go:112`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L112) |
+
+```toml
+batch-response-max-size = 25000000
+```
+
+---
+
+**max-open-connections**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Maximum simultaneous connections (0 = unlimited) |
+| **Section** | `[json-rpc]` |
+| **Default** | `0` |
+| **Format** | Integer |
+| **Source** | [`server/config/config.go:115`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L115) |
+
+```toml
+max-open-connections = 0
+```
+
+---
+
+**enable-indexer**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable custom transaction indexer for EVM transactions |
+| **Section** | `[json-rpc]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:256`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L256) |
+
+```toml
+enable-indexer = false
+```
+
+---
+
+**metrics-address**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Metrics server bind address |
+| **Section** | `[json-rpc]` |
+| **Default** | `"127.0.0.1:6065"` |
+| **Format** | `host:port` |
+| **Source** | [`server/config/config.go:53`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L53) |
+
+```toml
+metrics-address = "127.0.0.1:6065"
+```
+
+---
+
+**ws-origins**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Allowed origins for WebSocket connections |
+| **Section** | `[json-rpc]` |
+| **Default** | `["127.0.0.1", "localhost"]` |
+| **Format** | Array of strings |
+| **Source** | [`server/config/config.go:120-122`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L120-L122) |
+
+```toml
+ws-origins = ["127.0.0.1", "localhost", "myapp.example.com"]
+```
+
+---
+
+**enable-profiling**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable profiling in debug namespace |
+| **Section** | `[json-rpc]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+| **Source** | [`server/config/config.go:124`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L124) |
+
+```toml
+enable-profiling = false
+```
+
+**Warning:**
+- **Never enable on public nodes**
+- Only for development/debugging
+- Can expose sensitive information
+
+</Expandable>
+
+### TLS Configuration ([tls] section)
+
+<Expandable title="Complete Details">
+
+**certificate-path**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Path to TLS certificate .pem file |
+| **Section** | `[tls]` |
+| **Default** | `""` (TLS disabled) |
+| **Format** | File path |
+
+```toml
+[tls]
+certificate-path = ""
+```
+
+---
+
+**key-path**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Path to TLS key .pem file |
+| **Section** | `[tls]` |
+| **Default** | `""` (TLS disabled) |
+| **Format** | File path |
+
+```toml
+key-path = ""
+```
+
+**Example (TLS enabled):**
+```toml
+[tls]
+certificate-path = "/path/to/cert.pem"
+key-path = "/path/to/key.pem"
+```
+
+</Expandable>
+
+### Telemetry Configuration ([telemetry] section)
+
+<Expandable title="Complete Details">
+
+**service-name**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Service name prefix for telemetry keys |
+| **Section** | `[telemetry]` |
+| **Default** | `""` |
+| **Format** | String |
+
+```toml
+[telemetry]
+service-name = ""
+```
+
+---
+
+**enabled**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable application telemetry |
+| **Section** | `[telemetry]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+
+```toml
+enabled = false
+```
+
+---
+
+**enable-hostname** / **enable-hostname-label** / **enable-service-label**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Include hostname/service in telemetry metrics |
+| **Section** | `[telemetry]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+
+```toml
+enable-hostname = false
+enable-hostname-label = false
+enable-service-label = false
+```
+
+</Expandable>
+
+### config.toml Parameters
+
+Location: `~/.yourchain/config/config.toml` (CometBFT configuration)
+
+<Note>
+This file is managed by CometBFT. Most parameters use CometBFT defaults. Key parameters for chain operators are documented below.
+</Note>
+
+<Expandable title="Key Parameters">
+
+**P2P Configuration ([p2p] section)**
+
+**persistent_peers**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Comma-separated list of nodes to maintain persistent connections |
+| **Section** | `[p2p]` |
+| **Default** | `""` |
+| **Format** | `node_id@ip:port,node_id2@ip:port,...` |
+
+```toml
+[p2p]
+persistent_peers = "7c90e16cca334eb7@192.168.1.100:26656,abc123def456@192.168.1.101:26656"
+```
+
+**Get node ID:**
+```bash
+yourchain comet show-node-id
+```
+
+---
+
+**laddr** (P2P listen address)
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | P2P listen address |
+| **Section** | `[p2p]` |
+| **Default** | `"tcp://0.0.0.0:26656"` |
+| **Format** | `tcp://host:port` |
+
+```toml
+laddr = "tcp://0.0.0.0:26656"
+```
+
+---
+
+**Consensus Configuration ([consensus] section)**
+
+**timeout_commit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | How long to wait after committing before starting new height (determines block time) |
+| **Section** | `[consensus]` |
+| **Default** | `"5s"` |
+| **Format** | Go duration string |
+
+```toml
+[consensus]
+timeout_commit = "5s"
+```
+
+**Block Time:**
+- `"1s"` - Fast blocks (development)
+- `"5s"` - Standard (production)
+- `"8s"` - Slower (high latency networks)
+
+---
+
+**timeout_propose** / **timeout_prevote** / **timeout_precommit**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Timeouts for consensus phases |
+| **Section** | `[consensus]` |
+| **Default** | `"3s"` / `"1s"` / `"1s"` |
+| **Format** | Go duration string |
+
+```toml
+timeout_propose = "3s"
+timeout_prevote = "1s"
+timeout_precommit = "1s"
+```
+
+---
+
+**RPC Configuration ([rpc] section)**
+
+**laddr** (RPC listen address)
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | CometBFT RPC listen address |
+| **Section** | `[rpc]` |
+| **Default** | `"tcp://127.0.0.1:26657"` |
+| **Format** | `tcp://host:port` |
+
+```toml
+[rpc]
+laddr = "tcp://127.0.0.1:26657"
+```
+
+---
+
+**Instrumentation Configuration ([instrumentation] section)**
+
+**prometheus**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Enable Prometheus metrics |
+| **Section** | `[instrumentation]` |
+| **Default** | `false` |
+| **Format** | Boolean |
+
+```toml
+[instrumentation]
+prometheus = true
+prometheus_listen_addr = ":26660"
+```
+
+**Access metrics:**
+```bash
+curl http://localhost:26660/metrics
+```
+
+</Expandable>
+
+### client.toml Parameters
+
+Location: `~/.yourchain/config/client.toml`
+
+<Expandable title="Complete Details">
+
+**chain-id**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Chain ID for CLI operations |
+| **Section** | Root |
+| **Default** | `""` (must be set) |
+| **Format** | String |
+
+```toml
+chain-id = "mychain-1"
+```
+
+**Set via CLI:**
+```bash
+yourchain config set client chain-id mychain-1
+```
+
+**Important:**
+- **Required** for node startup
+- Must match `genesis.json` chain_id
+- Node will fail to start if mismatch
+
+---
+
+**keyring-backend**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Keyring storage backend |
+| **Section** | Root |
+| **Default** | `"os"` |
+| **Options** | `os`, `file`, `test` |
+
+```toml
+keyring-backend = "os"
+```
+
+**Options:**
+- `"os"` - OS native keyring (secure, production)
+- `"file"` - Encrypted file (requires password)
+- `"test"` - Unencrypted (development only, **never for production**)
+
+---
+
+**output**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Default output format for CLI |
+| **Section** | Root |
+| **Default** | `"text"` |
+| **Options** | `text`, `json` |
+
+```toml
+output = "text"
+```
+
+---
+
+**node**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | CometBFT RPC endpoint for CLI to connect to |
+| **Section** | Root |
+| **Default** | `"tcp://localhost:26657"` |
+| **Format** | `tcp://host:port` |
+
+```toml
+node = "tcp://localhost:26657"
+```
+
+**Use Cases:**
+- Local node: `"tcp://localhost:26657"`
+- Remote node: `"tcp://rpc.mychain.network:26657"`
+- Public endpoint: Connect without running full node
+
+---
+
+**broadcast-mode**
+
+| Parameter | Value |
+|-----------|-------|
+| **Description** | Transaction broadcast mode |
+| **Section** | Root |
+| **Default** | `"sync"` |
+| **Options** | `sync`, `async`, `block` |
+
+```toml
+broadcast-mode = "sync"
+```
+
+**Options:**
+- `"sync"` - Wait for CheckTx (recommended)
+- `"async"` - Return immediately
+- `"block"` - Wait for block inclusion (slowest, most certain)
+
+</Expandable>
+
+---
+
+## Summary Tables
+
+### Configuration by Phase
+
+| Phase | When | Examples | Changeability |
+|-------|------|----------|---------------|
+| **Pre-Genesis** | Before `init` | Binary name, Bech32 prefix, BIP44, EVM chain ID | Requires rebuild + hard fork |
+| **Genesis** | After `init`, before launch | Module params, initial accounts, validators | Via governance after launch |
+| **Runtime** | After launch | app.toml, config.toml, client.toml | Restart node |
+| **On-Chain** | After launch | Some module params | Via governance proposal |
+
+### Critical Parameters (Cannot Change After Genesis)
+
+| Parameter | Why Critical |
+|-----------|-------------|
+| **EVM Chain ID** | Breaks transaction replay protection |
+| **Bech32 Prefix** | Changes all address formats |
+| **BIP44 Coin Type** | Breaks wallet key derivation |
+| **Token Decimals** | Fundamental to token economics |
+
+### Commonly Changed Parameters
+
+| Parameter | Use Case |
+|-----------|----------|
+| **minimum-gas-prices** | Adjust fees, prevent spam |
+| **active_static_precompiles** | Enable/disable Cosmos SDK features |
+| **access_control** | Manage deployment permissions |
+| **json-rpc.api** | Control exposed RPC namespaces |
+| **pruning** | Manage disk usage |
+
+---
+
+## Quick Navigation
+
+<AccordionGroup>
+<Accordion title="Pre-Genesis Parameters">
+- [Binary Name](#binary-name)
+- [Bech32 Address Prefix](#bech32-address-prefix)
+- [BIP44 Coin Type](#bip44-coin-type)
+- [EVM Chain ID](#evm-chain-id)
+- [Default Denomination in Source](#default-denomination-in-source)
+</Accordion>
+
+<Accordion title="Genesis Parameters">
+- [Root-Level Parameters](#root-level-parameters)
+- [VM Module Parameters](#vm-module-parameters-xvm)
+- [FeeMarket Module Parameters](#feemarket-module-parameters-xfeemarket)
+- [ERC20 Module Parameters](#erc20-module-parameters-xerc20)
+- [Bank Module Parameters](#bank-module-parameters)
+- [Staking Module Parameters](#staking-module-parameters)
+- [Slashing Module Parameters](#slashing-module-parameters)
+- [Governance Module Parameters](#governance-module-parameters)
+- [Mint Module Parameters](#mint-module-parameters)
+- [Distribution Module Parameters](#distribution-module-parameters)
+</Accordion>
+
+<Accordion title="Runtime Configuration">
+- [app.toml Base Configuration](#apptoml-parameters)
+- [EVM Configuration](#evm-configuration-evm-section)
+- [EVM Mempool Configuration](#evm-mempool-configuration-evmmempool-section)
+- [JSON-RPC Configuration](#json-rpc-configuration-json-rpc-section)
+- [TLS Configuration](#tls-configuration-tls-section)
+- [config.toml Parameters](#configtoml-parameters)
+- [client.toml Parameters](#clienttoml-parameters)
+</Accordion>
+</AccordionGroup>
+
+---
+
+## Additional Resources
+
+<CardGroup cols={3}>
+<Card title="Pre-Genesis & Genesis Setup" icon="file-code" href="/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup">
+Step-by-step configuration guide
+</Card>
+
+<Card title="Runtime & Launch" icon="rocket" href="/docs/evm/next/documentation/getting-started/build-a-chain/runtime-and-launch">
+Network launch procedures
+</Card>
+
+<Card title="Configuration Reference" icon="book" href="/docs/evm/next/documentation/getting-started/build-a-chain/configuration-reference">
+Quick reference with commands
+</Card>
+
+<Card title="VM Module" icon="microchip" href="/docs/evm/next/documentation/cosmos-sdk/modules/vm">
+EVM module documentation
+</Card>
+
+<Card title="FeeMarket Module" icon="chart-line" href="/docs/evm/next/documentation/cosmos-sdk/modules/feemarket">
+Fee market documentation
+</Card>
+
+<Card title="ERC20 Module" icon="arrows-left-right" href="/docs/evm/next/documentation/cosmos-sdk/modules/erc20">
+ERC20 module documentation
+</Card>
+
+<Card title="PreciseBank Module" icon="scale-balanced" href="/docs/evm/next/documentation/cosmos-sdk/modules/precisebank">
+Precision handling for non-18 decimals
+</Card>
+
+<Card title="Precompiles Overview" icon="puzzle-piece" href="/docs/evm/next/documentation/smart-contracts/precompiles/overview">
+Cosmos SDK precompiles
+</Card>
+
+<Card title="Cosmos SDK Docs" icon="book-open" href="https://docs.cosmos.network">
+General Cosmos SDK documentation
+</Card>
+</CardGroup>
+
+---
+
+For questions or issues, visit the [Cosmos EVM GitHub repository](https://github.com/cosmos/evm).
