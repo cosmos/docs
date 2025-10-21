@@ -403,11 +403,13 @@ test-evmd → test-yourchain
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Your chain's address format (e.g., `cosmos1...`, `evmos1...`, `yourchain1...`) |
 | **Default** | `cosmos` |
-| **File Location** | [`config/config.go:62`](https://github.com/cosmos/evm/blob/main/config/config.go#L60-L74) |
+| **Type** | String (lowercase alphanumeric) |
+| **File Location** | [`config/config.go:62`](https://github.com/cosmos/evm/blob/main/config/config.go#L62) |
+| **Adjustable** | Immutable (requires rebuild before `init`) |
 | **Why Change It** | Create unique, recognizable addresses for your chain |
 
 <Warning>
@@ -491,11 +493,14 @@ Expected output:
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | The HD wallet derivation path for key generation according to [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki) |
 | **Default** | `60` (Ethereum) |
-| **File Location** | [`crypto/hd/hdpath.go:9`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L7-L13) |
+| **Type** | uint32 |
+| **File Location** | [`crypto/hd/hdpath.go:9`](https://github.com/cosmos/evm/blob/main/crypto/hd/hdpath.go#L9) |
+| **Adjustable** | Immutable (requires rebuild before `init`) |
+| **Standard** | [SLIP-0044](https://github.com/satoshilabs/slips/blob/master/slip-0044.md) |
 | **Why Change It** | For Cosmos SDK chains wanting non-Ethereum derivation paths, or to register a unique coin type |
 
 <Tabs>
@@ -570,11 +575,14 @@ make build
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | The EIP-155 chain ID used for Ethereum transaction replay protection |
 | **Default** | `262144` |
+| **Type** | uint64 |
 | **File Location** | [`config/config.go:78`](https://github.com/cosmos/evm/blob/main/config/config.go#L78) |
+| **Adjustable** | Immutable (must be set in source before building binary) |
+| **Standard** | [EIP-155](https://eips.ethereum.org/EIPS/eip-155) |
 | **Why Change It** | Must be unique for your network to prevent transaction replay attacks |
 
 <Warning>
@@ -692,10 +700,12 @@ const tx = {
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Determines whether your native token uses 18 decimals (like ETH) or another precision (like ATOM's 6 decimals) |
 | **Default** | 18 decimals |
+| **Type** | Architecture decision (affects bank metadata and module configuration) |
+| **Adjustable** | Immutable (cannot be changed after genesis) |
 | **Why Choose** | Affects EVM compatibility and module requirements |
 
 <Warning>
@@ -853,10 +863,13 @@ app.ModuleManager = module.NewManager(
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Default token denominations hardcoded in source files that are used when generating configuration files |
-| **Default** | `aatom` / `atom` |
+| **Default** | `aatom` (extended), `uatom` (base), `atom` (display) |
+| **Type** | String |
+| **Files** | `server/config/migration/v0.50-app.toml:11`, `x/vm/types/params.go:21-25`, `config/constants.go:5-8` |
+| **Adjustable** | Pre-Genesis (must be changed before `init`) |
 | **Why Change It** | So that generated config files use your token name instead of the default |
 
 <Warning>
@@ -1046,11 +1059,13 @@ Now proceed with genesis configuration below.
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | The unique string identifier for your blockchain in the Cosmos ecosystem |
+| **Genesis Path** | `chain_id` (root level) |
+| **Type** | String |
 | **Format** | Flexible string, commonly `{name}-{version}` |
-| **Genesis Location** | Root-level field `chain_id` |
+| **Adjustable** | Immutable (cannot be changed after genesis without coordinated upgrade) |
 | **Why Important** | Used for IBC connections, CometBFT consensus, and client identification |
 
 <Tabs>
@@ -1134,11 +1149,13 @@ dev-1
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | UTC timestamp when the chain starts producing blocks |
-| **Format** | RFC3339 timestamp (e.g., `"2024-12-01T00:00:00Z"`) |
-| **Genesis Location** | Root-level field `genesis_time` |
+| **Genesis Path** | `genesis_time` (root level) |
+| **Type** | RFC3339 timestamp |
+| **Format** | `"2024-12-01T00:00:00Z"` |
+| **Adjustable** | Immutable (must be set before network launch) |
 | **Why Important** | Coordinates synchronized network launch across all validators |
 
 **Set the genesis time:**
@@ -1170,10 +1187,12 @@ jq '.genesis_time' ~/.yourchain/config/genesis.json
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Your token's base denomination, decimal precision, and display properties |
-| **Genesis Location** | `app_state.bank.denom_metadata` |
+| **Genesis Path** | `app_state.bank.denom_metadata` |
+| **Type** | Array of metadata objects |
+| **Adjustable** | Governance |
 | **Why Important** | Controls how tokens are displayed and handled across the chain |
 
 <Info>
@@ -1251,10 +1270,12 @@ jq '.app_state.gov.params.min_deposit[0].denom' $GENESIS
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Core EVM module configuration including gas token, extended denom options, and chain behavior |
-| **Genesis Location** | `app_state.evm.params` |
+| **Genesis Path** | `app_state.evm.params` |
+| **Type** | Object containing multiple EVM configuration parameters |
+| **Adjustable** | Governance |
 | **Why Important** | Defines how the EVM layer interacts with Cosmos SDK |
 
 <Tabs>
@@ -1348,11 +1369,14 @@ jq '.app_state.evm.params.extra_eips = []' \
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Enabled precompiled contracts that expose Cosmos SDK functionality to EVM smart contracts |
-| **Genesis Location** | `app_state.evm.params.active_static_precompiles` |
-| **Default** | Empty array (no precompiles enabled) |
+| **Genesis Path** | `app_state.evm.params.active_static_precompiles` |
+| **Type** | Array of hex addresses (must be sorted) |
+| **Default** | `[]` (empty - no precompiles enabled) |
+| **Adjustable** | Governance |
+| **Source** | [`x/vm/types/precompiles.go:22-32`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go#L22-L32) |
 
 <Info>
 **Learn More**: [Precompiles Overview](/docs/evm/next/documentation/smart-contracts/precompiles/overview) - Complete documentation with Solidity interfaces
@@ -1442,10 +1466,12 @@ jq '.app_state.evm.params.active_static_precompiles = []' \
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Configured token pairs between Cosmos bank denoms and ERC20 representations, implementing Single Token Representation v2 (STRv2) |
-| **Genesis Location** | `app_state.erc20` |
+| **Genesis Path** | `app_state.erc20` |
+| **Type** | Object containing token pairs and configuration |
+| **Adjustable** | Governance |
 | **Why Important** | Allows native tokens to be used in EVM contracts as ERC20 |
 
 <Info>
@@ -1535,11 +1561,14 @@ jq '.app_state.erc20.params.permissionless_registration = false' \
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Dynamic fee pricing mechanism based on EIP-1559, controlling how transaction fees adjust based on network congestion |
-| **Genesis Location** | `app_state.feemarket.params` |
+| **Genesis Path** | `app_state.feemarket.params` |
+| **Type** | Object containing fee market parameters |
 | **Default** | EIP-1559 enabled with 1 gwei base fee |
+| **Adjustable** | Governance |
+| **Source** | [`x/feemarket/types/params.go:13-21`](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L13-L21) |
 
 <Info>
 **Learn More**:
@@ -1632,11 +1661,14 @@ jq '.app_state.feemarket.params = {
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Permissions for deploying and calling smart contracts |
-| **Genesis Location** | `app_state.evm.params.access_control` |
-| **Default** | Permissionless (anyone can deploy and call contracts) |
+| **Genesis Path** | `app_state.evm.params.access_control` |
+| **Type** | Object with `create` and `call` access controls |
+| **Default** | Permissionless (type 0 - anyone can deploy and call contracts) |
+| **Adjustable** | Governance |
+| **Source** | [`x/vm/types/params.go:160-165`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go#L160-L165) |
 
 <Tabs>
 <Tab title="Permissionless (Recommended)">
@@ -1718,10 +1750,12 @@ jq '.app_state.evm.params.access_control.create = {
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Staking module behavior, including bond denom, unbonding time, and validator set size |
-| **Genesis Location** | `app_state.staking.params` |
+| **Genesis Path** | `app_state.staking.params` |
+| **Type** | Object containing staking configuration parameters |
+| **Adjustable** | Governance |
 
 <Tabs>
 <Tab title="Quick Configuration">
@@ -1808,10 +1842,12 @@ jq '.app_state.staking.params.max_validators = 100' \
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Thresholds and penalties for validator downtime or misbehavior |
-| **Genesis Location** | `app_state.slashing.params` |
+| **Genesis Path** | `app_state.slashing.params` |
+| **Type** | Object containing slashing configuration parameters |
+| **Adjustable** | Governance |
 
 <Tabs>
 <Tab title="Standard Configuration">
@@ -1901,10 +1937,12 @@ jq '.app_state.slashing.params = {
 
 <Expandable title="Full Instructions" defaultOpen={false}>
 
-| Parameter | Details |
-|-----------|---------|
+| Attribute | Value |
+|-----------|-------|
 | **Description** | Settings for on-chain governance including voting periods, quorum, and deposit requirements |
-| **Genesis Location** | `app_state.gov.params` |
+| **Genesis Path** | `app_state.gov.params` |
+| **Type** | Object containing governance configuration parameters |
+| **Adjustable** | Governance |
 
 <Tabs>
 <Tab title="Standard Configuration">
