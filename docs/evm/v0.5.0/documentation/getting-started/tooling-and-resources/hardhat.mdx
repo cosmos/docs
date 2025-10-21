@@ -1,0 +1,237 @@
+---
+title: "Hardhat Guide: Setup & Workflows"
+description: "A guide to setting up and using the Hardhat development environment for building, testing, and deploying on Cosmos EVM."
+---
+
+Hardhat is a flexible and extensible Ethereum development environment that is fully compatible with Cosmos EVM. It's an excellent choice for teams with JavaScript/TypeScript expertise or those who need complex deployment and testing workflows.
+
+## Project Setup and Configuration
+
+Initialize and configure a new Hardhat project for Cosmos EVM development.
+
+### 1. Installation
+
+```bash lines expandable
+mkdir cosmos-evm-hardhat
+cd cosmos-evm-hardhat
+npm init -y
+npm install --save-dev hardhat @nomicfoundation/hardhat-toolbox @openzeppelin/contracts
+npx hardhat init # Select "Create a TypeScript project"
+```
+
+### 2. Configuration
+
+Modify `hardhat.config.ts` to include networks and settings for Cosmos EVM.
+
+```typescript title="hardhat.config.ts" lines expandable
+import { HardhatUserConfig } from "hardhat/config";
+import "@nomicfoundation/hardhat-toolbox";
+import "dotenv/config";
+
+const config: HardhatUserConfig = {
+  solidity: {
+    version: "0.8.24",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+      evmVersion: "istanbul"
+    },
+  },
+  networks: {
+    local: {
+      url: "http://127.0.0.1:8545",
+      chainId: 4321, // Your EVM chain ID
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      gasPrice: 20000000000,
+    },
+    testnet: {
+      url: "<evm_rpc_url>",
+      chainId: 4321, // Your EVM chain ID
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+    }
+  },
+  gasReporter: {
+    enabled: process.env.REPORT_GAS !== undefined,
+    currency: "USD",
+  },
+  etherscan: {
+    apiKey: {
+      cosmosEvmTestnet: process.env.ETHERSCAN_API_KEY || "dummy_key"
+    },
+    customChains: [
+      {
+        network: "cosmosEvmTestnet",
+        chainId: 4321, // Your EVM chain ID
+        urls: {
+          apiURL: "",
+          browserURL: ""
+        }
+      }
+    ]
+  }
+};
+
+export default config;
+```
+
+## TypeScript Integration
+
+Hardhat's first-class TypeScript support enables type-safe contract interactions and tests.
+
+### 1. Writing a Contract
+
+Create a contract in the `contracts/` directory. For this example, we'll use a simple `LiquidStakingVault`.
+
+```solidity title="contracts/LiquidStakingVault.sol" lines expandable
+// contracts/LiquidStakingVault.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+// Interface for the staking precompile
+interface IStaking {
+    function delegate(address validator, uint256 amount) external returns (bool);
+    function undelegate(address validator, uint256 amount) external returns (bool, uint64);
+}
+
+contract LiquidStakingVault is Ownable {
+    IStaking constant STAKING = IStaking(0x0000000000000000000000000000000000000800);
+
+    mapping(address => uint256) public stakedBalance;
+    address public primaryValidator;
+    uint256 public totalStaked;
+
+    event Staked(address indexed user, uint256 amount);
+
+    constructor(address _primaryValidator) Ownable(msg.sender) {
+        primaryValidator = _primaryValidator;
+    }
+
+    function stake() external payable {
+        require(msg.value > 0, "Must stake positive amount");
+        bool success = STAKING.delegate(primaryValidator, msg.value);
+        require(success, "Delegation failed");
+        stakedBalance[msg.sender] += msg.value;
+        totalStaked += msg.value;
+        emit Staked(msg.sender, msg.value);
+    }
+}
+```
+
+### 2. Writing Tests
+
+Create type-safe tests in the `test/` directory.
+
+```typescript title="test/LiquidStakingVault.test.ts" lines expandable
+// test/LiquidStakingVault.test.ts
+import { expect } from "chai";
+import { ethers } from "hardhat";
+import { LiquidStakingVault } from "../typechain-types";
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+
+describe("LiquidStakingVault", function () {
+  let vault: LiquidStakingVault;
+  let owner: SignerWithAddress;
+  let user1: SignerWithAddress;
+
+  const STAKING_PRECOMPILE = "0x0000000000000000000000000000000000000800";
+  const VALIDATOR_ADDRESS = "0x1234567890123456789012345678901234567890";
+
+  beforeEach(async function () {
+    [owner, user1] = await ethers.getSigners();
+
+    const VaultFactory = await ethers.getContractFactory("LiquidStakingVault");
+    vault = await VaultFactory.deploy(VALIDATOR_ADDRESS);
+    await vault.waitForDeployment();
+
+    // Mock the staking precompile's delegate function to always return true
+    // This bytecode is a minimal contract that returns true for any call
+    const successBytecode = "0x6080604052348015600f57600080fd5b50600160005560016000f3";
+    await ethers.provider.send("hardhat_setCode", [
+      STAKING_PRECOMPILE,
+      successBytecode,
+    ]);
+  });
+
+  it("Should allow a user to stake tokens", async function () {
+    const stakeAmount = ethers.parseEther("1.0");
+
+    await expect(vault.connect(user1).stake({ value: stakeAmount }))
+      .to.emit(vault, "Staked")
+      .withArgs(user1.address, stakeAmount);
+
+    expect(await vault.stakedBalance(user1.address)).to.equal(stakeAmount);
+    expect(await vault.totalStaked()).to.equal(stakeAmount);
+  });
+});
+```
+
+Run your tests:
+```bash lines
+npx hardhat test
+```
+
+## Deployment Scripts
+
+Create a deployment script in the `scripts/` directory to deploy your contract to a live network.
+
+```typescript title="scripts/deploy.ts" lines expandable
+// scripts/deploy.ts
+import { ethers, network } from "hardhat";
+import { writeFileSync } from "fs";
+
+async function main() {
+  const [deployer] = await ethers.getSigners();
+
+  console.log("Deploying contracts with the account:", deployer.address);
+
+  const validatorAddress = process.env.VALIDATOR_ADDRESS || "0x0000000000000000000000000000000000000000";
+
+  const VaultFactory = await ethers.getContractFactory("LiquidStakingVault");
+  const vault = await VaultFactory.deploy(validatorAddress);
+  await vault.waitForDeployment();
+
+  const vaultAddress = await vault.getAddress();
+  console.log("LiquidStakingVault deployed to:", vaultAddress);
+
+  // Save deployment information
+  const deploymentInfo = {
+    contractAddress: vaultAddress,
+    deployer: deployer.address,
+    network: network.name,
+    chainId: network.config.chainId,
+  };
+
+  writeFileSync(
+    `deployments/${network.name}-deployment.json`,
+    JSON.stringify(deploymentInfo, null, 2)
+  );
+
+  // Optional: Verify contract on Etherscan-compatible explorer
+  if (network.name !== "local" && process.env.ETHERSCAN_API_KEY) {
+    console.log("Waiting for block confirmations before verification...");
+    // await vault.deploymentTransaction()?.wait(5); // Wait for 5 blocks
+    await new Promise(resolve => setTimeout(resolve, 30000)); // Or wait 30 seconds
+
+    await hre.run("verify:verify", {
+        address: vaultAddress,
+        constructorArguments: [validatorAddress],
+    });
+  }
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+```
+
+Run the deployment script:
+```bash lines
+npx hardhat run scripts/deploy.ts --network testnet
+```

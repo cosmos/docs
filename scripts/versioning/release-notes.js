@@ -239,7 +239,7 @@ function parseChangelogToMintlify(changelogContent) {
   const mintlifyContent = `---
 title: "Release Notes"
 description: "Release history and changelog for Cosmos ${PRODUCT_LABEL}"
-mode: "center"
+mode: "wide"
 ---
 
 <Info>

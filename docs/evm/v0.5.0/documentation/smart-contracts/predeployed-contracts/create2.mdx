@@ -1,0 +1,303 @@
+---
+title: "Create2 Factory"
+description: "Deterministic contract deployment factory using the CREATE2 opcode"
+icon: "factory"
+keywords: ['create2', 'deterministic', 'deployment', 'factory', 'salt', 'address', 'prediction', 'bytecode']
+---
+
+The Create2 Factory is a minimal proxy contract that enables deterministic contract deployment using the CREATE2 opcode. This allows developers to deploy contracts to addresses that can be computed in advance, regardless of the deployer's nonce or transaction order.
+
+**Contract Address**: `0x4e59b44847b379578588920ca78fbf26c0b4956c`
+**Deployment Status**: Default preinstall
+**Gas Cost**: Deployment cost + ~32,000 gas overhead
+
+## Key Features
+
+- **Deterministic Addresses**: Compute contract addresses before deployment
+- **Cross-chain Consistency**: Same address on all chains with the same bytecode and salt
+- **Minimal Implementation**: Only 45 bytes of optimized assembly code
+- **No Storage or State**: Pure function contract with no storage variables
+
+## How It Works
+
+The CREATE2 opcode computes addresses using:
+```
+address = keccak256(0xff ++ deployerAddress ++ salt ++ keccak256(bytecode))[12:]
+```
+
+This formula ensures that the same inputs always produce the same address, enabling:
+- Pre-funding of contract addresses before deployment
+- Cross-chain address consistency
+- Gasless contract deployment patterns
+
+## Usage
+
+### Deploy a Contract
+
+<CodeGroup>
+```javascript "Ethers.js Create2 Contract Deployment" expandable
+import { ethers } from "ethers";
+
+const provider = new ethers.JsonRpcProvider("YOUR_RPC_URL");
+const signer = new ethers.Wallet("YOUR_PRIVATE_KEY", provider);
+
+// Create2 Factory address
+const CREATE2_FACTORY = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+
+// Your contract bytecode (including constructor args)
+const bytecode = "0x608060405234801561001057600080fd5b50..."; // Your compiled bytecode
+
+// Choose a salt (32 bytes)
+const salt = ethers.id("my-unique-salt-v1"); // Or use ethers.randomBytes(32)
+
+// Deploy using Create2
+async function deployWithCreate2() {
+  // Compute the deployment address
+  const deployAddress = ethers.getCreate2Address(
+    CREATE2_FACTORY,
+    salt,
+    ethers.keccak256(bytecode)
+  );
+
+  console.log("Contract will be deployed to:", deployAddress);
+
+  // Send deployment transaction
+  const tx = await signer.sendTransaction({
+    to: CREATE2_FACTORY,
+    data: salt + bytecode.slice(2), // Concatenate salt and bytecode
+    gasLimit: 3000000, // Adjust based on your contract
+  });
+
+  console.log("Deployment tx:", tx.hash);
+  await tx.wait();
+
+  console.log("Contract deployed to:", deployAddress);
+  return deployAddress;
+}
+
+deployWithCreate2();
+```
+
+```solidity "Solidity Create2 Deployer Contract" expandable
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Create2Deployer {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920ca78fbf26c0b4956c;
+
+    function deployContract(
+        bytes32 salt,
+        bytes memory bytecode
+    ) external returns (address) {
+        // Prepare deployment data
+        bytes memory deploymentData = abi.encodePacked(salt, bytecode);
+
+        // Deploy via Create2 factory
+        (bool success, bytes memory result) = CREATE2_FACTORY.call(deploymentData);
+        require(success, "Create2 deployment failed");
+
+        // Extract deployed address from return data
+        address deployed = abi.decode(result, (address));
+        return deployed;
+    }
+
+    function computeAddress(
+        bytes32 salt,
+        bytes memory bytecode
+    ) external pure returns (address) {
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                bytes1(0xff),
+                CREATE2_FACTORY,
+                salt,
+                keccak256(bytecode)
+            )
+        );
+        return address(uint160(uint256(hash)));
+    }
+}
+```
+</CodeGroup>
+
+### Compute Deployment Address
+
+You can calculate the deployment address without actually deploying:
+
+```javascript
+import { ethers } from "ethers";
+
+function computeCreate2Address(salt, bytecode) {
+  const factoryAddress = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+
+  const address = ethers.getCreate2Address(
+    factoryAddress,
+    salt,
+    ethers.keccak256(bytecode)
+  );
+
+  return address;
+}
+
+// Example usage
+const salt = ethers.id("my-deployment-v1");
+const bytecode = "0x608060405234801561001057600080fd5b50...";
+const futureAddress = computeCreate2Address(salt, bytecode);
+console.log("Contract will deploy to:", futureAddress);
+```
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Cross-chain Deployments">
+    Deploy contracts to the same address across multiple chains:
+    ```javascript
+    const salt = ethers.id("myapp-v1.0.0");
+    // Same salt + bytecode = same address on all chains
+    ```
+  </Accordion>
+
+  <Accordion title="Counterfactual Interactions">
+    Interact with contracts before they're deployed:
+    1. Compute the future address
+    2. Send funds or tokens to that address
+    3. Deploy the contract later when needed
+  </Accordion>
+
+  <Accordion title="Upgrade Patterns">
+    Predictable upgrade addresses using versioned salts:
+    ```javascript
+    const v1Salt = ethers.id("mycontract-v1");
+    const v2Salt = ethers.id("mycontract-v2");
+    ```
+  </Accordion>
+
+  <Accordion title="Factory Patterns">
+    Build factory contracts with deterministic child addresses:
+    ```solidity
+    function deployChild(uint256 nonce) external {
+        bytes32 salt = keccak256(abi.encode(msg.sender, nonce));
+        // Deploy with predictable address
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Implementation Details
+
+The Create2 factory contract is extremely minimal:
+
+```assembly
+// Entire contract bytecode (45 bytes)
+0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3
+```
+
+This assembly code:
+1. Reads the salt (32 bytes) and bytecode from calldata
+2. Uses the CREATE2 opcode to deploy the contract
+3. Returns the deployed contract address
+
+## Best Practices
+
+<Warning>
+  **Security Considerations**:
+  - Always verify bytecode integrity before deployment
+  - Be aware that anyone can deploy to a CREATE2 address if they have the bytecode and salt
+  - Consider using access controls in your factory contracts
+</Warning>
+
+### Salt Selection
+
+Choose salts carefully for your use case:
+
+```javascript "Salt Selection Strategies" expandable
+// Sequential salts for multiple instances
+const salt1 = ethers.solidityPacked(["uint256"], [1]);
+const salt2 = ethers.solidityPacked(["uint256"], [2]);
+
+// User-specific salts
+const userSalt = ethers.solidityPacked(["address", "uint256"], [userAddress, nonce]);
+
+// Version-based salts
+const versionSalt = ethers.id("v1.2.3");
+
+// Random salts for uniqueness
+const randomSalt = ethers.randomBytes(32);
+```
+
+### Gas Optimization
+
+- The Create2 factory adds ~32,000 gas overhead
+- Batch deployments in a single transaction when possible
+- Pre-compute addresses to avoid on-chain calculations
+
+## Comparison with CREATE
+
+| Aspect | CREATE | CREATE2 |
+|--------|--------|---------|
+| Address Calculation | Based on deployer + nonce | Based on deployer + salt + bytecode |
+| Predictability | Requires knowing nonce | Fully deterministic |
+| Cross-chain | Different addresses | Same address possible |
+| Gas Cost | Baseline | ~32,000 gas overhead |
+| Use Case | Standard deployments | Deterministic deployments |
+
+## Troubleshooting
+
+Common issues and solutions:
+
+| Issue | Solution |
+|-------|----------|
+| "Create2 deployment failed" | Ensure sufficient gas and correct bytecode format |
+| Address mismatch | Verify salt and bytecode are identical to computation |
+| Contract already deployed | CREATE2 can't deploy to the same address twice |
+| Invalid bytecode | Ensure bytecode includes constructor arguments if needed |
+
+## Example: Multi-chain Token Deployment
+
+Deploy an ERC20 token to the same address across multiple chains:
+
+```javascript "Multi-chain Token Deployment" expandable
+import { ethers } from "ethers";
+
+async function deployTokenMultichain(chains) {
+  const bytecode = "0x..."; // ERC20 bytecode with constructor args
+  const salt = ethers.id("MyToken-v1.0.0");
+
+  // Compute address (same on all chains)
+  const tokenAddress = ethers.getCreate2Address(
+    "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+    salt,
+    ethers.keccak256(bytecode)
+  );
+
+  console.log("Token will deploy to:", tokenAddress);
+
+  // Deploy on each chain
+  for (const chain of chains) {
+    const provider = new ethers.JsonRpcProvider(chain.rpc);
+    const signer = new ethers.Wallet(privateKey, provider);
+
+    // Check if already deployed
+    const code = await provider.getCode(tokenAddress);
+    if (code !== "0x") {
+      console.log(`Already deployed on ${chain.name}`);
+      continue;
+    }
+
+    // Deploy
+    const tx = await signer.sendTransaction({
+      to: "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+      data: salt + bytecode.slice(2),
+      gasLimit: 3000000,
+    });
+
+    await tx.wait();
+    console.log(`Deployed on ${chain.name}`);
+  }
+}
+```
+
+## Further Reading
+
+- [EIP-1014: CREATE2 Specification](https://eips.ethereum.org/EIPS/eip-1014)
+- [Ethereum Yellowpaper: CREATE2 Definition](https://ethereum.github.io/yellowpaper/paper.pdf)
+- [OpenZeppelin Create2 Library](https://docs.openzeppelin.com/contracts/4.x/api/utils#Create2)

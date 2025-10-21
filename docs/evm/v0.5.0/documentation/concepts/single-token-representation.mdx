@@ -1,0 +1,240 @@
+---
+title: "Single Token Representation"
+description: "Understanding unified token models across Cosmos and EVM ecosystems"
+icon: "coins"
+---
+
+## The Problem: Token Fragmentation
+
+In traditional blockchain ecosystems with EVM support, tokens often exist in multiple representations:
+
+- **Native tokens** in the base blockchain format
+- **Wrapped tokens** as ERC20 contracts
+- **IBC vouchers** for cross-chain assets
+- **Bridge tokens** from various bridge protocols
+
+This fragmentation creates confusion, liquidity splitting, and poor user experience. Users must manually wrap/unwrap tokens, track multiple versions, and worry about using the correct representation.
+
+## Single Token Representation v2 (STRv2)
+
+STRv2 solves fragmentation by ensuring each asset has exactly one canonical representation that automatically adapts to its usage context.
+
+### Core Principles
+
+**One Asset, One Representation**
+Each token exists in either Cosmos or EVM format at any given time, never both simultaneously. The representation automatically switches based on where it's being used.
+
+**Automatic Conversion**
+When tokens move between Cosmos and EVM contexts, conversion happens transparently:
+- Sending to an Ethereum address → converts to ERC20
+- Sending to a Cosmos address → converts to native coin
+- IBC transfer with EVM recipient → arrives as ERC20
+
+**Native Performance**
+Unlike wrapped tokens that require contract calls, STRv2 tokens operate at native speed through precompiled contracts that directly access bank balances.
+
+## Token Pairs: The Bridge
+
+A TokenPair links a Cosmos denomination with an ERC20 contract address, establishing the canonical mapping:
+
+```
+Cosmos Coin (test) ←→ TokenPair ←→ ERC20 Contract (0x...)
+```
+
+### Origin Types
+
+**Native Cosmos Coins**
+- Start as Cosmos SDK coins (test, uosmo, etc.)
+- Module deploys an ERC20 contract representation
+- Contract owned by module (OWNER_MODULE)
+- Conversions use mint/burn mechanism
+
+**Existing ERC20 Tokens**
+- Start as deployed ERC20 contracts
+- Module creates a Cosmos coin denomination
+- Contract owned externally (OWNER_EXTERNAL)
+- Conversions use escrow/release mechanism
+
+## Precompiled Contracts: The Magic
+
+Traditional wrapped tokens require expensive contract storage and logic. STRv2 uses precompiled contracts - native code that appears as ERC20 to the EVM but executes at native speed.
+
+### Native Precompiles
+
+For Cosmos-native assets, precompiles provide:
+- Standard ERC20 interface (transfer, approve, balanceOf)
+- Direct bank module integration
+- No contract storage overhead
+- Gas costs 10-100x lower than regular ERC20
+
+### Dynamic Precompiles
+
+For advanced functionality:
+- WERC20 interfaces with deposit/withdraw
+- Custom extensions per token
+- Runtime registration
+- Module-specific features
+
+## Conversion Mechanics
+
+### Cosmos → ERC20
+
+When converting native coins to ERC20:
+
+1. **User initiates** conversion via message or automatic trigger
+2. **Module validates** token pair is enabled
+3. **Coins escrowed** in module account (removed from circulation)
+4. **ERC20 minted** to recipient address
+5. **Event emitted** for tracking
+
+The coins don't disappear - they're held in escrow, maintaining supply consistency.
+
+### ERC20 → Cosmos
+
+When converting ERC20 to native coins:
+
+1. **User initiates** conversion or automatic trigger
+2. **Module validates** sufficient ERC20 balance
+3. **Tokens burned** (if module-owned) or **escrowed** (if external)
+4. **Coins released** from module account
+5. **Event emitted** for tracking
+
+## IBC Integration
+
+STRv2 seamlessly integrates with IBC transfers through middleware:
+
+### Automatic Conversion
+
+When receiving IBC tokens:
+- If recipient is Ethereum address → convert to ERC20
+- If recipient is Cosmos address → keep as native
+- If token pair doesn't exist → create dynamically
+
+### Cross-Chain DeFi
+
+This enables powerful workflows:
+1. Receive OSMO from Osmosis via IBC
+2. Automatically converts to ERC20
+3. Use in Uniswap-style DEX
+4. Swap for other tokens
+5. Send back via IBC as native
+
+## Design Rationale
+
+### Why Not Simple Wrapping?
+
+Traditional wrapping (like WETH) has drawbacks:
+- **Double tokens**: Native ETH and WETH coexist
+- **Manual process**: Users must wrap/unwrap
+- **Liquidity split**: Separate pools for each version
+- **Gas overhead**: Extra contract calls
+
+### Why Precompiles?
+
+Precompiles provide:
+- **Native speed**: Direct state access
+- **Compatibility**: Standard ERC20 interface
+- **Efficiency**: No storage overhead
+- **Transparency**: Appears as regular token to contracts
+
+### Why Automatic Conversion?
+
+Automatic conversion improves UX:
+- **No manual steps**: Tokens "just work"
+- **Unified liquidity**: Single pool per asset
+- **Reduced errors**: No wrong token mistakes
+- **Better bridging**: Seamless cross-chain
+
+## Security Considerations
+
+### Supply Integrity
+
+The total supply remains constant across conversions:
+```
+Total Supply = Cosmos Circulating + ERC20 Circulating + Module Escrow
+```
+
+### Ownership Models
+
+**Module Ownership** (Native Coins):
+- Module can mint/burn ERC20
+- Ensures 1:1 backing
+- No external control risks
+
+**External Ownership** (ERC20 Origin):
+- Original deployer retains control
+- Module uses escrow mechanism
+- Preserves contract upgradeability
+
+### Attack Vectors
+
+**Malicious ERC20 Contracts**
+- Validation before registration
+- Event log verification
+- Balance checks pre/post operation
+
+**Reentrancy Protection**
+- State changes before external calls
+- Checks-effects-interactions pattern
+- Gas limit enforcement
+
+## Benefits for Users
+
+### Simplified Experience
+- One token to rule them all
+- No manual wrapping
+- Automatic conversion where needed
+- Consistent balance across contexts
+
+### Better Capital Efficiency
+- No liquidity fragmentation
+- Single market per asset
+- Lower slippage
+- Unified order books
+
+### Enhanced Composability
+- Use any token in any context
+- Seamless DeFi integration
+- Cross-chain applications
+- Future-proof design
+
+## Benefits for Developers
+
+### Easier Integration
+- Standard interfaces everywhere
+- No wrapper contract management
+- Automatic handling
+- Less code complexity
+
+### Gas Optimization
+- Native precompile efficiency
+- No extra contract calls
+- Batched operations
+- Lower user costs
+
+### Innovation Enablement
+- Build cross-VM applications
+- Leverage both ecosystems
+- New DeFi primitives
+- Unified token standards
+
+## Future Evolution
+
+### Potential Enhancements
+
+**Multi-VM Support**
+- CosmWasm integration
+- Move VM compatibility
+- Universal token representation
+
+**Advanced Features**
+- Streaming payments
+- Programmable transfers
+- Conditional conversions
+- Batch operations
+
+**Cross-Chain Standards**
+- IBC native tokens
+- Universal asset IDs
+- Metadata preservation
+- Governance coordination

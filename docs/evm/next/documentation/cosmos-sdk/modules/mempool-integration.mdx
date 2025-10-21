@@ -1,0 +1,1048 @@
+---
+title: "Mempool Integration"
+description: "Unified EVM and Cosmos transaction mempool implementation"
+---
+
+## Module Overview
+
+The Experimental EVM Mempool is a **unified mempool implementation** that manages both EVM and Cosmos SDK transactions in a single pool. Unlike the other EVM-specific components (VM, FeeMarket, ERC20, PreciseBank), the mempool is **not a Cosmos SDK module** but rather a standalone component that integrates at the application level.
+
+<Info>
+The mempool is configured in `app.go` during application initialization, not through genesis state like other modules.
+</Info>
+
+**Key Features**:
+- **Dual Transaction Support**: Handles both EVM (MsgEthereumTx) and native Cosmos transactions
+- **Unified Ordering**: Priority-based transaction selection across both transaction types
+- **Nonce Management**: Automatic nonce sequencing for EVM transactions with gap handling
+- **Fee-Based Prioritization**: Transactions ordered by gas price/priority fee
+- **Ethereum Compatibility**: Compatible with standard Ethereum transaction pool semantics
+
+**Source Code**:
+- Implementation: [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go)
+- Interfaces: [`mempool/interface.go`](https://github.com/cosmos/evm/blob/main/mempool/interface.go)
+- Legacy Pool: [`mempool/txpool/legacypool/legacypool.go`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go)
+- Configuration Helpers: [`config/server_app_options.go`](https://github.com/cosmos/evm/blob/main/config/server_app_options.go)
+- Integration: [`evmd/app.go#L727-L743`](https://github.com/cosmos/evm/blob/main/evmd/app.go#L727-L743)
+
+---
+
+## Architecture
+
+### Transaction Flow
+
+```
+                    ┌─────────────────────────────────┐
+                    │  Incoming Transaction (CheckTx)  │
+                    └────────────────┬────────────────┘
+                                     │
+                    ┌────────────────▼────────────────┐
+                    │     ExperimentalEVMMempool      │
+                    │  (mempool/mempool.go:43-66)     │
+                    └────────────────┬────────────────┘
+                                     │
+                ┌────────────────────┴────────────────────┐
+                │                                         │
+    ┌───────────▼──────────┐              ┌──────────────▼──────────┐
+    │   EVM Transaction?   │              │   Cosmos Transaction?   │
+    │  (MsgEthereumTx)     │              │   (Other msg types)     │
+    └───────────┬──────────┘              └──────────────┬──────────┘
+                │                                        │
+    ┌───────────▼──────────┐              ┌──────────────▼──────────┐
+    │   TxPool + Legacy    │              │   PriorityNonceMempool  │
+    │   Pool (EVM Pool)    │              │   (Cosmos Pool)         │
+    │  (txpool/txpool.go)  │              │   (SDK mempool)         │
+    └───────────┬──────────┘              └──────────────┬──────────┘
+                │                                        │
+                │      ┌─────────────────────────┐       │
+                └──────►  Combined Iterator      ◄───────┘
+                       │  (iterator.go:30-52)    │
+                       │  Fee-based ordering     │
+                       └────────────┬────────────┘
+                                    │
+                       ┌────────────▼────────────┐
+                       │   Block Proposal        │
+                       │   (PrepareProposal)     │
+                       └─────────────────────────┘
+```
+
+### Component Structure
+
+The mempool consists of three primary components:
+
+1. **ExperimentalEVMMempool** ([`mempool.go:43-66`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L43-L66))
+   - Top-level coordinator routing transactions to appropriate pools
+   - Provides unified iterator for transaction selection
+   - Manages lifecycle and synchronization
+
+2. **EVM Transaction Pool** ([`txpool/legacypool/legacypool.go:207-228`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L207-L228))
+   - Handles EVM transactions with Ethereum-compatible semantics
+   - Manages pending and queued transaction lists
+   - Implements nonce-based ordering and replacement logic
+
+3. **Cosmos Transaction Pool** (SDK PriorityNonceMempool)
+   - Standard Cosmos SDK priority-based mempool
+   - Handles non-EVM transaction types
+   - Integrates with existing Cosmos SDK infrastructure
+
+---
+
+## Integration in app.go
+
+The mempool is initialized during application construction in `app.go`:
+
+```go
+// From evmd/app.go:722-743
+// Get the block gas limit from genesis file
+blockGasLimit := evmconfig.GetBlockGasLimit(appOpts, logger)
+// Get MinTip from app.toml or cli flag configuration
+minTip := evmconfig.GetMinTip(appOpts, logger)
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: blockGasLimit,
+    MinTip:        minTip,
+}
+
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext,
+    logger,
+    app.EVMKeeper,
+    app.FeeMarketKeeper,
+    app.txConfig,
+    app.clientCtx,
+    mempoolConfig,
+)
+app.EVMMempool = evmMempool
+
+app.SetMempool(evmMempool)
+checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
+app.SetCheckTxHandler(checkTxHandler)
+
+abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
+abciProposalHandler.SetSignerExtractionAdapter(
+    evmmempool.NewEthSignerExtractionAdapter(
+        sdkmempool.NewDefaultSignerExtractionAdapter(),
+    ),
+)
+app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+```
+
+**Integration Requirements**:
+
+<AccordionGroup>
+<Accordion title="1. Mempool Configuration" icon="gear">
+Create `EVMMempoolConfig` with required parameters from genesis and app.toml:
+
+```go
+type EVMMempoolConfig struct {
+    LegacyPoolConfig *legacypool.Config  // Optional: EVM pool settings
+    CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]  // Optional
+    AnteHandler      sdk.AnteHandler     // Required: Transaction validation
+    BroadCastTxFn    func([]*ethtypes.Transaction) error  // Optional
+    BlockGasLimit    uint64              // Required: From consensus params
+    MinTip           *uint256.Int        // Optional: Minimum priority fee
+}
+```
+
+**Source**: [`mempool/mempool.go:69-79`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L69-L79)
+</Accordion>
+
+<Accordion title="2. Initialize Mempool" icon="rocket">
+Create the mempool instance and set it as the application mempool:
+
+```go
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext,  // Context provider for historical queries
+    logger,                  // Logger instance
+    app.EVMKeeper,          // VM Keeper for EVM state access
+    app.FeeMarketKeeper,    // Fee market for base fee queries
+    app.txConfig,           // Transaction encoding/decoding
+    app.clientCtx,          // Client context for broadcasting
+    mempoolConfig,          // Configuration from step 1
+)
+
+app.SetMempool(evmMempool)  // Register as application mempool
+```
+
+**Source**: [`mempool/mempool.go:85-187`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L85-L187)
+</Accordion>
+
+<Accordion title="3. Set CheckTx Handler" icon="shield-check">
+Configure the CheckTx handler to validate incoming transactions:
+
+```go
+checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
+app.SetCheckTxHandler(checkTxHandler)
+```
+
+The CheckTx handler:
+- Validates transaction format and signatures
+- Checks nonce sequencing for EVM transactions
+- Verifies sufficient balance for gas fees
+- Routes valid transactions to appropriate pools
+
+**Source**: [`mempool/check_tx.go`](https://github.com/cosmos/evm/blob/main/mempool/check_tx.go)
+</Accordion>
+
+<Accordion title="4. Configure Proposal Handler" icon="cube">
+Set up the ABCI proposal handler for block production:
+
+```go
+abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
+abciProposalHandler.SetSignerExtractionAdapter(
+    evmmempool.NewEthSignerExtractionAdapter(
+        sdkmempool.NewDefaultSignerExtractionAdapter(),
+    ),
+)
+app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+```
+
+The proposal handler:
+- Selects transactions from mempool for inclusion in blocks
+- Orders transactions by priority (gas price)
+- Respects block gas limit and consensus constraints
+- Handles both EVM and Cosmos transaction signatures
+
+**Source**: SDK `baseapp/abci.go`
+</Accordion>
+</AccordionGroup>
+
+---
+
+## Configuration Parameters
+
+### Block Gas Limit
+
+<ParamField path="consensus_params.block.max_gas" type="int64" default="-1 (unlimited)">
+Maximum gas allowed per block. This parameter is **not** in app state but in the genesis consensus parameters.
+
+**Configuration Location**: `~/.evmd/config/genesis.json`
+
+```json
+{
+  "consensus_params": {
+    "block": {
+      "max_bytes": "22020096",
+      "max_gas": "100000000"
+    }
+  }
+}
+```
+
+**Valid Values**:
+- `-1`: Unlimited gas (not recommended for production)
+- `> 0`: Maximum gas units per block
+- **Recommended**: `50000000` to `100000000` for typical chains
+
+**What It Does**:
+- Limits total gas consumption per block
+- Prevents DoS attacks via expensive operations
+- Used by mempool to estimate how many transactions fit in a block
+- Affects transaction throughput and block production time
+
+**Code Reference**: [`config/server_app_options.go:23-66`](https://github.com/cosmos/evm/blob/main/config/server_app_options.go#L23-L66)
+
+<CodeGroup>
+```bash Genesis Configuration
+# View current max_gas setting
+jq '.consensus_params.block.max_gas' ~/.evmd/config/genesis.json
+
+# Set max_gas before chain start
+jq '.consensus_params.block.max_gas = 100000000' genesis.json > genesis_tmp.json
+mv genesis_tmp.json genesis.json
+```
+
+```bash Runtime Query
+# Query current block gas limit (via consensus params)
+evmd query consensus params
+```
+</CodeGroup>
+
+<Warning>
+The block gas limit **cannot be changed after chain start** without a coordinated upgrade. Plan carefully based on expected transaction volume.
+</Warning>
+</ParamField>
+
+### Minimum Priority Fee (MinTip)
+
+<ParamField path="evm.min-tip" type="uint64" default="0">
+Minimum priority fee (tip) required for EVM transactions to enter the mempool.
+
+**Configuration Location**: `~/.evmd/config/app.toml`
+
+```toml
+[evm]
+# Minimum priority fee for mempool acceptance (in wei)
+min-tip = 1000000000  # 1 gwei
+```
+
+**Valid Values**:
+- `0`: No minimum tip (accept any priority fee)
+- `> 0`: Minimum tip in wei (1 gwei = 1000000000 wei)
+
+**What It Does**:
+- Filters out low-priority transactions
+- Protects against mempool spam
+- Does **not** affect base fee (controlled by FeeMarket module)
+- Only applies to EVM transactions (MsgEthereumTx)
+
+**Code Reference**:
+- [`config/server_app_options.go:82-94`](https://github.com/cosmos/evm/blob/main/config/server_app_options.go#L82-L94)
+- [`server/config/config.go:67-68`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L67-L68)
+- [`mempool/mempool.go:78`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L78)
+
+<CodeGroup>
+```toml app.toml Configuration
+[evm]
+# Minimum priority fee (in wei)
+# 0 = no minimum (default)
+# 1000000000 = 1 gwei
+# 1000000000000 = 1000 gwei
+min-tip = 1000000000
+```
+
+```bash CLI Flag
+# Override via command-line flag
+evmd start --evm.min-tip 1000000000
+```
+
+```bash Query Current Setting
+# View current app.toml configuration
+grep "min-tip" ~/.evmd/config/app.toml
+```
+</CodeGroup>
+
+<Info>
+**Difference between MinTip and BaseFee**:
+- **BaseFee**: Dynamic fee set by FeeMarket module, adjusts per block (EIP-1559)
+- **MinTip**: Static minimum priority fee set in app.toml, filters mempool entries
+- **Effective Fee**: `max(base_fee, min_tip) + priority_fee`
+</Info>
+</ParamField>
+
+### Legacy Pool Configuration
+
+The EVM transaction pool uses Ethereum's legacy pool implementation with the following parameters:
+
+<AccordionGroup>
+<Accordion title="Journal & Rejournal" icon="book">
+**Journal**: File path for persisting local transactions across node restarts
+
+**Rejournal**: Time interval to regenerate the journal file
+
+```go
+// Default from legacypool.go:158-159
+Journal:   "transactions.rlp"
+Rejournal: time.Hour
+```
+
+**What It Does**:
+- Persists pending transactions to disk
+- Allows recovery after unexpected node restarts
+- Only applies to "local" transactions (submitted directly to this node)
+- Remote transactions are not journaled
+
+**Configuration** (requires code modification in `app.go`):
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.Journal = filepath.Join(homePath, "data", "evm_transactions.rlp")
+legacyConfig.Rejournal = 30 * time.Minute
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**: [`mempool/txpool/legacypool/legacypool.go:142-143`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L142-L143)
+</Accordion>
+
+<Accordion title="PriceLimit & PriceBump" icon="coins">
+**PriceLimit**: Minimum gas price (in wei) for transaction acceptance
+
+**PriceBump**: Minimum percentage increase required to replace an existing transaction with the same nonce
+
+```go
+// Default from legacypool.go:161-162
+PriceLimit: 1      // 1 wei minimum
+PriceBump:  10     // 10% increase required
+```
+
+**What PriceLimit Does**:
+- Filters out transactions with gas price below threshold
+- Prevents mempool spam with zero-fee transactions
+- Separate from MinTip (which applies to priority fee only)
+
+**What PriceBump Does**:
+- Enables transaction replacement (Replace-By-Fee)
+- If account sends two transactions with same nonce, new one must pay ≥ 10% more
+- Prevents trivial transaction churn
+
+**Example**: If existing transaction has gas price of 10 gwei, replacement must have ≥ 11 gwei.
+
+**Configuration**:
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.PriceLimit = 1000000000  // 1 gwei minimum
+legacyConfig.PriceBump = 20           // 20% increase for replacement
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**:
+- [`mempool/txpool/legacypool/legacypool.go:145-146`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L145-L146)
+- Validation: [`mempool/txpool/legacypool/legacypool.go:176-182`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L176-L182)
+</Accordion>
+
+<Accordion title="AccountSlots & GlobalSlots" icon="layer-group">
+**AccountSlots**: Maximum executable transactions per account
+
+**GlobalSlots**: Maximum total executable transactions across all accounts
+
+```go
+// Default from legacypool.go:164-165
+AccountSlots: 16              // Per-account limit
+GlobalSlots:  4096 + 1024     // 5120 total (urgent + floating)
+```
+
+**What It Does**:
+- **Executable transactions** = transactions with correct nonce that can be included in next block
+- AccountSlots prevents single account from dominating mempool
+- GlobalSlots limits total memory usage
+- When limits exceeded, lowest-priced transactions are evicted
+
+**Relationship**:
+- GlobalSlots ≥ AccountSlots (must allow at least one full account)
+- Typical ratio: GlobalSlots = 256 to 512 × AccountSlots
+
+**Configuration**:
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.AccountSlots = 32    // Allow 32 pending tx per account
+legacyConfig.GlobalSlots = 8192   // 8k total pending transactions
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**:
+- [`mempool/txpool/legacypool/legacypool.go:148-149`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L148-L149)
+- Validation: [`mempool/txpool/legacypool/legacypool.go:184-190`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L184-L190)
+</Accordion>
+
+<Accordion title="AccountQueue & GlobalQueue" icon="list">
+**AccountQueue**: Maximum queued (future) transactions per account
+
+**GlobalQueue**: Maximum total queued transactions across all accounts
+
+```go
+// Default from legacypool.go:166-167
+AccountQueue: 64    // Per-account queued limit
+GlobalQueue:  1024  // Total queued limit
+```
+
+**What It Does**:
+- **Queued transactions** = transactions with nonce gaps (not immediately executable)
+- Held until gap-filling transactions arrive
+- AccountQueue limits queued transactions per account
+- GlobalQueue caps total memory for future transactions
+
+**Example**: If account nonce is 5, transactions with nonce 6,7,8 are pending, but transaction with nonce 10 is queued (gap at nonce 9).
+
+**Configuration**:
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.AccountQueue = 128   // Allow 128 queued tx per account
+legacyConfig.GlobalQueue = 2048   // 2k total queued transactions
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**:
+- [`mempool/txpool/legacypool/legacypool.go:150-151`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L150-L151)
+- Validation: [`mempool/txpool/legacypool/legacypool.go:192-198`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L192-L198)
+</Accordion>
+
+<Accordion title="Lifetime" icon="clock">
+**Lifetime**: Maximum time non-executable (queued) transactions remain in mempool
+
+```go
+// Default from legacypool.go:169
+Lifetime: 3 * time.Hour
+```
+
+**What It Does**:
+- Queued transactions older than lifetime are evicted
+- Prevents mempool from filling with stale future transactions
+- Only applies to queued transactions (nonce gaps), not pending
+- Eviction checked periodically (every 1 minute by default)
+
+**Typical Values**:
+- **Short-lived**: 1-3 hours (good for high-activity chains)
+- **Long-lived**: 12-24 hours (good for low-activity chains)
+
+**Configuration**:
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.Lifetime = 6 * time.Hour  // 6 hours before eviction
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**:
+- [`mempool/txpool/legacypool/legacypool.go:153`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L153)
+- Validation: [`mempool/txpool/legacypool/legacypool.go:200-203`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L200-L203)
+- Eviction interval: [`mempool/txpool/legacypool/legacypool.go:81`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L81)
+</Accordion>
+
+<Accordion title="NoLocals Flag" icon="network-wired">
+**NoLocals**: Disable special handling for local transactions
+
+```go
+// Default from legacypool.go:141
+NoLocals: false  // Local transaction tracking enabled
+```
+
+**What It Does**:
+- **Local transactions** = submitted directly to this node via RPC
+- **Remote transactions** = received from other nodes via gossip
+- When `NoLocals = false`:
+  - Local transactions are journaled to disk
+  - Local transactions have slightly higher priority
+  - Local transactions bypass some price checks
+- When `NoLocals = true`:
+  - All transactions treated equally
+  - No journaling (faster, less disk I/O)
+
+**Configuration**:
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.NoLocals = true  // Disable local transaction priority
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    // ... other fields
+}
+```
+
+**Source**: [`mempool/txpool/legacypool/legacypool.go:141`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L141)
+</Accordion>
+</AccordionGroup>
+
+---
+
+## Complete Configuration Example
+
+Here's a complete example showing how to configure the mempool with custom settings in `app.go`:
+
+```go
+// In your NewApp function in app.go
+
+// 1. Get configuration from genesis and app.toml
+blockGasLimit := evmconfig.GetBlockGasLimit(appOpts, logger)
+minTip := evmconfig.GetMinTip(appOpts, logger)
+
+// 2. Configure Legacy Pool (EVM transactions)
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.Journal = filepath.Join(cast.ToString(appOpts.Get(flags.FlagHome)), "data", "evm_txpool.rlp")
+legacyConfig.Rejournal = 30 * time.Minute
+legacyConfig.PriceLimit = 1000000000  // 1 gwei minimum
+legacyConfig.PriceBump = 15           // 15% replacement bump
+legacyConfig.AccountSlots = 32        // 32 pending per account
+legacyConfig.GlobalSlots = 8192       // 8k total pending
+legacyConfig.AccountQueue = 128       // 128 queued per account
+legacyConfig.GlobalQueue = 2048       // 2k total queued
+legacyConfig.Lifetime = 6 * time.Hour // 6 hour lifetime
+legacyConfig.NoLocals = false         // Enable local tx tracking
+
+// 3. Configure Cosmos Pool (optional, uses defaults if nil)
+cosmosConfig := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
+cosmosConfig.TxPriority = sdkmempool.TxPriority[math.Int]{
+    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+        // Custom priority function for Cosmos transactions
+        ctx := sdk.UnwrapSDKContext(goCtx)
+        cosmosTxFee, ok := tx.(sdk.FeeTx)
+        if !ok {
+            return math.ZeroInt()
+        }
+        found, coin := cosmosTxFee.GetFee().Find(app.EVMKeeper.GetEvmCoinInfo(ctx).Denom)
+        if !found {
+            return math.ZeroInt()
+        }
+        gasPrice := coin.Amount.Quo(math.NewIntFromUint64(cosmosTxFee.GetGas()))
+        return gasPrice
+    },
+    Compare: func(a, b math.Int) int {
+        return a.BigInt().Cmp(b.BigInt())
+    },
+    MinValue: math.ZeroInt(),
+}
+
+// 4. Create mempool configuration
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    LegacyPoolConfig: &legacyConfig,
+    CosmosPoolConfig: &cosmosConfig,
+    AnteHandler:      app.GetAnteHandler(),
+    BlockGasLimit:    blockGasLimit,
+    MinTip:           minTip,
+    // BroadCastTxFn: nil,  // Uses default broadcast function
+}
+
+// 5. Initialize mempool
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext,
+    logger,
+    app.EVMKeeper,
+    app.FeeMarketKeeper,
+    app.txConfig,
+    app.clientCtx,
+    mempoolConfig,
+)
+app.EVMMempool = evmMempool
+
+// 6. Register with application
+app.SetMempool(evmMempool)
+checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
+app.SetCheckTxHandler(checkTxHandler)
+
+// 7. Configure proposal handler
+abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
+abciProposalHandler.SetSignerExtractionAdapter(
+    evmmempool.NewEthSignerExtractionAdapter(
+        sdkmempool.NewDefaultSignerExtractionAdapter(),
+    ),
+)
+app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+```
+
+---
+
+## Transaction Lifecycle
+
+### EVM Transaction Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Transaction Submission (eth_sendRawTransaction)          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│ 2. CheckTx (mempool/check_tx.go)                            │
+│    - Decode transaction                                     │
+│    - Verify signature                                       │
+│    - Check nonce (account nonce ≤ tx nonce)                │
+│    - Verify sufficient balance                             │
+│    - Run AnteHandler validation                            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │             │
+        ┌───────────▼───┐    ┌────▼───────────┐
+        │  Valid Nonce  │    │  Nonce Gap     │
+        │  (Sequential) │    │  (Future)      │
+        └───────┬───────┘    └────┬───────────┘
+                │                 │
+┌───────────────▼──────────┐  ┌──▼────────────────────────────┐
+│ 3a. Insert Pending       │  │ 3b. Insert Queued             │
+│     (mempool.go:214-226) │  │     (mempool.go:243-268)      │
+│     - Immediately ready  │  │     - Waiting for earlier tx  │
+│     - Can be included    │  │     - Held until gap filled   │
+└───────────────┬──────────┘  └──┬────────────────────────────┘
+                │                │
+                │  ┌─────────────▼──────────────────────────┐
+                │  │ Nonce gap filled by subsequent tx?     │
+                │  │ (Yes: promote to pending)              │
+                │  └─────────────┬──────────────────────────┘
+                │                │
+                └────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│ 4. Transaction Selection (iterator.go)                       │
+│    - Order by gas price (highest first)                     │
+│    - Group by account, maintain nonce order                 │
+│    - Respect block gas limit                                │
+│    - Filter by MinTip and BaseFee                           │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│ 5. Block Inclusion (PrepareProposal)                         │
+│    - Add to block until gas limit reached                   │
+│    - Execute transactions                                   │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│ 6. Removal (mempool.go:296-334)                             │
+│    - Successful: automatic removal by nonce advancement     │
+│    - Failed: manual removal if non-recoverable error        │
+│    - Nonce gap errors: kept in mempool                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Nonce Gap Handling
+
+The mempool implements sophisticated nonce gap handling to support Ethereum's sequential nonce requirement:
+
+<Steps>
+<Step title="Transaction Arrives">
+Account has nonce 5 on-chain. Transactions arrive:
+- Nonce 6: **Pending** (can execute immediately)
+- Nonce 7: **Queued** (waiting for nonce 6)
+- Nonce 10: **Queued** (waiting for nonces 7, 8, 9)
+</Step>
+
+<Step title="Gap Detected">
+Transaction with nonce 10 cannot execute until nonces 6-9 are processed. It enters the **queued** pool.
+
+**Code**: [`mempool/mempool.go:243-268`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L243-L268)
+</Step>
+
+<Step title="Gap Filled">
+When transactions with nonces 7, 8, 9 arrive and are validated:
+- Nonce 7 promotes to pending (after 6 executes)
+- Nonce 8 promotes to pending (after 7 executes)
+- Nonce 9 promotes to pending (after 8 executes)
+- Nonce 10 promotes to pending (after 9 executes)
+
+This happens automatically via the broadcast function.
+
+**Code**: [`mempool/mempool.go:116-126`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L116-L126)
+</Step>
+
+<Step title="Eviction">
+If queued transaction sits too long (beyond `Lifetime` parameter), it's evicted from mempool.
+
+**Default Lifetime**: 3 hours ([`legacypool.go:169`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L169))
+</Step>
+</Steps>
+
+### Cosmos Transaction Flow
+
+Cosmos transactions follow a simpler priority-based flow:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Transaction Submission (/cosmos/tx/v1beta1/txs)          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│ 2. CheckTx (mempool/check_tx.go)                            │
+│    - Decode transaction                                     │
+│    - Verify signatures                                      │
+│    - Check account sequence                                │
+│    - Verify sufficient balance                             │
+│    - Run AnteHandler validation                            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│ 3. Insert into Cosmos Pool (mempool.go:228-236)            │
+│    - Calculate priority (gas price)                         │
+│    - Insert into priority queue                             │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│ 4. Transaction Selection (iterator.go)                      │
+│    - Order by priority (highest first)                     │
+│    - Combine with EVM transactions                          │
+│    - Respect block gas limit                                │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│ 5. Block Inclusion & Removal                                │
+│    - Execute in block                                       │
+│    - Remove from mempool after commit                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Monitoring and Metrics
+
+### Query Mempool State
+
+```bash
+# View pending EVM transactions
+evmd query txpool content
+
+# Count transactions in mempool
+evmd query txpool status
+
+# Inspect specific transaction
+evmd query txpool inspect [tx-hash]
+```
+
+### Geth Metrics
+
+The mempool exposes Ethereum-compatible metrics at the configured metrics address:
+
+```toml
+# In app.toml
+[evm]
+geth-metrics-address = "127.0.0.1:8100"
+```
+
+**Available Metrics**:
+- `txpool/pending`: Number of pending transactions
+- `txpool/queued`: Number of queued transactions
+- `txpool/slots`: Total slots used
+- `txpool/discard`: Transactions discarded
+- `txpool/replace`: Transactions replaced
+- `txpool/underpriced`: Transactions rejected for low price
+- `txpool/throttle`: Transactions throttled
+- `txpool/reorgtime`: Time spent reorganizing mempool
+
+**Access Metrics**:
+```bash
+curl http://127.0.0.1:8100/debug/metrics
+```
+
+**Source**: [`mempool/txpool/legacypool/legacypool.go:86-119`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L86-L119)
+
+### Log Levels
+
+Enable debug logging for detailed mempool activity:
+
+```bash
+evmd start --log_level debug
+```
+
+**Relevant Log Lines**:
+- `"inserting transaction into mempool"`: Transaction entering mempool
+- `"inserting EVM transaction"`: EVM tx routed to EVM pool
+- `"inserting Cosmos transaction"`: Cosmos tx routed to Cosmos pool
+- `"broadcasting EVM transactions"`: Queued tx promoted to pending
+- `"removing transaction from mempool"`: Transaction removal
+
+**Source**: [`mempool/mempool.go:212-234`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L212-L234)
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Transactions Stuck in Mempool" icon="hourglass">
+**Symptoms**: Transactions remain in mempool indefinitely without inclusion in blocks.
+
+**Possible Causes**:
+
+1. **Nonce Gap**
+   - Check if transaction has future nonce
+   - Verify previous nonce transactions exist
+   - Query: `evmd query txpool content` and check "queued" section
+
+2. **Insufficient Priority Fee**
+   - Transaction may be below MinTip threshold
+   - Increase gas price or priority fee
+   - Check current MinTip: `grep "min-tip" ~/.evmd/config/app.toml`
+
+3. **Mempool Full**
+   - GlobalSlots or GlobalQueue limits reached
+   - Lower-priced transactions are evicted
+   - Increase gas price for priority
+
+4. **Block Gas Limit**
+   - Transaction gas exceeds block gas limit
+   - Check: `evmd query consensus params`
+   - Must deploy contract in multiple transactions or increase block limit
+
+**Solutions**:
+```bash
+# Check mempool status
+evmd query txpool status
+
+# View stuck transactions
+evmd query txpool content | jq '.queued'
+
+# Check transaction by hash
+evmd query txpool inspect [tx-hash]
+
+# Resubmit with higher gas price (via wallet)
+```
+</Accordion>
+
+<Accordion title="'Nonce Too Low' Errors" icon="circle-xmark">
+**Symptoms**: Transaction rejected with "nonce too low" or similar error.
+
+**Cause**: Account nonce has advanced beyond submitted transaction nonce.
+
+**Explanation**:
+- On-chain nonce: Last executed transaction nonce + 1
+- Transaction nonce must equal current on-chain nonce
+- If transaction nonce < on-chain nonce: already executed or replaced
+
+**Solutions**:
+
+```bash
+# 1. Query current account nonce
+evmd query auth account [address] | jq '.account.sequence'
+
+# 2. Query account via EVM (returns next expected nonce)
+curl -X POST http://localhost:8545 -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["[address]","latest"],"id":1}'
+
+# 3. Resubmit transaction with correct nonce
+# (use wallet/client to generate new transaction)
+```
+
+<Warning>
+Never manually set nonces unless you understand Ethereum nonce mechanics. Use wallet automatic nonce management.
+</Warning>
+</Accordion>
+
+<Accordion title="'Replacement Transaction Underpriced'" icon="arrow-trend-up">
+**Symptoms**: Attempting to replace pending transaction but getting "replacement transaction underpriced" error.
+
+**Cause**: New transaction doesn't meet PriceBump threshold (default 10%).
+
+**Explanation**:
+- To replace transaction with same nonce, new gas price must be ≥ (old gas price × 1.10)
+- This prevents trivial transaction churn
+- PriceBump is configurable in LegacyPoolConfig
+
+**Solutions**:
+
+```bash
+# Check existing transaction price
+evmd query txpool content | jq '.pending."[address]"'
+
+# Calculate required price (example: old price 10 gwei, need 11+ gwei)
+# Resubmit with 15-20% higher gas price to ensure acceptance
+```
+
+**Code Reference**: [`mempool/txpool/legacypool/legacypool.go:162`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go#L162)
+</Accordion>
+
+<Accordion title="Mempool Not Removing Executed Transactions" icon="trash">
+**Symptoms**: Transactions remain in mempool after successful block inclusion.
+
+**Cause**: Likely a bug in removal logic or nonce tracking.
+
+**Debug Steps**:
+
+```bash
+# 1. Enable debug logging
+evmd start --log_level debug
+
+# 2. Check for removal logs
+# Look for: "removing transaction from mempool"
+# And: "manually removing EVM transaction"
+
+# 3. Query mempool state
+evmd query txpool status
+
+# 4. Check if transactions were actually executed
+evmd query tx [tx-hash]
+
+# 5. Restart node (mempool rebuilds from current state)
+```
+
+**Workaround**: Restart the node - mempool will repopulate with only valid pending transactions.
+
+**Source**: [`mempool/mempool.go:296-334`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L296-L334)
+</Accordion>
+
+<Accordion title="High Memory Usage" icon="memory">
+**Symptoms**: Node memory usage grows unbounded, potential OOM kills.
+
+**Cause**: Mempool configuration allows too many transactions.
+
+**Solutions**:
+
+1. **Reduce Global Slot/Queue Limits**
+
+```go
+legacyConfig := legacypool.DefaultConfig
+legacyConfig.GlobalSlots = 2048  // Reduce from 5120
+legacyConfig.GlobalQueue = 512   // Reduce from 1024
+```
+
+2. **Reduce Per-Account Limits**
+
+```go
+legacyConfig.AccountSlots = 8   // Reduce from 16
+legacyConfig.AccountQueue = 32  // Reduce from 64
+```
+
+3. **Reduce Lifetime**
+
+```go
+legacyConfig.Lifetime = 1 * time.Hour  // Reduce from 3 hours
+```
+
+4. **Increase MinTip**
+
+```toml
+# In app.toml
+[evm]
+min-tip = 1000000000  # 1 gwei - filters low-priority spam
+```
+
+**Memory Estimation**:
+- Each transaction: ~1-4 KB
+- 5120 pending + 1024 queued ≈ 6-24 MB baseline
+- Adjust based on available memory and expected load
+
+**Monitoring**:
+```bash
+# Check mempool size
+evmd query txpool status
+
+# View slot usage
+curl http://127.0.0.1:8100/debug/metrics | grep txpool/slots
+```
+</Accordion>
+</AccordionGroup>
+
+---
+
+## Source Code References
+
+| Component | File | Lines | Description |
+|-----------|------|-------|-------------|
+| ExperimentalEVMMempool | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 43-66 | Main mempool structure |
+| EVMMempoolConfig | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 69-79 | Configuration struct |
+| NewExperimentalEVMMempool | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 85-187 | Constructor function |
+| Insert | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 205-237 | Transaction insertion |
+| Select | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 274-284 | Transaction selection |
+| Remove | [`mempool/mempool.go`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go) | 296-334 | Transaction removal |
+| LegacyPool Config | [`legacypool/legacypool.go`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go) | 138-154 | EVM pool configuration |
+| DefaultConfig | [`legacypool/legacypool.go`](https://github.com/cosmos/evm/blob/main/mempool/txpool/legacypool/legacypool.go) | 157-170 | Default EVM pool settings |
+| GetBlockGasLimit | [`config/server_app_options.go`](https://github.com/cosmos/evm/blob/main/config/server_app_options.go) | 23-66 | Extract block gas limit from genesis |
+| GetMinTip | [`config/server_app_options.go`](https://github.com/cosmos/evm/blob/main/config/server_app_options.go) | 82-94 | Extract MinTip from app.toml |
+| App Integration | [`evmd/app.go`](https://github.com/cosmos/evm/blob/main/evmd/app.go) | 722-743 | Mempool initialization in app |
+| CheckTx Handler | [`mempool/check_tx.go`](https://github.com/cosmos/evm/blob/main/mempool/check_tx.go) | - | Transaction validation |
+| Iterator | [`mempool/iterator.go`](https://github.com/cosmos/evm/blob/main/mempool/iterator.go) | - | Unified transaction iterator |
+| EVM Config Defaults | [`server/config/config.go`](https://github.com/cosmos/evm/blob/main/server/config/config.go) | 67-68 | MinTip default values |
+
+---
+
+## Additional Resources
+
+- **Ethereum Transaction Pool**: [Geth TxPool Documentation](https://geth.ethereum.org/docs/fundamentals/txpool)
+- **EIP-1559 Specification**: [EIP-1559: Fee Market](https://eips.ethereum.org/EIPS/eip-1559)
+- **Cosmos SDK Mempool**: [ADR-047: Mempool](https://docs.cosmos.network/main/architecture/adr-047-extend-mempool)
+- **Integration Tests**: [`tests/integration/mempool/`](https://github.com/cosmos/evm/tree/main/tests/integration/mempool)
+- **System Tests**: [`tests/systemtests/mempool/`](https://github.com/cosmos/evm/tree/main/tests/systemtests/mempool)
+
+---
+
+<Info>
+**Next Steps**: After configuring the mempool, proceed to update your main chain building guide and customization checklist to reference this documentation.
+</Info>

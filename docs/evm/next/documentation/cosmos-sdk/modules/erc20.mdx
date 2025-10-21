@@ -1,465 +1,540 @@
----
-title: "ERC20"
-description: "Token pair management and conversion between Cosmos coins and ERC20 tokens"
-icon: "coins"
+# ERC20 Module Reference
+
+The ERC20 module (`x/erc20`) implements Single Token Representation v2 (STRv2), ensuring seamless interoperability between Cosmos coins and EVM ERC-20 tokens. It automatically creates ERC-20 representations for IBC tokens and maintains bidirectional conversion.
+
+## Module Overview
+
+**Purpose**: Provide unified token representation across Cosmos and EVM environments
+
+**Key Functionality**:
+- Automatic ERC-20 wrapper creation for Cosmos coins and IBC tokens
+- Bidirectional token conversion (Cosmos ↔ EVM)
+- Native token precompiles at deterministic addresses
+- Dynamic precompile generation for IBC tokens
+- ERC-20 allowance tracking for cross-environment compatibility
+- Single token representation prevents fragmentation
+
+**Source Code**: [x/erc20](https://github.com/cosmos/evm/tree/main/x/erc20)
+**Parameter Defaults**: [x/erc20/types/params.go](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go#L24-L29)
+
 ---
 
-The `x/erc20` module from [cosmos/evm](https://github.com/cosmos/evm) enables bidirectional conversion between Cosmos SDK coins and ERC20 tokens within the EVM runtime.
+## Single Token Representation v2 (STRv2)
 
-<Note>
-  For conceptual understanding of Single Token Representation v2, see [Single Token Representation](/docs/evm/next/documentation/concepts/single-token-representation).
-</Note>
+### Problem Solved
+
+Without STRv2, tokens exist in separate "worlds":
+- **Cosmos side**: Bank module tracks `ibc/ABC...` denominations
+- **EVM side**: Separate ERC-20 contracts with different addresses
+- **Result**: Token fragmentation, broken liquidity, complex accounting
+
+### STRv2 Solution
+
+STRv2 ensures a single token representation:
+1. **IBC token arrives** → Automatically gets ERC-20 wrapper at deterministic address
+2. **User wants EVM access** → Convert bank balance to ERC-20 (same total supply)
+3. **User wants Cosmos access** → Convert ERC-20 back to bank balance
+4. **Result**: Same token, accessible from both environments, unified liquidity
+
+**Implementation**: [token_pair.go:18-29](https://github.com/cosmos/evm/blob/main/x/erc20/types/token_pair.go#L18-L29)
+
+---
+
+## Configuration Methods
+
+The ERC20 module is configured through genesis.json before chain launch.
+
+### Method 1: Direct JSON Editing
+
+Edit `~/.evmd/config/genesis.json` directly:
+
+```json
+{
+  "app_state": {
+    "erc20": {
+      "params": {
+        "enable_erc20": true,
+        "permissionless_registration": true
+      },
+      "token_pairs": [
+        {
+          "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "denom": "atest",
+          "enabled": true,
+          "contract_owner": 1
+        }
+      ],
+      "native_precompiles": ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"],
+      "dynamic_precompiles": [],
+      "allowances": []
+    }
+  }
+}
+```
+
+### Method 2: Using jq Command-Line Tool
+
+From [local_node.sh:247-248](https://github.com/cosmos/evm/blob/main/local_node.sh#L247-L248):
+
+```bash
+GENESIS="$HOME/.evmd/config/genesis.json"
+TMP="$HOME/.evmd/config/tmp_genesis.json"
+
+# Set native precompile for native token
+jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' \
+  "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+
+# Create token pair for native token
+jq '.app_state.erc20.token_pairs=[{
+  contract_owner:1,
+  erc20_address:"0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+  denom:"atest",
+  enabled:true
+}]' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+```
+
+---
 
 ## Parameters
 
-The module parameters control token conversion and registration ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/erc20/v1/genesis.proto)):
+### enable_erc20
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `enable_erc20` | bool | `true` | Enable token conversions globally |
-| `permissionless_registration` | bool | `false` | Allow anyone to register ERC20 tokens |
+**What It Does**: Master switch to enable/disable the entire ERC20 module functionality.
 
-### Parameter Details
+**Type**: `bool`
 
-<Expandable title="enable_erc20">
-Master switch for token conversions:
-- `true`: All conversions enabled (default)
-- `false`: Disables all conversions, registration still works
-- Use for emergency pause or maintenance
-</Expandable>
+**Valid Values**:
+- `true` - Enable ERC-20 conversions and token pairs (recommended)
+- `false` - Disable all ERC-20 functionality
 
-<Expandable title="permissionless_registration">
-Controls who can register new ERC20 tokens:
-- `false`: Only governance can register (default, recommended)
-- `true`: Anyone can register via MsgRegisterERC20
-- Permissionless risks: spam tokens, malicious contracts
-</Expandable>
+**Default**: `true` ([params.go:26](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go#L26))
 
-## State
-
-The module maintains token pair mappings and allowances ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/erc20/types/keys.go)):
-
-| Object | Key | Value | Description |
-|--------|-----|-------|-------------|
-| `TokenPair` | `0x01 + ID` | `TokenPair` | Token pair configuration |
-| `TokenPairByERC20` | `0x02 + address` | `ID` | Lookup by ERC20 address |
-| `TokenPairByDenom` | `0x03 + denom` | `ID` | Lookup by denomination |
-| `Allowance` | `0x04 + hash` | `Allowance` | ERC20 allowances |
-| `NativePrecompiles` | `0x05 + address` | `bool` | Native precompile registry |
-| `DynamicPrecompiles` | `0x06 + address` | `bool` | Dynamic precompile registry |
-
-### Token Pair Structure
-
-```go
-type TokenPair struct {
-    Erc20Address  string  // Hex address of ERC20 contract
-    Denom         string  // Cosmos coin denomination
-    Enabled       bool    // Conversion enable status
-    ContractOwner Owner   // OWNER_MODULE or OWNER_EXTERNAL
-}
-```
-
-## Token Pair Registration
-
-### Registration Methods
-
-1. **Automatic Registration (IBC Tokens)**
-   - IBC tokens (denoms starting with "ibc/") are automatically registered on first receipt
-   - No governance proposal or user action required
-   - Creates ERC20 precompile at deterministic address
-
-2. **Permissionless Registration (ERC20 Contracts)**
-   - When `permissionless_registration` parameter is `true`
-   - Any user can register existing ERC20 contracts via `MsgRegisterERC20`
-   - Useful for integrating existing ERC20 tokens
-
-3. **Governance Registration**
-   - Always available regardless of parameter settings
-   - Can register any ERC20 contract or create new token pairs
-   - Required when `permissionless_registration` is `false`
-
-## Messages
-
-### MsgRegisterERC20
-
-Register existing ERC20 contracts for conversion ([source](https://github.com/cosmos/evm/blob/v0.4.1/proto/cosmos/evm/erc20/v1/tx.proto#L104-L118)):
-
-```protobuf
-message MsgRegisterERC20 {
-    string signer = 1;
-    repeated string erc20addresses = 2;
-}
-```
-
-**Requirements:**
-- `permissionless_registration` enabled OR sender is governance authority
-- Valid ERC20 contract at address
-- Contract not already registered
-- Contract implements standard ERC20 interface
-
-### MsgConvertCoin
-
-Convert Cosmos coins to ERC20 tokens:
-
-```protobuf
-message MsgConvertCoin {
-    Coin coin = 1;      // Amount and denom to convert
-    string receiver = 2; // Hex address to receive ERC20
-    string sender = 3;   // Bech32 address of sender
-}
-```
-
-**Validation:**
-- Token pair exists and enabled
-- Sender has sufficient balance
-- Valid receiver address
-
-### MsgConvertERC20
-
-Convert ERC20 tokens to Cosmos coins:
-
-```protobuf
-message MsgConvertERC20 {
-    string contract_address = 1;  // ERC20 contract
-    string amount = 2;            // Amount to convert
-    string receiver = 3;          // Bech32 address
-    string sender = 4;            // Hex address of sender
-}
-```
-
-**Validation:**
-- Token pair exists and enabled
-- Sender has sufficient ERC20 balance
-- Valid receiver address
-
-### MsgToggleConversion
-
-Enable/disable conversions for a token pair (governance only):
-
-```protobuf
-message MsgToggleConversion {
-    string authority = 1;  // Must be governance account
-    string token = 2;      // Address or denom
-}
-```
-
-### MsgUpdateParams
-
-Update module parameters (governance only):
-
-```protobuf
-message MsgUpdateParams {
-    string authority = 1;  // Must be governance account
-    Params params = 2;     // New parameters
-}
-```
-
-## Conversion Flows
-
-### Native Coin → ERC20
-
-```mermaid
-sequenceDiagram
-    User->>Module: MsgConvertCoin
-    Module->>Bank: Escrow coins
-    Module->>EVM: Mint ERC20
-    Module->>User: ERC20 tokens
-```
-
-**Steps:**
-1. Validate token pair enabled
-2. Transfer coins to module account
-3. Mint equivalent ERC20 to receiver
-4. Emit conversion event
-
-### ERC20 → Native Coin
-
-```mermaid
-sequenceDiagram
-    User->>Module: MsgConvertERC20
-    Module->>EVM: Burn/Escrow tokens
-    Module->>Bank: Release coins
-    Module->>User: Native coins
-```
-
-**Steps:**
-1. Validate token pair enabled
-2. For module-owned: burn ERC20
-3. For external: transfer to module
-4. Release native coins from escrow
-5. Emit conversion event
-
-## Precompile System
-
-### Native Precompiles
-
-Automatically created for Cosmos coins at deterministic addresses:
-
-```go
-// Address derivation
-address = keccak256("erc20|<denom>")[:20]
-```
-
-**Interface:**
-```solidity
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-}
-```
-
-### Dynamic Precompiles (WERC20)
-
-Optional wrapped interface for registered tokens:
-
-```solidity
-interface IWERC20 is IERC20 {
-    function deposit() external payable;
-    function withdraw(uint256 amount) external;
-}
-```
-
-## IBC Integration
-
-### IBC Middleware v1
-
-Standard IBC transfer integration ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/erc20/ibc_middleware.go)):
-
-<Expandable title="View IBC middleware integration code">
-```go
-// Automatic registration and conversion on receive
-OnRecvPacket(packet) {
-    // Auto-register new IBC tokens (with "ibc/" prefix)
-    if !tokenPairExists && hasPrefix(denom, "ibc/") {
-        RegisterERC20Extension(denom)
+**Configuration**:
+```json
+{
+  "erc20": {
+    "params": {
+      "enable_erc20": true
     }
-
-    // Auto-convert to ERC20 for Ethereum addresses
-    if isEthereumAddress(receiver) {
-        convertToERC20(voucher, receiver)
-    }
-}
-
-// Automatic conversion on acknowledgment
-OnAcknowledgementPacket(packet, ack) {
-    if wasConverted {
-        convertBackToCosmos(refund)
-    }
+  }
 }
 ```
-</Expandable>
 
-**Automatic Registration:**
-- IBC tokens (denoms starting with "ibc/") are automatically registered on first receipt
-- Factory tokens (denoms starting with "factory/") are skipped
-- Native chain tokens require explicit registration
+**Impact**:
+- When `true`: Users can convert between Cosmos and ERC-20 representations
+- When `false`: All conversions disabled, tokens stay in their native format
+- Cannot be changed after genesis without governance proposal
 
-### IBC Middleware v2
+**Use Cases**:
+- `true` - Standard for EVM-compatible chains
+- `false` - Pure Cosmos chain without EVM token bridging
 
-Enhanced IBC v2 support ([source](https://github.com/cosmos/evm/blob/v0.4.1/x/erc20/v2/ibc_middleware.go)):
+---
 
-- New packet format support
-- Improved error handling
-- Multi-hop awareness
-- Backward compatibility
+### permissionless_registration
 
-## Events
+**What It Does**: Controls who can register new token pairs (create ERC-20 wrappers for Cosmos tokens).
 
-### Registration Events
+**Type**: `bool`
 
-| Event | Attributes | When Emitted |
-|-------|------------|--------------|
-| `register_erc20` | `erc20_address`, `cosmos_coin` | Token pair registered |
-| `toggle_token_conversion` | `erc20_address`, `cosmos_coin` | Conversion toggled |
+**Valid Values**:
+- `true` - Anyone can register token pairs (recommended for public chains)
+- `false` - Only governance can register token pairs (permissioned)
 
-### Conversion Events
+**Default**: `true` ([params.go:27](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go#L27))
 
-| Event | Attributes | When Emitted |
-|-------|------------|--------------|
-| `convert_coin` | `sender`, `receiver`, `amount`, `cosmos_coin`, `erc20_token` | Coin → ERC20 |
-| `convert_erc20` | `sender`, `receiver`, `amount`, `cosmos_coin`, `erc20_token` | ERC20 → Coin |
+**Configuration**:
+```json
+{
+  "erc20": {
+    "params": {
+      "permissionless_registration": true
+    }
+  }
+}
+```
 
-### IBC Events
+**Impact**:
 
-| Event | Attributes | When Emitted |
-|-------|------------|--------------|
-| `ibc_transfer_conversion` | `sender`, `receiver`, `denom`, `amount` | Auto-conversion during IBC |
+**When `true` (permissionless)**:
+- Any user can call `RegisterCoin` or `RegisterERC20` messages
+- IBC tokens automatically get ERC-20 wrappers
+- Fastest UX for new tokens
+- Standard Ethereum-like behavior
 
-## Queries
+**When `false` (permissioned)**:
+- Only governance proposals can create token pairs
+- More control over which tokens get ERC-20 representations
+- Slower onboarding for new tokens
+- Useful for curated token lists
 
-### gRPC
+**Recommendation**: Use `true` for public chains to match Ethereum UX
 
+---
+
+## Genesis State
+
+### token_pairs
+
+**What It Does**: Defines the mappings between Cosmos denominations and ERC-20 contract addresses.
+
+**Type**: Array of `TokenPair` objects
+
+**Structure**: ([token_pair.go:32-39](https://github.com/cosmos/evm/blob/main/x/erc20/types/token_pair.go#L32-L39))
 ```protobuf
-service Query {
-    // Get module parameters
-    rpc Params(QueryParamsRequest) returns (QueryParamsResponse);
-
-    // Get all token pairs
-    rpc TokenPairs(QueryTokenPairsRequest) returns (QueryTokenPairsResponse);
-
-    // Get specific token pair
-    rpc TokenPair(QueryTokenPairRequest) returns (QueryTokenPairResponse);
+message TokenPair {
+  string erc20_address = 1;   // ERC-20 contract address (hex)
+  string denom = 2;            // Cosmos denomination
+  bool enabled = 3;            // Whether conversions are active
+  Owner contract_owner = 4;    // Who owns the ERC-20 contract
 }
 ```
 
-### CLI
+**Contract Owner Types**:
+- `OWNER_MODULE = 1` - Owned by erc20 module (native Cosmos token)
+- `OWNER_EXTERNAL = 2` - Owned by external EOA (native ERC-20 token)
 
-<CodeGroup>
-
-```bash Query-Params
-# Query module parameters
-evmd query erc20 params
+**Configuration**:
+```bash
+# Using jq (from local_node.sh:248)
+jq '.app_state.erc20.token_pairs=[{
+  contract_owner:1,
+  erc20_address:"0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+  denom:"atest",
+  enabled:true
+}]' genesis.json > tmp.json && mv tmp.json genesis.json
 ```
 
-```bash Query-Token-Pairs
-# Query all registered token pairs
-evmd query erc20 token-pairs
-
-# Query specific token pair
-evmd query erc20 token-pair test
-evmd query erc20 token-pair 0x80b5a32e4f032b2a058b4f29ec95eefeeb87adcd
+```json
+{
+  "erc20": {
+    "token_pairs": [
+      {
+        "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "denom": "atest",
+        "enabled": true,
+        "contract_owner": 1
+      }
+    ]
+  }
+}
 ```
 
-```bash Convert-Tokens
-# Convert Cosmos coin to ERC20
-evmd tx erc20 convert-coin 100test 0xReceiverAddress --from mykey
+**Special Address**: `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE` - Standard address for native token (matches Ethereum convention)
 
-# Convert ERC20 to Cosmos coin
-evmd tx erc20 convert-erc20 0xTokenAddress 100000000000000000000 cosmos1receiver --from mykey
+**Validation**: ([genesis.go:30-46](https://github.com/cosmos/evm/blob/main/x/erc20/types/genesis.go#L30-L46))
+- No duplicate ERC-20 addresses
+- No duplicate denominations
+- Valid Cosmos denom format
+- Valid Ethereum address format
+
+---
+
+### native_precompiles
+
+**What It Does**: List of ERC-20 contract addresses that should be accessible as stateful precompiles for native Cosmos tokens.
+
+**Type**: Array of hex addresses (strings)
+
+**Purpose**: Enable EVM smart contracts to interact with native Cosmos tokens at deterministic addresses
+
+**Configuration**:
+```bash
+# Using jq (from local_node.sh:247)
+jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' \
+  genesis.json > tmp.json && mv tmp.json genesis.json
 ```
 
-```bash Register-Token
-# Register ERC20 token (if permissionless)
-evmd tx erc20 register-erc20 0xContractAddress --from mykey
-
-# Via governance (if permissioned)
-evmd tx gov submit-proposal register-erc20-proposal.json --from mykey
+```json
+{
+  "erc20": {
+    "native_precompiles": [
+      "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+    ]
+  }
+}
 ```
 
-</CodeGroup>
+**Requirements**:
+- Each precompile address MUST have a corresponding enabled token pair ([genesis.go:54-56](https://github.com/cosmos/evm/blob/main/x/erc20/types/genesis.go#L54-L56))
+- Precompile provides ERC-20 interface backed by bank module
 
-## Integration Examples
+**Use Case**: Enable Solidity contracts to call `IERC20(0xEeee...).transfer()` for native token
 
-### DeFi Protocol Integration
+---
 
-```javascript
-// Using precompiled ERC20 interface for IBC tokens
-const ibcToken = new ethers.Contract(
-    "0x80b5a32e4f032b2a058b4f29ec95eefeeb87adcd", // Precompile address
-    ERC20_ABI,
-    signer
-);
+### dynamic_precompiles
 
-// Standard ERC20 operations work seamlessly
-await ibcToken.approve(dexRouter, amount);
-await dexRouter.swapExactTokensForTokens(...);
+**What It Does**: Similar to native_precompiles but for IBC tokens that arrive dynamically after genesis.
+
+**Type**: Array of hex addresses (strings)
+
+**Default**: `[]` (empty at genesis, populated automatically during IBC transfers)
+
+**Configuration**:
+```json
+{
+  "erc20": {
+    "dynamic_precompiles": []
+  }
+}
 ```
 
-### Automatic IBC Conversion
+**How It Works**:
+1. IBC token arrives via `ibc/transfer` module
+2. ERC20 module automatically creates token pair with deterministic address
+3. Address is derived from IBC denom hash ([token_pair.go:18-29](https://github.com/cosmos/evm/blob/main/x/erc20/types/token_pair.go#L18-L29))
+4. Dynamic precompile address added to list
+5. EVM contracts can now interact with IBC token
 
-```javascript
-// IBC transfer automatically converts to ERC20
-const packet = {
-    sender: "cosmos1...",
-    receiver: "0x...",  // EVM address triggers conversion
-    token: { denom: "test", amount: "1000000" }
-};
-// Token arrives as ERC20 in receiver's EVM account
+**Address Derivation**: Uses `utils.GetIBCDenomAddress(denom)` to compute deterministic address from IBC denom
+
+**Example**:
+- IBC denom: `ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2`
+- Derived ERC-20 address: `0x...` (deterministic from denom hash)
+
+---
+
+### allowances
+
+**What It Does**: Stores ERC-20 allowances (approve/transferFrom) that need to persist across Cosmos-EVM conversions.
+
+**Type**: Array of `Allowance` objects
+
+**Structure**:
+```protobuf
+message Allowance {
+  string erc20_address = 1;  // ERC-20 contract
+  string owner = 2;          // Token owner address
+  string spender = 3;        // Approved spender address
+  string amount = 4;         // Approved amount
+}
 ```
 
-### Manual Conversion Flow
+**Default**: `[]` (empty at genesis)
 
-```javascript
-// Convert native to ERC20
-await client.signAndBroadcast(address, [
-    {
-        typeUrl: "/cosmos.evm.erc20.v1.MsgConvertCoin",
-        value: {
-            coin: { denom: "test", amount: "1000000" },
-            receiver: "0xEthereumAddress",
-            sender: "cosmos1..."
-        }
-    }
-]);
+**Configuration**:
+```json
+{
+  "erc20": {
+    "allowances": [
+      {
+        "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "owner": "0x1234...",
+        "spender": "0x5678...",
+        "amount": "1000000000000000000"
+      }
+    ]
+  }
+}
 ```
 
-## Best Practices
+**Why Needed**: When users convert tokens between Cosmos/EVM, allowances must be preserved for DeFi protocols to work correctly.
 
-### Chain Integration
+**Validation**: ([genesis.go:59-74](https://github.com/cosmos/evm/blob/main/x/erc20/types/genesis.go#L59-L74))
+- No duplicate allowances
+- Allowance must reference existing token pair
+- Valid addresses and amounts
 
-1. **Token Registration Review**
-   - Audit contracts before registration
-   - Verify standard compliance
-   - Check for malicious behavior
+---
 
-2. **Precompile Configuration**
-   - Enable precompiles for frequently used tokens
-   - Monitor gas consumption
-   - Set appropriate gas costs
+## Complete Configuration Example
 
-3. **IBC Setup**
-   - Configure middleware stack correctly
-   - Test auto-conversion flows
-   - Monitor conversion events
-
-### Security Considerations
-
-1. **Contract Validation**
-   ```solidity
-   // Verify standard interface
-   IERC20(token).totalSupply();
-   IERC20(token).balanceOf(address(this));
-   ```
-
-2. **Event Monitoring**
-   - Track conversion events
-   - Monitor for unusual patterns
-   - Alert on large conversions
-
-3. **Emergency Response**
-   - Disable conversions via governance
-   - Toggle specific token pairs
-   - Have incident response plan
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "token pair not found" | Token not registered | Register via governance |
-| "token pair disabled" | Conversions toggled off | Enable via governance |
-| "insufficient balance" | Low balance for conversion | Check balance in correct format |
-| "invalid recipient" | Wrong address format | Use hex for EVM, bech32 for Cosmos |
-| "module disabled" | enable_erc20 = false | Enable via governance |
-
-### Debug Commands
+Based on [local_node.sh:247-248](https://github.com/cosmos/evm/blob/main/local_node.sh#L247-L248):
 
 ```bash
-# Check if token is registered
-evmd query erc20 token-pair test
+#!/bin/bash
 
-# Check module parameters
-evmd query erc20 params
+GENESIS="$HOME/.evmd/config/genesis.json"
+TMP="$HOME/.evmd/config/tmp_genesis.json"
 
-# Check account balance (both formats)
-evmd query bank balances cosmos1...
-evmd query vm balance 0x...
+# Configure ERC20 module for native token (atest)
+jq '.app_state.erc20.native_precompiles=["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"]' \
+  "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+
+jq '.app_state.erc20.token_pairs=[{
+  contract_owner:1,
+  erc20_address:"0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+  denom:"atest",
+  enabled:true
+}]' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+
+# Validate genesis
+evmd genesis validate-genesis --home "$HOME/.evmd"
 ```
 
-## References
+Or in genesis.json directly:
 
-### Source Code
-- [ERC20 Module](https://github.com/cosmos/evm/tree/v0.4.1/x/erc20) - Module implementation
-- [Precompiles](https://github.com/cosmos/evm/tree/v0.4.1/precompiles/erc20) - ERC20 precompile contracts
-- [IBC Middleware](https://github.com/cosmos/evm/tree/v0.4.1/x/erc20/ibc_middleware.go) - IBC integration
-- [Proto Definitions](https://github.com/cosmos/evm/tree/v0.4.1/proto/cosmos/evm/erc20/v1) - API specifications
+```json
+{
+  "app_state": {
+    "erc20": {
+      "params": {
+        "enable_erc20": true,
+        "permissionless_registration": true
+      },
+      "token_pairs": [
+        {
+          "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "denom": "atest",
+          "enabled": true,
+          "contract_owner": 1
+        }
+      ],
+      "native_precompiles": [
+        "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+      ],
+      "dynamic_precompiles": [],
+      "allowances": []
+    }
+  }
+}
+```
 
-### Related Documentation
-- [Single Token Representation](/docs/evm/next/documentation/concepts/single-token-representation) - Conceptual overview
-- [VM Module](/docs/evm/next/documentation/cosmos-sdk/modules/vm) - EVM execution environment
-- [Bank Module](https://docs.cosmos.network/main/modules/bank) - Native token management
+---
+
+## Runtime Operations
+
+### Query Token Pairs
+
+```bash
+# List all token pairs
+evmd query erc20 token-pairs
+
+# Query specific token pair by denom
+evmd query erc20 token-pair atest
+
+# Query specific token pair by ERC-20 address
+evmd query erc20 token-pair-by-address 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
+```
+
+### Convert Tokens
+
+```bash
+# Convert Cosmos coin to ERC-20
+evmd tx erc20 convert-coin 1000000000000000000atest 0xRecipientAddress \
+  --from mykey --chain-id mychain-1
+
+# Convert ERC-20 back to Cosmos coin
+evmd tx erc20 convert-erc20 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE \
+  1000000000000000000 cosmos1recipient... --from mykey --chain-id mychain-1
+```
+
+### Register New Token Pair
+
+```bash
+# Register Cosmos coin (if permissionless_registration=true)
+evmd tx erc20 register-coin ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2 \
+  --from mykey --chain-id mychain-1
+
+# Register ERC-20 token (if permissionless_registration=true)
+evmd tx erc20 register-erc20 0xTokenAddress --from mykey --chain-id mychain-1
+```
+
+---
+
+## EVM Integration
+
+### Using Native Token in Solidity
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract MyDeFiProtocol {
+    // Native token precompile address
+    IERC20 constant NATIVE_TOKEN = IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+
+    function depositNative(uint256 amount) external {
+        // Transfer native Cosmos token (atest) using ERC-20 interface
+        NATIVE_TOKEN.transferFrom(msg.sender, address(this), amount);
+
+        // ... DeFi logic ...
+    }
+
+    function withdrawNative(uint256 amount) external {
+        // Transfer back to user
+        NATIVE_TOKEN.transfer(msg.sender, amount);
+    }
+}
+```
+
+### Using IBC Token in Solidity
+
+```solidity
+// IBC token addresses are deterministic from denom
+// Query the address: evmd query erc20 token-pair ibc/ABC...
+
+IERC20 ibcToken = IERC20(0xDeterministicAddressFromIBCDenom);
+ibcToken.transfer(recipient, amount);
+```
+
+---
+
+## Common Issues and Solutions
+
+### Issue: Token Pair Not Found
+
+**Symptom**: `error: token pair not found for denom X`
+
+**Cause**: No ERC-20 wrapper exists for the Cosmos token
+
+**Solution**:
+```bash
+# If permissionless_registration=true:
+evmd tx erc20 register-coin <denom> --from mykey
+
+# If permissionless_registration=false:
+# Submit governance proposal to register token pair
+```
+
+### Issue: Conversion Disabled
+
+**Symptom**: `error: token pair is not enabled`
+
+**Cause**: Token pair exists but `enabled=false`
+
+**Solution**: Submit governance proposal to enable token pair
+
+### Issue: Precompile Not Accessible
+
+**Symptom**: EVM calls to precompile address fail or return no code
+
+**Cause**: Address not in `native_precompiles` or `dynamic_precompiles`
+
+**Solution**:
+- For native tokens: Add to `native_precompiles` in genesis
+- For IBC tokens: Ensure token pair exists and is enabled
+
+### Issue: IBC Token No ERC-20 Address
+
+**Symptom**: IBC token arrives but no ERC-20 wrapper created
+
+**Cause**: `enable_erc20=false` or module not properly initialized
+
+**Solution**:
+- Check `enable_erc20` parameter is `true`
+- Check module is in app.go and BeginBlockers/EndBlockers
+
+---
+
+## Related Documentation
+
+- [Building Your Chain Guide](/docs/evm/next/documentation/getting-started/build-a-chain/overview) - Main configuration walkthrough
+- [VM Module](/docs/evm/next/documentation/cosmos-sdk/modules/vm) - EVM configuration
+- [IBC Module](/docs/evm/next/documentation/cosmos-sdk/modules/ibc) - IBC token handling
+
+---
+
+## Source Code References
+
+- **Module Implementation**: [x/erc20](https://github.com/cosmos/evm/tree/main/x/erc20)
+- **Parameter Types**: [x/erc20/types/params.go](https://github.com/cosmos/evm/blob/main/x/erc20/types/params.go)
+- **Genesis State**: [x/erc20/types/genesis.go](https://github.com/cosmos/evm/blob/main/x/erc20/types/genesis.go)
+- **Token Pair Logic**: [x/erc20/types/token_pair.go](https://github.com/cosmos/evm/blob/main/x/erc20/types/token_pair.go)
+- **IBC Callbacks**: [x/erc20/keeper/ibc_callbacks.go](https://github.com/cosmos/evm/blob/main/x/erc20/keeper/ibc_callbacks.go)
+- **Precompile Management**: [x/erc20/keeper/precompiles.go](https://github.com/cosmos/evm/blob/main/x/erc20/keeper/precompiles.go)
+- **Genesis Setup**: [local_node.sh:247-248](https://github.com/cosmos/evm/blob/main/local_node.sh#L247-L248)
+- **ERC-20 Bytecode**: [x/erc20/types/constants.go:8](https://github.com/cosmos/evm/blob/main/x/erc20/types/constants.go#L8)

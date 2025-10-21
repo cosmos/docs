@@ -497,6 +497,17 @@ export default function RPCMethodsViewerVersionB() {
     eth_createAccessList: [
       { name: 'callObject', type: 'object', description: 'Transaction call object containing at minimum "from" and "to" addresses', example: '{"from": "0x...", "to": "0x...", "data": "0x..."}' },
       { name: 'blockNumber', type: 'string', description: 'Block number or tag ("latest", "earliest", "pending")', example: 'latest' }
+    ],
+    eth_getHeaderByHash: [
+      { name: 'blockHash', type: 'hash', description: 'Block hash', example: '0xdc0818cf78f21a8e70579cb46a43643f78291264dda342ae31049421c82d21ae' }
+    ],
+    eth_getHeaderByNumber: [
+      { name: 'blockNumber', type: 'string', description: 'Block number or tag ("latest", "earliest", "pending")', example: '0x1b4' }
+    ],
+    debug_traceCall: [
+      { name: 'callObject', type: 'object', description: 'Transaction call object', example: '{"from": "0x...", "to": "0x...", "data": "0x..."}' },
+      { name: 'blockNumber', type: 'string', description: 'Block number or tag', example: 'latest' },
+      { name: 'traceConfig', type: 'object', description: 'Tracer configuration (optional)', example: '{"tracer": "callTracer"}' }
     ]
   };
 

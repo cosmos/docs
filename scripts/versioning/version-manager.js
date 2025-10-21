@@ -244,27 +244,6 @@ function updateNavigation(version, subdir) {
   }
   if (!Array.isArray(dropdown.versions)) dropdown.versions = [];
 
-  // Get base navigation from this dropdown's 'next' version
-  // 'next' is always the working directory that gets copied to create frozen versions
-  const nextVersion = dropdown.versions.find(v => v.version === 'next');
-  if (!nextVersion) {
-    throw new Error(`No 'next' version found in navigation for dropdown ${dropdownLabel}.
-
-The 'next' directory (docs/${subdir}/next/) is the working directory containing the latest documentation.
-When freezing a version, this directory is copied to docs/${subdir}/${version}/, and the original 'next' remains for continued development.
-
-Please add a 'next' navigation entry to docs.json before freezing:
-{
-  "dropdown": "${dropdownLabel}",
-  "versions": [
-    {
-      "version": "next",
-      "tabs": [ /* your navigation structure */ ]
-    }
-  ]
-}`);
-  }
-
   // Create versioned navigation by updating paths
   function updatePaths(obj, fromPrefix, toPrefix) {
     if (typeof obj === 'string') {
@@ -283,25 +262,73 @@ Please add a 'next' navigation entry to docs.json before freezing:
     return obj;
   }
 
-  const updatedFromNext = updatePaths(nextVersion, `docs/${subdir}/next/`, `docs/${subdir}/${version}/`);
-  if (updatedFromNext && typeof updatedFromNext === 'object') {
-    delete updatedFromNext.version; // ensure correct version label
-  }
-  const versionedNavigation = {
-    ...updatedFromNext,
-    version: version
-  };
+  // Try to find 'next' version first, if not use the latest version as template
+  let nextVersion = dropdown.versions.find(v => v.version === 'next');
+  let templateVersion = nextVersion;
 
-  // Remove version if it already exists
-  const existingIndex = dropdown.versions.findIndex(v => v.version === version);
-  if (existingIndex >= 0) {
-    dropdown.versions[existingIndex] = versionedNavigation;
-  } else {
-    dropdown.versions.unshift(versionedNavigation); // Add at beginning
+  if (!nextVersion) {
+    // If 'next' doesn't exist, try to use the latest existing version as template
+    if (dropdown.versions.length > 0) {
+      // Use the first version (should be the most recent) as template
+      templateVersion = dropdown.versions[0];
+      printWarning(`No 'next' version found. Using '${templateVersion.version}' as template for creating frozen version '${version}'.`);
+
+      // Create a 'next' version from the template
+      nextVersion = updatePaths(templateVersion, `docs/${subdir}/${templateVersion.version}/`, `docs/${subdir}/next/`);
+      if (nextVersion && typeof nextVersion === 'object') {
+        nextVersion.version = 'next';
+      }
+    } else {
+      throw new Error(`No versions found in navigation for dropdown ${dropdownLabel}.
+
+Please add at least one version entry to docs.json before freezing:
+{
+  "dropdown": "${dropdownLabel}",
+  "versions": [
+    {
+      "version": "next",
+      "tabs": [ /* your navigation structure */ ]
+    }
+  ]
+}`);
+    }
+  }
+
+  // Create the frozen version navigation from the template
+  const sourcePrefix = templateVersion.version === 'next'
+    ? `docs/${subdir}/next/`
+    : `docs/${subdir}/${templateVersion.version}/`;
+  const targetPrefix = `docs/${subdir}/${version}/`;
+
+  const versionedNavigation = updatePaths(templateVersion, sourcePrefix, targetPrefix);
+  if (versionedNavigation && typeof versionedNavigation === 'object') {
+    versionedNavigation.version = version;
+  }
+
+  // Now reorganize versions list:
+  // 1. Remove the version being added if it already exists
+  dropdown.versions = dropdown.versions.filter(v => v.version !== version);
+
+  // 2. Separate 'next' from other versions
+  const nextEntry = dropdown.versions.find(v => v.version === 'next');
+  const otherVersions = dropdown.versions.filter(v => v.version !== 'next');
+
+  // 3. Add the new frozen version at the top of other versions
+  otherVersions.unshift(versionedNavigation);
+
+  // 4. Rebuild versions list with frozen versions first, then 'next' at the bottom
+  dropdown.versions = [...otherVersions];
+
+  // 5. Always ensure 'next' exists at the bottom
+  if (!dropdown.versions.find(v => v.version === 'next')) {
+    dropdown.versions.push(nextVersion);
   }
 
   fs.writeFileSync(docsJsonPath, JSON.stringify(docsJson, null, 2) + '\n');
   printSuccess(`Navigation updated for version ${version}`);
+  if (!nextEntry) {
+    printSuccess(`Added 'next' version to navigation (will remain at bottom for continued development)`);
+  }
 }
 
 function copyAndUpdateDocs(currentVersion, subdir) {

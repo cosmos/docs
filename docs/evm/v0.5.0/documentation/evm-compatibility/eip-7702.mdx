@@ -1,0 +1,367 @@
+---
+title: "EIP-7702: Set EOA Code"
+description: "Implementation of EIP-7702 for enabling externally owned accounts to execute smart contract code temporarily"
+---
+
+EIP-7702 allows externally owned accounts (EOAs) to delegate their code execution to smart contracts for the duration of a transaction. EOAs temporarily "borrow" code from smart contracts through signed authorizations, enabling account abstraction, batched operations, and enhanced wallet functionality. Code delegation only lasts for the transaction duration, maintaining EOA security while adding programmable capabilities.
+
+## Comparison with Ethereum
+
+### Similarities
+
+-  **Same transaction structure:** SetCodeTx format with authorization lists
+-  **Same authorization signature format:** EIP-712 compatible signatures
+-  **Same nonce validation rules:** Authorization nonce must match account nonce
+-  **Same delegation bytecode format:** Standard delegation proxy pattern
+-  **Same gas cost parameters:** Standard EVM gas costs apply
+
+### Cosmos SDK Enhancements
+
+- **Instant Finality:** Delegations are final after one block (~2s) vs 12+ confirmations on Ethereum
+- **Lower Gas Costs:** Typically much lower transaction costs than Ethereum mainnet
+- **Enhanced Debugging:** Better error messages and transaction tracing
+- **IBC Integration:** Delegated code can interact with IBC precompiles for cross-chain operations
+
+## Comparison with Account Abstraction
+
+### EIP-7702 vs EIP-4337
+
+| Feature | EIP-7702 (Code Delegation) | EIP-4337 (Account Abstraction) |
+|---------|---------------------------|--------------------------------|
+| **Account Type** | Enhances existing EOAs | Requires new contract accounts |
+| **Compatibility** | Works with all existing wallets | Requires AA-compatible wallets |
+| **Gas Costs** | Standard transaction costs | Additional overhead for UserOps |
+| **Complexity** | Simple authorization signatures | Complex bundler infrastructure |
+| **Adoption Path** | Gradual EOA enhancement | New account creation required |
+
+### Use Case Comparison
+
+**EIP-7702 Strengths:**
+- Enhances existing accounts without migration
+- Lower complexity and gas costs
+- Works with current wallet infrastructure
+- Simpler developer experience
+
+**EIP-4337 Strengths:**
+- More flexible validation logic
+- Advanced features like social recovery
+- Dedicated account abstraction infrastructure
+- Better separation of concerns
+
+## Implementation Details
+
+### Transaction Structure
+
+### SetCodeTx Format
+
+<Expandable title="SetCodeTx Transaction Structure">
+```go
+// SetCodeTx transaction structure (EIP-7702 Type 4 transaction)
+// This transaction type enables EOAs to temporarily delegate code execution
+type SetCodeTx struct {
+    // Standard transaction fields
+    ChainID   *uint256.Int                // Chain ID for EIP-155 replay protection
+    Nonce     uint64                      // Account nonce (must be sequential)
+    GasTipCap *uint256.Int                // Priority fee per gas (EIP-1559)
+    GasFeeCap *uint256.Int                // Maximum fee per gas (EIP-1559)
+    Gas       uint64                      // Gas limit for transaction execution
+    To        *common.Address             // Recipient address (can be self for delegation)
+    Value     *uint256.Int                // ETH value to transfer
+    Data      []byte                      // Contract call data to execute with delegated code
+    AccessList ethtypes.AccessList        // EIP-2930 access list for gas optimization
+
+    // EIP-7702 specific fields
+    AuthList   []SetCodeAuthorization     // List of code delegation authorizations
+
+    // Transaction signature (signs entire transaction)
+    V *uint256.Int
+    R *uint256.Int
+    S *uint256.Int
+}
+```
+</Expandable>
+
+### Authorization Structure
+
+<Expandable title="SetCodeAuthorization Structure">
+```go
+// SetCodeAuthorization enables an EOA to authorize code delegation
+// Each authorization is separately signed and validated
+type SetCodeAuthorization struct {
+    // Delegation parameters
+    ChainID uint256.Int     // Target chain ID (0 = valid on any chain)
+    Address common.Address  // Contract address to delegate code from
+    Nonce   uint64         // Authority's current nonce (prevents replay)
+
+    // Authorization signature (separate from transaction signature)
+    // Signs: keccak256(0x05 || rlp(chainId, contractAddress, nonce))
+    V uint8           // Recovery ID
+    R *uint256.Int    // Signature R value
+    S *uint256.Int    // Signature S value
+}
+
+// Delegation Bytecode Format (automatically generated)
+// When delegation is active, the EOA's code becomes:
+// 0xEF0100 + contractAddress (23 bytes total)
+// - 0xEF01: Delegation marker (EIP-3541 compliance)
+// - 0x00: Delegation version
+// - contractAddress: 20 bytes of target contract
+```
+</Expandable>
+
+**Source:** [`tests/integration/x/vm/state_transition_benchmark.go:47-55`](https://github.com/cosmos/evm/blob/main/tests/integration/x/vm/state_transition_benchmark.go#L47-55)
+
+## Usage Examples
+
+<Tabs>
+<Tab title="Basic Delegation">
+
+<Expandable title="Multicall Contract Delegation">
+```javascript
+// Example: Delegate EOA to execute multicall contract
+// Source: Based on EIP-7702 specification examples
+import { ethers } from "ethers";
+
+async function createDelegatedMulticall() {
+    const wallet = new ethers.Wallet(privateKey, provider);
+    const multicallAddress = "0x..."; // Deployed multicall contract
+
+    // Step 1: Create authorization for code delegation
+    const authorization = {
+        chainId: 9000,                    // Your Cosmos EVM chain ID
+        address: multicallAddress,        // Contract to delegate code from
+        nonce: await wallet.getNonce(),   // Current account nonce
+    };
+
+    // Step 2: Sign authorization (EIP-712 format)
+    const authSignature = await signAuthorization(authorization, wallet);
+
+    // Step 3: Create SetCode transaction (Type 4)
+    const tx = {
+        type: 4,                         // SetCodeTxType
+        chainId: 9000,
+        nonce: authorization.nonce + 1,   // Must increment after authorization
+        gasLimit: 500000,
+        gasFeeCap: ethers.parseUnits("20", "gwei"),
+        gasTipCap: ethers.parseUnits("1", "gwei"),
+        to: wallet.address,              // Self-delegation
+        value: 0,
+        data: "0x",                      // No direct call data
+        accessList: [],
+        authorizationList: [{
+            chainId: authorization.chainId,
+            address: authorization.address,
+            nonce: authorization.nonce,
+            v: authSignature.v,
+            r: authSignature.r,
+            s: authSignature.s,
+        }]
+    };
+
+    // Step 4: Send transaction - EOA executes as multicall contract
+    return await wallet.sendTransaction(tx);
+}
+```
+</Expandable>
+
+</Tab>
+<Tab title="Account Abstraction">
+
+<Expandable title="Custom Account Logic Contract">
+```solidity
+// Custom account logic for enhanced EOA functionality
+// Source: Account abstraction pattern for EIP-7702
+pragma solidity ^0.8.0;
+
+contract CustomAccountLogic {
+    // Custom state for account logic
+    mapping(address => uint256) public customNonces;
+    mapping(address => mapping(address => bool)) public authorizedSpenders;
+
+    // Custom validation logic
+    function validateTransaction(
+        address sender,
+        bytes calldata signature,
+        bytes calldata txData
+    ) external view returns (bool) {
+        // Example: Multi-signature validation
+        // Example: Spending limit validation
+        // Example: Time-lock validation
+
+        // Simplified validation - implement your custom logic
+        return true;
+    }
+
+    // Custom execution logic
+    function executeTransaction(
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external returns (bool success, bytes memory result) {
+        // Pre-execution hooks
+        require(authorizedSpenders[tx.origin][target] || target == tx.origin, "Unauthorized target");
+
+        // Execute with custom logic
+        (success, result) = target.call{value: value}(data);
+
+        // Post-execution hooks
+        customNonces[tx.origin]++;
+
+        // Emit custom events
+        emit CustomTransaction(tx.origin, target, value, success);
+
+        return (success, result);
+    }
+
+    // Authorization management
+    function authorizeSpender(address spender) external {
+        authorizedSpenders[tx.origin][spender] = true;
+    }
+
+    event CustomTransaction(address indexed account, address indexed target, uint256 value, bool success);
+}
+```
+</Expandable>
+
+</Tab>
+<Tab title="Batch Operations">
+
+<Expandable title="DeFi Batch Executor">
+```javascript
+// Example: Batch multiple DeFi operations in one transaction
+// Source: DeFi batching pattern using EIP-7702
+async function batchDeFiOperations() {
+    const batchExecutorAddress = "0x..."; // Deployed batch executor contract
+
+    // Step 1: Authorization to use batch executor
+    const authorization = await signAuthorization({
+        chainId: 9000,
+        address: batchExecutorAddress,
+        nonce: await wallet.getNonce(),
+    }, wallet);
+
+    // Step 2: Encode batch operations
+    const operations = [
+        // Operation 1: Approve token spending
+        {
+            target: tokenAddress,
+            callData: erc20Interface.encodeFunctionData("approve", [spenderAddress, amount])
+        },
+        // Operation 2: Stake tokens
+        {
+            target: stakingAddress,
+            callData: stakingInterface.encodeFunctionData("stake", [amount])
+        },
+        // Operation 3: Claim rewards
+        {
+            target: rewardsAddress,
+            callData: rewardsInterface.encodeFunctionData("claimRewards", [])
+        }
+    ];
+
+    // Step 3: Encode batch call data
+    const batchCallData = batchInterface.encodeFunctionData("executeBatch", [operations]);
+
+    // Step 4: Create SetCode transaction
+    const tx = {
+        type: 4,
+        authorizationList: [authorization],
+        to: wallet.address,          // Self-delegation
+        data: batchCallData,         // Execute batch operations
+        gasLimit: 800000,            // Higher gas for multiple operations
+        // ... other tx fields
+    };
+
+    return await wallet.sendTransaction(tx);
+}
+```
+</Expandable>
+
+</Tab>
+<Tab title="Enhanced Wallets">
+
+<Expandable title="Smart Wallet Features">
+```solidity
+// Enhanced wallet functionality using EIP-7702
+// Source: Smart wallet pattern implementation
+pragma solidity ^0.8.0;
+
+contract SmartWalletLogic {
+    struct SpendingLimit {
+        uint256 dailyLimit;
+        uint256 spentToday;
+        uint256 lastResetDay;
+    }
+
+    mapping(address => SpendingLimit) public spendingLimits;
+    mapping(address => mapping(bytes32 => bool)) public executedTxHashes;
+
+    // Enhanced wallet functions
+    function setDailySpendingLimit(uint256 limit) external {
+        spendingLimits[tx.origin] = SpendingLimit({
+            dailyLimit: limit,
+            spentToday: 0,
+            lastResetDay: block.timestamp / 1 days
+        });
+    }
+
+    function executeWithLimits(
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external returns (bytes memory) {
+        // Check spending limits
+        SpendingLimit storage limit = spendingLimits[tx.origin];
+
+        // Reset daily counter if new day
+        uint256 currentDay = block.timestamp / 1 days;
+        if (currentDay > limit.lastResetDay) {
+            limit.spentToday = 0;
+            limit.lastResetDay = currentDay;
+        }
+
+        // Enforce spending limit
+        require(limit.spentToday + value <= limit.dailyLimit, "Daily spending limit exceeded");
+
+        // Execute transaction
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        require(success, "Transaction execution failed");
+
+        // Update spent amount
+        limit.spentToday += value;
+
+        return result;
+    }
+
+    // Prevent replay attacks
+    function executeOnce(
+        bytes32 txHash,
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external returns (bytes memory) {
+        require(!executedTxHashes[tx.origin][txHash], "Transaction already executed");
+        executedTxHashes[tx.origin][txHash] = true;
+
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        require(success, "Transaction execution failed");
+
+        return result;
+    }
+}
+```
+</Expandable>
+
+</Tab>
+</Tabs>
+## References
+
+- **EIP-7702 Specification:** https://eips.ethereum.org/EIPS/eip-7702
+- **Implementation PRs:**
+  - [Core Implementation](https://github.com/cosmos/evm/commit/4b0dcd3e) (July 2025)
+  - [Ante Handler Support](https://github.com/cosmos/evm/commit/2cc93849) (July 2025)
+  - [RPC Integration](https://github.com/cosmos/evm/commit/9164b471) (July 2025)
+- **Source Code:**
+  - [`x/vm/keeper/state_transition.go:426+`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L426) - Core delegation logic
+  - [`ante/evm/06_account_verification.go:33+`](https://github.com/cosmos/evm/blob/main/ante/evm/06_account_verification.go#L33) - Authorization validation
+  - [`rpc/types/utils.go:322+`](https://github.com/cosmos/evm/blob/main/rpc/types/utils.go#L322) - RPC transaction formatting

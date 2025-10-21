@@ -68,7 +68,10 @@ Uses version-specific tab `v0.5.0` with snapshot data.
 3. Click "Add Key" → "Create New Key"
 4. Select "JSON" format
 5. Click "Create"
-6. Save file as `scripts/versioning/service-account-key.json`
+6. Save file to one of these locations:
+   - `scripts/service-account-key.json` (recommended - shared across scripts)
+   - `scripts/versioning/service-account-key.json`
+   - Or set environment variable `GOOGLE_SERVICE_ACCOUNT_KEY` to the key file path
 
 ### 5. Share Spreadsheet
 

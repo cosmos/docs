@@ -1,0 +1,272 @@
+---
+title: "Ethereum JSON-RPC"
+description: "The JSON-RPC server provides an API that allows you to connect to a Cosmos EVM-enabled blockchain and interact with the EVM. This gives you direct access to reading Ethereum-formatted transactions or sending them to the network."
+---
+
+[JSON-RPC](http://www.jsonrpc.org/specification) is a stateless, light-weight remote procedure call (RPC) protocol. It defines several data structures and the rules around their processing. JSON-RPC is provided on multiple transports. Cosmos EVM supports JSON-RPC over HTTP and WebSocket. Transports must be enabled through command-line flags or through the `app.toml` configuration file. It uses JSON ([RFC 4627](https://www.ietf.org/rfc/rfc4627.txt)) as data format.
+
+More on Ethereum JSON-RPC:
+
+* [EthWiki JSON-RPC API](https://eth.wiki/json-rpc/API)
+* [Geth JSON-RPC Server](https://geth.ethereum.org/docs/interacting-with-geth/rpc)
+* [Ethereum's PubSub JSON-RPC API](https://geth.ethereum.org/docs/interacting-with-geth/rpc/pubsub)
+
+<Tip>
+  **Cosmos-Specific Extensions**: These methods are unique to Cosmos EVM and not found in standard Ethereum:
+
+  **Additional Eth Methods:**
+  * `eth_getTransactionLogs` - Returns logs for a specific transaction
+  * `eth_getBlockReceipts` - Returns all receipts for a given block
+
+  **Extended Debug Methods:**
+  * `debug_freeOSMemory` - Forces garbage collection
+  * `debug_setGCPercent` - Sets garbage collection percentage
+  * `debug_memStats` - Returns detailed memory statistics
+  * `debug_setBlockProfileRate` - Sets block profiling rate
+  * `debug_writeBlockProfile` - Writes block profile to file
+  * `debug_writeMemProfile` - Writes memory profile to file
+  * `debug_writeMutexProfile` - Writes mutex contention profile to file
+</Tip>
+
+<Warning>
+  **Notable Unsupported Methods**: The following standard Ethereum methods are not implemented:
+
+  * `eth_fillTransaction` - Transaction filling utility
+  * All `debug_getRaw*` methods - Raw data access not implemented
+  * `eth_subscribe` syncing events - Only newHeads, logs, and newPendingTransactions work
+  * All `trace_*` methods - Parity/OpenEthereum trace namespace
+  * All `engine_*` methods - Post-merge Engine API
+
+  See the [methods page](./methods) for complete details.
+</Warning>
+
+## Enabling the JSON-RPC Server
+
+To use the JSON-RPC API, you must enable it in your node's configuration. You can do this either through the `app.toml` configuration file or via command-line flags.
+
+### Configuration File
+
+Confirm the following in your `app.toml`:
+
+<Expandable title="View complete app.toml configuration">
+```toml
+# app.toml
+
+[json-rpc]
+
+# Enable defines if the JSON-RPC server should be enabled.
+enable = true
+
+# Address defines the JSON-RPC server address to bind to.
+address = "127.0.0.1:8545"
+
+# WS-address defines the JSON-RPC WebSocket server address to bind to.
+ws-address = "127.0.0.1:8546"
+
+# API defines a list of JSON-RPC namespaces that should be enabled.
+# Example: "eth,web3,net,txpool,debug,personal"
+api = "eth,web3,net,txpool"
+
+# MaxOpenConnections sets the maximum number of simultaneous connections
+# for the JSON-RPC server.
+max-open-connections = 0
+
+# RPCGasCap sets a cap on gas that can be used in eth_call/estimateGas queries.
+# If set to 0 (default), no cap is applied.
+rpc-gas-cap = 0
+
+# RPCEVMTimeout sets a timeout used for eth_call queries.
+evm-timeout = "10s"
+```
+</Expandable>
+
+### Command-Line Flags
+
+Alternatively, enable JSON-RPC when starting the node:
+
+```bash
+evmd start \
+  --json-rpc.enable \
+  --json-rpc.address="0.0.0.0:8545" \
+  --json-rpc.ws-address="0.0.0.0:8546" \
+  --json-rpc.api="eth,web3,net,txpool,debug,personal"
+```
+
+## JSON-RPC over HTTP[​](#json-rpc-over-http "Direct link to JSON-RPC over HTTP")
+
+Cosmos EVM supports most of the standard web3 JSON-RPC APIs to connect with existing Ethereum-compatible web3 tooling over HTTP. Ethereum JSON-RPC APIs use a namespace system. RPC methods are grouped into several categories depending on their purpose. All method names are composed of the namespace, an underscore, and the actual method name within the namespace. For example, the `eth_call` method resides in the eth namespace. Access to RPC methods can be enabled on a per-namespace basis.
+
+### HTTP Examples
+
+To interact with the JSON-RPC server, send HTTP POST requests with a JSON body:
+
+```bash
+# Get the current block number
+curl -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+  -H "Content-Type: application/json" \
+  http://localhost:8545
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": "0xC9B3C0"
+}
+```
+
+### Namespaces supported on Cosmos EVM
+
+<Info>
+See the [methods](./methods) page for an exhaustive list and working examples.
+</Info>
+
+| Namespace | Description | Supported | Enabled by Default |
+|-----------|-------------|-----------|-------------------|
+| [`eth`](./methods#eth-methods) | Core Ethereum JSON-RPC methods for interacting with the EVM | Y | Y |
+| [`web3`](./methods#web3-methods) | Utility functions for the web3 client | Y | Y |
+| [`net`](./methods#net-methods) | Network information about the node | Y | Y |
+| [`txpool`](./methods#txpool-methods) | Transaction pool inspection | Y | N |
+| [`debug`](./methods#debug-methods) | Debugging and tracing functionality | Y | N |
+| [`personal`](./methods#personal-methods) | Private key management | Y | N |
+| [`admin`](./methods#admin-methods) | Node administration | Y | N |
+| [`miner`](./methods#miner-methods) | Mining operations (stub for PoS) | Y | N |
+| `clique` | Proof-of-Authority consensus | N | N |
+| `les` | Light Ethereum Subprotocol | N | N |
+
+<Warning>
+  You should only expose the debug endpoint in non production settings as it could impact network performance and uptime under certain conditions.
+</Warning>
+
+## Subscribing to Ethereum Events[​](#subscribing-to-ethereum-events "Direct link to Subscribing to Ethereum Events")
+
+### Filters[​](#filters "Direct link to Filters")
+
+Cosmos EVM also supports the Ethereum [JSON-RPC](./methods) filters calls to subscribe to [state logs](https://eth.wiki/json-rpc/API#eth_newfilter), [blocks](https://eth.wiki/json-rpc/API#eth_newblockfilter) or [pending transactions](https://eth.wiki/json-rpc/API#eth_newpendingtransactionfilter) changes.
+
+Under the hood, it uses the CometBFT RPC client's event system to process subscriptions that are then formatted to Ethereum-compatible events.
+
+```
+curl -X POST --data '{"jsonrpc":"2.0","method":"eth_newBlockFilter","params":[],"id":1}' -H "Content-Type: application/json" http://localhost:8545{"jsonrpc":"2.0","id":1,"result":"0x3503de5f0c766c68f78a03a3b05036a5"}
+```
+
+Then you can check if the state changes with the [`eth_getFilterChanges`](https://eth.wiki/json-rpc/API#eth_getfilterchanges) call:
+
+```
+curl -X POST --data '{"jsonrpc":"2.0","method":"eth_getFilterChanges","params":["0x3503de5f0c766c68f78a03a3b05036a5"],"id":1}' -H "Content-Type: application/json" http://localhost:8545{"jsonrpc":"2.0","id":1,"result":["0x7d44dceff05d5963b5bc81df7e9f79b27e777b0a03a6feca09f3447b99c6fa71","0x3961e4050c27ce0145d375255b3cb829a5b4e795ac475c05a219b3733723d376","0xd7a497f95167d63e6feca70f344d9f6e843d097b62729b8f43bdcd5febf142ab","0x55d80a4ba6ef54f2a8c0b99589d017b810ed13a1fda6a111e1b87725bc8ceb0e","0x9e8b92c17280dd05f2562af6eea3285181c562ebf41fc758527d4c30364bcbc4","0x7353a4b9d6b35c9eafeccaf9722dd293c46ae2ffd4093b2367165c3620a0c7c9","0x026d91bda61c8789c59632c349b38fd7e7557e6b598b94879654a644cfa75f30","0x73e3245d4ddc3bba48fa67633f9993c6e11728a36401fa1206437f8be94ef1d3"]}
+```
+
+### Ethereum Websocket[​](#ethereum-websocket "Direct link to Ethereum Websocket")
+
+The Ethereum Websocket allows you to subscribe to Ethereum logs and events emitted in smart contracts. This way you don't need to continuously make requests when you want specific information.
+
+Since Cosmos EVM is built with the Cosmos SDK framework and uses CometBFT as it's consensus Engine, it inherits the event format from them. However, in order to support the native Web3 compatibility for websockets of the [Ethereum's PubSubAPI](https://geth.ethereum.org/docs/interacting-with-geth/rpc/pubsub), Cosmos EVM needs to cast the CometBFT responses retrieved into the Ethereum types.
+
+You can start a connection with the Ethereum websocket using the `--json-rpc.ws-address` flag when starting the node (default `"0.0.0.0:8546"`):
+
+```
+evmd start --json-rpc.address="0.0.0.0:8545" --json-rpc.ws-address="0.0.0.0:8546" --json-rpc.api="eth,web3,net,txpool,debug" --json-rpc.enable
+```
+
+Then, start a websocket subscription with [`ws`](https://github.com/hashrocket/ws)
+
+```
+# connect to CometBFT websocket at port 8546 as defined abovews ws://localhost:8546/# subscribe to new Ethereum-formatted block Headers> {"id": 1, "method": "eth_subscribe", "params": ["newHeads", {}]}< {"jsonrpc":"2.0","result":"0x44e010cb2c3161e9c02207ff172166ef","id":1}
+```
+
+#### Subscribing to Events via WebSocket
+
+The WebSocket endpoint allows your application to subscribe to real-time events, such as new blocks or logs, without needing to poll the node constantly.
+
+##### Example: Subscribe to New Block Headers
+
+1. **Connect to the WebSocket**: Use a tool like `wscat` or `ws` to connect to the WebSocket endpoint.
+
+   ```bash
+   ws ws://localhost:8546
+   ```
+
+2. **Send Subscription Request**: Send an `eth_subscribe` request. The parameter `newHeads` tells the server you want to listen for new blocks.
+
+   ```json
+   > {"id": 1, "method": "eth_subscribe", "params": ["newHeads"]}
+   ```
+
+3. **Receive Subscription ID**: The server responds with a unique subscription ID.
+
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": "0x9cef36b2817151b1686a73bcec17eff0"
+   }
+   ```
+
+4. **Receive Notifications**: As new blocks are created, the server will push notifications to your client with the block header details.
+
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "method": "eth_subscription",
+     "params": {
+       "subscription": "0x9cef36b2817151b1686a73bcec17eff0",
+       "result": {
+         "number": "0xC9B3C1",
+         "parentHash": "0x1d4ea5a0e9e4f5b5f20f8a8b1d9b3e9d82a4c6a4f8f8e6e5c4a3b2a1b0f0c0d1",
+         "timestamp": "0x68B9833D"
+       }
+     }
+   }
+   ```
+
+## Key Concepts[​](#key-concepts "Direct link to Key Concepts")
+
+### Data Encoding[​](#data-encoding "Direct link to Data Encoding")
+
+JSON-RPC uses hexadecimal encoding for data, but the formatting differs based on the type:
+
+#### Quantities
+
+When encoding quantities (integers, numbers):
+* Encode as hex, prefix with `"0x"`
+* Use the most compact representation
+* Zero should be represented as `"0x0"`
+
+Examples:
+* `0x41` (65 in decimal)
+* `0x400` (1024 in decimal)
+* WRONG: `0x` (should always have at least one digit - zero is `"0x0"`)
+* WRONG: `0x0400` (no leading zeroes allowed)
+* WRONG: `ff` (must be prefixed `0x`)
+
+#### Unformatted Byte Arrays
+
+When encoding unformatted data (byte arrays, account addresses, hashes, bytecode arrays):
+* Encode as hex, prefix with `"0x"`
+* Two hex digits per byte
+
+Examples:
+* `0x41` (size 1, `"A"`)
+* `0x004200` (size 3, `"\0B\0"`)
+* `0x` (size 0, `""`)
+* WRONG: `0xf0f0f` (must be even number of digits)
+* WRONG: `004200` (must be prefixed `0x`)
+
+### Default Block Parameter[​](#default-block-parameter "Direct link to Default block parameter")
+
+Several methods that query the state of the EVM accept a default block parameter. This allows you to specify the block height at which to perform the query.
+
+Methods supporting block parameter:
+* [`eth_getBalance`](./methods#eth_getbalance)
+* [`eth_getCode`](./methods#eth_getcode)
+* [`eth_getTransactionCount`](./methods#eth_gettransactioncount)
+* [`eth_getStorageAt`](./methods#eth_getstorageat)
+* [`eth_call`](./methods#eth_call)
+
+The possible values for the `defaultBlock` parameter:
+* **Hex String** - A specific block number (e.g., `0xC9B3C0`)
+* **`"latest"`** - The most recently mined block
+* **`"pending"`** - The pending state, including transactions not yet mined
+* **`"earliest"`** - The genesis block
+

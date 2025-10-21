@@ -1,0 +1,297 @@
+---
+title: 'Building Your Network'
+description: 'Quickly configure and launch an L1 EVM compatible blockchain, customized to your needs.'
+---
+
+<Tip>
+The `local_node.sh` script can quickly set up a preconfigured local blockchain, complete with pre-funded accounts, streamlined consensus parameters, and all available endpoints exposed. This is ideal for development, testing, and experimentation.
+</Tip>
+
+## Quick Start
+
+For testing and faster iteration in development, run the script as-is:
+
+```bash
+cd /path/to/evm
+./local_node.sh
+```
+
+This will:
+- Build and install the `evmd` binary
+- Create a new chain in `~/.evmd`
+- Set up 4 pre-funded development accounts (dev0-dev3)
+- Start the node with all APIs enabled
+
+<Note>
+**Prerequisites:**
+- **Go toolchain** - Required for building the binary
+- **Make** - Used to build and install `evmd`
+- **jq** - JSON processor for genesis modifications
+  - macOS: `brew install jq`
+  - Linux: `apt install jq` or `yum install jq`
+</Note>
+
+## Command-Line Options
+
+### Overwrite Control
+
+Control whether existing chain data is overwritten:
+
+```bash
+# Automatically overwrite existing data (no prompt)
+./local_node.sh -y
+
+# Never overwrite existing data (no prompt)
+./local_node.sh -n
+```
+
+Without these flags, you'll be prompted if existing data is found.
+
+### Build Options
+
+```bash
+# Skip the make install step (use existing binary)
+./local_node.sh --no-install
+
+# Build with debug symbols for remote debugging
+./local_node.sh --remote-debugging
+```
+
+The `--remote-debugging` flag builds with `nooptimization,nostrip` options, making it easier to debug with tools like Delve.
+
+### Additional Development Accounts
+
+Create extra pre-funded accounts beyond the default four:
+
+```bash
+# Create 10 additional accounts (dev4-dev13)
+./local_node.sh --additional-users 10
+```
+
+Generated mnemonics are saved to `~/.evmd/mnemonics.yaml`.
+
+### Custom Mnemonics
+
+Use your own mnemonics instead of the default dev accounts:
+
+```bash
+./local_node.sh --mnemonics-input ./my-mnemonics.yaml
+```
+
+The input YAML format:
+
+```yaml
+mnemonics:
+  - "your first mnemonic phrase here"
+  - "your second mnemonic phrase here"
+  - "your third mnemonic phrase here"
+```
+
+<Tip>
+You cannot use both `--mnemonics-input` and `--additional-users` together. Use `--mnemonics-input` to provide all accounts, or use `--additional-users` to generate additional random accounts.
+</Tip>
+
+## Default Configuration
+
+### Chain Parameters
+
+The script sets up a chain with default values:
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Cosmos Chain ID | `9001` | "Native" chain ID |
+| EVM Chain ID | 262144 | Ethereum-compatible chain ID |
+| Moniker | `localtestnet` | Node identifier |
+| Home Directory | `~/.evmd` | All chain data location |
+| Keyring | `test` | **Not secure for production -- `OS` is recommended** |
+| Key Algorithm | `eth_secp256k1` | Ethereum and Cosmos compatible |
+| Base Fee | `10000000` | Initial gas price |
+| Denom | `atest` | Base denomination (atto-test) |
+
+### Pre-Funded Development Accounts
+
+Four development accounts are created by default, each funded with `1000000000000000000000atest` (1,000 TEST tokens):
+
+<Accordion title="dev0 - Primary Test Account">
+**Mnemonic:**
+```
+copper push brief egg scan entry inform record adjust fossil boss egg
+comic alien upon aspect dry avoid interest fury window hint race symptom
+```
+
+**Addresses:**
+- Ethereum: `0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101`
+- Cosmos: `cosmos1cml96vmptgw99syqrrz8az79xer2pcgp84pdun`
+- Private Key: `0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305`
+</Accordion>
+
+<Accordion title="dev1 - Secondary Test Account">
+**Mnemonic:**
+```
+maximum display century economy unlock van census kite error heart snow filter
+midnight usage egg venture cash kick motor survey drastic edge muffin visual
+```
+
+**Addresses:**
+- Ethereum: `0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17`
+- Cosmos: `cosmos1jcltmuhplrdcwp7stlr4hlhlhgd4htqh3a79sq`
+- Private Key: `0x741de4f8988ea941d3ff0287911ca4074e62b7d45c991a51186455366f10b544`
+</Accordion>
+
+<Accordion title="dev2 - Third Test Account">
+**Mnemonic:**
+```
+will wear settle write dance topic tape sea glory hotel oppose rebel
+client problem era video gossip glide during yard balance cancel file rose
+```
+
+**Addresses:**
+- Ethereum: `0x40a0cb1C63e026A81B55EE1308586E21eec1eFa9`
+- Cosmos: `cosmos1gzsvk8rruqn2sx64acfsskrwy8hvrmafqkaze8`
+- Private Key: `0x3b7955d25189c99a7468192fcbc6429205c158834053ebe3f78f4512ab432db9`
+</Accordion>
+
+<Accordion title="dev3 - Fourth Test Account">
+**Mnemonic:**
+```
+doll midnight silk carpet brush boring pluck office gown inquiry duck chief
+aim exit gain never tennis crime fragile ship cloud surface exotic patch
+```
+
+**Addresses:**
+- Ethereum: `0x498B5AeC5D439b733dC2F58AB489783A23FB26dA`
+- Cosmos: `cosmos1fx944mzagwdhx0wz7k9tfztc8g3lkfk6rrgv6l`
+- Private Key: `0x8a36c69d940a92fcea94b36d0f2928c7a0ee19a90073eda769693298dfa9603b`
+</Accordion>
+
+<Warning>
+These are **well-known test accounts**. Never use them on public networks or with real funds. Anyone with access to these mnemonics can control these accounts.
+</Warning>
+
+## Genesis Configuration
+
+The script applies numerous genesis customizations optimized for development:
+
+- **Token denomination**: `atest` (18 decimals) configured across all modules
+- **ERC20 native token**: Available at `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`
+- **Precompiles**: All standard precompiles enabled (P256, Bech32, Staking, Distribution, ICS20, Vesting, Bank, Governance, Slashing)
+- **Governance**: Fast testing periods (30s voting, 15s expedited)
+- **Block gas**: 10M gas per block
+
+## Node Configuration
+
+The script optimizes several runtime configurations for local development:
+
+### Consensus & Block Times
+- **Fast consensus**: Reduced timeouts result in ~1 second block times (vs default ~5 seconds)
+- **Quick commit**: `timeout_commit = 1s` for rapid iteration
+
+### APIs & Endpoints
+- **All APIs enabled**: gRPC, REST, JSON-RPC (eth, txpool, personal, net, debug, web3)
+- **Metrics enabled**: Prometheus metrics available at `http://localhost:26660/metrics`
+
+## Node Startup Configuration
+
+The node starts with these runtime parameters:
+
+```bash
+evmd start \
+  --pruning nothing \                    # Keep all historical data
+  --log_level info \                     # Standard logging
+  --minimum-gas-prices=0atest \          # Accept zero gas price
+  --evm.min-tip=0 \                      # Accept zero priority fee
+  --json-rpc.api eth,txpool,personal,net,debug,web3 \
+  --chain-id 9001 \
+  --home ~/.evmd
+```
+
+### JSON RPC
+
+| Namespace | Purpose |
+|-----|---------|
+| `eth` | Standard Ethereum JSON-RPC (eth_sendTransaction, eth_call, etc.) |
+| `txpool` | Transaction pool inspection |
+| `personal` | Account management (personal_sign, etc.) |
+| `net` | Network information |
+| `debug` | Debugging methods (debug_traceTransaction, etc.) |
+| `web3` | Web3 utilities |
+
+## Customizing the Local Node Script
+
+The `local_node.sh` script can be customized to test different chain configurations. To modify parameters:
+
+1. **Open the script** in your text editor
+2. **Locate the genesis customization section** (lines 233-255 with `jq` commands)
+3. **Add or modify `jq` commands** for your desired parameters
+4. **Run the script** with `./local_node.sh -y` to apply changes
+
+### Quick Customization Options
+
+**Top-level variables** (edit at top of script):
+- `CHAINID` (line 3) - Cosmos chain ID, default: `9001`
+- `MONIKER` (line 4) - Node identifier, default: `localtestnet`
+- `LOGLEVEL` (line 11) - Log verbosity: `debug`, `info`, `warn`, `error`
+- `BASEFEE` (line 15) - Initial EIP-1559 base fee, default: `10000000`
+
+**Common customizations**:
+- Token denomination and metadata
+- Active precompiles
+- Fee market parameters
+- Governance timing
+- Consensus timeouts
+
+## Connecting to the Local Node
+
+### JSON-RPC Endpoint
+
+```
+http://localhost:8545
+```
+
+Configure your tools to use this endpoint:
+
+<CodeGroup>
+```javascript MetaMask
+Network Name: Local EVM
+RPC URL: http://localhost:8545
+Chain ID: 999111
+Currency Symbol: TEST
+```
+
+```javascript Hardhat (hardhat.config.js)
+module.exports = {
+  networks: {
+    local: {
+      url: "http://localhost:8545",
+      accounts: [
+        "0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305"  // dev0
+      ]
+    }
+  }
+}
+```
+
+```bash Foundry
+forge create --rpc-url http://localhost:8545 \
+  --private-key 0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305 \
+  src/MyContract.sol:MyContract
+```
+</CodeGroup>
+
+### gRPC Endpoint
+
+```
+localhost:9090
+```
+
+### REST API
+
+```
+http://localhost:1317
+```
+
+### WebSocket
+
+```
+ws://localhost:8546
+```
