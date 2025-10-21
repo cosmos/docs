@@ -1,0 +1,110 @@
+---
+title: "IBC"
+description: "An Overview of the Inter-Blockchain Communication Protocol"
+icon: "network"
+---
+
+# IBC
+
+> An Overview of the Inter-Blockchain Communication Protocol
+
+<Info>
+  This is a summary view of IBC v2 \[Eureka]. For more comprehensive details, guides and more please visit the official [Eureka documentation](https://docs.skip.build/go/eureka/eureka-overview).
+</Info>
+
+### Core Data Structures
+
+The `Packet` is the primary container for cross-chain communication in IBC v2. Each packet may wrap **one or more** application-specific **`Payload`** objects.
+
+<CodeGroup>
+  ```typescript "IBC v2 Core Data Structures" expandable
+  // Main container sent between chains
+  interface Packet {
+    sourceClientId: bytes;    // Client ID for destination chain (stored on source)
+    destClientId: bytes;      // Client ID for source chain (stored on destination)
+    sequence: uint64;         // Monotonically increasing nonce per client-pair
+    timeout: uint64;          // UNIX timestamp (seconds) for packet expiry
+    data: Payload[];          // Application payload(s)
+  }
+
+  // Application-specific data
+  interface Payload {
+    sourcePort: bytes;  // Sending application identifier
+    destPort: bytes;    // Receiving application identifier
+    version: string;    // Application version
+    encoding: string;   // MIME-type for decoding
+    value: bytes;       // Opaque app data
+  }
+  ```
+</CodeGroup>
+
+<Info>
+  Timeout is measured **against the destination chain’s clock**, not the source. This ensures safety even under clock drift.
+</Info>
+
+## Key On-Chain Components
+
+<Accordion title="Client (ICS-02) – Light Client">
+A light client verifies the state of a counterparty chain with cryptographic proofs against trusted consensus.
+
+Each IBC client defines a `ClientState` (long-term parameters) and evolving `ConsensusState`s (snapshots). If consensus assumptions are violated, misbehaviour evidence can freeze the client.
+</Accordion>
+
+<Accordion title="Provable Store (ICS-24)">
+A Merkle-proof-capable key–value store used for commitments.
+
+| Value             | Path Format                                    |
+| :---------------- | :--------------------------------------------- |
+| Packet Commitment | `{sourceClientId}0x1{bigEndianUint64Sequence}` |
+| Packet Receipt    | `{destClientId}0x3{bigEndianUint64Sequence}`   |
+| Acknowledgement   | `{destClientId}0x2{bigEndianUint64Sequence}`   |
+
+These standardized paths allow counterparties to verify packet existence, receipts, and acknowledgements.
+</Accordion>
+
+<Accordion title="Routing & Handler (ICS-25)">
+The IBC handler exposes the standard functions for packet relay:
+`SendPacket`, `RecvPacket`, `AcknowledgePacket`, and `TimeoutPacket`.
+
+It enforces **exactly-once delivery**, ensures valid ordering (ordered, unordered, or ordered-allow-timeout), and dispatches packets to the correct application.
+</Accordion>
+
+<Accordion title="Port Allocation (ICS-05)">
+Applications must bind to unique **`portId`** values during initialization. Ports are referenced in every `Payload` for routing incoming packets.
+</Accordion>
+
+## Application Interface (ICS-26)
+
+An IBC-enabled application **must** implement these callbacks to manage the packet lifecycle:
+
+* **`OnRecvPacket(...)`** – Executed on the **destination chain** to process incoming data. Must return an **Acknowledgement**, which may contain success data or an error.
+* **`OnAcknowledgePacket(...)`** – Executed on the **source chain** once an acknowledgement is verified. Provides acknowledgement data so the sending application can finalize or revert actions.
+* **`OnTimeoutPacket(...)`** – Executed on the **source chain** if a timeout occurs, enabling rollback or refunds.
+
+<Attention>
+For packets with multiple payloads, execution is **atomic**. If `OnRecvPacket` fails for even one payload, the **entire packet** is considered failed. All state changes from other successful payloads **must be reverted**.
+</Attention>
+
+## Packet Lifecycle
+
+<Accordion title="1. SendPacket (Source Chain)">
+Application data is wrapped into a `Packet`, assigned a `sequence`, and committed at the **Packet Commitment** path.
+</Accordion>
+
+<Accordion title="2. RecvPacket (Destination Chain)">
+Destination chain verifies the packet commitment proof via its light client. Upon success, it stores a **Receipt** at the Packet Receipt path and invokes `OnRecvPacket`.
+</Accordion>
+
+<Accordion title="3. WriteAcknowledgement (Destination Chain)">
+The receiving application returns an `Acknowledgement`. This is committed under the **Acknowledgement** path, allowing proof for the source chain.
+</Accordion>
+
+<Accordion title="4. AcknowledgePacket (Source Chain)">
+Source chain verifies the acknowledgement proof, deletes the original commitment, and calls `OnAcknowledgePacket` on the sending application.
+</Accordion>
+
+<Accordion title="5. TimeoutPacket (Source Chain)">
+If the `timeout` elapses before a receipt exists on the destination chain, the source verifies this via proof of non-existence, deletes the commitment, and triggers `OnTimeoutPacket`.
+</Accordion>
+
+```

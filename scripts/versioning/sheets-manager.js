@@ -21,10 +21,22 @@ const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
  * Authenticate with Google Sheets API
  */
 async function authenticate() {
-  const serviceAccountPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY ||
-                             path.join(__dirname, 'service-account-key.json');
+  // Check multiple possible locations for service account key
+  const possiblePaths = [
+    process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+    path.join(__dirname, 'service-account-key.json'),
+    path.join(__dirname, '..', 'service-account-key.json'), // Parent directory
+  ].filter(Boolean); // Remove undefined/null values
 
-  if (fs.existsSync(serviceAccountPath)) {
+  let serviceAccountPath = null;
+  for (const keyPath of possiblePaths) {
+    if (fs.existsSync(keyPath)) {
+      serviceAccountPath = keyPath;
+      break;
+    }
+  }
+
+  if (serviceAccountPath) {
     const auth = new google.auth.GoogleAuth({
       keyFile: serviceAccountPath,
       scopes: SCOPES,
@@ -37,7 +49,23 @@ async function authenticate() {
     scopes: SCOPES,
   });
 
-  return auth.getClient();
+  try {
+    return await auth.getClient();
+  } catch (error) {
+    // Provide helpful setup instructions if credentials are missing
+    throw new Error(
+      'Google Cloud credentials not configured.\n\n' +
+      'To enable Google Sheets versioning:\n' +
+      '1. Follow setup instructions in scripts/versioning/GSHEET-SETUP.md\n' +
+      '2. Create service account and save key to one of:\n' +
+      '   - scripts/service-account-key.json\n' +
+      '   - scripts/versioning/service-account-key.json\n' +
+      '   - Or set GOOGLE_SERVICE_ACCOUNT_KEY env variable\n' +
+      '3. Share spreadsheet with service account email\n\n' +
+      'To skip Google Sheets versioning, answer "n" when prompted.\n\n' +
+      'Original error: ' + error.message
+    );
+  }
 }
 
 /**
@@ -210,6 +238,17 @@ async function main() {
 
   } catch (error) {
     console.error(' Google Sheets operation failed:', error.message);
+    console.error('');
+    if (error.message.includes('credentials not configured')) {
+      console.error(' Setup Instructions:');
+      console.error('1. Enable Google Sheets API in Google Cloud Console');
+      console.error('2. Create service account and download key');
+      console.error('3. Save key as scripts/versioning/service-account-key.json');
+      console.error('4. Share spreadsheet with service account email');
+      console.error('5. See GSHEET-SETUP.md for detailed instructions');
+      console.error('');
+      console.error(' Or run versioning again and answer "n" to skip Google Sheets.');
+    }
     process.exit(1);
   }
 }

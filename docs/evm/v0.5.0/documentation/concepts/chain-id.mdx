@@ -1,0 +1,129 @@
+---
+title: "Chain ID"
+description: "Chain IDs are unique identifiers that distinguish blockchain networks from each other. Cosmos EVM uses a dual Chain ID system to maintain compatibility with both Cosmos SDK and Ethereum ecosystems."
+icon: "fingerprint"
+---
+
+<Check>
+  You can look up existing EVM Chain IDs by referring to [chainlist.org](https://chainlist.org/) to ensure your chosen ID is not already in use.
+</Check>
+
+## Dual Chain ID System
+
+Cosmos EVM requires **two completely independent chain IDs** to maintain full compatibility with both the Cosmos SDK and Ethereum ecosystems.
+
+### 1. Cosmos Chain ID (String)
+
+The **Cosmos Chain ID** is a string identifier used by:
+- CometBFT consensus engine
+- IBC (Inter-Blockchain Communication) protocol
+- Native Cosmos SDK transactions
+- Chain upgrades and governance
+
+**Format**: Any string (recommended format: `"mychain-1"`, `"testnet-2"`)
+
+**Example**:
+```json
+// In genesis.json
+{
+  "chain_id": "mychain-1"
+}
+```
+
+### 2. EVM Chain ID (Integer)
+
+The **EVM Chain ID** is an integer used by:
+- Ethereum transactions (EIP-155 replay protection)
+- MetaMask and other Ethereum wallets
+- Smart contract deployments
+- EVM tooling (Hardhat, Foundry, etc.)
+
+**Format**: Any unique positive integer (check [chainlist.org](https://chainlist.org))
+
+**Example**:
+```toml
+# In app.toml
+[evm]
+chain-id = 262144
+```
+
+## Configuration
+
+Both chain IDs must be configured when setting up your chain:
+
+### In Your Application Code
+
+```go "Chain ID Configuration" expandable
+// app/app.go
+const (
+    CosmosChainID = "cosmosevm-1"  // String for Cosmos/IBC
+    EVMChainID    = 9000           // Integer for EVM/Ethereum
+)
+```
+
+### In Genesis Configuration
+
+The Cosmos Chain ID is set in `genesis.json`:
+```json "Genesis Chain ID Configuration" expandable
+{
+  "chain_id": "cosmosevm-1",
+  // ... other genesis parameters
+}
+```
+
+The EVM Chain ID is configured in the EVM module parameters:
+```go "EVM Chain ID Initialization" expandable
+// During chain initialization
+evmtypes.DefaultChainConfig(9000)  // Your EVM Chain ID
+```
+
+## Important Considerations
+
+### EVM Chain ID Guidelines
+
+When selecting your EVM Chain ID:
+1. **Check availability**: Verify your chosen ID is not already in use on [chainlist.org](https://chainlist.org/)
+2. **Avoid conflicts**: Don't use well-known chain IDs (1 for Ethereum mainnet, 137 for Polygon, etc.)
+3. **Choose any available integer**: There are no required ranges or formats - simply pick any integer not in use
+
+### Chain Upgrades
+
+<Note>
+Unlike traditional Cosmos chains that change their chain ID during upgrades (e.g., `cosmoshub-4` to `cosmoshub-5`), the EVM Chain ID must remain **constant** across upgrades to maintain compatibility with deployed smart contracts and existing wallets.
+</Note>
+
+Only the Cosmos Chain ID may change during chain upgrades if needed for consensus-breaking changes. The EVM Chain ID should never change once set.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"Chain ID mismatch" errors**
+   - **Cause**: Using Cosmos Chain ID where EVM Chain ID is expected (or vice versa)
+   - **Solution**: Ensure you're using the correct type of chain ID for each context
+
+2. **MetaMask connection failures**
+   - **Cause**: Incorrect EVM Chain ID in wallet configuration
+   - **Solution**: Use the integer EVM Chain ID, not the string Cosmos Chain ID
+
+3. **IBC transfer failures**
+   - **Cause**: Using EVM Chain ID for IBC operations
+   - **Solution**: IBC always uses the Cosmos Chain ID (string format)
+
+4. **Smart contract deployment issues**
+   - **Cause**: EIP-155 replay protection using wrong chain ID
+   - **Solution**: Ensure your EVM Chain ID matches what's configured in the chain
+
+### Verification Commands
+
+To verify your chain IDs are correctly configured:
+
+```bash "Chain ID Verification Commands" expandable
+# Check Cosmos Chain ID
+curl -s http://localhost:26657/status | jq '.result.node_info.network'
+
+# Check EVM Chain ID
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+  http://localhost:8545 | jq '.result'
+```

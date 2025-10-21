@@ -1,0 +1,291 @@
+---
+title: "Build A Custom EVM Chain"
+description: "Create your own blockchain by forking and customizing the Cosmos EVM reference chain (evmd). This guide covers the example chain configuration, running the chain locally, and understanding the foundation for building your custom network."
+---
+
+# Example Cosmos EVM Chain
+
+The `evmd` directory in the Cosmos EVM repository contains an example chain that demonstrates the integration of Cosmos EVM modules. This reference implementation is based on the simapp implementation from the Cosmos SDK repository, which provides a simplified yet complete blockchain foundation.
+
+<Info>
+This chain implementation serves two primary purposes:
+1. **Demonstration**: Shows how to integrate Cosmos EVM modules into a blockchain
+2. **Testing Foundation**: Provides a working chain for development and testing
+
+You can use evmd as the starting point for building your own custom chain.
+</Info>
+
+## Why Cosmos-EVM?
+
+In addition to being a standalone module, the [Cosmos/EVM](https://github.com/cosmos/evm) project repository includes `evmd`, a complete working blockchain pre-wired with the EVM module and a few supporting modules.
+
+Because this example is actively developed and maintained alongside the module itself and serves as the canonical reference implementation, it is the perfect starting point to modify and customize into your own EVM-compatible chain.
+One of the largest benefits is the simplicity and time saved. Rather than researching and going through the trial and error process of assembling components individually and figuring out what works, simply fork `evmd` and customize it to your needs.
+This approach lets engineers focus on what makes your chain unique rather than debugging basic integration issues.
+
+## Prerequisites
+
+You'll need a standard Go development environment:
+
+- **Go 1.23.8+** - [Installation guide](https://go.dev/doc/install)
+- **Git** - For repository management
+- **Make** - For build commands
+- **GCC/Build Tools** - Required for CGo compilation
+
+<Note>
+If you're new to Go development, ensure your `$GOPATH/bin` is in your system PATH. Most package managers (Homebrew, apt, pacman) handle this automatically.
+</Note>
+
+## Building Your Custom Chain
+
+The `evmd` implementation serves as the foundation for building your own custom blockchain. To create your chain:
+
+<Steps>
+<Step title="Fork the Repository">
+Start by forking the Cosmos EVM repository:
+
+```bash
+git clone https://github.com/cosmos/evm.git
+cd evm
+```
+</Step>
+
+<Step title="Rename and Rebrand">
+Rename the `evmd` directory and update all references:
+
+```bash
+# Rename directory
+mv evmd yourchain
+
+# Update imports and binary name
+find . -type f -name "*.go" -exec sed -i 's/evmd/yourchain/g' {} \;
+```
+
+Update `go.mod` to reflect your repository path.
+</Step>
+
+<Step title="Customize Configuration">
+Modify the default configuration in your chain:
+
+- **Chain IDs**: Update Cosmos chain ID and EVM chain ID
+- **Bech32 Prefix**: Set your address prefix in `evmd/config/config.go`
+- **Token Denomination**: Configure in genesis
+- **Precompiles**: Enable only the precompiles you need
+- **Modules**: Add or remove modules based on requirements
+
+</Step>
+
+<Step title="Test Locally">
+Use the local node script to test your changes:
+
+```bash
+./local_node.sh -y
+```
+
+Verify that:
+- The chain starts successfully
+- JSON-RPC is accessible
+- Wallets can connect
+- Transactions work as expected
+</Step>
+
+<Step title="Deploy to Testnet">
+Once testing is complete, prepare for testnet deployment:
+
+- Set up validator infrastructure
+- Configure persistent peers
+- Coordinate genesis with validators
+- Launch the network
+
+</Step>
+</Steps>
+
+## Default Configuration
+
+The example chain (`evmd`) comes with the following default configuration:
+
+| Option              | Value                  | Description |
+|---------------------|------------------------|-------------|
+| **Binary**          | `evmd`                 | The compiled chain binary name |
+| **Chain ID**        | `cosmos_262144-1`      | Default Cosmos chain ID (format: `name_evmChainID-version`) |
+| **EVM Chain ID**    | `262144`               | EVM chain ID for transaction replay protection |
+| **Custom Opcodes**  | -                      | No custom opcodes by default |
+| **Token Pairs**     | 1 (native token)       | Default ERC20 token pair for the native denomination |
+| **Denomination**    | `atest`                | Native token denomination (18 decimals, atto-prefix) |
+| **EVM Permissioning** | Permissionless       | Anyone can deploy and call contracts |
+| **Enabled Precompiles** | All               | All nine static precompiles are enabled by default |
+
+<Tip>
+The default configuration uses an 18-decimal token (`atest`) which provides direct EVM compatibility without requiring the precisebank module. This is the recommended setup for new chains.
+</Tip>
+
+## Running The Chain
+
+To run the example chain locally, use the provided local node script from the repository root:
+
+```bash
+./local_node.sh [FLAGS]
+```
+
+### Available Flags
+
+- `-y`: Overwrite previous database (fresh start)
+- `-n`: Do **not** overwrite previous database (resume from previous state)
+- `--no-install`: Skip installation of the binary (use existing binary)
+- `--remote-debugging`: Build a binary suitable for remote debugging
+
+<Note>
+The `local_node.sh` script handles all the setup including:
+- Building the `evmd` binary
+- Initializing the chain configuration
+- Setting up genesis parameters
+- Starting the chain with JSON-RPC enabled
+</Note>
+
+### Example Usage
+
+<CodeGroup>
+```bash Fresh Start
+# Start with a clean slate
+./local_node.sh -y
+```
+
+```bash Resume Previous State
+# Continue from where you left off
+./local_node.sh -n
+```
+
+```bash Development Mode
+# Skip rebuild if binary already exists
+./local_node.sh --no-install
+```
+
+```bash Debug Mode
+# Build with debugging symbols
+./local_node.sh --remote-debugging
+```
+</CodeGroup>
+
+## Connect to Wallet
+
+Once the chain is running, you can connect using any Ethereum-compatible wallet. The example below uses MetaMask:
+
+### MetaMask Setup
+
+<Steps>
+<Step title="Import Test Account">
+Use the following seed phrase when adding a new wallet in MetaMask:
+
+```
+gesture inject test cycle original hollow east ridge hen combine
+junk child bacon zero hope comfort vacuum milk pitch cage oppose
+unhappy lunar seat
+```
+
+<Warning>
+**Notice**: This is a well-known test seed phrase. **Never** use it for mainnet or with real funds. It's provided solely for local development and testing purposes.
+</Warning>
+</Step>
+
+<Step title="Add Custom Network">
+1. Click the **Network** button on the top left of MetaMask
+2. Click **Add custom network** at the bottom of the modal
+3. Configure the network with these settings:
+
+| Setting | Value |
+|---------|-------|
+| **Network Name** | Cosmos EVM Local |
+| **RPC URL** | `http://localhost:8545` |
+| **Chain ID** | `262144` |
+| **Currency Symbol** | `TEST` |
+| **Block Explorer URL** | (leave empty for local) |
+
+<Tip>
+Make sure your local chain is running before adding the network. The RPC URL must be accessible from your browser.
+</Tip>
+</Step>
+
+<Step title="Verify Connection">
+After adding the network:
+- Switch to the "Cosmos EVM Local" network in MetaMask
+- You should see your account balance (if the test account was funded in genesis)
+- You can now interact with the chain through MetaMask
+</Step>
+</Steps>
+
+## Key Concepts
+
+Before diving into configuration, familiarize yourself with:
+
+**Precompiled Contracts** - [Precompiles](/docs/evm/next/documentation/smart-contracts/precompiles) bridge EVM smart contracts with Cosmos SDK modules, enabling Solidity contracts to access staking, governance, IBC, and other native functionality.
+
+**Cosmos SDK Modules** - Explore the [core modules](/docs/evm/next/documentation/cosmos-sdk) that provide blockchain functionality:
+- [Bank](https://docs.cosmos.network/main/build/modules/bank) - Token transfers and balances
+- [Staking](https://docs.cosmos.network/main/build/modules/staking) - Validator delegation and rewards
+- [Governance](https://docs.cosmos.network/main/build/modules/governance) - On-chain voting and proposals
+- [Slashing](https://docs.cosmos.network/main/build/modules/slashing) - Validator penalty enforcement
+- [Distribution](https://docs.cosmos.network/main/build/modules/distribution) - Fee and reward distribution
+
+## Understanding the Stack
+
+Before diving into configuration, it's helpful to understand what you're building with:
+
+- **[Cosmos SDK Modules](/docs/evm/next/documentation/cosmos-sdk)** - Core blockchain functionality including staking, governance, and token management
+- **[Precompiles](/docs/evm/next/documentation/smart-contracts/precompiles)** - Smart contract interfaces that bridge EVM and Cosmos SDK capabilities
+- **[Security & Audits](/docs/evm/next/documentation/overview#audits)** - Third-party security assessments of the codebase
+
+## Configuration Guides
+
+The following three guides cover three general categories: Basic/Introductory setup, understanding and setting all network parameters, and final steps to launch the network successfully:
+
+<div style={{maxWidth: '600px'}}>
+<Card title="Initial Setup" href="/docs/evm/next/documentation/getting-started/build-a-chain/initial-setup">
+Fork the repository and prepare your development environment
+</Card>
+</div>
+
+<div style={{maxWidth: '600px'}}>
+<Card title="Pre-Genesis & Genesis Setup" href="/docs/evm/next/documentation/getting-started/build-a-chain/pre-genesis-and-genesis-setup">
+Configure chain identity, parameters, and genesis file
+</Card>
+</div>
+
+<div style={{maxWidth: '600px'}}>
+<Card title="Runtime Configuration & Launch" href="/docs/evm/next/documentation/getting-started/build-a-chain/runtime-and-launch">
+Set up node configuration and coordinate network launch
+</Card>
+</div>
+
+These guides are designed to be followed in order, taking you from an empty repository to a running blockchain network. For a comprehensive reference of all commands and configuration options, see the [Configuration Reference](/docs/evm/next/documentation/getting-started/build-a-chain/configuration-reference).
+
+## Advanced Configuration
+
+For specialized customization beyond the core configuration:
+
+<div style={{maxWidth: '600px'}}>
+<Card title="EVM Mempool Integration" href="/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration">
+Configure the EVM mempool for nonce gap handling and transaction prioritization
+</Card>
+</div>
+
+<div style={{maxWidth: '600px'}}>
+<Card title="Predeployed Contracts" href="/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts">
+Deploy standard contracts at genesis for Create2, Multicall3, Permit2, and Safe
+</Card>
+</div>
+
+### Recommended Reading
+
+<CardGroup cols={2}>
+<Card title="VM Module" icon="microchip" href="/evm/next/documentation/cosmos-sdk/modules/vm">
+EVM execution and parameter configuration
+</Card>
+
+<Card title="Precompiles Overview" icon="puzzle" href="/docs/evm/next/documentation/smart-contracts/precompiles/overview">
+Available precompiled contracts and integration
+</Card>
+</CardGroup>
+
+---
+
+For additional support and community resources, visit the [Cosmos EVM GitHub repository](https://github.com/cosmos/evm) or join the Cosmos developer community.

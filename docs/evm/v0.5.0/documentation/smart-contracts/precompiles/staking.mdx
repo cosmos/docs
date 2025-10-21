@@ -1,0 +1,2130 @@
+---
+title: "Staking"
+description: "Validator operations, delegation management, and staking functionality"
+icon: "coins"
+keywords: ['staking', 'validator', 'delegation', 'undelegation', 'redelegation', 'precompile', 'cosmos sdk', 'proof of stake', 'bonding', 'unbonding', 'rewards', 'slashing', 'commission']
+---
+
+## Overview
+
+The Staking precompile provides a comprehensive interface to the Cosmos SDK's `x/staking` module, enabling smart contracts to engage in staking activities. This includes creating and managing validators, delegating and undelegating tokens, and querying a wide range of staking-related information, such as validator details, delegation records, and staking pool status.
+
+**Precompile Address**: `0x0000000000000000000000000000000000000800`
+**Related Module**: [x/staking](https://docs.cosmos.network/main/modules/staking)
+
+## Gas Costs
+
+<Info>
+Gas costs are approximated and may vary based on the complexity of the staking operation and chain settings.
+</Info>
+
+| Method | Gas Cost |
+|---|---|
+| **Transactions** | `2000 + (30 × bytes of input)` |
+| **Queries** | `1000 + (3 × bytes of input)` |
+
+## Transaction Methods
+
+### `createValidator`
+Creates a new validator.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    struct Description {
+        string moniker;
+        string identity;
+        string website;
+        string securityContact;
+        string details;
+    }
+    
+    struct CommissionRates {
+        uint256 rate;
+        uint256 maxRate;
+        uint256 maxChangeRate;
+    }
+    
+    function createValidator(
+        Description memory description,
+        CommissionRates memory commissionRates,
+        uint256 minSelfDelegation,
+        address validatorAddress,
+        string memory pubkey,
+        uint256 value
+    ) external returns (bool success);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event ValidatorCreated(address indexed validatorAddress, string moniker, uint256 value);
+    
+    error InvalidInput();
+    error InsufficientValue();
+    error StakingOperationFailed();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function createNewValidator(
+        IStaking.Description calldata description,
+        IStaking.CommissionRates calldata commissionRates,
+        uint256 minSelfDelegation,
+        string calldata pubkey,
+        uint256 value
+    ) external payable returns (bool success) {
+        if (msg.value < value) revert InsufficientValue();
+        if (bytes(description.moniker).length == 0) revert InvalidInput();
+        if (bytes(pubkey).length == 0) revert InvalidInput();
+        
+        try staking.createValidator(
+            description, 
+            commissionRates, 
+            minSelfDelegation, 
+            msg.sender, 
+            pubkey, 
+            value
+        ) returns (bool result) {
+            if (!result) revert StakingOperationFailed();
+            emit ValidatorCreated(msg.sender, description.moniker, value);
+            return result;
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Transaction methods require signatures - use ethers.js or other Web3 library
+echo "Validator creation requires a signed transaction"
+```
+</CodeGroup>
+
+### `editValidator`
+Edits an existing validator's parameters.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    struct Description {
+        string moniker;
+        string identity;
+        string website;
+        string securityContact;
+        string details;
+    }
+    
+    function editValidator(
+        Description memory description,
+        uint256 commissionRate,
+        uint256 minSelfDelegation
+    ) external returns (bool success);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event ValidatorUpdated(address indexed validatorAddress, string moniker);
+    
+    error InvalidInput();
+    error StakingOperationFailed();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function updateValidator(
+        IStaking.Description calldata description,
+        uint256 commissionRate,
+        uint256 minSelfDelegation
+    ) external returns (bool success) {
+        if (bytes(description.moniker).length == 0) revert InvalidInput();
+        
+        try staking.editValidator(description, commissionRate, minSelfDelegation) returns (bool result) {
+            if (!result) revert StakingOperationFailed();
+            emit ValidatorUpdated(msg.sender, description.moniker);
+            return result;
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Transaction methods require signatures - use ethers.js or other Web3 library
+echo "Validator editing requires a signed transaction"
+```
+</CodeGroup>
+
+### `delegate`
+Delegates tokens to a validator.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    function delegate(address delegatorAddress, string memory validatorAddress, uint256 amount) external returns (bool success);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event DelegationSuccess(address indexed delegator, string indexed validator, uint256 amount);
+    
+    error InvalidAmount();
+    error InvalidValidator();
+    error StakingOperationFailed();
+    error InsufficientBalance();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function delegateTokens(string calldata validatorAddress, uint256 amount) external payable {
+        if (amount == 0) revert InvalidAmount();
+        if (msg.value != amount) revert InsufficientBalance();
+        if (bytes(validatorAddress).length == 0) revert InvalidValidator();
+        
+        try staking.delegate(msg.sender, validatorAddress, amount) returns (bool success) {
+            if (!success) revert StakingOperationFailed();
+            emit DelegationSuccess(msg.sender, validatorAddress, amount);
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+}
+```
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the delegate function
+const precompileAbi = [
+  "function delegate(address delegatorAddress, string memory validatorAddress, uint256 amount) returns (bool)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const signer = new ethers.Wallet("<PRIVATE_KEY>", provider);
+const contract = new ethers.Contract(precompileAddress, precompileAbi, signer);
+
+// Delegation parameters
+const delegatorAddress = await signer.getAddress();
+const validatorAddress = "cosmosvaloper1..."; // Validator operator address
+const amount = ethers.parseEther("10.0"); // Amount to delegate in native token
+
+async function delegateTokens() {
+  try {
+    const tx = await contract.delegate(
+      delegatorAddress,
+      validatorAddress,
+      amount
+    );
+
+    console.log("Delegation transaction:", tx.hash);
+    await tx.wait();
+    console.log("Delegation confirmed");
+  } catch (error) {
+    console.error("Error delegating tokens:", error);
+  }
+}
+
+// delegateTokens();
+```
+
+```bash cURL expandable lines
+# Note: cURL cannot be used for transaction methods as they require signatures
+# Use the ethers.js example above for staking delegation
+echo "Staking delegation requires a signed transaction - use ethers.js or other Web3 library"
+```
+</CodeGroup>
+
+### `undelegate`
+Undelegates tokens from a validator.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    function beginUnbonding(address delegatorAddress, string memory validatorAddress, uint256 amount) external returns (int64 completionTime);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event UndelegationStarted(address indexed delegator, string indexed validator, uint256 amount, int64 completionTime);
+    
+    error InvalidAmount();
+    error InvalidValidator();
+    error StakingOperationFailed();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function undelegateTokens(string calldata validatorAddress, uint256 amount) 
+        external returns (int64 completionTime) {
+        if (amount == 0) revert InvalidAmount();
+        if (bytes(validatorAddress).length == 0) revert InvalidValidator();
+        
+        try staking.beginUnbonding(msg.sender, validatorAddress, amount) returns (int64 completion) {
+            completionTime = completion;
+            emit UndelegationStarted(msg.sender, validatorAddress, amount, completionTime);
+            return completionTime;
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+    
+    // Helper function to calculate days until completion
+    function getDaysUntilCompletion(int64 completionTime) external view returns (uint256 days) {
+        if (completionTime <= int64(block.timestamp)) {
+            return 0;
+        }
+        return uint256(uint64(completionTime - int64(block.timestamp))) / 86400;
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Transaction methods require signatures - use ethers.js or other Web3 library
+echo "Undelegation requires a signed transaction"
+```
+</CodeGroup>
+
+### `redelegate`
+Redelegates tokens from one validator to another.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    function beginRedelegate(
+        address delegatorAddress,
+        string memory validatorSrcAddress,
+        string memory validatorDstAddress,
+        uint256 amount
+    ) external returns (int64 completionTime);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event RedelegationStarted(
+        address indexed delegator, 
+        string indexed srcValidator, 
+        string indexed dstValidator, 
+        uint256 amount, 
+        int64 completionTime
+    );
+    
+    error InvalidValidator();
+    error InvalidAmount();
+    error SameValidator();
+    error StakingOperationFailed();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function redelegateTokens(
+        string calldata srcValidatorAddress,
+        string calldata dstValidatorAddress,
+        uint256 amount
+    ) external returns (int64 completionTime) {
+        if (bytes(srcValidatorAddress).length == 0) revert InvalidValidator();
+        if (bytes(dstValidatorAddress).length == 0) revert InvalidValidator();
+        if (amount == 0) revert InvalidAmount();
+        if (keccak256(bytes(srcValidatorAddress)) == keccak256(bytes(dstValidatorAddress))) {
+            revert SameValidator();
+        }
+        
+        try staking.beginRedelegate(msg.sender, srcValidatorAddress, dstValidatorAddress, amount) 
+            returns (int64 completion) {
+            completionTime = completion;
+            emit RedelegationStarted(msg.sender, srcValidatorAddress, dstValidatorAddress, amount, completionTime);
+            return completionTime;
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Transaction methods require signatures - use ethers.js or other Web3 library
+echo "Redelegation requires a signed transaction"
+```
+</CodeGroup>
+
+### `cancelUnbondingDelegation`
+Cancels an unbonding delegation.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    function cancelUnbondingDelegation(
+        address delegatorAddress,
+        string memory validatorAddress,
+        uint256 amount,
+        int64 creationHeight
+    ) external returns (bool success);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event UnbondingCancelled(
+        address indexed delegator, 
+        string indexed validator, 
+        uint256 amount, 
+        int64 creationHeight
+    );
+    
+    error InvalidHeight();
+    error InvalidAmount();
+    error InvalidValidator();
+    error StakingOperationFailed();
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function cancelUnbonding(
+        string calldata validatorAddress,
+        uint256 amount,
+        int64 creationHeight
+    ) external returns (bool success) {
+        if (creationHeight <= 0) revert InvalidHeight();
+        if (amount == 0) revert InvalidAmount();
+        if (bytes(validatorAddress).length == 0) revert InvalidValidator();
+        
+        try staking.cancelUnbondingDelegation(msg.sender, validatorAddress, amount, creationHeight) 
+            returns (bool result) {
+            if (!result) revert StakingOperationFailed();
+            emit UnbondingCancelled(msg.sender, validatorAddress, amount, creationHeight);
+            return result;
+        } catch {
+            revert StakingOperationFailed();
+        }
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Transaction methods require signatures - use ethers.js or other Web3 library
+echo "Cancel unbonding requires a signed transaction"
+```
+</CodeGroup>
+
+## Query Methods
+
+### `validator`
+Queries information about a specific validator.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile (matches ~/repos/evm ABI)
+interface IStaking {
+    struct Validator {
+        string operatorAddress;
+        string consensusPubkey;
+        bool jailed;
+        uint8 status;                // BondStatus enum as uint8
+        uint256 tokens;
+        uint256 delegatorShares;      // uint256
+        string description;           // string, not a nested struct
+        int64 unbondingHeight;
+        int64 unbondingTime;          // int64
+        uint256 commission;           // uint256
+        uint256 minSelfDelegation;
+    }
+
+    function validator(address validatorAddress) external view returns (Validator memory);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event ValidatorQueried(address indexed validatorAddress, string operatorAddress, uint256 tokens);
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function getValidator(address validatorAddress) external view returns (IStaking.Validator memory validator) {
+        validator = staking.validator(validatorAddress);
+        return validator;
+    }
+    
+    function getValidatorInfo(address validatorAddress) 
+        external 
+        returns (string memory operatorAddress, uint256 tokens, bool jailed) {
+        IStaking.Validator memory validator = staking.validator(validatorAddress);
+        operatorAddress = validator.operatorAddress;
+        tokens = validator.tokens;
+        jailed = validator.jailed;
+        
+        emit ValidatorQueried(validatorAddress, operatorAddress, tokens);
+        return (operatorAddress, tokens, jailed);
+    }
+}
+```
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function validator(address validatorAddress) view returns (tuple(string operatorAddress, string consensusPubkey, bool jailed, uint8 status, uint256 tokens, uint256 delegatorShares, string description, int64 unbondingHeight, int64 unbondingTime, uint256 commission, uint256 minSelfDelegation) validator)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Input - use actual validator address from the network
+const validatorAddress = "0x7cB61D4117AE31a12E393a1Cfa3BaC666481D02E"; // Example validator address
+
+async function getValidator() {
+  try {
+    const validator = await contract.validator(validatorAddress);
+    console.log("Validator Info:", {
+      operatorAddress: validator.operatorAddress,
+      jailed: validator.jailed,
+      status: validator.status, // 0=Unspecified, 1=Unbonded, 2=Unbonding, 3=Bonded
+      tokens: ethers.formatEther(validator.tokens),
+      delegatorShares: ethers.formatEther(validator.delegatorShares)
+    });
+  } catch (error) {
+    console.error("Error fetching validator:", error);
+  }
+}
+
+getValidator();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and the validator address with your actual data.
+# Data is ABI-encoded: validator(address) function selector + padded address parameter
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0x223b3b7a0000000000000000000000007cb61d4117ae31a12e393a1cfa3bac666481d02e"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `validators`
+Queries validators with optional status filtering and pagination.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function validators(string memory status, tuple(bytes key, uint64 offset, uint64 limit, bool countTotal, bool reverse) pageRequest) view returns (tuple(string operatorAddress, string consensusPubkey, bool jailed, uint32 status, uint256 tokens, string delegatorShares, tuple(string moniker, string identity, string website, string securityContact, string details) description, int64 unbondingHeight, uint256 unbondingTime, tuple(tuple(string rate, string maxRate, string maxChangeRate) commissionRates, uint256 updateTime) commission, uint256 minSelfDelegation)[] validators, tuple(bytes nextKey, uint64 total) pageResponse)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const status = "BOND_STATUS_BONDED";
+const pagination = {
+  key: "0x",
+  offset: 0,
+  limit: 10,
+  countTotal: true,
+  reverse: false,
+};
+
+async function getValidators() {
+  try {
+    const result = await contract.validators(status, pagination);
+    console.log("Validators:", JSON.stringify(result.validators, null, 2));
+    console.log("Pagination Response:", result.pageResponse);
+  } catch (error) {
+    console.error("Error fetching validators:", error);
+  }
+}
+
+getValidators();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> with your actual RPC endpoint.
+# This example queries for the first 10 bonded validators.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0x186b2167000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000012424f4e445f5354415455535f424f4e444544000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `delegation`
+Queries the delegation amount between a delegator and a validator.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function delegation(address delegatorAddress, string memory validatorAddress) view returns (uint256 shares, tuple(string denom, uint256 amount) balance)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const delegatorAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Example delegator
+const validatorAddress = "cosmosvaloper10jmp6sgh4cc6zt3e8gw05wavvejgr5pw4xyrql"; // Example validator
+
+async function getDelegation() {
+  try {
+    const [shares, balance] = await contract.delegation(delegatorAddress, validatorAddress);
+    console.log("Delegation Shares:", shares.toString());
+    console.log("Balance:", balance);
+  } catch (error) {
+    console.error("Error fetching delegation:", error);
+  }
+}
+
+getDelegation();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and the placeholder addresses with your actual data.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0x241774e6000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000346636f736d6f7376616c6f70657231306a6d7036736768346363367a743365386777303577617676656a677235707734787972716c00000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `unbondingDelegation`
+Queries unbonding delegation information.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function unbondingDelegation(address delegatorAddress, string validatorAddress) view returns (tuple(string delegatorAddress, string validatorAddress, tuple(int64 creationHeight, int64 completionTime, uint256 initialBalance, uint256 balance, uint64 unbondingId, int64 unbondingOnHoldRefCount)[] entries) unbondingDelegation)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const delegatorAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Example delegator
+const validatorAddress = "cosmosvaloper10jmp6sgh4cc6zt3e8gw05wavvejgr5pw4xyrql"; // Example validator
+
+async function getUnbondingDelegation() {
+  try {
+    const unbonding = await contract.unbondingDelegation(delegatorAddress, validatorAddress);
+    console.log("Unbonding Delegation:", JSON.stringify(unbonding, null, 2));
+  } catch (error) {
+    console.error("Error fetching unbonding delegation:", error);
+  }
+}
+
+getUnbondingDelegation();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and the placeholder addresses with your actual data.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0xa03ffee1000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000346636f736d6f7376616c6f70657231306a6d7036736768346363367a743365386777303577617676656a677235707734787972716c00000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `redelegation`
+Queries a specific redelegation.
+
+<CodeGroup>
+```solidity Solidity expandable lines
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Interface for the Staking precompile
+interface IStaking {
+    struct RedelegationEntry {
+        int64 creationHeight;
+        int64 completionTime;
+        uint256 initialBalance;
+        uint256 sharesDst;
+        uint64 unbondingId;
+        int64 unbondingOnHoldRefCount;
+    }
+    
+    struct Redelegation {
+        string delegatorAddress;
+        string validatorSrcAddress;
+        string validatorDstAddress;
+        RedelegationEntry[] entries;
+    }
+    
+    function redelegation(
+        address delegatorAddress,
+        string memory validatorSrcAddress,
+        string memory validatorDstAddress
+    ) external view returns (Redelegation memory);
+}
+
+contract StakingExample {
+    address constant STAKING_PRECOMPILE = 0x0000000000000000000000000000000000000800;
+    IStaking public immutable staking;
+    
+    event RedelegationQueried(
+        address indexed delegator,
+        string srcValidator,
+        string dstValidator,
+        uint256 entriesCount
+    );
+    
+    constructor() {
+        staking = IStaking(STAKING_PRECOMPILE);
+    }
+    
+    function getRedelegation(
+        address delegatorAddress,
+        string calldata srcValidatorAddress,
+        string calldata dstValidatorAddress
+    ) external view returns (IStaking.Redelegation memory redelegation) {
+        redelegation = staking.redelegation(delegatorAddress, srcValidatorAddress, dstValidatorAddress);
+        return redelegation;
+    }
+    
+    function getRedelegationInfo(
+        address delegatorAddress,
+        string calldata srcValidatorAddress,
+        string calldata dstValidatorAddress
+    ) external returns (uint256 entriesCount, bool hasActiveRedelegations) {
+        IStaking.Redelegation memory redelegation = staking.redelegation(
+            delegatorAddress, 
+            srcValidatorAddress, 
+            dstValidatorAddress
+        );
+        
+        entriesCount = redelegation.entries.length;
+        hasActiveRedelegations = entriesCount > 0;
+        
+        // Check if any redelegations are still active
+        for (uint256 i = 0; i < redelegation.entries.length; i++) {
+            if (redelegation.entries[i].completionTime > int64(int256(block.timestamp))) {
+                hasActiveRedelegations = true;
+                break;
+            }
+        }
+        
+        emit RedelegationQueried(delegatorAddress, srcValidatorAddress, dstValidatorAddress, entriesCount);
+        return (entriesCount, hasActiveRedelegations);
+    }
+    
+    // Check if redelegation is complete
+    function isRedelegationComplete(RedelegationOutput memory redelegation) external view returns (bool) {
+        for (uint i = 0; i < redelegation.entries.length; i++) {
+            if (redelegation.entries[i].completionTime > int64(block.timestamp)) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+```
+```bash cURL expandable lines
+# Note: Replace addresses with your actual data
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0x..."  # ABI-encoded redelegation(address,string,string) call
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+### `redelegations`
+Queries redelegations with optional filters.
+
+<CodeGroup>
+```javascript Ethers.js expandable lines
+import { ethers } from "ethers";
+
+// ABI definition for the function
+const precompileAbi = [
+  "function redelegations(address delegatorAddress, string srcValidatorAddress, string dstValidatorAddress, tuple(bytes key, uint64 offset, uint64 limit, bool countTotal, bool reverse) pageRequest) view returns (tuple(tuple(string delegatorAddress, string validatorSrcAddress, string validatorDstAddress, tuple(int64 creationHeight, int64 completionTime, uint256 initialBalance, uint256 sharesDst)[] entries) redelegation, tuple(tuple(int64 creationHeight, int64 completionTime, uint256 initialBalance, uint256 sharesDst) redelegationEntry, uint256 balance)[] entries)[] redelegations, tuple(bytes nextKey, uint64 total) pageResponse)"
+];
+
+// Provider and contract setup
+const provider = new ethers.JsonRpcProvider("<RPC_URL>");
+const precompileAddress = "0x0000000000000000000000000000000000000800";
+const contract = new ethers.Contract(precompileAddress, precompileAbi, provider);
+
+// Inputs
+const delegatorAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Example delegator
+const srcValidatorAddress = ""; // Empty string for all
+const dstValidatorAddress = ""; // Empty string for all
+const pagination = {
+  key: "0x",
+  offset: 0,
+  limit: 10,
+  countTotal: true,
+  reverse: false,
+};
+
+async function getRedelegations() {
+  try {
+    const result = await contract.redelegations(delegatorAddress, srcValidatorAddress, dstValidatorAddress, pagination);
+    console.log("Redelegations:", JSON.stringify(result.redelegations, null, 2));
+    console.log("Pagination Response:", result.pageResponse);
+  } catch (error) {
+    console.error("Error fetching redelegations:", error);
+  }
+}
+
+getRedelegations();
+```
+```bash cURL expandable lines
+# Note: Replace <RPC_URL> and addresses with your actual data.
+# This example queries for the first 10 redelegations.
+curl -X POST --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [
+        {
+            "to": "0x0000000000000000000000000000000000000800",
+            "data": "0x10a2851c000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "latest"
+    ],
+    "id": 1
+}' -H "Content-Type: application/json" <RPC_URL>
+```
+</CodeGroup>
+
+**Note**: The `pool()` and `params()` functions are not currently available in this staking precompile implementation. The available query methods are limited to delegation-specific functions shown above.
+
+## Full Solidity Interface & ABI
+
+```solidity title="Staking Solidity Interface" lines expandable
+// SPDX-License-Identifier: LGPL-3.0-only
+pragma solidity >=0.8.17;
+
+import "../common/Types.sol";
+
+/// @dev The StakingI contract's address.
+address constant STAKING_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000800;
+
+/// @dev The StakingI contract's instance.
+StakingI constant STAKING_CONTRACT = StakingI(STAKING_PRECOMPILE_ADDRESS);
+
+// BondStatus is the status of a validator.
+enum BondStatus {
+    Unspecified,
+    Unbonded,
+    Unbonding,
+    Bonded
+}
+
+// Description contains a validator's description.
+struct Description {
+    string moniker;
+    string identity;
+    string website;
+    string securityContact;
+    string details;
+}
+
+// CommissionRates defines the initial commission rates to be used for a validator
+struct CommissionRates {
+    uint256 rate;
+    uint256 maxRate;
+    uint256 maxChangeRate;
+}
+
+// Commission defines a commission parameters for a given validator.
+struct Commission {
+    CommissionRates commissionRates;
+    uint256 updateTime;
+}
+
+// Validator defines a validator, an account that can participate in consensus.
+struct Validator {
+    string operatorAddress;
+    string consensusPubkey;
+    bool jailed;
+    uint8 status; // BondStatus enum: 0=Unspecified, 1=Unbonded, 2=Unbonding, 3=Bonded
+    uint256 tokens;
+    uint256 delegatorShares;
+    string description;
+    int64 unbondingHeight;
+    int64 unbondingTime;
+    uint256 commission;
+    uint256 minSelfDelegation;
+}
+
+// Delegation represents the bond with tokens held by an account. It is
+// owned by one delegator, and is associated with the voting power of one
+// validator.
+struct Delegation {
+    address delegatorAddress;
+    string validatorAddress;
+    string shares;
+}
+
+// UnbondingDelegation stores all of a single delegator's unbonding bonds
+// for a single validator in an array.
+struct UnbondingDelegation {
+    address delegatorAddress;
+    string validatorAddress;
+    UnbondingDelegationEntry[] entries;
+}
+
+// UnbondingDelegationEntry defines an unbonding object with relevant metadata.
+struct UnbondingDelegationEntry {
+    uint256 creationHeight;
+    uint256 completionTime;
+    string initialBalance;
+    string balance;
+}
+
+// RedelegationEntry defines a redelegation object with relevant metadata.
+struct RedelegationEntry {
+    uint256 creationHeight;
+    uint256 completionTime;
+    string initialBalance;
+    string sharesDst;
+}
+
+// Redelegation contains the list of a particular delegator's redelegating bonds
+// from a particular source validator to a particular destination validator.
+struct Redelegation {
+    address delegatorAddress;
+    string validatorSrcAddress;
+    string validatorDstAddress;
+    RedelegationEntry[] entries;
+}
+
+// DelegationResponse is equivalent to Delegation except that it contains a
+// balance in addition to shares which is more suitable for client responses.
+struct DelegationResponse {
+    Delegation delegation;
+    Coin balance;
+}
+
+// RedelegationEntryResponse is equivalent to a RedelegationEntry except that it
+// contains a balance in addition to shares which is more suitable for client
+// responses.
+struct RedelegationEntryResponse {
+    RedelegationEntry redelegationEntry;
+    string balance;
+}
+
+// RedelegationResponse is equivalent to a Redelegation except that its entries
+// contain a balance in addition to shares which is more suitable for client
+// responses.
+struct RedelegationResponse {
+    Redelegation redelegation;
+    RedelegationEntryResponse[] entries;
+}
+
+// Pool is used for tracking bonded and not-bonded token supply of the bond denomination.
+struct Pool {
+    string notBondedTokens;
+    string bondedTokens;
+}
+
+// StakingParams defines the parameters for the staking module.
+struct Params {
+    uint256 unbondingTime;
+    uint256 maxValidators;
+    uint256 maxEntries;
+    uint256 historicalEntries;
+    string bondDenom;
+    string minCommissionRate;
+}
+
+/// @author The Evmos Core Team
+/// @title Staking Precompile Contract
+/// @dev The interface through which solidity contracts will interact with Staking
+/// @custom:address 0x0000000000000000000000000000000000000800
+interface StakingI {
+    event CreateValidator(string indexed validatorAddress, uint256 value);
+    event EditValidator(string indexed validatorAddress);
+    event Delegate(address indexed delegatorAddress, string indexed validatorAddress, uint256 amount);
+    event Unbond(address indexed delegatorAddress, string indexed validatorAddress, uint256 amount, uint256 completionTime);
+    event Redelegate(address indexed delegatorAddress, address indexed validatorSrcAddress, address indexed validatorDstAddress, uint256 amount, uint256 completionTime);
+    event CancelUnbondingDelegation(address indexed delegatorAddress, address indexed validatorAddress, uint256 amount, uint256 creationHeight);
+
+    // Transactions
+    function createValidator(
+        Description calldata description,
+        CommissionRates calldata commissionRates,
+        uint256 minSelfDelegation,
+        address validatorAddress,
+        string calldata pubkey,
+        uint256 value
+    ) external returns (bool success);
+
+    function editValidator(
+        Description calldata description,
+        address validatorAddress,
+        int256 commissionRate,
+        int256 minSelfDelegation
+    ) external returns (bool success);
+
+    function delegate(
+        address delegatorAddress,
+        string calldata validatorAddress,
+        uint256 amount
+    ) external payable returns (bool);
+
+    function undelegate(
+        address delegatorAddress,
+        string calldata validatorAddress,
+        uint256 amount
+    ) external returns (bool);
+
+    function redelegate(
+        address delegatorAddress,
+        string calldata validatorSrcAddress,
+        string calldata validatorDstAddress,
+        uint256 amount
+    ) external returns (bool);
+
+    function cancelUnbondingDelegation(
+        address delegatorAddress,
+        string calldata validatorAddress,
+        uint256 amount,
+        uint256 creationHeight
+    ) external returns (bool);
+
+    // Queries
+    function validator(
+        address validatorAddress
+    ) external view returns (Validator memory);
+
+    function validators(
+        string calldata status,
+        PageRequest calldata pageRequest
+    ) external view returns (Validator[] memory, PageResponse memory);
+
+    function delegation(
+        address delegatorAddress,
+        string calldata validatorAddress
+    ) external view returns (uint256 shares, Coin memory balance);
+
+    function unbondingDelegation(
+        address delegatorAddress,
+        string calldata validatorAddress
+    ) external view returns (UnbondingDelegation memory);
+
+    function redelegation(
+        address delegatorAddress,
+        string calldata srcValidatorAddress,
+        string calldata dstValidatorAddress
+    ) external view returns (Redelegation memory);
+
+    function redelegations(
+        address delegatorAddress,
+        string calldata srcValidatorAddress,
+        string calldata dstValidatorAddress,
+        PageRequest calldata pageRequest
+    ) external view returns (RedelegationResponse[] memory, PageResponse memory);
+}
+```
+
+```json title="Staking ABI" lines expandable
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "StakingI",
+  "sourceName": "solidity/precompiles/staking/StakingI.sol",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "creationHeight",
+          "type": "uint256"
+        }
+      ],
+      "name": "CancelUnbondingDelegation",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "CreateValidator",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newShares",
+          "type": "uint256"
+        }
+      ],
+      "name": "Delegate",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "int256",
+          "name": "commissionRate",
+          "type": "int256"
+        },
+        {
+          "indexed": false,
+          "internalType": "int256",
+          "name": "minSelfDelegation",
+          "type": "int256"
+        }
+      ],
+      "name": "EditValidator",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorSrcAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorDstAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "completionTime",
+          "type": "uint256"
+        }
+      ],
+      "name": "Redelegate",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "completionTime",
+          "type": "uint256"
+        }
+      ],
+      "name": "Unbond",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "creationHeight",
+          "type": "uint256"
+        }
+      ],
+      "name": "cancelUnbondingDelegation",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "moniker",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "identity",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "website",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "securityContact",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "details",
+              "type": "string"
+            }
+          ],
+          "internalType": "struct Description",
+          "name": "description",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "rate",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxRate",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxChangeRate",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct CommissionRates",
+          "name": "commissionRates",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint256",
+          "name": "minSelfDelegation",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "pubkey",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "createValidator",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "delegate",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorAddress",
+          "type": "string"
+        }
+      ],
+      "name": "delegation",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "shares",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "denom",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct Coin",
+          "name": "balance",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "moniker",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "identity",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "website",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "securityContact",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "details",
+              "type": "string"
+            }
+          ],
+          "internalType": "struct Description",
+          "name": "description",
+          "type": "tuple"
+        },
+        {
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "int256",
+          "name": "commissionRate",
+          "type": "int256"
+        },
+        {
+          "internalType": "int256",
+          "name": "minSelfDelegation",
+          "type": "int256"
+        }
+      ],
+      "name": "editValidator",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorSrcAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorDstAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "redelegate",
+      "outputs": [
+        {
+          "internalType": "int64",
+          "name": "completionTime",
+          "type": "int64"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "srcValidatorAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "dstValidatorAddress",
+          "type": "string"
+        }
+      ],
+      "name": "redelegation",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "delegatorAddress",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "validatorSrcAddress",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "validatorDstAddress",
+              "type": "string"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "int64",
+                  "name": "creationHeight",
+                  "type": "int64"
+                },
+                {
+                  "internalType": "int64",
+                  "name": "completionTime",
+                  "type": "int64"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "initialBalance",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "sharesDst",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct RedelegationEntry[]",
+              "name": "entries",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct RedelegationOutput",
+          "name": "redelegation",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "srcValidatorAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "dstValidatorAddress",
+          "type": "string"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes",
+              "name": "key",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint64",
+              "name": "offset",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "limit",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bool",
+              "name": "countTotal",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "reverse",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct PageRequest",
+          "name": "pageRequest",
+          "type": "tuple"
+        }
+      ],
+      "name": "redelegations",
+      "outputs": [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "string",
+                  "name": "delegatorAddress",
+                  "type": "string"
+                },
+                {
+                  "internalType": "string",
+                  "name": "validatorSrcAddress",
+                  "type": "string"
+                },
+                {
+                  "internalType": "string",
+                  "name": "validatorDstAddress",
+                  "type": "string"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "int64",
+                      "name": "creationHeight",
+                      "type": "int64"
+                    },
+                    {
+                      "internalType": "int64",
+                      "name": "completionTime",
+                      "type": "int64"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "initialBalance",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "sharesDst",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct RedelegationEntry[]",
+                  "name": "entries",
+                  "type": "tuple[]"
+                }
+              ],
+              "internalType": "struct Redelegation",
+              "name": "redelegation",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "components": [
+                    {
+                      "internalType": "int64",
+                      "name": "creationHeight",
+                      "type": "int64"
+                    },
+                    {
+                      "internalType": "int64",
+                      "name": "completionTime",
+                      "type": "int64"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "initialBalance",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "sharesDst",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct RedelegationEntry",
+                  "name": "redelegationEntry",
+                  "type": "tuple"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "balance",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct RedelegationEntryResponse[]",
+              "name": "entries",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct RedelegationResponse[]",
+          "name": "response",
+          "type": "tuple[]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes",
+              "name": "nextKey",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint64",
+              "name": "total",
+              "type": "uint64"
+            }
+          ],
+          "internalType": "struct PageResponse",
+          "name": "pageResponse",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorAddress",
+          "type": "string"
+        }
+      ],
+      "name": "unbondingDelegation",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "delegatorAddress",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "validatorAddress",
+              "type": "string"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "int64",
+                  "name": "creationHeight",
+                  "type": "int64"
+                },
+                {
+                  "internalType": "int64",
+                  "name": "completionTime",
+                  "type": "int64"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "initialBalance",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "balance",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "unbondingId",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "int64",
+                  "name": "unbondingOnHoldRefCount",
+                  "type": "int64"
+                }
+              ],
+              "internalType": "struct UnbondingDelegationEntry[]",
+              "name": "entries",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct UnbondingDelegationOutput",
+          "name": "unbondingDelegation",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "delegatorAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "validatorAddress",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "undelegate",
+      "outputs": [
+        {
+          "internalType": "int64",
+          "name": "completionTime",
+          "type": "int64"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "validatorAddress",
+          "type": "address"
+        }
+      ],
+      "name": "validator",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "operatorAddress",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "consensusPubkey",
+              "type": "string"
+            },
+            {
+              "internalType": "bool",
+              "name": "jailed",
+              "type": "bool"
+            },
+            {
+              "internalType": "enum BondStatus",
+              "name": "status",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tokens",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "delegatorShares",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "internalType": "int64",
+              "name": "unbondingHeight",
+              "type": "int64"
+            },
+            {
+              "internalType": "int64",
+              "name": "unbondingTime",
+              "type": "int64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "commission",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "minSelfDelegation",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct Validator",
+          "name": "validator",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "status",
+          "type": "string"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes",
+              "name": "key",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint64",
+              "name": "offset",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "limit",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bool",
+              "name": "countTotal",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "reverse",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct PageRequest",
+          "name": "pageRequest",
+          "type": "tuple"
+        }
+      ],
+      "name": "validators",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "operatorAddress",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "consensusPubkey",
+              "type": "string"
+            },
+            {
+              "internalType": "bool",
+              "name": "jailed",
+              "type": "bool"
+            },
+            {
+              "internalType": "enum BondStatus",
+              "name": "status",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tokens",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "delegatorShares",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "internalType": "int64",
+              "name": "unbondingHeight",
+              "type": "int64"
+            },
+            {
+              "internalType": "int64",
+              "name": "unbondingTime",
+              "type": "int64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "commission",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "minSelfDelegation",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct Validator[]",
+          "name": "validators",
+          "type": "tuple[]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes",
+              "name": "nextKey",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint64",
+              "name": "total",
+              "type": "uint64"
+            }
+          ],
+          "internalType": "struct PageResponse",
+          "name": "pageResponse",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
+```
+```
