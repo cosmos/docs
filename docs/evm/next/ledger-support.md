@@ -165,7 +165,7 @@ See the test web app in the evm repository for a complete working example.
 - **Algorithm**: `eth_secp256k1`
 - **HD Path**: `m/44'/60'/0'/0/0` (Ethereum standard, BIP-44)
 - **Public Key Format**: Uncompressed 65-byte ECDSA public key
-- **Address Derivation**: Keccak256[pubkey](12:) → Bech32
+- **Address Derivation**: Keccak256(pubkey)[12:] → Bech32
 
 ### Signature Format
 
