@@ -1,5 +1,7 @@
-export const TopicCard = ({ title, description, links = [], color = '#cccccc' }) => {
-  const [isHovered, setIsHovered] = useState(false)
+'use client'
+
+export const TopicCard = ({ title, description, links = [], color = '#cccccc', titleHref = null }) => {
+  const [isHovered, setIsHovered] = React.useState(false)
 
   return (
     <div
@@ -60,7 +62,27 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc' })
             display: 'inline-block',
           }}
         />
-        {title}
+        {titleHref ? (
+          <a
+            href={titleHref}
+            {...(titleHref.startsWith('http') && { target: '_blank', rel: 'noopener noreferrer' })}
+            style={{
+              color: '#F1F1F1',
+              textDecoration: 'none',
+              transition: 'color 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = color
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#F1F1F1'
+            }}
+          >
+            {title}
+          </a>
+        ) : (
+          title
+        )}
       </h3>
 
       {description && (
@@ -88,47 +110,51 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc' })
           flex: '1',
         }}
       >
-        {links.map((link, index) => (
-          <li key={index}>
-            <a
-              href={link.href}
-              className="topic-link"
-              style={{
-                color: '#cccccc',
-                textDecoration: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 12px',
-                borderRadius: '6px',
-                fontSize: '14px',
-                transition: 'all 0.2s ease',
-                background: 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = `${color}15`
-                e.currentTarget.style.color = color
-                e.currentTarget.style.paddingLeft = '16px'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.color = '#cccccc'
-                e.currentTarget.style.paddingLeft = '12px'
-              }}
-            >
-              <span
+        {links.map((link, index) => {
+          const isExternal = link.href.startsWith('http')
+          return (
+            <li key={index}>
+              <a
+                href={link.href}
+                className="topic-link"
+                {...(isExternal && { target: '_blank', rel: 'noopener noreferrer' })}
                 style={{
-                  fontSize: '16px',
-                  opacity: 0.7,
-                  transition: 'opacity 0.2s ease',
+                  color: '#cccccc',
+                  textDecoration: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  transition: 'all 0.2s ease',
+                  background: 'transparent',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = `${color}15`
+                  e.currentTarget.style.color = color
+                  e.currentTarget.style.paddingLeft = '16px'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.style.color = '#cccccc'
+                  e.currentTarget.style.paddingLeft = '12px'
                 }}
               >
-                →
-              </span>
-              <span>{link.text}</span>
-            </a>
-          </li>
-        ))}
+                <span
+                  style={{
+                    fontSize: '16px',
+                    opacity: 0.7,
+                    transition: 'opacity 0.2s ease',
+                  }}
+                >
+                  →
+                </span>
+                <span>{link.text}</span>
+              </a>
+            </li>
+          )
+        })}
       </ul>
 
       {/* Bottom accent line */}
@@ -153,7 +179,9 @@ export const TopicCardGrid = ({ children, cols = 3 }) => {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
+        gridTemplateColumns: cols
+          ? `repeat(${cols}, 1fr)`
+          : 'repeat(auto-fit, minmax(320px, 1fr))',
         gap: '28px',
         marginBottom: '40px',
         marginTop: '20px',
