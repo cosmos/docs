@@ -65,37 +65,65 @@ function loadVersionsRegistry() {
     }
   }
 
-  // If already in new schema, return as-is
-  if (data && data.products && typeof data.products === 'object') {
-    return { data, path: versionsPath };
+  // Ensure products object exists
+  if (!data.products || typeof data.products !== 'object') {
+    data = { products: {} };
   }
 
-  // Migrate old schema to new per-product schema by discovery
-  const products = {};
+  // Auto-discover products from docs/ directory and merge with existing config
   const subdirs = listDocsSubdirs();
   for (const subdir of subdirs) {
     const base = path.join(__dirname, '..', '..', 'docs', subdir);
     const entries = fs.readdirSync(base, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
-    const versions = [];
-    if (entries.includes('next')) versions.push('next');
+
+    // Discover versions from filesystem
+    const discoveredVersions = [];
+    if (entries.includes('next')) discoveredVersions.push('next');
     for (const name of entries) {
       if (/^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(name)) {
-        versions.push(name);
+        discoveredVersions.push(name);
       }
     }
-    // Prefer a reasonable default: next if present else highest version
-    const defaultVersion = entries.includes('next')
-      ? 'next'
-      : (versions.filter(v => v !== 'next').sort(compareVersionsDesc)[0] || 'next');
-    products[subdir] = {
-      versions: Array.from(new Set(versions)),
-      defaultVersion
-    };
+
+    // Merge with existing product config or create new
+    if (!data.products[subdir]) {
+      // New product - create default config
+      data.products[subdir] = {
+        versions: discoveredVersions,
+        defaultVersion: entries.includes('next') ? 'next' : discoveredVersions[0] || 'next',
+        repository: `cosmos/${subdir}`,
+        changelogPath: 'CHANGELOG.md'
+      };
+    } else {
+      // Existing product - merge discovered versions with configured ones
+      const existingVersions = data.products[subdir].versions || [];
+      const mergedVersions = Array.from(new Set([...discoveredVersions, ...existingVersions]));
+
+      // Ensure 'next' is always first if it exists
+      const hasNext = mergedVersions.includes('next');
+      const otherVersions = mergedVersions.filter(v => v !== 'next').sort(compareVersionsDesc);
+      data.products[subdir].versions = hasNext ? ['next', ...otherVersions] : otherVersions;
+
+      // Ensure defaultVersion is set
+      if (!data.products[subdir].defaultVersion) {
+        data.products[subdir].defaultVersion = hasNext ? 'next' : otherVersions[0] || 'next';
+      }
+
+      // Ensure repository is set
+      if (!data.products[subdir].repository) {
+        data.products[subdir].repository = `cosmos/${subdir}`;
+      }
+
+      // Ensure changelogPath is set
+      if (!data.products[subdir].changelogPath) {
+        data.products[subdir].changelogPath = 'CHANGELOG.md';
+      }
+    }
   }
 
-  return { data: { products }, path: versionsPath };
+  return { data, path: versionsPath };
 }
 
 function saveVersionsRegistry(registry, versionsPath) {
@@ -217,9 +245,24 @@ function updateNavigation(version, subdir) {
   if (!Array.isArray(dropdown.versions)) dropdown.versions = [];
 
   // Get base navigation from this dropdown's 'next' version
+  // 'next' is always the working directory that gets copied to create frozen versions
   const nextVersion = dropdown.versions.find(v => v.version === 'next');
   if (!nextVersion) {
-    throw new Error(`No 'next' version found in navigation for dropdown ${dropdownLabel}. Please add a 'next' entry for ${subdir} in docs.json before freezing.`);
+    throw new Error(`No 'next' version found in navigation for dropdown ${dropdownLabel}.
+
+The 'next' directory (docs/${subdir}/next/) is the working directory containing the latest documentation.
+When freezing a version, this directory is copied to docs/${subdir}/${version}/, and the original 'next' remains for continued development.
+
+Please add a 'next' navigation entry to docs.json before freezing:
+{
+  "dropdown": "${dropdownLabel}",
+  "versions": [
+    {
+      "version": "next",
+      "tabs": [ /* your navigation structure */ ]
+    }
+  ]
+}`);
   }
 
   // Create versioned navigation by updating paths
@@ -264,15 +307,25 @@ function updateNavigation(version, subdir) {
 function copyAndUpdateDocs(currentVersion, subdir) {
   printInfo('Creating version directory...');
 
-  // Copy docs/<subdir>/next/ to docs/<subdir>/<VERSION>/ (contents only)
+  // The 'next' directory is the working directory containing latest documentation.
+  // It gets COPIED to create a frozen version snapshot, but the original 'next' remains unchanged
+  // for continued development. This allows us to:
+  // 1. Preserve historical documentation at docs/<subdir>/<version>/
+  // 2. Continue updating docs in docs/<subdir>/next/ for future releases
   const sourcePath = path.join(__dirname, '..', '..', 'docs', subdir, 'next');
   const targetPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion);
-  // reset target to avoid nested 'next/'
+
+  // Verify source exists
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Source directory does not exist: ${sourcePath}\n\nThe 'next' directory must exist before freezing a version.`);
+  }
+
+  // Reset target to avoid nested 'next/' and copy contents
   execSync(`rm -rf "${targetPath}" && mkdir -p "${targetPath}"`);
   execSync(`cp -R "${sourcePath}/." "${targetPath}/"`);
 
-  // Update internal links in frozen version
-  printInfo('Updating internal links...');
+  // Update internal links in frozen version only (source 'next' remains unchanged)
+  printInfo('Updating internal links in frozen version...');
   const findCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' "s|/docs/${subdir}/next/|/docs/${subdir}/${currentVersion}/|g" {} \\;`;
   execSync(findCmd);
 
@@ -280,7 +333,8 @@ function copyAndUpdateDocs(currentVersion, subdir) {
   const fixRelativeCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' 's|href="/docs/documentation/|href="/docs/${subdir}/${currentVersion}/documentation/|g' {} \\;`;
   execSync(fixRelativeCmd);
 
-  printSuccess(`Documentation copied and links updated`);
+  printSuccess(`Documentation copied from 'next' to '${currentVersion}' and links updated`);
+  printInfo(`The 'next' directory remains unchanged for continued development`);
 }
 
 function createVersionMetadata(currentVersion, newVersion, subdir) {

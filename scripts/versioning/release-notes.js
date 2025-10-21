@@ -15,24 +15,56 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = process.argv[2] || 'latest';
 const SUBDIR = process.argv[3] || process.env.DOCS_SUBDIR || process.env.SUBDIR || 'evm';
 
-// Repo mapping per product
-const PRODUCT_REPOS = {
-  evm: 'cosmos/evm',
-  sdk: 'cosmos/cosmos-sdk',
-  ibc: 'cosmos/ibc-go'
-};
+// Load product configuration from versions.json
+function getProductConfig(subdir) {
+  const versionsPath = path.join(__dirname, '..', '..', 'versions.json');
+  let config = {};
+  if (fs.existsSync(versionsPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
+      if (data.products && data.products[subdir]) {
+        config = data.products[subdir];
+      }
+    } catch (e) {
+      // Fallback to defaults
+    }
+  }
 
-const REPO = PRODUCT_REPOS[SUBDIR] || PRODUCT_REPOS.evm;
+  // Fallback repo mapping if not in versions.json
+  const defaultRepos = {
+    evm: 'cosmos/evm',
+    sdk: 'cosmos/cosmos-sdk',
+    ibc: 'cosmos/ibc-go'
+  };
+
+  return {
+    repository: config.repository || defaultRepos[subdir] || `cosmos/${subdir}`,
+    changelogPath: config.changelogPath || 'CHANGELOG.md'
+  };
+}
+
+const productConfig = getProductConfig(SUBDIR);
+const REPO = productConfig.repository;
 const PRODUCT_LABEL = SUBDIR.toUpperCase();
 
-// Common changelog file candidates by repo
-const CHANGELOG_PATHS = [
-  'CHANGELOG.md',
-  'RELEASE_NOTES.md',
-  'RELEASES.md',
-  'CHANGELOG/CHANGELOG.md',
-  'docs/CHANGELOG.md'
-];
+// Changelog paths - primary from config, fallbacks for discovery
+function getChangelogPaths(configPath) {
+  const paths = [configPath];
+  // Add common fallbacks if not already included
+  const fallbacks = [
+    'CHANGELOG.md',
+    'RELEASE_NOTES.md',
+    'RELEASES.md',
+    'CHANGELOG/CHANGELOG.md',
+    'docs/CHANGELOG.md'
+  ];
+  for (const fb of fallbacks) {
+    if (fb !== configPath) paths.push(fb);
+  }
+  return paths;
+}
+
+const CHANGELOG_PATHS = getChangelogPaths(productConfig.changelogPath);
 
 async function getLatestRelease() {
   try {
@@ -57,8 +89,11 @@ async function fetchChangelog(source) {
         errors.push(`${p}: ${response.status}`);
         continue;
       }
-      const changelog = await response.text();
+      let changelog = await response.text();
       if (changelog && changelog.trim().length > 0) {
+        // Remove all HTML comment blocks before parsing
+        // This prevents malformed MDX comments in the output
+        changelog = changelog.replace(/<!--[\s\S]*?-->/g, '');
         console.log(`✓ Fetched ${p} (${changelog.split('\n').length} lines)`);
         return changelog;
       }
@@ -72,8 +107,33 @@ async function fetchChangelog(source) {
 }
 
 function sanitizeLine(line) {
-  // Convert HTML comments to MDX comments and neutralize problematic sequences
-  return line.replace(/<!--/g, '{/*').replace(/-->/g, '*/}');
+  // Clean up line for MDX compatibility
+  // Note: HTML comments are already stripped at fetch time
+
+  let cleaned = line.trim();
+
+  // Escape comparison operators that could be interpreted as JSX/HTML tags
+  // Must preserve markdown links [text](url) - match them first
+  const markdownLinks = [];
+  cleaned = cleaned.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+    const placeholder = `__LINK_${markdownLinks.length}__`;
+    markdownLinks.push({ text, url });
+    return placeholder;
+  });
+
+  // Now escape comparison operators outside of markdown links
+  cleaned = cleaned
+    .replace(/ <= /g, ' &lt;= ')
+    .replace(/ >= /g, ' &gt;= ')
+    .replace(/ < /g, ' &lt; ')
+    .replace(/ > /g, ' &gt; ');
+
+  // Restore markdown links
+  markdownLinks.forEach((link, i) => {
+    cleaned = cleaned.replace(`__LINK_${i}__`, `[${link.text}](${link.url})`);
+  });
+
+  return cleaned;
 }
 
 function parseChangelogToMintlify(changelogContent) {
@@ -83,70 +143,127 @@ function parseChangelogToMintlify(changelogContent) {
   const updates = [];
   let currentVersion = null;
   let currentDate = null;
-  let currentChanges = [];
+  let currentSection = null;
+  let sections = {};
+  let skipUntilVersion = true;
 
   for (const line of lines) {
-    // Match version headers commonly used across repos
-    // Examples:
-    //   ## [v0.4.1] - 2024-08-15
-    //   ## v0.53.0 - 2024-08-15
-    //   ## v0.53
-    //   ## [v0.4.x] - 2024-08-15
-    const versionMatch = line.match(/^##\s*\[?([vV]?\d+\.\d+(?:\.(?:\d+|x))?)\]?\s*(?:-\s*(.+))?$/);
+    // Skip main changelog header
+    if (line.match(/^#\s+Changelog/i)) {
+      continue;
+    }
+
+    // Detect unreleased section header
+    if (line.match(/^##\s*\[?Unreleased\]?(?:\([^)]*\))?/i)) {
+      skipUntilVersion = true;
+      continue;
+    }
+
+    // Match version headers
+    const versionMatch = line.match(/^##\s*\[?([vV]?\d+\.\d+(?:\.(?:\d+|x))?)\]?(?:\([^)]*\))?\s*(?:-\s*(.+))?$/);
 
     if (versionMatch) {
+      skipUntilVersion = false;
+
       // Save previous version if exists
-      if (currentVersion && currentChanges.length > 0) {
+      if (currentVersion && Object.keys(sections).length > 0) {
         updates.push({
           version: currentVersion,
           date: currentDate,
-          changes: currentChanges
+          sections: sections
         });
       }
 
       // Start new version
       currentVersion = versionMatch[1];
       currentDate = versionMatch[2] || '';
-      currentChanges = [];
+      sections = {};
+      currentSection = null;
       continue;
     }
+
+    // Skip content until we find the first version
+    if (skipUntilVersion) continue;
 
     // Skip empty lines and separators
     if (!line.trim() || line.match(/^[-=]+$/)) continue;
 
-    // Collect changes (lines that start with - or * or are indented)
-    if (currentVersion && (line.startsWith('- ') || line.startsWith('* ') || line.match(/^\s+/))) {
-      currentChanges.push(sanitizeLine(line.trim()));
+    // Match section headers (### Features, ### Bug Fixes, etc.)
+    const sectionMatch = line.match(/^###\s+(.+)$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      if (!sections[currentSection]) {
+        sections[currentSection] = [];
+      }
+      continue;
+    }
+
+    // Collect changes under current section
+    if (currentVersion && (line.startsWith('- ') || line.startsWith('* ') || line.match(/^\s+\*/))) {
+      const cleanedLine = sanitizeLine(line.trim().replace(/^[*-]\s*/, ''));
+      if (currentSection) {
+        sections[currentSection].push(cleanedLine);
+      } else {
+        // No section header, add to "Changes" section
+        if (!sections['Changes']) {
+          sections['Changes'] = [];
+        }
+        sections['Changes'].push(cleanedLine);
+      }
     }
   }
 
   // Add the last version
-  if (currentVersion && currentChanges.length > 0) {
+  if (currentVersion && Object.keys(sections).length > 0) {
     updates.push({
       version: currentVersion,
       date: currentDate,
-      changes: currentChanges
+      sections: sections
     });
   }
 
-  // Fallback: if nothing parsed, wrap entire changelog
+  // Fallback: if nothing parsed, create a single update with available content
   if (updates.length === 0) {
-    const nonEmpty = lines.filter(l => l.trim().length).slice(0, 500);
-    updates.push({ version: SOURCE, date: '', changes: nonEmpty.map(l => sanitizeLine(`- ${l.trim()}`)) });
+    console.log('   ⚠ No versions parsed from changelog, creating fallback entry');
+    const nonEmpty = lines.filter(l => l.trim().length).slice(0, 100);
+    updates.push({
+      version: 'latest',
+      date: '',
+      sections: {
+        'Changes': nonEmpty.map(l => sanitizeLine(l.trim()))
+      }
+    });
   }
 
-  // Generate Mintlify format
+  // Generate Mintlify format with proper structure
   const mintlifyContent = `---
 title: "Release Notes"
-description: "Cosmos ${PRODUCT_LABEL} release notes and changelog"
-mode: "custom"
+description: "Release history and changelog for Cosmos ${PRODUCT_LABEL}"
+mode: "center"
 ---
 
-${updates.map(update =>
-  `<Update version="${update.version}" date="${update.date}">
-${update.changes.map(change => `  ${change}`).join('\n')}
-</Update>`
-).join('\n\n')}`;
+<Info>
+  This page tracks all releases and changes from the [${REPO}](https://github.com/${REPO}) repository.
+  For the latest development updates, see the [UNRELEASED](https://github.com/${REPO}/blob/main/CHANGELOG.md#unreleased) section.
+</Info>
+
+${updates.map(update => {
+  // Format date for label
+  const label = update.date || 'Release';
+
+  // Generate sections with markdown headers
+  const sectionsContent = Object.entries(update.sections)
+    .map(([sectionName, items]) => {
+      if (items.length === 0) return '';
+      return `## ${sectionName}\n\n${items.map(item => `- ${item}`).join('\n')}`;
+    })
+    .filter(s => s)
+    .join('\n\n');
+
+  return `<Update label="${label}" description="${update.version}" tags={["${PRODUCT_LABEL}", "Release"]}>
+${sectionsContent}
+</Update>`;
+}).join('\n\n')}`;
 
   return mintlifyContent;
 }
@@ -175,8 +292,10 @@ async function main() {
     // Determine source
     let source = SOURCE;
     if (source === 'latest') {
-      source = await getLatestRelease();
-      console.log(` Using latest release: ${source}`);
+      // Use 'main' branch to get full changelog with all versions
+      // Using a specific release tag often only includes that release's notes
+      source = 'main';
+      console.log(` Using main branch for full changelog history`);
     }
 
     // Fetch and process changelog
