@@ -15,14 +15,6 @@ This chain implementation serves two primary purposes:
 You can use evmd as the starting point for building your own custom chain.
 </Info>
 
-## Why Cosmos-EVM?
-
-In addition to being a standalone module, the [Cosmos/EVM](https://github.com/cosmos/evm) project repository includes `evmd`, a complete working blockchain pre-wired with the EVM module and a few supporting modules.
-
-Because this example is actively developed and maintained alongside the module itself and serves as the canonical reference implementation, it is the perfect starting point to modify and customize into your own EVM-compatible chain.
-One of the largest benefits is the simplicity and time saved. Rather than researching and going through the trial and error process of assembling components individually and figuring out what works, simply fork `evmd` and customize it to your needs.
-This approach lets engineers focus on what makes your chain unique rather than debugging basic integration issues.
-
 ## Prerequisites
 
 You'll need a standard Go development environment:
@@ -226,32 +218,183 @@ Before diving into configuration, familiarize yourself with:
 - [Slashing](https://docs.cosmos.network/main/build/modules/slashing) - Validator penalty enforcement
 - [Distribution](https://docs.cosmos.network/main/build/modules/distribution) - Fee and reward distribution
 
-## Understanding the Stack
-
-Before diving into configuration, it's helpful to understand what you're building with:
-
-- **[Cosmos SDK Modules](/docs/evm/next/documentation/cosmos-sdk)** - Core blockchain functionality including staking, governance, and token management
-- **[Precompiles](/docs/evm/next/documentation/smart-contracts/precompiles)** - Smart contract interfaces that bridge EVM and Cosmos SDK capabilities
-- **[Security & Audits](/docs/evm/next/documentation/overview#audits)** - Third-party security assessments of the codebase
-
-
-These guides are designed to help you customize and configure your blockchain network.
-
 ## Advanced Configuration
 
-For specialized customization beyond the core configuration:
+### EVM Mempool Integration
 
-<div style={{maxWidth: '600px'}}>
-<Card title="EVM Mempool Integration" href="/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration">
-Configure the EVM mempool for nonce gap handling and transaction prioritization
-</Card>
-</div>
+<Tabs>
+<Tab title="Quick Setup">
+Add the EVM mempool to your chain for nonce gap handling and transaction prioritization:
 
-<div style={{maxWidth: '600px'}}>
-<Card title="Predeployed Contracts" href="/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts">
-Deploy standard contracts at genesis for Create2, Multicall3, Permit2, and Safe
-</Card>
-</div>
+```go expandable
+// In app/app.go, add to your App struct
+type App struct {
+    *baseapp.BaseApp
+    // ... other keepers
+    EVMMempool *evmmempool.ExperimentalEVMMempool
+}
+
+// In NewApp constructor (after setting antehandler)
+if evmtypes.GetChainConfig() != nil {
+    mempoolConfig := &evmmempool.EVMMempoolConfig{
+        AnteHandler:   app.GetAnteHandler(),
+        BlockGasLimit: 100_000_000, // or 0 for default
+    }
+
+    evmMempool := evmmempool.NewExperimentalEVMMempool(
+        app.CreateQueryContext, logger, app.EVMKeeper,
+        app.FeeMarketKeeper, app.txConfig, app.clientCtx, mempoolConfig,
+    )
+    app.EVMMempool = evmMempool
+    app.SetMempool(evmMempool)
+
+    // Set custom CheckTx handler for nonce gaps
+    checkTxHandler := evmmempool.NewCheckTxHandler(evmMempool)
+    app.SetCheckTxHandler(checkTxHandler)
+
+    // Set custom PrepareProposal handler
+    abciProposalHandler := baseapp.NewDefaultProposalHandler(evmMempool, app)
+    abciProposalHandler.SetSignerExtractionAdapter(
+        evmmempool.NewEthSignerExtractionAdapter(
+            sdkmempool.NewDefaultSignerExtractionAdapter(),
+        ),
+    )
+    app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+}
+```
+</Tab>
+
+<Tab title="Configuration Options">
+Customize mempool behavior with advanced configuration:
+
+```go expandable
+// Custom EVM TxPool configuration
+legacyCfg := legacypool.DefaultConfig
+legacyCfg.PriceLimit = 2              // Minimum gas price (wei)
+legacyCfg.PriceBump = 15              // 15% price bump to replace
+legacyCfg.AccountSlots = 32           // Slots per account
+legacyCfg.GlobalSlots = 10240         // Total executable slots
+legacyCfg.AccountQueue = 128          // Non-executable per account
+legacyCfg.GlobalQueue = 2048          // Total non-executable
+legacyCfg.Lifetime = 6 * time.Hour    // Max queue time
+
+// Custom Cosmos mempool priority
+cosmosCfg := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
+cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
+    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+        feeTx, ok := tx.(sdk.FeeTx)
+        if !ok {
+            return math.ZeroInt()
+        }
+        fee := feeTx.GetFee()
+        found, coin := fee.Find("stake") // your bond denom
+        if !found {
+            return math.ZeroInt()
+        }
+        return coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
+    },
+    Compare: func(a, b math.Int) int {
+        return a.BigInt().Cmp(b.BigInt())
+    },
+    MinValue: math.ZeroInt(),
+}
+
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:      app.GetAnteHandler(),
+    BlockGasLimit:    100_000_000,
+    LegacyPoolConfig: &legacyCfg,
+    CosmosPoolConfig: &cosmosCfg,
+}
+```
+
+See the [full mempool documentation](/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration) for details.
+</Tab>
+</Tabs>
+
+### Predeployed Contracts
+
+<Tabs>
+<Tab title="Genesis Deployment">
+Deploy standard contracts (Create2, Multicall3, Permit2, Safe) at chain initialization:
+
+```go expandable
+// In your genesis configuration (e.g., evmd/genesis.go)
+func NewEVMGenesisState() *evmtypes.GenesisState {
+    evmGenState := evmtypes.DefaultGenesisState()
+    evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+    evmGenState.Preinstalls = evmtypes.DefaultPreinstalls  // Includes all standard contracts
+    return evmGenState
+}
+```
+
+Default contracts included:
+- **Create2** (`0x4e59b44847b379578588920ca78fbf26c0b4956c`) - Deterministic deployment
+- **Multicall3** (`0xcA11bde05977b3631167028862bE2a173976CA11`) - Batched calls
+- **Permit2** (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) - Signature-based approvals
+- **Safe Factory** (`0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7`) - Multisig wallets
+
+<Note>
+The `local_node.sh` script automatically configures default preinstalls.
+</Note>
+</Tab>
+
+<Tab title="Custom Contracts">
+Add your own predeployed contracts:
+
+```json expandable
+{
+  "app_state": {
+    "evm": {
+      "preinstalls": [
+        {
+          "name": "MyCustomContract",
+          "address": "0xYourChosenAddress",
+          "code": "0xCompiledBytecodeHere..."
+        }
+      ]
+    }
+  }
+}
+```
+
+Validation requirements:
+- Valid 40-character hex address (with 0x prefix)
+- Non-empty EVM bytecode
+- No conflicts with existing contracts or precompiles (0x1-0x9FF)
+</Tab>
+
+<Tab title="Governance Deployment">
+Deploy contracts on running chains via governance:
+
+```json expandable
+{
+  "messages": [{
+    "@type": "/cosmos.evm.vm.v1.MsgRegisterPreinstalls",
+    "authority": "[gov module account address]",
+    "preinstalls": [{
+      "name": "Multicall3",
+      "address": "0xcA11bde05977b3631167028862bE2a173976CA11",
+      "code": "0x6080604052..."
+    }]
+  }],
+  "metadata": "ipfs://CID",
+  "deposit": "10000000stake",
+  "title": "Deploy Multicall3 Contract",
+  "summary": "Deploy Multicall3 for batched calls"
+}
+```
+
+```bash
+# Submit and vote
+evmd tx gov submit-proposal proposal.json --from mykey
+evmd tx gov vote 1 yes --from mykey
+```
+</Tab>
+</Tabs>
+
+<Warning>
+**Known Issue - Safe Factory**: The Safe Singleton Factory bytecode in `DefaultPreinstalls` is currently incorrect (identical to Create2). Before production deployment, get the correct bytecode from the [official Safe repository](https://github.com/safe-global/safe-singleton-factory). See the [predeployed contracts documentation](/docs/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts) for details.
+</Warning>
 
 ### Recommended Reading
 
