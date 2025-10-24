@@ -3,14 +3,33 @@ title: "EVM Mempool Integration"
 description: "Integrate the EVM mempool with your Cosmos EVM chain"
 ---
 
+<Warning>
+This mempool implementation is **experimental** and under active development. It is intended for testing and evaluation purposes. Use in production environments is **not recommended** without thorough testing and risk assessment.
+
+Please report issues and submit feedback to help improve stability.
+</Warning>
+
 ## Overview
 
-This guide provides step-by-step instructions for integrating the EVM mempool into your Cosmos EVM chain. For conceptual information about mempool design and architecture, see the [Mempool Concepts](/docs/evm/v0.5.0/documentation/concepts/mempool) page.
+This guide provides step-by-step instructions for integrating the EVM mempool into your Cosmos EVM chain.
 
-### Step 1: Add EVM Mempool to App Struct
+The EVM mempool is responsible for managing both EVM and Cosmos transactions in a unified pool, enabling Ethereum-compatible transaction flows including out-of-order transactions and nonce gap handling. It serves as a replacement for the default CometBFT FIFO mempool to support Ethereum tooling expectations while maintaining Cosmos SDK compatibility.
+
+The mempool implements a two-tier architecture: a local transaction pool for queuing nonce-gapped transactions and CometBFT broadcasting for executable transactions, preventing network spam while enabling proper EVM transaction semantics.
+
+<Note>
+For conceptual information about mempool design and architecture, see the [Mempool Concepts](/docs/evm/v0.5.0/documentation/concepts/mempool) page.
+</Note>
+
+## Integration
+
+### Quick Start
+
+To integrate the EVM mempool in your Cosmos application, follow these steps:
+
+#### 1. Add EVM Mempool to App Struct
 
 ```go expandable
-// Update your app/app.go to include the EVM mempool
 type App struct {
     *baseapp.BaseApp
     // ... other keepers
@@ -22,20 +41,33 @@ type App struct {
 }
 ```
 
-### Step 2: Configure Mempool in NewApp Constructor
+#### 2. Configure Mempool in NewApp Constructor
 
 <Note>
 The mempool must be initialized **after** the antehandler has been set in the app.
 </Note>
 
-Add the following configuration in your `NewApp` constructor:
+The reference implementation from `evmd` shows the recommended setup pattern:
 
 ```go expandable
-// Set the EVM priority nonce mempool
-if evmtypes.GetChainConfig() != nil {
+// Configure EVM mempool (evmd reference implementation)
+func (app *App) configureEVMMempool(appOpts servertypes.AppOptions, logger log.Logger) error {
+    if evmtypes.GetChainConfig() == nil {
+        logger.Debug("evm chain config is not set, skipping mempool configuration")
+        return nil
+    }
+
+    cosmosPoolMaxTx := evmconfig.GetCosmosPoolMaxTx(appOpts, logger)
+    if cosmosPoolMaxTx < 0 {
+        logger.Debug("app-side mempool is disabled, skipping evm mempool configuration")
+        return nil
+    }
+
     mempoolConfig := &evmmempool.EVMMempoolConfig{
-        AnteHandler:   app.GetAnteHandler(),
-        BlockGasLimit: 100_000_000, // or 0 to use default
+        AnteHandler:      app.GetAnteHandler(),
+        LegacyPoolConfig: evmconfig.GetLegacyPoolConfig(appOpts, logger),
+        BlockGasLimit:    evmconfig.GetBlockGasLimit(appOpts, logger),
+        MinTip:           evmconfig.GetMinTip(appOpts, logger),
     }
 
     evmMempool := evmmempool.NewExperimentalEVMMempool(
@@ -46,6 +78,7 @@ if evmtypes.GetChainConfig() != nil {
         app.txConfig,
         app.clientCtx,
         mempoolConfig,
+        cosmosPoolMaxTx,
     )
     app.EVMMempool = evmMempool
 
@@ -64,30 +97,35 @@ if evmtypes.GetChainConfig() != nil {
         ),
     )
     app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+
+    return nil
 }
 ```
 
-<Warning>
-**Breaking Change from v0.4.x:** The global mempool registry (`SetGlobalEVMMempool`) has been removed. Mempool is now passed directly to the JSON-RPC server during initialization.
-</Warning>
-
-## Configuration Options
-
-The `EVMMempoolConfig` struct provides several configuration options for customizing the mempool behavior:
-
-<Tabs>
-<Tab title="Minimal Configuration">
-For most use cases, the minimal configuration is sufficient:
+#### 3. Add Cleanup Handler
 
 ```go expandable
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // or 0 to use default
+// Close unsubscribes from the CometBFT event bus (if set) and closes the underlying BaseApp.
+func (app *App) Close() error {
+    var err error
+    if m, ok := app.GetMempool().(*evmmempool.ExperimentalEVMMempool); ok {
+        err = m.Close()
+    }
+    err = errors.Join(err, app.BaseApp.Close())
+    msg := "Application gracefully shutdown"
+    if err == nil {
+        app.Logger().Info(msg)
+    } else {
+        app.Logger().Error(msg, "error", err)
+    }
+    return err
 }
 ```
-</Tab>
 
-<Tab title="Full Configuration Options">
+### Configuration Options
+
+The `EVMMempoolConfig` struct provides several configuration options:
+
 ```go expandable
 type EVMMempoolConfig struct {
     // Required: AnteHandler for transaction validation
@@ -96,34 +134,190 @@ type EVMMempoolConfig struct {
     // Required: Block gas limit for transaction selection
     BlockGasLimit uint64
 
-    // Optional: Custom legacy pool configuration (replaces TxPool)
+    // Optional: Custom legacy pool configuration
     LegacyPoolConfig *legacypool.Config
 
-    // Optional: Custom Cosmos pool configuration (replaces CosmosPool)
+    // Optional: Custom Cosmos pool configuration
     CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]
 
     // Optional: Custom broadcast function for promoted transactions
-    BroadcastTxFn func(txs []*ethtypes.Transaction) error
+    BroadCastTxFn func(txs []*ethtypes.Transaction) error
 
     // Optional: Minimum tip required for EVM transactions
     MinTip *uint256.Int
 }
 ```
-</Tab>
-</Tabs>
 
-#### Defaults and Fallbacks
+**Configuration Helpers**:
 
-- If `BlockGasLimit` is `0`, the mempool uses a fallback of `100_000_000` gas.
-- If `LegacyPoolConfig` is not provided, defaults from `legacypool.DefaultConfig` are used.
-- If `CosmosPoolConfig` is not provided, a default `PriorityNonceMempool` is created with:
-  - Priority = `(fee_amount / gas_limit)` in the chain bond denom
-  - Comparator = big-int comparison (higher is selected first)
-  - `MinValue = 0`
-- If `BroadcastTxFn` is not provided, a default is created that uses the app `clientCtx`/`txConfig` to broadcast EVM transactions when they are promoted from queued → pending.
-- `MinTip` is optional. If unset, selection uses the effective tip from each tx (`min(gas_tip_cap, gas_fee_cap - base_fee)`).
+The `evmconfig` package provides helpers to read configuration from `app.toml` and genesis:
 
-### v0.4.x to v0.5.0 Migration
+- `GetLegacyPoolConfig(appOpts, logger)` - Reads EVM mempool settings from app.toml, falls back to `legacypool.DefaultConfig`
+- `GetBlockGasLimit(appOpts, logger)` - Extracts block gas limit from genesis consensus params
+- `GetMinTip(appOpts, logger)` - Reads minimum priority fee from app.toml
+- `GetCosmosPoolMaxTx(appOpts, logger)` - Reads mempool.max-txs from app.toml
+
+**Minimal Configuration**:
+
+```go expandable
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 100_000_000, // or use evmconfig.GetBlockGasLimit
+}
+
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext,
+    logger,
+    app.EVMKeeper,
+    app.FeeMarketKeeper,
+    app.txConfig,
+    app.clientCtx,
+    mempoolConfig,
+    5000, // cosmosPoolMaxTx
+)
+```
+
+### Custom Configuration
+
+#### Custom Legacy Pool Configuration
+
+Customize EVM transaction pool parameters via app.toml or programmatically:
+
+**Via app.toml**:
+```toml expandable
+[evm.mempool]
+# Minimum gas price (wei)
+price-limit = 1
+
+# Minimum price bump percentage to replace transaction
+price-bump = 10
+
+# Maximum executable transactions per account
+account-slots = 16
+
+# Maximum total executable transactions
+global-slots = 5120
+
+# Maximum queued (non-executable) transactions per account
+account-queue = 64
+
+# Maximum total queued transactions
+global-queue = 1024
+
+# Maximum time transactions can stay in mempool
+lifetime = "3h"
+```
+
+**Programmatically**:
+```go expandable
+// Override specific values
+legacyCfg := legacypool.DefaultConfig
+legacyCfg.PriceLimit = 2              // Minimum gas price (wei)
+legacyCfg.PriceBump = 15              // 15% price bump to replace
+legacyCfg.AccountSlots = 32           // Slots per account
+legacyCfg.GlobalSlots = 10240         // Total executable slots
+legacyCfg.AccountQueue = 128          // Non-executable per account
+legacyCfg.GlobalQueue = 2048          // Total non-executable
+legacyCfg.Lifetime = 6 * time.Hour    // Max queue time
+
+mempoolConfig.LegacyPoolConfig = &legacyCfg
+```
+
+#### Custom Cosmos Mempool Configuration
+
+The mempool uses a default `PriorityNonceMempool` for Cosmos transactions. You can customize the priority calculation:
+
+```go expandable
+// Define custom priority calculation for Cosmos transactions
+cosmosCfg := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
+cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
+    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
+        feeTx, ok := tx.(sdk.FeeTx)
+        if !ok {
+            return math.ZeroInt()
+        }
+
+        // Get fee in bond denomination
+        bondDenom := "stake" // your chain's bond denom
+        fee := feeTx.GetFee()
+        found, coin := fee.Find(bondDenom)
+        if !found {
+            return math.ZeroInt()
+        }
+
+        // Calculate gas price: fee_amount / gas_limit
+        gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
+        return gasPrice
+    },
+    Compare: func(a, b math.Int) int {
+        return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
+    },
+    MinValue: math.ZeroInt(),
+}
+
+mempoolConfig.CosmosPoolConfig = &cosmosCfg
+```
+
+<Note>
+The evmd reference implementation does **not** set `CosmosPoolConfig` - it uses the default priority function which calculates gas price based on the EVM denom from `vmKeeper.GetEvmCoinInfo(ctx).Denom`.
+</Note>
+
+#### Custom Block Gas Limit
+
+Different chains may require different gas limits:
+
+```go expandable
+// Example: 50M gas limit for lower capacity chains
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: 50_000_000,
+}
+```
+
+#### Custom Minimum Tip
+
+Set a minimum priority fee requirement:
+
+```go expandable
+// Via app.toml
+[evm.mempool]
+min-tip = 1000000000  # 1 gwei in wei
+
+// Or programmatically
+mempoolConfig.MinTip = uint256.NewInt(1000000000) // 1 gwei
+```
+
+#### Custom Broadcast Function
+
+Override the default broadcast behavior for promoted EVM transactions:
+
+```go expandable
+// Custom EVM broadcast (optional)
+mempoolConfig.BroadCastTxFn = func(txs []*ethtypes.Transaction) error {
+    // Custom logic for broadcasting promoted transactions
+    return nil
+}
+```
+
+### Prerequisites
+
+1. **EVM Module Integration**: EVM keeper and module initialized before mempool
+2. **FeeMarket Module**: Required for base fee calculations
+3. **Compatible AnteHandler**: Must support EVM transaction validation
+
+### Event Bus Integration
+
+For best results, connect the mempool to CometBFT's EventBus so it can react to finalized blocks:
+
+```go expandable
+// After starting the CometBFT node
+if m, ok := app.GetMempool().(*evmmempool.ExperimentalEVMMempool); ok {
+    m.SetEventBus(bftNode.EventBus())
+}
+```
+This enables chain-head notifications so the mempool can promptly promote/evict transactions when blocks are committed.
+
+## v0.4.x to v0.5.0 Migration
 
 **Breaking Change:** Pre-built pools replaced with configuration objects
 
@@ -131,23 +325,31 @@ PR [#496](https://github.com/cosmos/evm/pull/496) replaced pre-built pools with 
 
 - **Removed:** `TxPool *txpool.TxPool`, `CosmosPool sdkmempool.ExtMempool`
 - **Added:** `LegacyPoolConfig *legacypool.Config`, `CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]`
+- **Added:** `cosmosPoolMaxTx int` parameter to `NewExperimentalEVMMempool`
 
-#### Minimal Setups: Nothing to Change
+### Minimal Setups: Update Function Signature
 
-If you use the default mempool wiring (no custom pools), your existing code continues to work:
+If you use the default mempool wiring, update the function call to include `cosmosPoolMaxTx`:
 
+**Before (v0.4.x):**
 ```go expandable
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 100_000_000, // or 0 to use default
-}
 evmMempool := evmmempool.NewExperimentalEVMMempool(
     app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
     app.txConfig, app.clientCtx, mempoolConfig
 )
 ```
 
-#### Advanced Setups: Migrate Your Customizations
+**After (v0.5.0):**
+```go expandable
+cosmosPoolMaxTx := 5000 // or read from app.toml
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
+    app.txConfig, app.clientCtx, mempoolConfig,
+    cosmosPoolMaxTx, // ← NEW required parameter
+)
+```
+
+### Advanced Setups: Migrate Your Customizations
 
 If you built custom pools yourself, replace them with configuration objects:
 
@@ -171,231 +373,65 @@ mempoolConfig := &evmmempool.EVMMempoolConfig{
 }
 ```
 
-### Custom Legacy Pool Configuration
-
-Customize EVM transaction pool parameters:
-
-```go expandable
-// EVM legacy txpool tuning
-legacyCfg := legacypool.DefaultConfig
-legacyCfg.PriceLimit = 2              // Minimum gas price (wei)
-legacyCfg.PriceBump = 15              // 15% price bump to replace
-legacyCfg.AccountSlots = 32           // Slots per account
-legacyCfg.GlobalSlots = 10240         // Total executable slots
-legacyCfg.AccountQueue = 128          // Non-executable per account
-legacyCfg.GlobalQueue = 2048          // Total non-executable
-legacyCfg.Lifetime = 6 * time.Hour    // Max queue time
-
-mempoolConfig.LegacyPoolConfig = &legacyCfg
-```
-
-### Custom Cosmos Mempool Configuration
-
-The mempool uses a `PriorityNonceMempool` for Cosmos transactions by default. You can customize the priority calculation:
-
-```go expandable
-// Define custom priority calculation for Cosmos transactions
-cosmosCfg := sdkmempool.PriorityNonceMempoolConfig[math.Int]{}
-cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
-    GetTxPriority: func(goCtx context.Context, tx sdk.Tx) math.Int {
-        feeTx, ok := tx.(sdk.FeeTx)
-        if !ok {
-            return math.ZeroInt()
-        }
-
-        // Get fee in bond denomination
-        bondDenom := "uatom" // or your chain's bond denom
-        fee := feeTx.GetFee()
-        found, coin := fee.Find(bondDenom)
-        if !found {
-            return math.ZeroInt()
-        }
-
-        // Calculate gas price: fee_amount / gas_limit
-        gasPrice := coin.Amount.Quo(math.NewIntFromUint64(feeTx.GetGas()))
-        return gasPrice
-    },
-    Compare: func(a, b math.Int) int {
-        return a.BigInt().Cmp(b.BigInt()) // Higher values have priority
-    },
-    MinValue: math.ZeroInt(),
-}
-
-mempoolConfig.CosmosPoolConfig = &cosmosCfg
-```
-
-### Custom Broadcast Function
-
-Override the default broadcast behavior for promoted EVM transactions:
-
-```go expandable
-// Custom EVM broadcast (optional)
-mempoolConfig.BroadcastTxFn = func(txs []*ethtypes.Transaction) error {
-    // Custom logic for broadcasting promoted transactions
-    return nil
-}
-```
-
-### Custom Block Gas Limit
-
-Different chains may require different gas limits based on their capacity:
-
-```go expandable
-// Example: 50M gas limit for lower capacity chains
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: 50_000_000,
-}
-```
-
-### Event Bus Integration
-
-For best results, connect the mempool to CometBFT's EventBus so it can react to finalized blocks:
-
-```go expandable
-// After starting the CometBFT node
-if m, ok := app.GetMempool().(*evmmempool.ExperimentalEVMMempool); ok {
-    m.SetEventBus(bftNode.EventBus())
-}
-```
-This enables chain-head notifications so the mempool can promptly promote/evict transactions when blocks are committed.
-
-## Architecture Components
-
-The EVM mempool consists of several key components:
-
-### ExperimentalEVMMempool
-
-The main coordinator implementing Cosmos SDK's `ExtMempool` interface (`mempool/mempool.go`).
-
-**Key Methods**:
-- `Insert(ctx, tx)`: Routes transactions to appropriate pools
-- `Select(ctx, filter)`: Returns unified iterator over all transactions
-- `Remove(tx)`: Handles transaction removal with EVM-specific logic
-- `InsertInvalidNonce(txBytes)`: Queues nonce-gapped EVM transactions locally
-
-### CheckTx Handler
-
-Custom transaction validation that handles nonce gaps specially (`mempool/check_tx.go`).
-
-**Special Handling**: On `ErrNonceGap` for EVM transactions:
-```go expandable
-if errors.Is(err, ErrNonceGap) {
-    // Route to local queue instead of rejecting
-    err := mempool.InsertInvalidNonce(request.Tx)
-    // Must intercept error and return success to EVM client
-    return interceptedSuccess
-}
-```
-
-### TxPool
-
-Direct port of Ethereum's transaction pool managing both pending and queued transactions (`mempool/txpool/`).
-
-**Key Features**:
-- Uses `vm.StateDB` interface for Cosmos state compatibility
-- Implements `BroadcastTxFn` callback for transaction promotion
-- Cosmos-specific reset logic for instant finality
-
-### PriorityNonceMempool
-
-Standard Cosmos SDK mempool for non-EVM transactions with fee-based prioritization.
-
-**Default Priority Calculation**:
-```go expandable
-// Calculate effective gas price
-priority = (fee_amount / gas_limit) - base_fee
-```
-
-## Transaction Type Routing
-
-The mempool handles different transaction types appropriately:
-
-### Ethereum Transactions (MsgEthereumTx)
-
-- **Tier 1 (Local)**: EVM TxPool handles nonce gaps and promotion
-- **Tier 2 (Network)**: CometBFT broadcasts executable transactions
-
-### Cosmos Transactions (Bank, Staking, Gov, etc.)
-
-- **Direct to Tier 2**: Always go directly to CometBFT mempool
-- **Standard Flow**: Follow normal Cosmos SDK validation and broadcasting
-- **Priority-Based**: Use PriorityNonceMempool for fee-based ordering
-
-## Unified Transaction Selection
-
-During block building, both transaction types compete fairly based on their effective tips:
-
-```go expandable
-// Simplified selection logic
-func SelectTransactions() Iterator {
-    evmTxs := GetPendingEVMTransactions()      // From local TxPool
-    cosmosTxs := GetPendingCosmosTransactions() // From Cosmos mempool
-
-    return NewUnifiedIterator(evmTxs, cosmosTxs) // Fee-based priority
-}
-```
-
-**Fee Comparison**:
-- **EVM**: `gas_tip_cap` or `min(gas_tip_cap, gas_fee_cap - base_fee)`
-- **Cosmos**: `(fee_amount / gas_limit) - base_fee`
-- **Selection**: Higher effective tip gets selected first
-
-## Testing Your Integration
-
-### Verify Nonce Gap Handling
-
-Test that transactions with nonce gaps are properly queued:
-
-```javascript expandable
-// Send transactions out of order
-await wallet.sendTransaction({nonce: 100, ...}); // OK: Immediate execution
-await wallet.sendTransaction({nonce: 102, ...}); // OK: Queued locally (gap)
-await wallet.sendTransaction({nonce: 101, ...}); // OK: Fills gap, both execute
-```
-
-### Test Transaction Replacement
-
-Verify that higher-fee transactions replace lower-fee ones:
-
-```javascript expandable
-// Send initial transaction
-const tx1 = await wallet.sendTransaction({
-  nonce: 100,
-  gasPrice: parseUnits("20", "gwei")
-});
-
-// Replace with higher fee
-const tx2 = await wallet.sendTransaction({
-  nonce: 100, // Same nonce
-  gasPrice: parseUnits("30", "gwei") // Higher fee
-});
-// tx1 is replaced by tx2
-```
-
-### Verify Batch Deployments
-
-Test typical deployment scripts (like Uniswap) that send many transactions at once:
-
-```javascript expandable
-// Deploy multiple contracts in quick succession
-const factory = await Factory.deploy();
-const router = await Router.deploy(factory.address);
-const multicall = await Multicall.deploy();
-// All transactions should queue and execute properly
-```
-
 ## Monitoring and Debugging
 
-Use the [txpool RPC methods](/docs/evm/v0.5.0/api-reference/ethereum-json-rpc/methods#txpool-methods) to monitor mempool state:
+The mempool extends RPC functionality through the `/txpool` namespace compatible with go-ethereum:
 
-- `txpool_status`: Get pending and queued transaction counts
-- `txpool_content`: View all transactions in the pool
-- `txpool_inspect`: Get human-readable transaction summaries
-- `txpool_contentFrom`: View transactions from specific addresses
+### txpool_status
+
+Returns pool statistics (pending/queued transaction counts).
+
+```shell expandable
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"method":"txpool_status","params":[],"id":1,"jsonrpc":"2.0"}' \
+  http://localhost:8545
+```
+
+Example Output:
+
+```json expandable
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending": 42,
+    "queued": 7
+  }
+}
+```
+
+### txpool_content
+
+Returns full transaction content grouped by account and state.
+
+```shell expandable
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"method":"txpool_content","params":[],"id":1,"jsonrpc":"2.0"}' \
+  http://localhost:8545
+```
+
+### txpool_contentFrom
+
+Returns transactions from a specific address.
+
+```shell expandable
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"method":"txpool_contentFrom","params":["0x1234..."],"id":1,"jsonrpc":"2.0"}' \
+  http://localhost:8545
+```
+
+### txpool_inspect
+
+Returns transaction summaries without full transaction data.
+
+```shell expandable
+curl -X POST -H "Content-Type: application/json" \
+  --data '{"method":"txpool_inspect","params":[],"id":1,"jsonrpc":"2.0"}' \
+  http://localhost:8545
+```
 
 ## Related Documentation
 
 - [Mempool Concepts](/docs/evm/v0.5.0/documentation/concepts/mempool) - Understanding mempool behavior and design
-- [EVM Module Integration](/docs/evm/v0.5.0/documentation/getting-started/build-a-chain/overview.mdx) - Prerequisites for mempool integration
-- [JSON-RPC Methods](/docs/evm/v0.5.0/api-reference/ethereum-json-rpc/methods#txpool-methods) - Mempool query methods
+- [Using the Local Node](/docs/evm/v0.5.0/documentation/getting-started/build-a-chain/using-local-node#evm-mempool-integration) - Quick setup example
+- [JSON-RPC Methods](/docs/evm/v0.5.0/api-reference/ethereum-json-rpc/methods#txpool-methods) - Complete API reference
