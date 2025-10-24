@@ -11,7 +11,7 @@ This document describes `BaseApp`, the abstraction that implements the core func
 **Pre-requisite Readings**
 
 * [Anatomy of a Cosmos SDK application](/docs/sdk/v0.53/learn/beginner/app-anatomy)
-* [Lifecycle of a Cosmos SDK transaction](/docs/sdk/v0.53/beginner/tx-lifecycle)
+* [Lifecycle of a Cosmos SDK transaction](/docs/sdk/v0.53/learn/beginner/tx-lifecycle)
 
 </Note>
 
@@ -1505,7 +1505,7 @@ Let us go through the most important components.
 
 First, the important parameters that are initialized during the bootstrapping of the application:
 
-* [`CommitMultiStore`](/docs/sdk/v0.53/store#commitmultistore): This is the main store of the application,
+* [`CommitMultiStore`](/docs/sdk/v0.53/learn/advanced/store#commitmultistore): This is the main store of the application,
   which holds the canonical state that is committed at the [end of each block](#commit). This store
   is **not** cached, meaning it is not used to update the application's volatile (un-committed) states.
   The `CommitMultiStore` is a multi-store, meaning a store of stores. Each module of the application
@@ -1539,7 +1539,7 @@ Finally, a few more important parameters:
 
 * `voteInfos`: This parameter carries the list of validators whose precommit is missing, either
   because they did not vote or because the proposer did not include their vote. This information is
-  carried by the [Context](/docs/sdk/v0.53/context) and can be used by the application for various things like
+  carried by the [Context](/docs/sdk/v0.53/learn/advanced/context) and can be used by the application for various things like
   punishing absent validators.
 * `minGasPrices`: This parameter defines the minimum gas prices accepted by the node. This is a
   **local** parameter, meaning each full-node can set a different `minGasPrices`. It is used in the
@@ -1665,13 +1665,13 @@ When messages and queries are received by the application, they must be routed t
 
 The [default `msgServiceRouter` included in `BaseApp`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/baseapp/msg_service_router.go) is stateless. However, some applications may want to make use of more stateful routing mechanisms such as allowing governance to disable certain routes or point them to new modules for upgrade purposes. For this reason, the `sdk.Context` is also passed into each [route handler inside `msgServiceRouter`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/baseapp/msg_service_router.go#L35-L36). For a stateless router that doesn't want to make use of this, you can just ignore the `ctx`.
 
-The application's `msgServiceRouter` is initialized with all the routes using the application's [module manager](/docs/sdk/v0.53//build/building-modules/module-manager#manager) (via the `RegisterServices` method), which itself is initialized with all the application's modules in the application's [constructor](/docs/sdk/v0.53/learn/beginner/app-anatomy#constructor-function).
+The application's `msgServiceRouter` is initialized with all the routes using the application's [module manager](/docs/sdk/v0.53//build/building-modules/docs/sdk/v0.53/build/building-modules/module-manager#manager) (via the `RegisterServices` method), which itself is initialized with all the application's modules in the application's [constructor](/docs/sdk/v0.53/learn/beginner/app-anatomy#constructor-function).
 
 ### gRPC Query Router
 
 Similar to `sdk.Msg`s, [`queries`](/docs/sdk/v0.53//build/building-modules/messages-and-queries#queries) need to be routed to the appropriate module's [`Query` service](/docs/sdk/v0.53//build/building-modules/query-services). To do so, `BaseApp` holds a `grpcQueryRouter`, which maps modules' fully-qualified service methods (`string`, defined in their Protobuf `Query` gRPC) to their `QueryServer` implementation. The `grpcQueryRouter` is called during the initial stages of query processing, which can be either by directly sending a gRPC query to the gRPC endpoint, or via the [`Query` ABCI message](#query) on the CometBFT RPC endpoint.
 
-Just like the `msgServiceRouter`, the `grpcQueryRouter` is initialized with all the query routes using the application's [module manager](/docs/sdk/v0.53//build/building-modules/module-manager) (via the `RegisterServices` method), which itself is initialized with all the application's modules in the application's [constructor](/docs/sdk/v0.53/learn/beginner/app-anatomy#app-constructor).
+Just like the `msgServiceRouter`, the `grpcQueryRouter` is initialized with all the query routes using the application's [module manager](/docs/sdk/v0.53//build/building-modules/docs/sdk/v0.53/build/building-modules/module-manager) (via the `RegisterServices` method), which itself is initialized with all the application's modules in the application's [constructor](/docs/sdk/v0.53/learn/beginner/app-anatomy#app-constructor).
 
 ## Main ABCI 2.0 Messages
 
@@ -1751,7 +1751,7 @@ Unconfirmed transactions are relayed to peers only if they pass `CheckTx`.
 `CheckTx()` can perform both *stateful* and *stateless* checks, but developers should strive to
 make the checks **lightweight** because gas fees are not charged for the resources (CPU, data load...) used during the `CheckTx`.
 
-In the Cosmos SDK, after [decoding transactions](/docs/sdk/v0.53/encoding), `CheckTx()` is implemented
+In the Cosmos SDK, after [decoding transactions](/docs/sdk/v0.53/learn/advanced/encoding), `CheckTx()` is implemented
 to do the following checks:
 
 1. Extract the `sdk.Msg`s from the transaction.
@@ -1759,16 +1759,16 @@ to do the following checks:
    first, as *stateless* checks are less computationally expensive than *stateful* checks. If
    `ValidateBasic()` fail, `CheckTx` returns before running *stateful* checks, which saves resources.
    This check is still performed for messages that have not yet migrated to the new message validation mechanism defined in [RFC 001](https://docs.cosmos.network/main/rfc/rfc-001-tx-validation) and still have a `ValidateBasic()` method.
-3. Perform non-module related *stateful* checks on the [account](/docs/sdk/v0.53/beginner/accounts). This step is mainly about checking
+3. Perform non-module related *stateful* checks on the [account](/docs/sdk/v0.53/learn/beginner/accounts). This step is mainly about checking
    that the `sdk.Msg` signatures are valid, that enough fees are provided and that the sending account
-   has enough funds to pay for said fees. Note that no precise [`gas`](/docs/sdk/v0.53/beginner/gas-fees) counting occurs here,
-   as `sdk.Msg`s are not processed. Usually, the [`AnteHandler`](/docs/sdk/v0.53/beginner/gas-fees#antehandler) will check that the `gas` provided
+   has enough funds to pay for said fees. Note that no precise [`gas`](/docs/sdk/v0.53/learn/beginner/gas-fees) counting occurs here,
+   as `sdk.Msg`s are not processed. Usually, the [`AnteHandler`](/docs/sdk/v0.53/learn/beginner/gas-fees#antehandler) will check that the `gas` provided
    with the transaction is superior to a minimum reference gas amount based on the raw transaction size,
    in order to avoid spam with transactions that provide 0 gas.
 
 `CheckTx` does **not** process `sdk.Msg`s -  they only need to be processed when the canonical state needs to be updated, which happens during `FinalizeBlock`.
 
-Steps 2. and 3. are performed by the [`AnteHandler`](/docs/sdk/v0.53/beginner/gas-fees#antehandler) in the [`RunTx()`](#runtx-antehandler-and-runmsgs)
+Steps 2. and 3. are performed by the [`AnteHandler`](/docs/sdk/v0.53/learn/beginner/gas-fees#antehandler) in the [`RunTx()`](#runtx-antehandler-and-runmsgs)
 function, which `CheckTx()` calls with the `runTxModeCheck` mode. During each step of `CheckTx()`, a
 special [volatile state](#state-updates) called `checkState` is updated. This state is used to keep
 track of the temporary changes triggered by the `CheckTx()` calls of each transaction without modifying
@@ -2047,7 +2047,7 @@ return next(ctx, tx, simulate)
 }
 ```
 
-* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.53/events) for more.
+* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.53/learn/advanced/events) for more.
 * `Codespace (string)`: Namespace for the Code.
 
 #### RecheckTx
@@ -2065,7 +2065,7 @@ This allows certain checks like signature verification can be skipped during `Ch
 
 `RunTx` is called from `CheckTx`/`Finalizeblock` to handle the transaction, with `execModeCheck` or `execModeFinalize` as parameter to differentiate between the two modes of execution. Note that when `RunTx` receives a transaction, it has already been decoded.
 
-The first thing `RunTx` does upon being called is to retrieve the `context`'s `CacheMultiStore` by calling the `getContextForTx()` function with the appropriate mode (either `runTxModeCheck` or `execModeFinalize`). This `CacheMultiStore` is a branch of the main store, with cache functionality (for query requests), instantiated during `FinalizeBlock` for transaction execution and during the `Commit` of the previous block for `CheckTx`. After that, two `defer func()` are called for [`gas`](/docs/sdk/v0.53/beginner/gas-fees) management. They are executed when `runTx` returns and make sure `gas` is actually consumed, and will throw errors, if any.
+The first thing `RunTx` does upon being called is to retrieve the `context`'s `CacheMultiStore` by calling the `getContextForTx()` function with the appropriate mode (either `runTxModeCheck` or `execModeFinalize`). This `CacheMultiStore` is a branch of the main store, with cache functionality (for query requests), instantiated during `FinalizeBlock` for transaction execution and during the `Commit` of the previous block for `CheckTx`. After that, two `defer func()` are called for [`gas`](/docs/sdk/v0.53/learn/beginner/gas-fees) management. They are executed when `runTx` returns and make sure `gas` is actually consumed, and will throw errors, if any.
 
 After that, `RunTx()` calls `ValidateBasic()`, when available and for backward compatibility, on each `sdk.Msg`in the `Tx`, which runs preliminary *stateless* validity checks. If any `sdk.Msg` fails to pass `ValidateBasic()`, `RunTx()` returns with an error.
 
@@ -3520,7 +3520,7 @@ GetBaseApp() *BaseApp {
 }
 ```
 
-This allows `RunTx` not to commit the changes made to the state during the execution of `anteHandler` if it ends up failing. It also prevents the module implementing the `anteHandler` from writing to state, which is an important part of the [object-capabilities](/docs/sdk/v0.53/ocap) of the Cosmos SDK.
+This allows `RunTx` not to commit the changes made to the state during the execution of `anteHandler` if it ends up failing. It also prevents the module implementing the `anteHandler` from writing to state, which is an important part of the [object-capabilities](/docs/sdk/v0.53/learn/advanced/ocap) of the Cosmos SDK.
 
 Finally, the [`RunMsgs()`](#runmsgs) function is called to process the `sdk.Msg`s in the `Tx`. In preparation of this step, just like with the `anteHandler`, both the `checkState`/`finalizeBlockState`'s `context` and `context`'s `CacheMultiStore` are branched using the `cacheTxContext()` function.
 
@@ -3661,13 +3661,13 @@ PostHandle(ctx Context, _ Tx, _, _ bool, _ PostHandler) (Context, error) {
 
 The `AnteHandler` is theoretically optional, but still a very important component of public blockchain networks. It serves 3 primary purposes:
 
-* Be a primary line of defense against spam and second line of defense (the first one being the mempool) against transaction replay with fees deduction and [`sequence`](/docs/sdk/v0.53/transactions#transaction-generation) checking.
+* Be a primary line of defense against spam and second line of defense (the first one being the mempool) against transaction replay with fees deduction and [`sequence`](/docs/sdk/v0.53/learn/advanced/transactions#transaction-generation) checking.
 * Perform preliminary *stateful* validity checks like ensuring signatures are valid or that the sender has enough funds to pay for fees.
 * Play a role in the incentivisation of stakeholders via the collection of transaction fees.
 
 `BaseApp` holds an `anteHandler` as parameter that is initialized in the [application's constructor](/docs/sdk/v0.53/learn/beginner/app-anatomy#application-constructor). The most widely used `anteHandler` is the [`auth` module](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/x/auth/ante/ante.go).
 
-Click [here](/docs/sdk/v0.53/beginner/gas-fees#antehandler) for more on the `anteHandler`.
+Click [here](/docs/sdk/v0.53/learn/beginner/gas-fees#antehandler) for more on the `anteHandler`.
 
 ### RunMsgs
 
@@ -3714,7 +3714,7 @@ The [`InitChain` ABCI message](https://github.com/cometbft/cometbft/blob/v0.37.x
 
 * [Consensus Parameters](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_app_requirements.md#consensus-parameters) via `setConsensusParams`.
 * [`checkState` and `finalizeBlockState`](#state-updates) via `setState`.
-* The [block gas meter](/docs/sdk/v0.53/beginner/gas-fees#block-gas-meter), with infinite gas to process genesis transactions.
+* The [block gas meter](/docs/sdk/v0.53/learn/beginner/gas-fees#block-gas-meter), with infinite gas to process genesis transactions.
 
 Finally, the `InitChain(req abci.RequestInitChain)` method of `BaseApp` calls the [`initChainer()`](/docs/sdk/v0.53/learn/beginner/app-anatomy#initchainer) of the application in order to initialize the main state of the application from the `genesis file` and, if defined, call the [`InitGenesis`](/docs/sdk/v0.53//build/building-modules/genesis#initgenesis) function of each of the application's modules.
 
@@ -6734,13 +6734,13 @@ return legacyVotes
   }
   ```
 
-  This function also resets the [main gas meter](/docs/sdk/v0.53/beginner/gas-fees#main-gas-meter).
+  This function also resets the [main gas meter](/docs/sdk/v0.53/learn/beginner/gas-fees#main-gas-meter).
 
-* Initialize the [block gas meter](/docs/sdk/v0.53/beginner/gas-fees#block-gas-meter) with the `maxGas` limit. The `gas` consumed within the block cannot go above `maxGas`. This parameter is defined in the application's consensus parameters.
+* Initialize the [block gas meter](/docs/sdk/v0.53/learn/beginner/gas-fees#block-gas-meter) with the `maxGas` limit. The `gas` consumed within the block cannot go above `maxGas`. This parameter is defined in the application's consensus parameters.
 
 * Run the application's [`beginBlocker()`](/docs/sdk/v0.53/learn/beginner/app-anatomy#beginblocker-and-endblocker), which mainly runs the [`BeginBlocker()`](/docs/sdk/v0.53//build/building-modules/beginblock-endblock#beginblock) method of each of the modules.
 
-* Set the [`VoteInfos`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#voteinfo) of the application, i.e. the list of validators whose *precommit* for the previous block was included by the proposer of the current block. This information is carried into the [`Context`](/docs/sdk/v0.53/context) so that it can be used during transaction execution and EndBlock.
+* Set the [`VoteInfos`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/abci/abci++_methods.md#voteinfo) of the application, i.e. the list of validators whose *precommit* for the previous block was included by the proposer of the current block. This information is carried into the [`Context`](/docs/sdk/v0.53/learn/advanced/context) so that it can be used during transaction execution and EndBlock.
 
 #### Transaction Execution
 
@@ -8572,7 +8572,7 @@ Each transactions returns a response to the underlying consensus engine of type 
 * `Info (string):` Additional information. May be non-deterministic.
 * `GasWanted (int64)`: Amount of gas requested for transaction. It is provided by users when they generate the transaction.
 * `GasUsed (int64)`: Amount of gas consumed by transaction. During transaction execution, this value is computed by multiplying the standard cost of a transaction byte by the size of the raw transaction, and by adding gas each time a read/write to the store occurs.
-* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.53/events) for more.
+* `Events ([]cmn.KVPair)`: Key-Value tags for filtering and indexing transactions (eg. by account). See [`event`s](/docs/sdk/v0.53/learn/advanced/events) for more.
 * `Codespace (string)`: Namespace for the Code.
 
 #### EndBlock
