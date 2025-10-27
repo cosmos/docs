@@ -337,8 +337,8 @@ Active development uses it without props (defaults to main sheet):
 The system handles three types of paths:
 
 1. **Document paths**: Updated to version-specific
-   - Before: `/docs/evm/next/documentation/concepts/accounts`
-   - After: `/docs/evm/v0.4.x/documentation/concepts/accounts`
+   - Before: `/evm/next/documentation/concepts/accounts`
+   - After: `/evm/v0.4.x/documentation/concepts/accounts`
 
 2. **Snippet imports**: Remain unchanged (shared)
    - Always: `/snippets/icons.mdx`

@@ -1,0 +1,1211 @@
+---
+title: "Runtime Configuration & Network Launch"
+description: "Configure your validator and coordinate the network launch."
+---
+
+This guide covers runtime configuration (`app.toml`, `config.toml`) and network launch procedures. Complete these steps after your genesis file is finalized.
+
+<Info>
+**Related Documentation:**
+- [Pre-Genesis & Genesis Setup](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Initial configuration and genesis preparation
+- [Configuration Reference](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Commands, examples, and quick reference
+</Info>
+
+## Overview
+
+Once you have your network configuation and genesis file ready, you can prepare to launch the network:
+
+1. **Configure Runtime Settings** - Set node-specific parameters in `app.toml` and `config.toml`
+2. **Distribute Genesis File** - Share the final genesis file with all validators
+3. **Launch Network** - Coordinate the chain start across all validators
+4. **Monitor and Maintain** - Ensure healthy network operation post-launch
+
+## Runtime Configuration
+
+Runtime configuration is set in config files located at `~/.yourchain/config/`. These settings can be changed after genesis and are node-specific.
+
+### Configuration Files
+
+Three main configuration files control your node's runtime behavior:
+
+- **`app.toml`** - Application settings including EVM parameters, JSON-RPC server, gas prices, and API endpoints. Changes require node restart.
+- **`config.toml`** - CometBFT (consensus) settings including P2P networking, consensus timeouts, and mempool configuration. Changes require node restart.
+- **`client.toml`** - CLI client defaults including chain-id, keyring backend, and output preferences. Changes take effect immediately.
+
+
+
+## app.toml Configuration
+
+Located at `~/.yourchain/config/app.toml`, this file controls application-level settings.
+
+### Minimum Gas Prices
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Node-level minimum gas price to accept transactions into mempool |
+| **File** | `app.toml` |
+| **Section** | Root level |
+| **Type** | String |
+| **Format** | `<amount><denom>` |
+| **Default** | `"0aatom"` |
+| **Adjustable** | Per Node (requires restart) |
+| **Source** | [`server/config/migration/v0.50-app.toml:11`](https://github.com/cosmos/evm/blob/main/server/config/migration/v0.50-app.toml#L11) |
+| **Why Configure** | Protect against spam and ensure validators can cover operational costs |
+
+<Tabs>
+<Tab title="Configuration">
+Edit `app.toml`:
+
+```toml
+# Minimum gas prices for the node to accept transactions
+minimum-gas-prices = "1000000000atoken"
+```
+
+**Format**: `<amount><denom>`
+
+**Examples:**
+- `"1000000000atoken"` = 1 gwei
+- `"500000000atoken"` = 0.5 gwei
+- `"0atoken"` = accept all transactions (not recommended)
+
+**How it works:**
+- Node rejects transactions with gas price below this value
+- Protects against spam
+- Should align with genesis fee market `min_gas_price`
+</Tab>
+
+<Tab title="Recommendations">
+**For 18-decimal tokens:**
+```toml
+minimum-gas-prices = "1000000000atoken"  # 1 gwei
+```
+
+**For 6-decimal tokens:**
+```toml
+minimum-gas-prices = "1000utoken"  # 0.001 token
+```
+
+**Testing/Development:**
+```toml
+minimum-gas-prices = "0atoken"  # Accept all (not for production)
+```
+
+**Production:**
+- Set to at least expected minimum to prevent mempool spam
+- Can be higher than network minimum
+- Each validator can set their own value
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### JSON-RPC Configuration
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Ethereum-compatible RPC endpoints for EVM interactions |
+| **File** | `app.toml` |
+| **Section** | `[json-rpc]` |
+| **Type** | Object containing multiple JSON-RPC configuration parameters |
+| **Default Ports** | `8545` (HTTP), `8546` (WebSocket) |
+| **Default Address** | `127.0.0.1:8545` (HTTP), `127.0.0.1:8546` (WebSocket) |
+| **Adjustable** | Per Node (requires restart) |
+| **Source** | [`server/config/config.go:236-310`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L236) |
+| **Why Configure** | Control API exposure, security settings, and performance limits |
+
+<Tabs>
+<Tab title="Standard Configuration">
+```toml expandable
+[json-rpc]
+# Enable JSON-RPC server
+enable = true
+
+# HTTP server address
+# Use 127.0.0.1 for localhost only, 0.0.0.0 for public access
+address = "0.0.0.0:8545"
+
+# WebSocket server address
+ws-address = "0.0.0.0:8546"
+
+# API namespaces to enable
+api = ["eth", "net", "web3", "txpool"]
+
+# Gas cap for eth_call and eth_estimateGas
+gas-cap = 25000000
+
+# EVM execution timeout
+evm-timeout = "5s"
+
+# Transaction fee cap (in native token units)
+txfee-cap = 1.0
+
+# Maximum number of logs returned
+logs-cap = 10000
+
+# Maximum block range for queries
+block-range-cap = 10000
+
+# HTTP request timeout
+http-timeout = "30s"
+
+# HTTP idle timeout
+http-idle-timeout = "2m0s"
+
+# Allow unprotected transactions (only for development)
+allow-unprotected-txs = false
+
+# Maximum open connections (0 = unlimited)
+max-open-connections = 0
+
+# Enable indexer for historical queries
+enable-indexer = false
+```
+</Tab>
+
+<Tab title="API Namespaces">
+**Available Namespaces:**
+
+| Namespace | Purpose | Production Use |
+|---|---|---|
+| `eth` | Standard Ethereum RPC | ✅ Required |
+| `net` | Network information | ✅ Recommended |
+| `web3` | Web3 client version | ✅ Recommended |
+| `txpool` | Transaction pool inspection | ⚠️ Caution |
+| `debug` | Debug/trace endpoints | ❌ Dev only |
+
+**Production configuration:**
+```toml
+api = ["eth", "net", "web3"]
+```
+
+**Development configuration:**
+```toml
+api = ["eth", "net", "web3", "txpool", "debug"]
+```
+
+**Note**: The `debug` namespace can expose sensitive information and cause performance issues. Only enable for development.
+</Tab>
+
+<Tab title="Security Settings">
+**For public RPC nodes:**
+
+```toml expandable
+# Bind to localhost only
+address = "127.0.0.1:8545"
+ws-address = "127.0.0.1:8546"
+
+# Disable unprotected transactions
+allow-unprotected-txs = false
+
+# Limit connections
+max-open-connections = 100
+
+# Disable debug APIs
+api = ["eth", "net", "web3"]
+
+# Set reasonable caps
+gas-cap = 25000000
+logs-cap = 10000
+block-range-cap = 10000
+```
+
+**Security recommendations:**
+1. Use reverse proxy (nginx, traefik) for public access
+2. Implement rate limiting at proxy level
+3. Enable TLS/HTTPS
+4. Monitor for abuse
+5. Consider DDoS protection
+</Tab>
+</Tabs>
+
+**Default Port**: `8545` (HTTP), `8546` (WebSocket)
+
+</Expandable>
+
+### EVM Configuration
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | EVM module settings including chain ID, tracer, and gas limits |
+| **File** | `app.toml` |
+| **Section** | `[evm]` |
+| **Type** | Object containing multiple EVM configuration parameters |
+| **Default** | Chain ID from config, no tracing, unlimited gas per tx |
+| **Adjustable** | Per Node (requires restart); `evm-chain-id` is read-only |
+| **Source** | [`server/config/config.go:56-149`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L56) |
+| **Why Configure** | Debug transactions, limit gas usage, control EVM behavior |
+
+<Tabs>
+<Tab title="Configuration">
+
+```toml expandable
+[evm]
+# EVM chain ID (set during init from config/config.go)
+# Do not modify - change in source code before init
+evm-chain-id = 262144
+
+# Tracer type for debugging
+tracer = ""
+
+# Maximum gas limit for individual transactions
+# 0 = unlimited
+max-tx-gas-wanted = 0
+
+# Cache preimages for historical queries
+cache-preimage = false
+
+# Minimum tip (priority fee) required
+min-tip = 0
+```
+</Tab>
+
+<Tab title="Parameter Details">
+**1. `evm-chain-id`** (uint64) - **Read-only**
+- Automatically written during `yourchain init`
+- Value from `config/config.go:78`
+- Do not modify in app.toml
+- To change: Edit source code and rebuild before init
+
+**2. `tracer`** (string)
+- Options: `"json"`, `"markdown"`, `"struct"`, `""`
+- `"json"`: Detailed traces for debugging
+- `""`: No tracing (production recommended)
+
+**3. `max-tx-gas-wanted`** (uint64)
+- `0`: Unlimited (default)
+- `30000000`: Example limit per transaction
+- Protects against excessive gas usage
+
+**4. `min-tip`** (uint64)
+- Minimum priority fee in wei
+- `0`: Accept all transactions
+- `1000000000`: Require at least 1 gwei tip
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### EVM Mempool Configuration
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Transaction pool behavior including price limits, queue sizes, and lifetime |
+| **File** | `app.toml` |
+| **Section** | `[evm.mempool]` |
+| **Type** | Object containing mempool configuration parameters |
+| **Default** | 1 wei price limit, 5120 global slots, 3 hour lifetime |
+| **Adjustable** | Per Node (requires restart) |
+| **Source** | [`server/config/config.go:158-187`](https://github.com/cosmos/evm/blob/main/server/config/config.go#L158-L187) |
+| **Why Configure** | Optimize mempool capacity, prevent spam, manage transaction lifetime |
+
+<Info>
+**New in v0.5.0**: Mempool configuration is now fully exposed in `app.toml` and can be adjusted without code changes.
+</Info>
+
+<Tabs>
+<Tab title="Standard Configuration">
+
+```toml expandable
+[evm.mempool]
+# Minimum gas price to accept into pool (in wei)
+price-limit = 1
+
+# Minimum price bump % to replace existing transaction
+price-bump = 10
+
+# Executable transaction slots guaranteed per account
+account-slots = 16
+
+# Maximum executable slots for all accounts
+global-slots = 5120
+
+# Non-executable slots per account
+account-queue = 64
+
+# Non-executable slots for all accounts
+global-queue = 1024
+
+# Maximum time non-executable transactions stay queued
+lifetime = "3h0m0s"
+```
+</Tab>
+
+<Tab title="Parameter Details">
+**1. `price-limit`** (uint64, wei)
+- Minimum gas price to accept into mempool
+- Default: `1` wei
+- Example: `1000000000` = reject txs below 1 gwei
+
+**2. `price-bump`** (uint64, percentage)
+- Minimum % increase to replace transaction with same nonce
+- Default: `10` (10%)
+- Example: `20` = require 20% higher gas price
+
+**3. `account-slots`** (uint64)
+- Guaranteed executable slots per account
+- Default: `16`
+- Higher = more pending txs per account
+
+**4. `global-slots`** (uint64)
+- Total executable slots across all accounts
+- Default: `5120`
+- Higher = larger mempool capacity
+
+**5. `account-queue`** (uint64)
+- Queued (non-executable) slots per account
+- Default: `64`
+- For transactions with gaps in nonce sequence
+
+**6. `global-queue`** (uint64)
+- Total queued slots across all accounts
+- Default: `1024`
+
+**7. `lifetime`** (duration)
+- Maximum time transaction stays in mempool
+- Default: `"3h0m0s"` (3 hours)
+- Format: Go duration (e.g., `"1h30m"`, `"24h0m0s"`)
+</Tab>
+</Tabs>
+
+**Source**: [server/config/config.go:158-187](https://github.com/cosmos/evm/blob/main/server/config/config.go#L158-L187)
+
+<Info>
+**Advanced Mempool Configuration**: For detailed information on integrating the EVM mempool, see the [EVM Mempool Integration](/evm/v0.5.0/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration) guide.
+</Info>
+
+</Expandable>
+
+## config.toml Configuration
+
+Located at `~/.yourchain/config/config.toml`, this file controls CometBFT (consensus layer) settings.
+
+### Persistent Peers
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | List of nodes to maintain persistent connections to |
+| **File** | `config.toml` |
+| **Section** | `[p2p]` |
+| **Type** | String (comma-separated list) |
+| **Format** | `node_id@ip:port,node_id2@ip:port` |
+| **Default** | `""` (empty - no persistent peers) |
+| **Default Port** | `26656` |
+| **Adjustable** | Per Node (requires restart) |
+| **Why Configure** | Ensure validators stay connected to the network |
+
+<Tabs>
+<Tab title="Configuration">
+Edit `config.toml`:
+
+```toml
+[p2p]
+# Comma separated list of nodes to keep persistent connections to
+persistent_peers = "node_id@ip:port,node_id2@ip:port"
+```
+
+**Example:**
+```toml
+persistent_peers = "7c90e16cca334eb7@192.168.1.100:26656,abc123def456@192.168.1.101:26656"
+```
+</Tab>
+
+<Tab title="Getting Node IDs">
+**Each validator runs:**
+```bash
+yourchain comet show-node-id
+```
+
+**Output**: `7c90e16cca334eb7259754f964918d879ca54996`
+
+**Share format:**
+- **Node ID**: `7c90e16cca334eb7259754f964918d879ca54996`
+- **Public IP**: `192.168.1.100`
+- **P2P Port**: `26656` (default)
+- **Connection string**: `7c90e16cca334eb7@192.168.1.100:26656`
+</Tab>
+
+<Tab title="Coordinator Sheet">
+Create a coordination sheet for validators:
+
+| Validator | Node ID | IP Address | P2P Port | Connection String |
+|---|---|---|---|---|
+| Validator 1 | `7c90e16c...` | 192.168.1.100 | 26656 | `7c90e16c@192.168.1.100:26656` |
+| Validator 2 | `abc123de...` | 192.168.1.101 | 26656 | `abc123de@192.168.1.101:26656` |
+| Validator 3 | `def456ab...` | 192.168.1.102 | 26656 | `def456ab@192.168.1.102:26656` |
+
+**Each validator updates their `persistent_peers` with all other validators.**
+</Tab>
+</Tabs>
+
+**Verification:**
+```bash
+# Check connected peers
+curl localhost:26657/net_info | jq '.result.peers'
+```
+
+**Default P2P Port**: `26656`
+
+</Expandable>
+
+### Consensus Timeouts
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Timing parameters for consensus protocol |
+| **File** | `config.toml` |
+| **Section** | `[consensus]` |
+| **Type** | Duration strings |
+| **Default** | `"5s"` commit timeout (determines block time) |
+| **Adjustable** | Per Node (requires restart) |
+| **Why Configure** | Adjust block time, optimize for network conditions |
+
+<Tabs>
+<Tab title="Production">
+**Default values**:
+
+```toml expandable
+[consensus]
+timeout_propose = "3s"
+timeout_propose_delta = "500ms"
+timeout_prevote = "1s"
+timeout_prevote_delta = "500ms"
+timeout_precommit = "1s"
+timeout_precommit_delta = "500ms"
+timeout_commit = "5s"
+```
+
+Typically you do not need to adjust these.
+</Tab>
+
+<Tab title="Development Settings">
+Faster block times for local development or testing:
+
+```toml expandable
+[consensus]
+timeout_propose = "2s"
+timeout_propose_delta = "200ms"
+timeout_prevote = "500ms"
+timeout_prevote_delta = "200ms"
+timeout_precommit = "500ms"
+timeout_precommit_delta = "200ms"
+timeout_commit = "1s"
+```
+
+These are the parameters used in `./local_node.sh`.
+</Tab>
+
+<Tab title="Parameter Explanation">
+**Consensus Phases:**
+1. **Propose**: Block proposer broadcasts new block
+2. **Prevote**: Validators vote on proposed block
+3. **Precommit**: Validators commit to block
+4. **Commit**: Block is finalized
+
+**Timeout Parameters:**
+- `timeout_propose`: Time for proposer to broadcast block
+- `timeout_prevote`: Time to collect prevotes
+- `timeout_precommit`: Time to collect precommits
+- `timeout_commit`: Target block time
+- `*_delta`: Incremental increase per round
+
+**Trade-offs:**
+- Shorter timeouts = faster blocks, but higher chance of timeouts on slow networks
+- Longer timeouts = more robust on slow networks, but slower blocks
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Prometheus Metrics
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Enable metrics collection for monitoring |
+| **File** | `config.toml` |
+| **Section** | `[instrumentation]` |
+| **Type** | Boolean + String (address) |
+| **Default** | `false` (disabled), port `26660` |
+| **Adjustable** | Per Node (requires restart) |
+| **Why Configure** | Monitor node health, track performance metrics |
+
+```toml
+[instrumentation]
+# Enable Prometheus metrics
+prometheus = true
+
+# Prometheus listen address
+prometheus_listen_addr = ":26660"
+```
+
+**Access metrics:**
+```bash
+curl http://localhost:26660/metrics
+```
+
+Enable for production to monitor node and overall network health.
+
+</Expandable>
+
+## client.toml Configuration
+
+Located at `~/.yourchain/config/client.toml`, this file configures client behavior.
+
+### Set Client Chain ID
+
+<Expandable title="More Details" defaultOpen={false}>
+
+| Attribute | Value |
+|-----------|-------|
+| **Description** | Chain ID for CLI client operations |
+| **File** | `client.toml` |
+| **Section** | Root level |
+| **Type** | String |
+| **Default** | `""` (empty - must be set manually) |
+| **Adjustable** | Per Node (takes effect immediately) |
+| **Why Configure** | Required for node startup - must match genesis chain ID |
+
+<Warning>
+The node reads `chain-id` from `client.toml` at startup. If this doesn't match `genesis.json`, the node will fail to start.
+</Warning>
+
+<Tabs>
+<Tab title="Configuration">
+```bash
+yourchain config set client chain-id mychain-1 --home ~/.yourchain
+```
+
+**Or edit `client.toml` directly:**
+```toml
+chain-id = "mychain-1"
+```
+</Tab>
+</Tabs>
+
+**Other client settings:**
+```toml expandable
+# Keyring backend - This can be changed to "file", or "test" to create additional keys in different formats.
+# "Test" creates an UNSAFE key that requires no password to submit txs for quicker iteration when testing.
+keyring-backend = "os"
+
+# Output format
+output = "text"
+
+# Node RPC address - This can be changed to a public endpoint to use the light client without syncing the full node.
+node = "tcp://localhost:26657"
+
+# Broadcast mode
+broadcast-mode = "sync"
+```
+
+</Expandable>
+
+## Network Launch
+
+After all validators have configured their nodes, coordinate the network launch.
+
+### Pre-Launch Checklist
+
+<Expandable title="More Details" defaultOpen={false}>
+
+<Steps>
+<Step title="Finalize Genesis">
+- All genesis parameters configured
+- Genesis validation passes
+- Genesis accounts and validators added
+- Genesis time set for future launch
+</Step>
+
+<Step title="Distribute Genesis">
+- Share final genesis file with all validators
+- All validators verify genesis hash matches
+- No modifications allowed after distribution
+</Step>
+
+<Step title="Runtime Configuration">
+- All validators configure `app.toml`
+- All validators configure `config.toml`
+- All validators set `client.toml` chain-id
+- Persistent peers exchanged
+</Step>
+
+<Step title="Pre-Launch Tests">
+- Validators verify binary version
+- Validators test node starts without errors
+- Network connectivity verified
+- Monitoring systems ready
+</Step>
+</Steps>
+
+</Expandable>
+
+### Distribute Genesis File
+
+<Expandable title="More Details" defaultOpen={false}>
+
+After finalizing your genesis file, distribute it to all validators.
+
+<Tabs>
+<Tab title="GitHub Release">
+**Recommended for public networks:**
+
+```bash expandable
+# Coordinator creates release
+gh release create v1.0.0-genesis \
+  ~/.yourchain/config/genesis.json \
+  --title "Genesis File" \
+  --notes "Official genesis file for mychain-1"
+
+# Validators download
+wget https://github.com/yourorg/yourchain/releases/download/v1.0.0-genesis/genesis.json \
+  -O ~/.yourchain/config/genesis.json
+```
+</Tab>
+
+<Tab title="IPFS">
+**Recommended for decentralization:**
+
+```bash
+# Coordinator uploads
+ipfs add ~/.yourchain/config/genesis.json
+# Returns: QmXyz123...
+
+# Validators download
+ipfs get QmXyz123... -o ~/.yourchain/config/genesis.json
+```
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Verify Genesis Hash
+
+<Expandable title="More Details" defaultOpen={false}>
+
+**Critical**: All validators must verify they have the identical genesis file.
+
+<Tabs>
+<Tab title="Generate Hash">
+**Each validator runs:**
+
+```bash
+jq -S -c . ~/.yourchain/config/genesis.json | shasum -a 256
+```
+
+**Example output:**
+```
+a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6  -
+```
+</Tab>
+
+<Tab title="Coordination">
+**1. Coordinator publishes canonical hash:**
+```bash
+# Generate and save hash
+jq -S -c . ~/.yourchain/config/genesis.json | shasum -a 256 > genesis_hash.txt
+
+# Publish hash via official channel
+cat genesis_hash.txt
+```
+
+**2. All validators verify:**
+```bash
+# Each validator generates hash
+jq -S -c . ~/.yourchain/config/genesis.json | shasum -a 256
+
+# Compare with published hash
+```
+
+**3. All validators confirm:**
+- Report matching hash on official communication channel
+- Proceed only when all validators confirm
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Exchange Peer Information
+
+<Expandable title="More Details" defaultOpen={false}>
+
+Validators need each other's peer information to connect.
+
+<Tabs>
+<Tab title="Collect Information">
+**Each validator provides:**
+
+```bash expandable
+# Get node ID
+yourchain comet show-node-id
+# Output: 7c90e16cca334eb7259754f964918d879ca54996
+
+# Share:
+# - Node ID: 7c90e16cca334eb7259754f964918d879ca54996
+# - Public IP: 192.168.1.100
+# - P2P Port: 26656 (default)
+```
+
+**Format for sharing:**
+```
+7c90e16cca334eb7259754f964918d879ca54996@192.168.1.100:26656
+```
+</Tab>
+
+<Tab title="Update Config">
+**Each validator updates `config.toml`:**
+
+```bash
+# Edit ~/.yourchain/config/config.toml
+# Add all other validators to persistent_peers
+
+[p2p]
+persistent_peers = "7c90e16c@192.168.1.100:26656,abc123de@192.168.1.101:26656,def456ab@192.168.1.102:26656"
+```
+
+**Remove your own node ID** from the list (nodes don't connect to themselves).
+</Tab>
+
+<Tab title="Verification">
+**After starting nodes, verify connectivity:**
+
+```bash
+# Check number of connected peers
+curl localhost:26657/net_info | jq '.result.n_peers'
+
+# List connected peers
+curl localhost:26657/net_info | jq '.result.peers[].node_info.moniker'
+
+# Check peer details
+curl localhost:26657/net_info | jq '.result.peers'
+```
+
+**Expected**: Each validator should connect to all other validators.
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Coordinate Launch Time
+
+<Expandable title="More Details" defaultOpen={false}>
+
+Set and coordinate the exact launch time across all validators.
+
+<Tabs>
+<Tab title="Set Genesis Time">
+**Coordinator sets future genesis time:**
+
+```bash
+jq '.genesis_time = "2024-12-01T00:00:00Z"' \
+  ~/.yourchain/config/genesis.json > tmp && mv tmp ~/.yourchain/config/genesis.json
+```
+
+**Timing recommendations:**
+- **Testnet**: 1-2 hours ahead (allows validator setup)
+- **Mainnet**: 24-48 hours ahead (allows thorough preparation)
+- **Local dev**: Past time (starts immediately)
+</Tab>
+
+<Tab title="Launch Timeline">
+**Example launch timeline:**
+
+```
+T-48h: Announce genesis time to all validators
+T-24h: Distribute final genesis file
+T-4h:  Validators complete configuration
+T-2h:  All validators verify genesis hash
+T-1h:  Validators start nodes (wait for genesis time)
+T-30m: Monitor validator connections
+T-0:   Genesis time - network starts automatically
+T+10m: Verify all validators online and signing
+T+1h:  Monitor network health
+```
+</Tab>
+
+<Tab title="Validator Experience">
+**Validators start early:**
+
+```bash
+# Start node before genesis time
+yourchain start
+
+# Node output while waiting:
+Genesis time is in the future. Waiting...
+Time until genesis: 29m 45s
+...
+
+# At genesis time:
+Starting consensus...
+INF finalizing commit of block hash=ABC123... height=1
+INF finalizing commit of block hash=DEF456... height=2
+```
+
+**Network automatically begins** when genesis time is reached.
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Start Validator Nodes
+
+<Expandable title="More Details" defaultOpen={false}>
+
+After configuration and coordination, start the nodes.
+
+<Tabs>
+<Tab title="Start Command">
+
+```bash expandable
+# Standard startup
+yourchain start
+
+# With log level
+yourchain start --log_level info
+
+# In background with systemd (recommended)
+sudo systemctl start yourchain
+
+# In background with nohup
+nohup yourchain start > yourchain.log 2>&1 &
+```
+</Tab>
+
+<Tab title="Monitor Logs">
+
+```bash
+# Follow logs
+yourchain start 2>&1 | grep "finalizing commit"
+
+# Expected output:
+INF finalizing commit of block hash=ABC123... height=1 module=consensus
+INF finalizing commit of block hash=DEF456... height=2 module=consensus
+INF finalizing commit of block hash=GHI789... height=3 module=consensus
+```
+
+**Healthy signs:**
+- Block height increasing
+- No error messages
+- Blocks finalizing every ~5-8 seconds
+</Tab>
+
+<Tab title="Systemd Service">
+**Create service file** at `/etc/systemd/system/yourchain.service`:
+
+```ini expandable
+[Unit]
+Description=Cosmos EVM Chain
+After=network-online.target
+
+[Service]
+User=yourchain
+ExecStart=/usr/local/bin/yourchain start --home /home/yourchain/.yourchain
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Enable and start:**
+
+```bash expandable
+sudo systemctl enable yourchain
+sudo systemctl start yourchain
+
+# Check status
+sudo systemctl status yourchain
+
+# View logs
+sudo journalctl -fu yourchain -ocat
+```
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Verify Network Health
+
+<Expandable title="More Details" defaultOpen={false}>
+
+After launch, verify the network is operating correctly.
+
+<Tabs>
+<Tab title="Block Production">
+**Check block height increasing:**
+
+```bash
+# Via CometBFT RPC
+curl localhost:26657/status | jq '.result.sync_info.latest_block_height'
+
+# Via EVM RPC
+curl http://localhost:8545 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+```
+
+**Should see:** Block height increasing over time.
+</Tab>
+
+<Tab title="Validator Participation">
+**Check validator set:**
+
+```bash
+# Number of validators
+curl localhost:26657/validators | jq '.result.validators | length'
+
+# List validators
+curl localhost:26657/validators | jq '.result.validators[].address'
+
+# Check voting power
+curl localhost:26657/validators | \
+  jq '[.result.validators[].voting_power | tonumber] | add'
+```
+
+**Should see:** All expected validators present and voting.
+</Tab>
+
+<Tab title="Network Connectivity">
+**Check peers:**
+
+```bash
+# Number of connected peers
+curl localhost:26657/net_info | jq '.result.n_peers'
+
+# List connected peers
+curl localhost:26657/net_info | jq '.result.peers[].node_info.moniker'
+```
+
+**Should see:** Connected to expected number of peers.
+</Tab>
+
+<Tab title="Health Check">
+**CometBFT health:**
+
+```bash
+curl localhost:26657/health
+# Returns: {}  (empty object = healthy)
+```
+
+**Node status:**
+```bash
+curl localhost:26657/status | jq '.result'
+```
+
+**Shows:**
+- Node info
+- Sync status
+- Latest block info
+- Validator info
+</Tab>
+
+<Tab title="RPC Endpoints">
+**Test JSON-RPC:**
+
+```bash expandable
+# Check chain ID
+curl http://localhost:8545 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'
+
+# Get latest block
+curl http://localhost:8545 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}'
+
+# Check gas price
+curl http://localhost:8545 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_gasPrice","params":[],"id":1}'
+```
+
+**Should see:** Valid JSON responses with expected data.
+</Tab>
+</Tabs>
+
+</Expandable>
+
+## Post-Launch Operations
+
+After successful launch, maintain healthy network operation.
+
+### Validator Operations
+
+<Expandable title="Validator Operations" defaultOpen={false}>
+
+<Tabs>
+<Tab title="Unjail Validator">
+**If validator gets jailed for downtime:**
+
+```bash
+# Check if jailed
+yourchain query staking validator $(yourchain keys show validator --bech val -a)
+
+# Unjail
+yourchain tx slashing unjail \
+  --from validator \
+  --chain-id mychain-1 \
+  --fees 1000000000000000000atoken
+```
+</Tab>
+
+<Tab title="Edit Validator">
+**Update validator information:**
+
+```bash
+yourchain tx staking edit-validator \
+  --moniker "New Moniker" \
+  --website "https://example.com" \
+  --identity "keybase-id" \
+  --details "Description" \
+  --commission-rate 0.05 \
+  --from validator \
+  --chain-id mychain-1
+```
+</Tab>
+
+<Tab title="Monitor Performance">
+**Track validator performance:**
+
+```bash
+# Check signing info
+yourchain query slashing signing-info $(yourchain comet show-validator)
+
+# Check delegations
+yourchain query staking validator $(yourchain keys show validator --bech val -a)
+
+# Check rewards
+yourchain query distribution validator-outstanding-rewards \
+  $(yourchain keys show validator --bech val -a)
+```
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Monitoring and Alerting
+
+<Expandable title="Monitoring and Alerting" defaultOpen={false}>
+
+<Tabs>
+<Tab title="Key Metrics">
+**Monitor these metrics:**
+
+1. **Block height** - Should increase steadily
+2. **Peer count** - Should maintain connections
+3. **Validator signing** - Should sign every block
+4. **Memory/CPU usage** - Should be stable
+5. **Disk space** - Should have adequate free space
+
+**Prometheus metrics** available at `http://localhost:26660/metrics`
+</Tab>
+
+<Tab title="Common Issues">
+**Chain not producing blocks:**
+- Check >= 2/3 voting power online
+- Verify network connectivity
+- Check validator logs for errors
+
+**Node out of sync:**
+- May need to resync from genesis
+- Or use state sync (if configured)
+- Check peer connections
+
+**High memory usage:**
+- Check mempool size
+- Monitor for transaction spam
+- May need to adjust `app.toml` settings
+
+**Validator missing blocks:**
+- Check node is running
+- Verify network connectivity
+- Check slashing params
+</Tab>
+</Tabs>
+
+</Expandable>
+
+### Backup and Recovery
+
+<Expandable title="Backup and Recovery" defaultOpen={false}>
+
+<Tabs>
+<Tab title="Backup Critical Data">
+**What to backup:**
+
+```bash
+# Validator private key
+cp ~/.yourchain/config/priv_validator_key.json /secure/backup/
+
+# Node key
+cp ~/.yourchain/config/node_key.json /secure/backup/
+
+# Genesis file
+cp ~/.yourchain/config/genesis.json /secure/backup/
+```
+
+**Store securely:**
+- Encrypted storage
+- Multiple locations
+- Offline backups
+- Access controls
+</Tab>
+
+<Tab title="Disaster Recovery">
+**If validator node fails:**
+
+1. **Restore on new hardware:**
+
+<Warning>
+**IMPORTANT**
+Never run two validators with same private key simultaneously (double-sign risk). Before putting your keys onto another running node make sure there is _absolutely no chance_ of the previous one starting back up.
+</Warning>
+
+```bash
+# Install binary
+# Copy priv_validator_key.json
+# Copy node_key.json
+# Copy genesis.json
+# Sync blockchain data
+```
+
+2. **Sync options:**
+- Full sync from genesis or snapshot (slow, not recommended in this case)
+- State sync from snapshot (fast)
+- Copy data directory from backup or additional node (if available)
+
+3. **Restart validator:**
+```bash
+yourchain start
+```
+
+</Tab>
+</Tabs>
+
+</Expandable>
+
+## Next Steps
+
+Your chain should now be launched and operational! If not, start the process over from the beginning, or [contact us](https://cosmos.network/contact)!
+
+**Further resources:**
+- [Configuration Reference](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Complete command reference and examples
+- [VM Module Documentation](/evm/v0.5.0/documentation/cosmos-sdk/modules/vm) - EVM configuration details
+- [Cosmos SDK Documentation](https://docs.cosmos.network) - General Cosmos SDK operations
