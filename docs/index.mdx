@@ -5,206 +5,57 @@ mode: "custom"
 
 import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
-<script
-  dangerouslySetInnerHTML={{
-    __html: `
-      (function() {
-        const css = \`
-          .nav-tabs,
-          div.nav-tabs,
-          .nav-tabs-item,
-          button[aria-haspopup="menu"],
-          button[data-state],
-          button.group[class*="rounded-full"] {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            height: 0 !important;
-            width: 0 !important;
-            overflow: hidden !important;
-            position: absolute !important;
-            left: -9999px !important;
-          }
-        \`;
-
-        const style = document.createElement('style');
-        style.id = 'hide-nav-styles';
-        style.innerHTML = css;
-
-        function injectStyles() {
-          if (!document.getElementById('hide-nav-styles')) {
-            (document.head || document.documentElement).appendChild(style);
-          }
-        }
-
-        injectStyles();
-        document.addEventListener('DOMContentLoaded', injectStyles);
-        window.addEventListener('load', injectStyles);
-
-        // Keep re-injecting in case Mintlify removes it
-        setInterval(injectStyles, 500);
-      })();
-    `
-  }}
-/>
-
-<style>{`
-  /* Hide navigation tabs */
-  .nav-tabs,
-  div.nav-tabs,
-  .nav-tabs-item,
-  a.nav-tabs-item {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-  }
-
-  /* Hide version dropdown button */
-  button[aria-haspopup="menu"],
-  button[data-state],
-  button.group[class*="rounded-full"] {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-  }
-`}</style>
-
 <script>{`
-  // Aggressive navigation hiding
+  // Hide navigation elements
   function hideNavElements() {
-    const isMobile = window.innerWidth <= 768;
-
     const selectors = [
       '.nav-tabs',
-      'div.nav-tabs',
-      '.nav-tabs-item',
-      'a.nav-tabs-item',
-      '.link.nav-tabs-item',
       'button[aria-haspopup="menu"]',
       'button[data-state]',
-      'button.group',
-      'button[class*="bg-background-light"]',
-      'button[class*="bg-background-dark"]',
-      'header button:not([aria-label*="theme"]):not([aria-label*="Theme"])',
-      'header a.link',
-      'header .link',
-      '[class*="rounded-full"]:not([aria-label*="theme"]):not([aria-label*="Theme"])',
-      '[class*="lg:flex"]',
-      'nav:not([aria-label*="breadcrumb"])',
-      '[role="navigation"]',
-      'header a:not([href="/"])',
-      '[class*="version"]',
-      '[class*="Version"]',
-      '[class*="breadcrumb"]'
+      'header button:not([aria-label*="theme"])'
     ];
-
-    // Additional selectors for mobile
-    if (isMobile) {
-      selectors.push(
-        'button[aria-label*="menu"]',
-        'button[aria-label*="Menu"]',
-        'button[aria-label*="navigation"]',
-        'button[aria-label*="Navigation"]',
-        'button[aria-label*="Open"]',
-        'button[aria-label*="Sidebar"]',
-        'button[type="button"]:not([aria-label*="theme"]):not([aria-label*="Theme"])',
-        '[class*="mobile-menu"]',
-        '[class*="hamburger"]'
-      );
-    }
 
     selectors.forEach(selector => {
       try {
         document.querySelectorAll(selector).forEach(el => {
           el.style.setProperty('display', 'none', 'important');
           el.style.setProperty('visibility', 'hidden', 'important');
-          el.style.setProperty('opacity', '0', 'important');
-          el.style.setProperty('pointer-events', 'none', 'important');
-          el.style.setProperty('position', 'absolute', 'important');
-          el.style.setProperty('left', '-9999px', 'important');
         });
       } catch(e) {}
     });
   }
 
-  // Theme detection and application
-  function getCurrentTheme() {
-    const html = document.documentElement;
-    // Check for Mintlify's theme attribute or class
-    const dataTheme = html.getAttribute('data-theme');
-    if (dataTheme) return dataTheme;
-
-    // Check for dark class
-    if (html.classList.contains('dark')) return 'dark';
-
-    // Check system preference as fallback
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-
-    return 'light';
-  }
-
+  // Theme detection
   function applyTheme() {
-    const theme = getCurrentTheme();
+    const html = document.documentElement;
+    const theme = html.getAttribute('data-theme') ||
+                  (html.classList.contains('dark') ? 'dark' : 'light');
     const customContent = document.getElementById('custom-index-content');
-
     if (customContent) {
       customContent.setAttribute('data-theme', theme);
     }
   }
 
-  // Run immediately and repeatedly
+  // Initialize
   if (typeof window !== 'undefined') {
     hideNavElements();
-    setTimeout(hideNavElements, 0);
-    setTimeout(hideNavElements, 100);
-    setTimeout(hideNavElements, 500);
-    setTimeout(hideNavElements, 1000);
-
-    window.addEventListener('load', hideNavElements);
-    document.addEventListener('DOMContentLoaded', hideNavElements);
-    window.addEventListener('resize', hideNavElements);
-
-    // Apply theme on load
     applyTheme();
-    setTimeout(applyTheme, 0);
-    setTimeout(applyTheme, 100);
-    setTimeout(applyTheme, 500);
-    window.addEventListener('load', applyTheme);
-    document.addEventListener('DOMContentLoaded', applyTheme);
 
-    // Watch for dynamic content and theme changes
-    const observer = new MutationObserver(() => {
+    setTimeout(() => {
+      hideNavElements();
+      applyTheme();
+    }, 100);
+
+    window.addEventListener('load', () => {
       hideNavElements();
       applyTheme();
     });
 
-    // Watch HTML element for theme changes
-    observer.observe(document.documentElement, {
+    // Watch for theme changes
+    new MutationObserver(() => applyTheme()).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme', 'class']
     });
-
-    if (document.body) {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'style']
-      });
-    } else {
-      setTimeout(() => {
-        if (document.body) {
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class', 'style']
-          });
-        }
-      }, 100);
-    }
   }
 `}</script>
 
@@ -274,61 +125,9 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
   /* Mobile responsive styles */
   @media (max-width: 768px) {
-    /* Hide the "Cosmos Stack Developer Documentation" text on mobile */
     .font-semibold.truncate,
-    div.font-semibold.text-gray-900,
-    div.font-semibold.dark\:text-gray-200,
-    .min-w-0.flex-1.font-semibold {
+    header button:not([aria-label*="theme"]) {
       display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-    }
-
-    /* Hide the hamburger menu button (3-line icon) on mobile */
-    svg.h-4[viewBox="0 0 448 512"],
-    button:has(svg.h-4[viewBox="0 0 448 512"]),
-    button svg[viewBox="0 0 448 512"],
-    header button:has(svg),
-    button:has(svg path[d*="M0 96C0"]) {
-      display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-      position: absolute !important;
-      left: -9999px !important;
-      width: 0 !important;
-      height: 0 !important;
-    }
-
-    /* Hide mobile navigation button and menu */
-    #navbar button:not([aria-label*="theme"]):not([aria-label*="Theme"]),
-    #header button:not([aria-label*="theme"]):not([aria-label*="Theme"]),
-    header button:not([aria-label*="theme"]):not([aria-label*="Theme"]),
-    button[aria-label*="menu"],
-    button[aria-label*="Menu"],
-    button[aria-label*="navigation"],
-    button[aria-label*="Navigation"],
-    button[aria-label*="Open"],
-    button[aria-label*="sidebar"],
-    button[aria-label*="Sidebar"],
-    button[type="button"]:not([aria-label*="theme"]):not([aria-label*="Theme"]),
-    .mobile-nav-toggle,
-    [class*="mobile-menu"],
-    [class*="hamburger"],
-    nav button,
-    header svg[class*="menu"],
-    header [role="button"]:not([aria-label*="theme"]):not([aria-label*="Theme"]) {
-      display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-      position: absolute !important;
-      left: -9999px !important;
-    }
-
-    .topic-card-grid {
-      grid-template-columns: 1fr !important;
-      gap: 20px !important;
     }
 
     #custom-index-content .content-container {
@@ -337,7 +136,6 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
     #custom-index-content .banner {
       padding: 40px 20px !important;
-      min-height: 20vh !important;
     }
 
     #custom-index-content h1 {
@@ -348,30 +146,13 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
       font-size: 28px !important;
     }
 
-    #custom-index-content h3.heading {
-      font-size: 20px !important;
-      padding: 10px 14px !important;
-    }
-
     #custom-index-content .content-card {
       padding: 24px !important;
-    }
-
-    #custom-index-content section {
-      margin-bottom: 40px !important;
-      padding-bottom: 40px !important;
-    }
-
-    .topic-card {
-      padding: 20px !important;
     }
   }
 
   @media (max-width: 480px) {
-    #custom-index-content .content-container {
-      padding: 30px 16px !important;
-    }
-
+    #custom-index-content .content-container,
     #custom-index-content .banner {
       padding: 30px 16px !important;
     }
@@ -384,22 +165,8 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
       font-size: 24px !important;
     }
 
-    #custom-index-content h3.heading {
-      font-size: 18px !important;
-      padding: 8px 12px !important;
-    }
-
     #custom-index-content .content-card {
       padding: 20px !important;
-    }
-
-    .topic-card {
-      padding: 16px !important;
-    }
-
-    #custom-index-content section {
-      margin-bottom: 30px !important;
-      padding-bottom: 30px !important;
     }
   }
 
@@ -425,56 +192,34 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
 
-  /* Card hover effects */
-  #custom-index-content[data-theme="dark"] .content-card:hover {
-    border-color: #999999;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  /* Interactive elements */
+  .content-card:hover {
+    transform: translateY(-4px);
   }
 
-  #custom-index-content[data-theme="light"] .content-card:hover {
-    border-color: #666666;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  .cta-button {
+    transition: all 0.2s;
   }
 
-  /* Button styles */
   #custom-index-content[data-theme="dark"] .cta-button,
   #custom-index-content:not([data-theme]) .cta-button {
-    background: #000000;
-    border: 1px solid #CCCCCC;
+    background: #000;
+    border: 1px solid #CCC;
     color: #F1F1F1;
   }
 
   #custom-index-content[data-theme="light"] .cta-button {
-    background: #FFFFFF;
-    border: 1px solid #333333;
+    background: #FFF;
+    border: 1px solid #333;
     color: #1A1A1A;
   }
 
-  #custom-index-content[data-theme="dark"] .cta-button:hover {
-    background: #1A1A1A;
+  .cta-button:hover {
+    opacity: 0.9;
   }
 
-  #custom-index-content[data-theme="light"] .cta-button:hover {
-    background: #F5F5F5;
-  }
-
-  /* Link colors */
-  #custom-index-content[data-theme="dark"] .text-link,
-  #custom-index-content:not([data-theme]) .text-link {
-    color: #CCCCCC;
-  }
-
-  #custom-index-content[data-theme="light"] .text-link {
-    color: #4A4A4A;
-  }
-
-  #custom-index-content[data-theme="dark"] .text-link:hover,
-  #custom-index-content:not([data-theme]) .text-link:hover {
-    color: #F1F1F1;
-  }
-
-  #custom-index-content[data-theme="light"] .text-link:hover {
-    color: #1A1A1A;
+  .text-link:hover {
+    text-decoration: underline;
   }
 `}</style>
 

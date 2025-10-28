@@ -73,7 +73,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
         border: isMobile
           ? `1px solid ${isOpen ? color : (isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(204, 204, 204, 0.15)')}`
           : `1px solid ${isHovered ? color : (isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(204, 204, 204, 0.2)')}`,
-        borderRadius: isMobile ? '10px' : '12px',
+        borderRadius: isMobile ? '0' : '12px',
         padding: isMobile ? (isOpen ? '18px 20px 20px' : '14px 18px') : '28px',
         height: isMobile ? 'auto' : '100%',
         display: 'flex',
@@ -177,19 +177,21 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
           <div
             onClick={onToggle}
             style={{
-              fontSize: '12px',
-              color: isLight ? '#666' : '#999',
-              transition: 'transform 0.25s ease, color 0.2s ease',
-              transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+              fontSize: '18px',
+              fontWeight: '300',
+              color: color,
+              transition: 'transform 0.25s ease',
+              transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
               cursor: 'pointer',
               padding: '4px 8px',
               userSelect: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              lineHeight: '1',
             }}
           >
-            ▼
+            ›
           </div>
         )}
       </div>
