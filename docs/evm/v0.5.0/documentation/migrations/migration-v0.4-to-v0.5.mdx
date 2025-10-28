@@ -2,6 +2,8 @@
 title: "Migration: v0.4.x to v0.5.0"
 ---
 
+# Cosmos EVM v0.4.0 → v0.5.0 Migration
+
 ## 0) Prep
 
 - Create a branch: `git switch -c upgrade/evm-v0.5`.
@@ -79,35 +81,9 @@ following list includes references within `evmd` that have been moved.
 
 ### Mempool
 
-#### Custom initializer
+#### Minimal setups: nothing to change
 
-The mempool configuration can now be handled by a helper function. If you prefer to use the configuration from `app.toml` and CLI flags, you can refactor your mempool setup:
-
-- **Before**: Manual configuration in app.go
-```go
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
-    BlockGasLimit: blockGasLimit,
-    MinTip:        minTip,
-}
-evmMempool := evmmempool.NewExperimentalEVMMempool(
-    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
-    app.txConfig, app.clientCtx, mempoolConfig,
-)
-```
-- **After**: Using helper function (optional). See https://github.com/cosmos/evm/blob/42e1141c9b00432020e69945e565f60f80ab501d/evmd/mempool.go for the reference implementation
-```go
-if err := app.configureEVMMempool(appOpts, logger); err != nil {
-    panic(fmt.Sprintf("failed to configure EVM mempool: %s", err.Error()))
-}
-```
-
-The helper function reads configuration from `appOpts` or applies defaults if omitted. Note that `NewExperimentalEVMMempool` now takes an additional `cosmosPoolMaxTx` parameter, with a recommended default value being `4096` or `0` (uncapped).
-
-
-#### Simple config migration
-
-If `BlockGasLimit` is 0, it defaults to `100_000_000`. If `BroadCastTxFn` is not set, it's also set to a default value.
+If you use the default mempool wiring (no custom pools), your existing code continues to work. If `BlockGasLimit` is 0, it defaults to `100_000_000`. If `BroadCastTxFn` is not set, it's also set to a default value.
 
 ```go
 mempoolConfig := &evmmempool.EVMMempoolConfig{
@@ -211,100 +187,30 @@ These options can also be set via CLI flags:
 
 A new flag `--mempool.max-txs` allows limiting the maximum number of transactions in the Cosmos mempool. Set to 0 or -1 for unbounded (default: 0).
 
-The function signature for `NewExperimentalEVMMempool` also changed to add a cosmosPoolMaxTx field:
+##### Simplified Mempool Setup
 
-```diff
-func NewExperimentalEVMMempool(
-	getCtxCallback func(height int64, prove bool) (sdk.Context, error),
-	logger log.Logger,
-	vmKeeper VMKeeperI,
-	feeMarketKeeper FeeMarketKeeperI,
-	txConfig client.TxConfig,
-	clientCtx client.Context,
-	config *EVMMempoolConfig,
-+	cosmosPoolMaxTx int,
-)
-```
-
-#### EVM Chain ID
-
-The EVM chain ID is now retrieved directly from `appOpts` instead of being passed as a parameter. In `app.go`, the chain ID is obtained using:
+The mempool configuration can now be handled by a helper function. If you prefer to use the configuration from `app.toml` and CLI flags, you can refactor your mempool setup:
 
 ```go
-evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
+// Before: Manual configuration in app.go
+mempoolConfig := &evmmempool.EVMMempoolConfig{
+    AnteHandler:   app.GetAnteHandler(),
+    BlockGasLimit: blockGasLimit,
+    MinTip:        minTip,
+}
+evmMempool := evmmempool.NewExperimentalEVMMempool(
+    app.CreateQueryContext, logger, app.EVMKeeper, app.FeeMarketKeeper,
+    app.txConfig, app.clientCtx, mempoolConfig,
+)
+
+// After: Using helper function (optional)
+// See evmd/mempool.go for reference implementation
+if err := app.configureEVMMempool(appOpts, logger); err != nil {
+    panic(fmt.Sprintf("failed to configure EVM mempool: %s", err.Error()))
+}
 ```
 
-See `evmd/app.go:216` for the reference implementation.
-
-The EVM Keeper now also takes in evmChainID as a parameter:
-
-```diff
-app.EVMKeeper = evmkeeper.NewKeeper(
-		appCodec, keys[evmtypes.StoreKey], tkeys[evmtypes.TransientKey], keys,
-		authtypes.NewModuleAddress(govtypes.ModuleName),
-		app.AccountKeeper,
-		app.PreciseBankKeeper,
-		app.StakingKeeper,
-		app.FeeMarketKeeper,
-		&app.ConsensusParamsKeeper,
-		&app.Erc20Keeper,
-+		evmChainID,
-		tracer,
-	)
-```
-
-#### Function Signature Changes
-
-In `app.go`, remove evmChainID and evmAppOptions from the NewApp signature.
-
-```diff
-// NewExampleApp returns a reference to an initialized EVMD.
-func NewExampleApp(
-	logger log.Logger,
-	db dbm.DB,
-	traceStore io.Writer,
-	loadLatest bool,
-	appOpts servertypes.AppOptions,
--	evmChainID uint64,
--	evmAppOptions evmconfig.EVMOptionsFn,
-	baseAppOptions ...func(*baseapp.BaseApp),
-) *EVMD {
-```
-
-Afterwards, fix any reference to the function by removing the inputs.
-
-Then, remove any reference of evmAppOptions being called:
-
-`app.go`
-```diff
--	if err := evmAppOptions(evmChainID); err != nil {
--		panic(err)
--	}
-```
-
-`root.go`
-```diff
-- noOpEvmAppOptions := func(_ uint64) error {
--		return nil
--	}
-```
-```diff
-- if initClientCtx.ChainID != "" {
--		if err := config.EvmAppOptions(config.EVMChainID); err != nil {
--			panic(err)
--		}
--	}
-```
-
-`evmd_config.go`, `chain_id.go`, `config.go`, `constants.go` have been moved to
-`github.com/cosmos/evm/config` and may be removed to your repo.
-
-### Denom Configs
-
-[#661](https://github.com/cosmos/evm/pull/661) removes the instantiation of chain configs via app.go
-and moves them to state or genesis.
-It is critical to remove any use of EvmAppOptions as calling the configurator will panic the chain
-at runtime during startup.
+The helper function reads configuration from `appOpts` and applies defaults where needed. Note that `NewExperimentalEVMMempool` now takes an additional `cosmosPoolMaxTx` parameter.
 
 ### Default Precompiles
 
@@ -323,7 +229,6 @@ function can now happen *alongside the keeper instantiation*, and not after. The
 		app.FeeMarketKeeper,
 		&app.ConsensusParamsKeeper,
 		&app.Erc20Keeper,
-		evmChainID,
 		tracer,
 	).WithStaticPrecompiles(
 		precompiletypes.DefaultStaticPrecompiles(
@@ -339,6 +244,13 @@ function can now happen *alongside the keeper instantiation*, and not after. The
 		),
 	)
 ```
+
+#### Denom Configs
+
+[#661](https://github.com/cosmos/evm/pull/661) removes the instantiation of chain configs via app.go
+and moves them to state or genesis.
+It is critical to remove any use of EvmAppOptions as calling the configurator will panic the chain
+at runtime during startup.
 
 #### UpgradeHandler
 
