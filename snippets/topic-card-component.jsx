@@ -237,6 +237,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
 export const TopicCardGrid = ({ children, cols = 3 }) => {
   return (
     <div
+      className="topic-card-grid"
       style={{
         display: 'grid',
         gridTemplateColumns: cols
