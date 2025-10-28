@@ -196,7 +196,7 @@ To test if vote extensions have been propagated, add the following to the `Prepa
 if req.Height > 2 {
     voteExt := req.GetLocalLastCommit()
 
-h.logger.Info(fmt.Sprintf("🛠️ :: Get vote extensions: %v", voteExt))
+h.logger.Info(fmt.Sprintf(" :: Get vote extensions: %v", voteExt))
 }
 ```
 
@@ -209,7 +209,7 @@ PrepareProposalHandler()
 
 sdk.PrepareProposalHandler {
     return func(ctx sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
-    h.logger.Info(fmt.Sprintf("🛠️ :: Prepare Proposal"))
+    h.logger.Info(fmt.Sprintf(" :: Prepare Proposal"))
 
 var proposalTxs [][]byte
 
@@ -219,7 +219,7 @@ var proposalTxs [][]byte
     if req.Height > 2 {
     voteExt := req.GetLocalLastCommit()
 
-h.logger.Info(fmt.Sprintf("🛠️ :: Get vote extensions: %v", voteExt))
+h.logger.Info(fmt.Sprintf(" :: Get vote extensions: %v", voteExt))
 }
     itr := h.mempool.Select(context.Background(), nil)
     for itr != nil {
@@ -230,11 +230,11 @@ txs = append(txs, tmptx)
 itr = itr.Next()
 }
 
-h.logger.Info(fmt.Sprintf("🛠️ :: Number of Transactions available from mempool: %v", len(txs)))
+h.logger.Info(fmt.Sprintf(" :: Number of Transactions available from mempool: %v", len(txs)))
     if h.runProvider {
     tmpMsgs, err := h.txProvider.BuildProposal(ctx, txs)
     if err != nil {
-    h.logger.Error(fmt.Sprintf("❌️ :: Error Building Custom Proposal: %v", err))
+    h.logger.Error(fmt.Sprintf(" :: Error Building Custom Proposal: %v", err))
 }
 
 txs = tmpMsgs
@@ -242,13 +242,13 @@ txs = tmpMsgs
     for _, sdkTxs := range txs {
     txBytes, err := h.txConfig.TxEncoder()(sdkTxs)
     if err != nil {
-    h.logger.Info(fmt.Sprintf("❌~Error encoding transaction: %v", err.Error()))
+    h.logger.Info(fmt.Sprintf("~Error encoding transaction: %v", err.Error()))
 }
 
 proposalTxs = append(proposalTxs, txBytes)
 }
 
-h.logger.Info(fmt.Sprintf("🛠️ :: Number of Transactions in proposal: %v", len(proposalTxs)))
+h.logger.Info(fmt.Sprintf(" :: Number of Transactions in proposal: %v", len(proposalTxs)))
 
 return &abci.ResponsePrepareProposal{
     Txs: proposalTxs
@@ -257,7 +257,7 @@ return &abci.ResponsePrepareProposal{
 }
 ```
 
-As mentioned above, we check if vote extensions have been propagated, you can do this by checking the logs for any relevant messages such as `🛠️ :: Get vote extensions:`. If the logs do not provide enough information, you can also reinitialise your local testing environment by running the `./scripts/single_node/setup.sh` script again.
+As mentioned above, we check if vote extensions have been propagated, you can do this by checking the logs for any relevant messages such as ` :: Get vote extensions:`. If the logs do not provide enough information, you can also reinitialise your local testing environment by running the `./scripts/single_node/setup.sh` script again.
 
 5. Implement the `ProcessProposalHandler()`. This function is responsible for processing the proposal. It should handle the logic of processing vote extensions, including inspecting the proposal and validating the bids.
 
@@ -268,27 +268,27 @@ ProcessProposalHandler()
 
 sdk.ProcessProposalHandler {
     return func(ctx sdk.Context, req *abci.RequestProcessProposal) (resp *abci.ResponseProcessProposal, err error) {
-    h.Logger.Info(fmt.Sprintf("⚙️ :: Process Proposal"))
+    h.Logger.Info(fmt.Sprintf(" :: Process Proposal"))
 
   // The first transaction will always be the Special Transaction
     numTxs := len(req.Txs)
 
-h.Logger.Info(fmt.Sprintf("⚙️:: Number of transactions :: %v", numTxs))
+h.Logger.Info(fmt.Sprintf(":: Number of transactions :: %v", numTxs))
     if numTxs >= 1 {
     var st SpecialTransaction
    err = json.Unmarshal(req.Txs[0], &st)
     if err != nil {
-    h.Logger.Error(fmt.Sprintf("❌️:: Error unmarshalling special Tx in Process Proposal :: %v", err))
+    h.Logger.Error(fmt.Sprintf(":: Error unmarshalling special Tx in Process Proposal :: %v", err))
 }
     if len(st.Bids) > 0 {
-    h.Logger.Info(fmt.Sprintf("⚙️:: There are bids in the Special Transaction"))
+    h.Logger.Info(fmt.Sprintf(":: There are bids in the Special Transaction"))
 
 var bids []nstypes.MsgBid
     for i, b := range st.Bids {
     var bid nstypes.MsgBid
      h.Codec.Unmarshal(b, &bid)
 
-h.Logger.Info(fmt.Sprintf("⚙️:: Special Transaction Bid No %v :: %v", i, bid))
+h.Logger.Info(fmt.Sprintf(":: Special Transaction Bid No %v :: %v", i, bid))
 
 bids = append(bids, bid)
 }
@@ -296,21 +296,21 @@ bids = append(bids, bid)
     txs := req.Txs[1:]
     ok, err := ValidateBids(h.TxConfig, bids, txs, h.Logger)
     if err != nil {
-    h.Logger.Error(fmt.Sprintf("❌️:: Error validating bids in Process Proposal :: %v", err))
+    h.Logger.Error(fmt.Sprintf(":: Error validating bids in Process Proposal :: %v", err))
 
 return &abci.ResponseProcessProposal{
     Status: abci.ResponseProcessProposal_REJECT
 }, nil
 }
     if !ok {
-    h.Logger.Error(fmt.Sprintf("❌️:: Unable to validate bids in Process Proposal :: %v", err))
+    h.Logger.Error(fmt.Sprintf(":: Unable to validate bids in Process Proposal :: %v", err))
 
 return &abci.ResponseProcessProposal{
     Status: abci.ResponseProcessProposal_REJECT
 }, nil
 }
 
-h.Logger.Info("⚙️:: Successfully validated bids in Process Proposal")
+h.Logger.Info(":: Successfully validated bids in Process Proposal")
 }
  
 }
@@ -326,7 +326,7 @@ return &abci.ResponseProcessProposal{
 
 ```go expandable
 func processVoteExtensions(req *abci.RequestPrepareProposal, log log.Logger) (SpecialTransaction, error) {
-    log.Info(fmt.Sprintf("🛠️ :: Process Vote Extensions"))
+    log.Info(fmt.Sprintf(" :: Process Vote Extensions"))
 
  // Create empty response
     st := SpecialTransaction{
@@ -345,14 +345,14 @@ func processVoteExtensions(req *abci.RequestPrepareProposal, log log.Logger) (Sp
   // Unmarshal to AppExt
     err := json.Unmarshal(vote.VoteExtension, &ve)
     if err != nil {
-    log.Error(fmt.Sprintf("❌ :: Error unmarshalling Vote Extension"))
+    log.Error(fmt.Sprintf(" :: Error unmarshalling Vote Extension"))
 }
 
 st.Height = int(ve.Height)
 
   // If Bids in VE, append to Special Transaction
     if len(ve.Bids) > 0 {
-    log.Info("🛠️ :: Bids in VE")
+    log.Info(" :: Bids in VE")
     for _, b := range ve.Bids {
     st.Bids = append(st.Bids, b)
 }

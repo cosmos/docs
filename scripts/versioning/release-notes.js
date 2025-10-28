@@ -224,7 +224,7 @@ function parseChangelogToMintlify(changelogContent) {
 
   // Fallback: if nothing parsed, create a single update with available content
   if (updates.length === 0) {
-    console.log('   ⚠ No versions parsed from changelog, creating fallback entry');
+    console.log('    No versions parsed from changelog, creating fallback entry');
     const nonEmpty = lines.filter(l => l.trim().length).slice(0, 100);
     updates.push({
       version: 'latest',
