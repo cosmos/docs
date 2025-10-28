@@ -73,7 +73,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
         border: isMobile
           ? `1px solid ${isOpen ? color : (isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(204, 204, 204, 0.15)')}`
           : `1px solid ${isHovered ? color : (isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(204, 204, 204, 0.2)')}`,
-        borderRadius: isMobile ? '0' : '12px',
+        borderRadius: isMobile ? '0' : '4px',
         padding: isMobile ? (isOpen ? '18px 20px 20px' : '14px 18px') : '28px',
         height: isMobile ? 'auto' : '100%',
         display: 'flex',
