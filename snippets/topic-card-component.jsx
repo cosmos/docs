@@ -1,7 +1,61 @@
 'use client'
 
+import React from 'react'
+
 export const TopicCard = ({ title, description, links = [], color = '#cccccc', titleHref = null }) => {
   const [isHovered, setIsHovered] = React.useState(false)
+  const [isLight, setIsLight] = React.useState(false)
+
+  React.useEffect(() => {
+    const checkTheme = () => {
+      // Check multiple sources for theme
+      const customContent = document.getElementById('custom-index-content')
+      const htmlElement = document.documentElement
+
+      let theme = null
+
+      if (customContent) {
+        theme = customContent.getAttribute('data-theme')
+      }
+
+      if (!theme && htmlElement) {
+        theme = htmlElement.getAttribute('data-theme')
+      }
+
+      if (!theme && htmlElement) {
+        theme = htmlElement.classList.contains('dark') ? 'dark' : 'light'
+      }
+
+      setIsLight(theme === 'light')
+    }
+
+    // Initial check with delay to ensure DOM is ready
+    setTimeout(checkTheme, 0)
+    setTimeout(checkTheme, 100)
+    setTimeout(checkTheme, 500)
+
+    const observer = new MutationObserver(checkTheme)
+
+    // Observe both custom-index-content and html element
+    const customContent = document.getElementById('custom-index-content')
+    const htmlElement = document.documentElement
+
+    if (customContent) {
+      observer.observe(customContent, {
+        attributes: true,
+        attributeFilter: ['data-theme']
+      })
+    }
+
+    if (htmlElement) {
+      observer.observe(htmlElement, {
+        attributes: true,
+        attributeFilter: ['data-theme', 'class']
+      })
+    }
+
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div
@@ -9,8 +63,10 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       style={{
-        background: 'linear-gradient(135deg, #0E0E0E 0%, #1a1a1a 100%)',
-        border: `1px solid ${isHovered ? color : 'rgba(204, 204, 204, 0.2)'}`,
+        background: isLight
+          ? 'linear-gradient(135deg, #E8E8E8 0%, #D5D5D5 100%)'
+          : 'linear-gradient(135deg, #0E0E0E 0%, #1a1a1a 100%)',
+        border: `1px solid ${isHovered ? color : (isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(204, 204, 204, 0.2)')}`,
         borderRadius: '12px',
         padding: '28px',
         height: '100%',
@@ -19,8 +75,12 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         transform: isHovered ? 'translateY(-4px)' : 'translateY(0)',
         boxShadow: isHovered
-          ? `0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px ${color}`
-          : '0 4px 12px rgba(0, 0, 0, 0.3)',
+          ? (isLight
+            ? `0 12px 32px rgba(0, 0, 0, 0.15), 0 0 0 1px ${color}`
+            : `0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px ${color}`)
+          : (isLight
+            ? '0 4px 12px rgba(0, 0, 0, 0.1)'
+            : '0 4px 12px rgba(0, 0, 0, 0.3)'),
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -43,7 +103,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
         style={{
           fontSize: '22px',
           fontWeight: '700',
-          color: '#F1F1F1',
+          color: isLight ? '#1A1A1A' : '#F1F1F1',
           marginBottom: '12px',
           paddingBottom: '16px',
           borderBottom: `2px solid ${color}40`,
@@ -67,7 +127,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
             href={titleHref}
             {...(titleHref.startsWith('http') && { target: '_blank', rel: 'noopener noreferrer' })}
             style={{
-              color: '#F1F1F1',
+              color: isLight ? '#1A1A1A' : '#F1F1F1',
               textDecoration: 'none',
               transition: 'color 0.2s ease',
             }}
@@ -75,7 +135,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
               e.currentTarget.style.color = color
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#F1F1F1'
+              e.currentTarget.style.color = isLight ? '#1A1A1A' : '#F1F1F1'
             }}
           >
             {title}
@@ -89,7 +149,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
         <p
           style={{
             fontSize: '14px',
-            color: '#aaaaaa',
+            color: isLight ? '#4A4A4A' : '#aaaaaa',
             lineHeight: '1.7',
             marginBottom: '24px',
             flex: '0 0 auto',
@@ -119,7 +179,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
                 className="topic-link"
                 {...(isExternal && { target: '_blank', rel: 'noopener noreferrer' })}
                 style={{
-                  color: '#cccccc',
+                  color: isLight ? '#4A4A4A' : '#cccccc',
                   textDecoration: 'none',
                   display: 'flex',
                   alignItems: 'center',
@@ -137,7 +197,7 @@ export const TopicCard = ({ title, description, links = [], color = '#cccccc', t
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = '#cccccc'
+                  e.currentTarget.style.color = isLight ? '#4A4A4A' : '#cccccc'
                   e.currentTarget.style.paddingLeft = '12px'
                 }}
               >
