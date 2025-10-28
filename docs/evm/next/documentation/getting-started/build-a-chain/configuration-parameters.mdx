@@ -1,0 +1,1083 @@
+---
+title: "Chain Configuration Guide"
+description: "Step-by-step guide to configuring your Cosmos EVM chain. Learn how to customize the binary name, chain IDs, token denomination, precompiles, and permissions based on the evmd reference implementation."
+---
+
+# Chain Configuration Guide
+
+When building your custom chain based on `evmd`, you'll need to configure several key parameters. This guide walks through each configuration option from the evmd default setup and shows you how to customize it for your chain.
+
+<Info>
+This guide focuses on the practical configuration steps. For comprehensive parameter references and advanced topics, see the [migration guides](/docs/evm/next/documentation/migrations/migration-v0.4-to-v0.5) and module-specific documentation.
+</Info>
+
+## evmd Default Configuration
+
+The reference implementation (`evmd`) comes with these defaults:
+
+| Configuration | Default Value | Customizable |
+|---------------|---------------|--------------|
+| **Binary Name** | `evmd` | ✓ Yes (rename) |
+| **Cosmos Chain ID** | `cosmos_262144-1` | ✓ Yes (genesis) |
+| **EVM Chain ID** | `262144` | ✓ Yes (genesis) |
+| **Custom Opcodes** | None | ✓ Yes (advanced) |
+| **Token Pairs** | 1 (native token) | ✓ Yes (genesis) |
+| **Denomination** | `atest` (18 decimals) | ✓ Yes (genesis) |
+| **EVM Permissioning** | Permissionless | ✓ Yes (genesis) |
+| **Enabled Precompiles** | All 9 precompiles | ✓ Yes (genesis) |
+
+Let's configure each of these for your custom chain.
+
+---
+
+## 1. Binary Name
+
+**What It Is**: The name of your compiled blockchain executable.
+
+**Default**: `evmd`
+
+### How to Change
+
+<Steps>
+<Step title="Rename Directory">
+```bash
+cd /path/to/cosmos-evm
+mv evmd yourchain
+```
+</Step>
+
+<Step title="Update Go Files">
+```bash
+# Update all references in Go files
+find . -type f -name "*.go" -exec sed -i 's/evmd/yourchain/g' {} \;
+```
+</Step>
+
+<Step title="Update go.mod">
+Edit the module path in `go.mod`:
+```go
+module github.com/your-org/your-chain
+
+// Update import paths that reference evmd
+```
+</Step>
+
+<Step title="Update Makefile">
+Edit the Makefile to use your binary name:
+```makefile
+BINARY_NAME := yourchain
+
+install:
+	go install ./yourchain/cmd/yourchain
+```
+</Step>
+
+<Step title="Build">
+```bash
+go mod tidy
+make install
+
+# Or build directly
+go build -o yourchain ./yourchain/cmd/yourchain
+```
+</Step>
+</Steps>
+
+<Tip>
+After renaming, your binary will be `yourchain` instead of `evmd`. All CLI commands will use this new name (e.g., `yourchain start` instead of `evmd start`).
+</Tip>
+
+---
+
+## 2. Cosmos Chain ID
+
+**What It Is**: The unique identifier for your blockchain in the Cosmos ecosystem. Used for IBC connections and governance.
+
+**Default**: `cosmos_262144-1`
+
+**Format**: `{name}_{evmChainID}-{version}`
+
+### How to Change
+
+Set during chain initialization:
+
+```bash
+yourchain init mynode --chain-id yourchain_262144-1
+```
+
+**Recommended Formats**:
+- Testnet: `yourchain_262144-1`
+- Mainnet: `yourchain-1` (after registering a unique EVM chain ID)
+
+<Note>
+The Cosmos chain ID is separate from the EVM chain ID. The format `name_evmChainID-version` helps maintain consistency between both IDs, but it's not required.
+</Note>
+
+### Changing After Genesis
+
+While technically possible through a coordinated upgrade, changing the Cosmos chain ID requires all nodes to update and restart simultaneously. Plan your chain ID carefully before launch.
+
+---
+
+## 3. EVM Chain ID
+
+**What It Is**: The EIP-155 chain ID used for Ethereum transaction replay protection.
+
+**Default**: `262144`
+
+**Where Configured**: Retrieved from app options in `app.go`
+
+### How to Change
+
+<Warning>
+The EVM chain ID **cannot** be changed after genesis without breaking transaction replay protection. Choose carefully before launch.
+</Warning>
+
+The EVM chain ID is retrieved from app options in `app.go`:
+
+```go
+// evmd/app.go line ~216
+evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
+```
+
+You can set it via CLI flag when starting the chain:
+```bash
+yourchain start --evm.chain-id 262144
+```
+
+Or configure it in `app.toml`:
+```toml
+[evm]
+chain-id = 262144
+```
+
+### Choosing an EVM Chain ID
+
+<AccordionGroup>
+<Accordion title="Reserved IDs">
+**Avoid these ranges**:
+- `1` - Ethereum Mainnet
+- `2-10` - Ethereum testnets
+- `1-999` - Generally reserved by Ethereum Foundation
+- `137` - Polygon
+- Common production chains - Check [chainlist.org](https://chainlist.org)
+</Accordion>
+
+<Accordion title="Testing">
+**For local development and testnets**:
+- Use `262144` (evmd default)
+- Or any high number unlikely to conflict
+- No registration needed
+</Accordion>
+
+<Accordion title="Production">
+**For mainnet launches**:
+- Choose a unique ID > 1,000,000
+- Register at [chainlist.org](https://chainlist.org)
+- Verify no conflicts with existing chains
+- Document your choice publicly
+</Accordion>
+</AccordionGroup>
+
+---
+
+## 4. Custom Opcodes
+
+**What It Is**: Custom EVM operations beyond standard Ethereum opcodes.
+
+**Default**: None
+
+<Note>
+Custom opcodes are an advanced feature. Most chains should use standard Ethereum opcodes with the optional `extra_eips` parameter instead.
+</Note>
+
+### Adding Extra EIPs
+
+Instead of custom opcodes, enable additional Ethereum Improvement Proposals:
+
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "extra_eips": [2200, 2929, 3198]
+      }
+    }
+  }
+}
+```
+
+**Common EIPs**:
+- `2200` - Net gas metering
+- `2929` - Gas cost increases for state access
+- `3198` - BASEFEE opcode
+- `3529` - Reduction in refunds
+
+<Accordion title="Implementing Custom Opcodes (Advanced)">
+For teams that need custom EVM functionality:
+
+1. Create activator functions in your chain's `eips/` directory
+2. Register in the activators map
+3. Add to `extra_eips` in genesis
+
+```go
+// yourchain/eips/custom.go
+func ActivateMyCustomOpcode(jt *vm.JumpTable) {
+    // Define custom opcode behavior
+}
+
+// Register in activators
+var CustomActivators = map[int]func(*vm.JumpTable){
+    9999: ActivateMyCustomOpcode,
+}
+```
+
+Then in genesis:
+```json
+{
+  "extra_eips": [9999]
+}
+```
+
+This is rarely needed - consider if standard EVM functionality meets your needs first.
+</Accordion>
+
+---
+
+## 5. Token Pairs (ERC20 Module)
+
+**What It Is**: Mappings between Cosmos native tokens and ERC20 contract representations.
+
+**Default**: 1 pair for the native token
+
+### How to Configure
+
+<Info>
+For comprehensive ERC20 module configuration, see the [ERC20 Module Documentation](/evm/next/documentation/cosmos-sdk/modules/erc20).
+</Info>
+
+Token pairs are configured in genesis under the `erc20` module:
+
+```json
+{
+  "app_state": {
+    "erc20": {
+      "native_precompiles": [
+        "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+      ],
+      "token_pairs": [
+        {
+          "erc20_address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          "denom": "atest",
+          "enabled": true,
+          "contract_owner": 1
+        }
+      ]
+    }
+  }
+}
+```
+
+### Default Native Token Pair
+
+The evmd example uses a special ERC20 address for the native token:
+- **Address**: `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`
+- **Denom**: `atest` (or your chain's native denom)
+- **Purpose**: Allows native tokens to be used in EVM contracts as ERC20
+
+<Tip>
+**Default Setup**: Most chains start with just the native token pair. Additional pairs can be registered after launch through governance or permissionless registration (if enabled).
+</Tip>
+
+---
+
+## 6. Token Denomination
+
+**What It Is**: Your chain's native token denomination and decimal precision.
+
+**Default**: `atest` (18 decimals, atto-prefix)
+
+### Understanding Token Configuration
+
+Token configuration involves three components:
+
+1. **Bank Metadata** - Defines denominations and decimals
+2. **VM Parameters** - Specifies which denom is the EVM native token
+3. **Extended Denom Options** - Required only for non-18 decimal tokens
+
+<Tabs>
+<Tab title="18 Decimals (Recommended)">
+**Direct EVM Compatibility - No Extra Modules Needed**
+
+```json
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "description": "The native staking token",
+          "denom_units": [
+            {
+              "denom": "atoken",    // atto-prefix (18 decimals)
+              "exponent": 0,
+              "aliases": ["attotoken"]
+            },
+            {
+              "denom": "token",     // Display denomination
+              "exponent": 18
+            }
+          ],
+          "base": "atoken",
+          "display": "token",
+          "name": "Token",
+          "symbol": "TOKEN"
+        }
+      ]
+    },
+    "vm": {
+      "params": {
+        "evm_denom": "atoken"  // Must match base
+        // No extended_denom_options needed!
+      }
+    }
+  }
+}
+```
+
+**Benefits**:
+- ✓ Direct 1:1 EVM mapping
+- ✓ Uses standard `x/bank` module
+- ✓ Simpler architecture
+- ✓ No additional modules required
+</Tab>
+
+<Tab title="6 Decimals (Cosmos Standard)">
+**Requires PreciseBank Module**
+
+```json
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "denom_units": [
+            {
+              "denom": "utoken",    // micro-prefix (6 decimals)
+              "exponent": 0
+            },
+            {
+              "denom": "token",
+              "exponent": 6
+            }
+          ],
+          "base": "utoken",
+          "display": "token"
+        }
+      ]
+    },
+    "vm": {
+      "params": {
+        "evm_denom": "utoken",
+        "extended_denom_options": {
+          "extended_denom": "atoken"  // 18-decimal EVM representation
+        }
+      }
+    }
+  }
+}
+```
+
+**Additional Setup Required**:
+- Must add `x/precisebank` module to `app.go`
+- Precisebank handles fractional amounts (1 utoken = 10^12 wei)
+- See [PreciseBank Module Docs](/evm/next/documentation/cosmos-sdk/modules/precisebank)
+
+<Warning>
+When using non-18 decimal tokens, you **must** add the precisebank module and configure the extended denom. Failure to do so will result in precision loss and incorrect balances.
+</Warning>
+</Tab>
+
+<Tab title="Other Decimals">
+**Also Requires PreciseBank**
+
+For chains using other decimal precisions (e.g., 8 decimals for Bitcoin compatibility):
+
+```json
+{
+  "bank": {
+    "denom_metadata": [{
+      "denom_units": [
+        {"denom": "sats", "exponent": 0},      // 8 decimals
+        {"denom": "btc", "exponent": 8}
+      ],
+      "base": "sats"
+    }]
+  },
+  "vm": {
+    "params": {
+      "evm_denom": "sats",
+      "extended_denom_options": {
+        "extended_denom": "asats"  // 18-decimal for EVM
+      }
+    }
+  }
+}
+```
+
+Requires precisebank module with custom conversion factor.
+</Tab>
+</Tabs>
+
+### Common Denomination Prefixes
+
+| Prefix | Decimals | Example | Used For |
+|--------|----------|---------|----------|
+| `a` (atto) | 18 | `atoken` | **EVM-compatible chains (recommended)** |
+| `u` (micro) | 6 | `uatom`, `ustake` | Traditional Cosmos chains |
+| Base | 0-8 | `sats` | Bitcoin-style |
+
+<Tip>
+**Recommendation**: Use 18 decimals (`atto` prefix) for new chains. This provides:
+- Direct EVM compatibility
+- Simpler codebase (no precisebank needed)
+- Better UX for Ethereum users
+- Standard across EVM ecosystems
+</Tip>
+
+### Setting Denomination in Genesis
+
+The denomination is set in multiple places that must be consistent:
+
+```bash
+# After initializing your chain
+GENESIS=~/.yourchain/config/genesis.json
+
+# Set denomination in all modules
+jq '.app_state["staking"]["params"]["bond_denom"]="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+jq '.app_state["gov"]["params"]["min_deposit"][0]["denom"]="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+jq '.app_state["vm"]["params"]["evm_denom"]="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+jq '.app_state["mint"]["params"]["mint_denom"]="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+
+# Set bank metadata
+jq '.app_state["bank"]["denom_metadata"]=[{
+  "description": "The native staking token",
+  "denom_units": [
+    {"denom": "atoken", "exponent": 0, "aliases": ["attotoken"]},
+    {"denom": "token", "exponent": 18, "aliases": []}
+  ],
+  "base": "atoken",
+  "display": "token",
+  "name": "Token",
+  "symbol": "TOKEN"
+}]' $GENESIS > tmp && mv tmp $GENESIS
+```
+
+<Note>
+**Critical**: The following must all use the same base denomination:
+- `staking.params.bond_denom`
+- `mint.params.mint_denom`
+- `gov.params.min_deposit[0].denom`
+- `vm.params.evm_denom`
+- `bank.denom_metadata[0].base`
+</Note>
+
+---
+
+## 7. EVM Permissioning
+
+**What It Is**: Access control for deploying and calling smart contracts.
+
+**Default**: Permissionless (anyone can deploy and call contracts)
+
+### How to Configure
+
+EVM permissions are set in genesis under `vm.params.access_control`:
+
+<Tabs>
+<Tab title="Permissionless (Default)">
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "access_control": {
+          "create": {
+            "access_type": 0,  // 0 = PERMISSIONLESS
+            "access_control_list": []
+          },
+          "call": {
+            "access_type": 0,
+            "access_control_list": []
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Use Case**: Public chains, testnets, open ecosystems
+</Tab>
+
+<Tab title="Permissioned Deployment">
+```json
+{
+  "access_control": {
+    "create": {
+      "access_type": 2,  // 2 = PERMISSIONED (allowlist)
+      "access_control_list": [
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      ]
+    },
+    "call": {
+      "access_type": 0,  // Keep calls open
+      "access_control_list": []
+    }
+  }
+}
+```
+
+**Use Case**: Enterprise chains, regulated environments, controlled contract deployment
+</Tab>
+
+<Tab title="Restricted (Blocklist)">
+```json
+{
+  "access_control": {
+    "create": {
+      "access_type": 1,  // 1 = RESTRICTED (blocklist)
+      "access_control_list": [
+        "0xbadaddr1234567890123456789012345678901234"
+      ]
+    },
+    "call": {
+      "access_type": 0,
+      "access_control_list": []
+    }
+  }
+}
+```
+
+**Use Case**: Blocking known malicious addresses while keeping chain open
+</Tab>
+
+<Tab title="Fully Closed">
+```json
+{
+  "access_control": {
+    "create": {
+      "access_type": 1,  // RESTRICTED with empty list = block all
+      "access_control_list": []
+    },
+    "call": {
+      "access_type": 1,
+      "access_control_list": []
+    }
+  }
+}
+```
+
+**Use Case**: Chains that only use predeployed contracts, no user deployments
+</Tab>
+</Tabs>
+
+### Access Control Types
+
+| Type | Value | Behavior | access_control_list |
+|------|-------|----------|---------------------|
+| **Permissionless** | `0` | Anyone can perform action | Ignored |
+| **Restricted** | `1` | Block addresses in list | Blocklist |
+| **Permissioned** | `2` | Only addresses in list | Allowlist |
+
+<Tip>
+**Recommendation**: Start with permissionless for testnets. For mainnets, consider permissioned deployment initially, then transition to permissionless through governance once the chain is stable.
+</Tip>
+
+### Modifying After Genesis
+
+Access control can be changed through governance proposals:
+
+```bash
+# Example: Enable permissionless deployment via governance
+yourchain tx gov submit-proposal param-change proposal.json \
+  --from validator \
+  --chain-id yourchain-1
+```
+
+---
+
+## 8. Enabled Precompiles
+
+**What It Is**: Native Cosmos SDK functionality exposed as EVM smart contracts.
+
+**Default**: All 9 static precompiles enabled
+
+### Available Precompiles
+
+<Info>
+For complete precompile documentation including Solidity interfaces and usage examples, see the [Precompiles Overview](/docs/evm/next/documentation/smart-contracts/precompiles/overview).
+</Info>
+
+| Address | Name | Description | Typical Use Case |
+|---------|------|-------------|------------------|
+| `0x0100` | **P256** | P256 cryptographic operations | Web3 auth, secure signing |
+| `0x0400` | **Bech32** | Cosmos ↔ Ethereum address conversion | Cross-chain operations |
+| `0x0800` | **Staking** | Validator staking operations | Liquid staking, auto-compounding |
+| `0x0801` | **Distribution** | Reward distribution queries | Reward dashboards, auto-claiming |
+| `0x0802` | **ICS20** | IBC token transfers | Cross-chain DeFi |
+| `0x0803` | **Vesting** | Vesting account management | Token vesting contracts |
+| `0x0804` | **Bank** | Native token transfers | Payment contracts |
+| `0x0805` | **Governance** | On-chain voting | DAO integration |
+| `0x0806` | **Slashing** | Validator slashing info | Validator monitoring |
+
+### How to Configure
+
+<Tabs>
+<Tab title="Enable All (evmd default)">
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "active_static_precompiles": [
+          "0x0000000000000000000000000000000000000100",
+          "0x0000000000000000000000000000000000000400",
+          "0x0000000000000000000000000000000000000800",
+          "0x0000000000000000000000000000000000000801",
+          "0x0000000000000000000000000000000000000802",
+          "0x0000000000000000000000000000000000000803",
+          "0x0000000000000000000000000000000000000804",
+          "0x0000000000000000000000000000000000000805",
+          "0x0000000000000000000000000000000000000806"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Use Case**: Maximum Cosmos SDK integration, full-featured chains
+</Tab>
+
+<Tab title="Enable Specific Precompiles">
+```json
+{
+  "active_static_precompiles": [
+    "0x0000000000000000000000000000000000000100",  // P256
+    "0x0000000000000000000000000000000000000400",  // Bech32
+    "0x0000000000000000000000000000000000000800",  // Staking
+    "0x0000000000000000000000000000000000000804"   // Bank
+  ]
+}
+```
+
+**Use Case**: Minimal attack surface, only enable what you need
+</Tab>
+
+<Tab title="Disable All">
+```json
+{
+  "active_static_precompiles": []
+}
+```
+
+**Use Case**: Pure EVM chains with no Cosmos SDK integration
+</Tab>
+
+<Tab title="In app.go">
+Set defaults in your chain's genesis configuration:
+
+```go
+// yourchain/genesis.go
+func NewDefaultVMGenesisState() *vmtypes.GenesisState {
+    evmGenState := vmtypes.DefaultGenesisState()
+
+    // Enable only specific precompiles
+    evmGenState.Params.ActiveStaticPrecompiles = []string{
+        "0x0000000000000000000000000000000000000100", // P256
+        "0x0000000000000000000000000000000000000800", // Staking
+        "0x0000000000000000000000000000000000000804", // Bank
+    }
+
+    return evmGenState
+}
+```
+</Tab>
+</Tabs>
+
+<Warning>
+**Security Consideration**: Only enable precompiles your chain actually needs. Each enabled precompile increases the attack surface and testing complexity.
+</Warning>
+
+### Modifying After Genesis
+
+Precompiles can be enabled or disabled through governance:
+
+```bash
+# Propose adding a precompile
+yourchain tx gov submit-proposal param-change proposal.json \
+  --from validator
+```
+
+---
+
+## Configuration Workflow
+
+Here's the recommended order for configuring your chain:
+
+<Steps>
+<Step title="Plan Your Configuration">
+Decide on:
+- Binary name
+- Chain IDs (Cosmos and EVM)
+- Token denomination and decimals
+- Precompiles needed
+- Access control policy
+</Step>
+
+<Step title="Rename and Rebrand">
+```bash
+# Rename binary
+mv evmd yourchain
+
+# Update references
+find . -type f -name "*.go" -exec sed -i 's/evmd/yourchain/g' {} \;
+
+# Update go.mod
+# Edit module path
+```
+</Step>
+
+<Step title="Initialize Chain">
+```bash
+yourchain init mynode --chain-id yourchain-1
+```
+</Step>
+
+<Step title="Configure Genesis">
+Edit `~/.yourchain/config/genesis.json`:
+
+```bash
+GENESIS=~/.yourchain/config/genesis.json
+
+# Set denominations
+jq '.app_state.staking.params.bond_denom="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+jq '.app_state.vm.params.evm_denom="atoken"' $GENESIS > tmp && mv tmp $GENESIS
+
+# Set bank metadata
+# Set precompiles
+# Set access control
+```
+</Step>
+
+<Step title="Configure app.toml">
+Edit `~/.yourchain/config/app.toml`:
+
+```toml
+[evm]
+chain-id = 262144  # Set EVM chain ID
+min-tip = 1000000000
+
+[json-rpc]
+enable = true
+address = "0.0.0.0:8545"
+```
+</Step>
+
+<Step title="Test Locally">
+```bash
+yourchain start
+```
+
+Verify:
+- Chain starts successfully
+- RPC is accessible
+- Precompiles are enabled
+- Token denomination is correct
+</Step>
+
+<Step title="Deploy">
+For production:
+- Coordinate genesis with validators
+- Distribute final genesis file
+- Launch at coordinated time
+</Step>
+</Steps>
+
+---
+
+## Configuration Examples
+
+### Reference: local_node.sh
+
+<Info>
+**Looking for a real-world example?** The `local_node.sh` script in the Cosmos EVM repository is the best reference for complete chain configuration. It demonstrates how evmd sets up genesis and app.toml for local development.
+</Info>
+
+The `local_node.sh` script performs all the configuration steps automatically. Here's what it does:
+
+<AccordionGroup>
+<Accordion title="Genesis Modifications" icon="file-code">
+The script modifies `genesis.json` to configure:
+
+- **Chain ID**: Sets to `cosmos_262144-1`
+- **Token denomination**: Configures `atest` (18 decimals) across all modules
+- **Bank metadata**: Sets up denom metadata with proper exponents
+- **Precompiles**: Enables all 9 static precompiles by default
+- **Validator configuration**: Creates genesis validator with initial stake
+- **Genesis accounts**: Funds test accounts for development
+
+</Accordion>
+
+<Accordion title="app.toml Configuration" icon="gear">
+The script configures `app.toml` with development-friendly settings:
+
+```toml
+[evm]
+chain-id = 262144
+tracer = "json"  # Enable EVM tracing for debugging
+min-tip = 0      # No minimum tip for local testing
+
+[json-rpc]
+enable = true
+address = "0.0.0.0:8545"
+ws-address = "0.0.0.0:8546"
+api = ["eth", "net", "web3", "txpool", "debug"]  # All APIs for testing
+allow-unprotected-txs = true                      # Allow unsigned txs locally
+enable-indexer = true                             # Enable transaction indexing
+```
+
+These settings are optimized for local development and should be adjusted for production.
+</Accordion>
+
+<Accordion title="Script Flags" icon="flag">
+The `local_node.sh` script accepts flags that control configuration:
+
+- **`-y`**: Overwrites previous database (fresh genesis)
+- **`-n`**: Preserves previous database (resume)
+- **`--no-install`**: Skips binary rebuild
+- **`--remote-debugging`**: Builds with debug symbols
+
+Example usage:
+```bash
+# Fresh start with all default configurations
+./local_node.sh -y
+
+# Resume from previous state
+./local_node.sh -n
+```
+</Accordion>
+
+<Accordion title="Using as a Template" icon="copy">
+To use `local_node.sh` as a template for your chain:
+
+1. **Copy the script**: `cp local_node.sh my_chain_setup.sh`
+2. **Update chain name**: Change `evmd` to your binary name
+3. **Modify genesis values**: Update denom, chain ID, precompiles
+4. **Adjust app.toml settings**: Configure for your use case (testnet/mainnet)
+5. **Add custom logic**: Include any chain-specific setup
+
+The script serves as a complete example of the configuration workflow described in this guide.
+</Accordion>
+</AccordionGroup>
+
+<Note>
+**Production Considerations**: The `local_node.sh` configuration is optimized for local development. For testnets and mainnets:
+- Disable debug APIs in JSON-RPC
+- Require transaction signatures (`allow-unprotected-txs = false`)
+- Set appropriate `min-tip` value
+- Use secure key management (not test keys)
+- Configure proper peer discovery and networking
+</Note>
+
+---
+
+### Complete 18-Decimal Chain
+
+<CodeGroup>
+```bash init.sh
+#!/bin/bash
+# Initialize and configure an 18-decimal chain
+
+BINARY="yourchain"
+CHAIN_ID="yourchain-1"
+EVM_CHAIN_ID="262144"
+DENOM="atoken"
+GENESIS=~/.yourchain/config/genesis.json
+
+# Initialize
+$BINARY init mynode --chain-id $CHAIN_ID
+
+# Configure denominations
+jq ".app_state.staking.params.bond_denom=\"$DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.mint.params.mint_denom=\"$DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.gov.params.min_deposit[0].denom=\"$DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.vm.params.evm_denom=\"$DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+
+# Set bank metadata (18 decimals)
+jq ".app_state.bank.denom_metadata=[{
+  \"description\": \"The native staking token\",
+  \"denom_units\": [
+    {\"denom\": \"$DENOM\", \"exponent\": 0, \"aliases\": [\"attotoken\"]},
+    {\"denom\": \"token\", \"exponent\": 18, \"aliases\": []}
+  ],
+  \"base\": \"$DENOM\",
+  \"display\": \"token\",
+  \"name\": \"Token\",
+  \"symbol\": \"TOKEN\"
+}]" $GENESIS > tmp && mv tmp $GENESIS
+
+# Enable specific precompiles
+jq '.app_state.vm.params.active_static_precompiles=[
+  "0x0000000000000000000000000000000000000100",
+  "0x0000000000000000000000000000000000000400",
+  "0x0000000000000000000000000000000000000800",
+  "0x0000000000000000000000000000000000000804"
+]' $GENESIS > tmp && mv tmp $GENESIS
+
+echo "Configuration complete!"
+```
+
+```toml app.toml
+[evm]
+chain-id = 262144
+min-tip = 1000000000  # 1 gwei
+cache-preimage = false
+
+[json-rpc]
+enable = true
+address = "0.0.0.0:8545"
+ws-address = "0.0.0.0:8546"
+api = ["eth", "net", "web3", "txpool"]
+gas-cap = 25000000
+allow-unprotected-txs = false
+```
+</CodeGroup>
+
+### Complete 6-Decimal Chain with PreciseBank
+
+<CodeGroup>
+```bash init-6-decimal.sh
+#!/bin/bash
+# Initialize and configure a 6-decimal chain
+
+BINARY="yourchain"
+CHAIN_ID="yourchain-1"
+EVM_CHAIN_ID="262144"
+BASE_DENOM="utoken"
+EXTENDED_DENOM="atoken"
+GENESIS=~/.yourchain/config/genesis.json
+
+# Initialize
+$BINARY init mynode --chain-id $CHAIN_ID
+
+# Configure denominations
+jq ".app_state.staking.params.bond_denom=\"$BASE_DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.mint.params.mint_denom=\"$BASE_DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.gov.params.min_deposit[0].denom=\"$BASE_DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+jq ".app_state.vm.params.evm_denom=\"$BASE_DENOM\"" $GENESIS > tmp && mv tmp $GENESIS
+
+# Set bank metadata (6 decimals)
+jq ".app_state.bank.denom_metadata=[{
+  \"description\": \"The native staking token\",
+  \"denom_units\": [
+    {\"denom\": \"$BASE_DENOM\", \"exponent\": 0},
+    {\"denom\": \"token\", \"exponent\": 6}
+  ],
+  \"base\": \"$BASE_DENOM\",
+  \"display\": \"token\",
+  \"name\": \"Token\",
+  \"symbol\": \"TOKEN\"
+}]" $GENESIS > tmp && mv tmp $GENESIS
+
+# Set extended denom options (REQUIRED for 6 decimals)
+jq ".app_state.vm.params.extended_denom_options={
+  \"extended_denom\": \"$EXTENDED_DENOM\"
+}" $GENESIS > tmp && mv tmp $GENESIS
+
+echo "Configuration complete! Remember to add precisebank module to app.go"
+```
+
+```go app.go
+// In app.go, you must add precisebank module:
+
+import (
+    precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+    precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+)
+
+// Add to store keys
+keys := storetypes.NewKVStoreKeys(
+    // ... other keys
+    precisebanktypes.StoreKey,
+)
+
+// Initialize PreciseBankKeeper
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    keys[precisebanktypes.StoreKey],
+    app.BankKeeper,
+    app.AccountKeeper,
+)
+
+// Use PreciseBankKeeper in EVMKeeper
+app.EVMKeeper = evmkeeper.NewKeeper(
+    // ...
+    app.PreciseBankKeeper,  // Not app.BankKeeper!
+    // ...
+)
+
+// Add to module manager
+app.ModuleManager = module.NewManager(
+    // ... other modules
+    precisebank.NewAppModule(app.PreciseBankKeeper, app.AccountKeeper),
+    // ...
+)
+
+// Add to genesis order (after bank, before vm)
+genesisModuleOrder := []string{
+    // ...
+    banktypes.ModuleName,
+    precisebanktypes.ModuleName,
+    evmtypes.ModuleName,
+    // ...
+}
+```
+</CodeGroup>
+
+---
+
+## Next Steps
+
+Now that your chain is configured:
+
+1. **Test Locally**: Use `./local_node.sh` to test all configurations
+2. **Deploy Contracts**: Verify precompiles work as expected
+3. **Set Up Validators**: Prepare for testnet/mainnet launch
+4. **Document Configuration**: Share configuration choices with users
+5. **Plan Governance**: Determine which parameters may change post-launch
+
+### Further Reading
+
+<CardGroup cols={2}>
+<Card title="Building Your Chain Guide" icon="hammer" href="/docs/evm/next/documentation/getting-started/build-a-chain/building-your-chain-guide">
+Complete guide to forking and customizing evmd
+</Card>
+
+<Card title="Migration Guide" icon="right-left" href="/docs/evm/next/documentation/migrations/migration-v0.4-to-v0.5">
+Detailed migration instructions for v0.5
+</Card>
+
+<Card title="VM Module" icon="microchip" href="/evm/next/documentation/cosmos-sdk/modules/vm">
+VM module configuration and parameters
+</Card>
+
+<Card title="PreciseBank Module" icon="scale-balanced" href="/evm/next/documentation/cosmos-sdk/modules/precisebank">
+Fractional balance tracking for non-18-decimal chains
+</Card>
+</CardGroup>
+
+---
+
+For additional support, visit the [Cosmos EVM GitHub repository](https://github.com/cosmos/evm) or join the Cosmos developer community.
