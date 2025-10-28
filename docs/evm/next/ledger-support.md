@@ -6,13 +6,13 @@ This chain implements a novel approach to transaction signing that enables **Cos
 
 ## The Problem
 
-Traditional Cosmos chains use:
+Mosr Cosmos chains use:
 
 - **Key Type**: `secp256k1`
 - **Ledger App**: Cosmos app
 - **Address Format**: Bech32 (derived from SHA256 + RIPEMD160)
 
-EVM-compatible chains need:
+EVM compatibility requires:
 
 - **Key Type**: `eth_secp256k1`
 - **Address Format**: Ethereum hex (derived from Keccak256)
@@ -21,7 +21,7 @@ The Cosmos Ledger app cannot derive Ethereum-style addresses because it only sup
 
 ## The Solution: EIP-712
 
-[EIP-712](https://eips.ethereum.org/EIPS/eip-712) is a standard for typed structured data hashing and signing. Originally designed for Ethereum dApps, it can be used to sign **any structured data**, including Cosmos transactions.
+[EIP-712](https://eips.ethereum.org/EIPS/eip-712) is a standard for typed structured data hashing and signing. Originally designed for Ethereum dApps, it can be used to sign any structured data, including Cosmos transactions.
 
 ### How It Works
 
@@ -117,39 +117,6 @@ evmd tx bank send mykey cosmos1... 1000aevmd --ledger --chain-id evm_7001-1
 
 Your Ledger will display the EIP-712 domain and message hashes for verification.
 
-### Browser Wallet Integration (Keplr)
-
-Wallet developers can integrate EIP-712 signing using the `@evmos/transactions` library:
-
-```typescript
-import {
-  createTxRawEIP712,
-  signatureToWeb3Extension,
-} from "@evmos/transactions";
-
-// 1. Create EIP-712 payload from Cosmos transaction
-const txRaw = createTxRawEIP712(messages, fee, {
-  accountNumber,
-  sequence,
-  chainId: "evm_7001-1",
-});
-
-// 2. Sign with Ethereum provider (MetaMask, Ledger via Ethereum app, etc.)
-const signature = await window.ethereum.request({
-  method: "eth_signTypedData_v4",
-  params: [signerAddress, JSON.stringify(txRaw.eipToSign)],
-});
-
-// 3. Convert signature to Cosmos format
-const web3Extension = signatureToWeb3Extension(signature);
-
-// 4. Broadcast to chain
-const txBytes = txRaw.message.serializeBinary();
-await client.broadcastTx(txBytes);
-```
-
-See the test web app in the evm repository for a complete working example.
-
 ## Why This Approach?
 
 ### Cosmos Leger App Limitations
@@ -165,30 +132,13 @@ See the test web app in the evm repository for a complete working example.
 - **Algorithm**: `eth_secp256k1`
 - **HD Path**: `m/44'/60'/0'/0/0` (Ethereum standard, BIP-44)
 - **Public Key Format**: Uncompressed 65-byte ECDSA public key
-- **Address Derivation**: Keccak256(pubkey)[12:] → Bech32
+- **Address Derivation**: `Keccak256(pubkey)[12:] → Bech32`
 
 ### Signature Format
 
 - **Input**: EIP-712 typed data (structured Cosmos transaction)
 - **Output**: ECDSA signature (65 bytes: r + s + v)
 - **Verification**: Standard ECDSA verification against `eth_secp256k1` pubkey
-
-### EIP-712 Domain Separator
-
-```javascript
-{
-  name: "Cosmos Web3",
-  version: "1.0.0",
-  chainId: 7001, // Numeric EVM chain ID
-  verifyingContract: "cosmos",
-  salt: "0"
-}
-```
-
-## Reference Implementation
-
-- **CLI Tool**: See `scripts/test_ledger_manual.sh` in the evm repo
-- **Web App**: See test-webapp in the evm repository for browser integration
 
 ## Further Reading
 
