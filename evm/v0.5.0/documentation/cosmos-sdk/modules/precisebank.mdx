@@ -1,0 +1,661 @@
+# PreciseBank Module Reference
+
+The PreciseBank module (`x/precisebank`) extends the precision of the standard Cosmos SDK bank module from 6 decimals to 18 decimals, enabling full EVM compatibility while maintaining Cosmos coin integrity. This module is **required** for chains using non-18-decimal native tokens.
+
+**Big thanks to the [Kava](https://www.kava.io/) team for their valuable contributions to this module.**
+
+## Module Overview
+
+**Purpose**: Bridge the decimal precision gap between Cosmos (typically 6 decimals) and EVM (18 decimals)
+
+**Key Functionality**:
+- Extends token precision without changing the base denomination
+- Tracks fractional balances (sub-atomic units) separate from integer balances
+- Maintains 1:1 backing between fractional and integer units
+- Transparent to users - balances appear as expected in both environments
+- Wraps `x/bank` to provide 18-decimal precision for `x/vm`
+
+**Source Code**: [x/precisebank](https://github.com/cosmos/evm/tree/main/x/precisebank)
+**Documentation**: [x/precisebank/README.md](https://github.com/cosmos/evm/blob/main/x/precisebank/README.md)
+
+---
+
+## When Do You Need PreciseBank?
+
+### ✅ You NEED PreciseBank if:
+
+Your native token has **6 decimals** (or any non-18 decimal count):
+- Base denom: `ustake`, `utoken`, `uatom` (micro prefix = 10^6)
+- Display denom: `stake`, `token`, `atom`
+- Example: 1 STAKE = 1,000,000 ustake = 10^6 smallest units
+
+**Why**: EVM expects 18 decimals. Without PreciseBank, you lose 12 decimals of precision, causing rounding errors and broken DeFi protocols.
+
+### ❌ You DON'T NEED PreciseBank if:
+
+Your native token has **18 decimals**:
+- Base denom: `atest`, `atoken` (atto prefix = 10^18)
+- Display denom: `test`, `token`
+- Example: 1 TEST = 1,000,000,000,000,000,000 atest = 10^18 smallest units
+
+**Why**: Your Cosmos denomination already matches EVM's 18-decimal expectation. Direct 1:1 mapping with no fractional tracking needed.
+
+---
+
+## Mathematical Foundation
+
+### The Precision Problem
+
+**Cosmos Standard**: 6 decimal places
+```
+1 ATOM = 1,000,000 uatom (10^6)
+Smallest unit: 0.000001 ATOM = 1 uatom
+```
+
+**EVM Standard**: 18 decimal places
+```
+1 ETH = 1,000,000,000,000,000,000 wei (10^18)
+Smallest unit: 0.000000000000000001 ETH = 1 wei
+```
+
+**Gap**: 12 orders of magnitude (10^12)
+
+### PreciseBank Solution
+
+PreciseBank subdivides each `uatom` into 10^12 sub-atomic units called `aatom`:
+
+```
+1 ATOM = 1,000,000 uatom (Cosmos layer - x/bank)
+1 uatom = 1,000,000,000,000 aatom (EVM layer - x/precisebank)
+1 ATOM = 1,000,000,000,000,000,000 aatom (10^18 total)
+```
+
+**Key Principle**: Every `aatom` is fully backed by `uatom` in x/bank. You cannot have fractional `aatom` without corresponding integer `uatom` reserves.
+
+### Balance Representation
+
+For any account `n`, the total balance in sub-atomic units `a(n)` is:
+
+$$
+a(n) = b(n) \cdot C + f(n)
+$$
+
+Where:
+- `a(n)` = Total aatom balance (18-decimal representation)
+- `b(n)` = Integer uatom balance (stored in x/bank)
+- `f(n)` = Fractional balance (stored in x/precisebank)
+- `C` = Conversion factor = 10^12
+
+**Constraints**:
+```
+0 ≤ f(n) < C
+a(n), b(n) ≥ 0
+```
+
+**Derivation** (quotient-remainder theorem):
+```
+b(n) = ⌊a(n) / C⌋  (integer division)
+f(n) = a(n) mod C   (remainder)
+```
+
+**Example**:
+```
+User has: 1,500,000,123,456,789,012 aatom
+b(n) = ⌊1,500,000,123,456,789,012 / 10^12⌋ = 1,500,000 uatom (in x/bank)
+f(n) = 1,500,000,123,456,789,012 mod 10^12 = 123,456,789,012 aatom (in x/precisebank)
+```
+
+**Source**: [README.md Background](https://github.com/cosmos/evm/blob/main/x/precisebank/README.md#background)
+
+---
+
+## Module Integration
+
+### Adding to Your Chain
+
+PreciseBank requires integration in `app/app.go`:
+
+**1. Import the module**:
+```go
+import (
+    precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+    precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+)
+```
+
+**2. Add keeper to App struct**:
+```go
+type App struct {
+    // ... other keepers ...
+    BankKeeper    bankkeeper.Keeper
+    PreciseBankKeeper precisebankkeeper.Keeper
+    // ... other keepers ...
+}
+```
+
+**3. Initialize keeper (before VM keeper)**:
+```go
+// Create precisebank keeper wrapping bank keeper
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    keys[precisebanktypes.StoreKey],
+    app.BankKeeper,        // Wrapped bank keeper
+    app.AccountKeeper,
+)
+```
+
+**4. Pass PreciseBankKeeper to VM module**:
+```go
+// VM keeper needs precisebank for 18-decimal operations
+app.VMKeeper = vmkeeper.NewKeeper(
+    appCodec,
+    keys[vmtypes.StoreKey],
+    app.PreciseBankKeeper,  // Use precisebank instead of bank
+    app.StakingKeeper,
+    // ... other keepers ...
+)
+```
+
+**5. Add to module manager**:
+```go
+app.ModuleManager = module.NewManager(
+    // ... other modules ...
+    precisebank.NewAppModule(app.PreciseBankKeeper),
+    // ... other modules ...
+)
+```
+
+**Critical**: PreciseBank must wrap BankKeeper and be passed to VMKeeper, not BankKeeper directly.
+
+---
+
+## Configuration
+
+### Genesis Configuration
+
+PreciseBank has minimal genesis configuration - it primarily tracks state, not parameters.
+
+**File Location**: `~/.evmd/config/genesis.json` under `app_state.precisebank`
+
+**Structure**:
+```json
+{
+  "app_state": {
+    "precisebank": {
+      "fractional_balances": [],
+      "remainder": "0"
+    }
+  }
+}
+```
+
+### Required VM Module Configuration
+
+When using PreciseBank, you **MUST** configure `extended_denom_options` in the VM module:
+
+```json
+{
+  "app_state": {
+    "vm": {
+      "params": {
+        "evm_denom": "ustake",
+        "extended_denom_options": [
+          {
+            "native_denom": "ustake",
+            "extended_denom": "astake"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Explanation**:
+- `native_denom`: 6-decimal Cosmos denom (`ustake`)
+- `extended_denom`: 18-decimal EVM denom (`astake`)
+- Conversion: 1 ustake = 10^12 astake
+
+**Naming Pattern**:
+- `u` prefix (micro, 10^6) → `a` prefix (atto, 10^18): `ustake` → `astake`
+- Other prefixes → add `evm` prefix: `stake` → `evmstake`
+
+**Source**: [Token Configuration Guide](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start)
+
+---
+
+## State
+
+### fractional_balances
+
+**What It Stores**: The fractional (sub-atomic) portion of each account's balance that cannot be represented as whole integer units.
+
+**Type**: Array of `FractionalBalance` objects
+
+**Structure** ([fractional_balance.go:43-48](https://github.com/cosmos/evm/blob/main/x/precisebank/types/fractional_balance.go#L43-L48)):
+```protobuf
+message FractionalBalance {
+  string address = 1;  // Bech32 account address
+  string amount = 2;   // Fractional amount (0 < amount < 10^12)
+}
+```
+
+**Validation** ([fractional_balance.go:64-78](https://github.com/cosmos/evm/blob/main/x/precisebank/types/fractional_balance.go#L64-L78)):
+- Amount must be positive (`amount > 0`)
+- Amount must be less than conversion factor (`amount < 10^12`)
+- Address must be valid Bech32
+
+**Example**:
+```json
+{
+  "fractional_balances": [
+    {
+      "address": "cosmos1abc...",
+      "amount": "123456789012"
+    },
+    {
+      "address": "cosmos1def...",
+      "amount": "999999999999"
+    }
+  ]
+}
+```
+
+**Storage Key**: [keys.go:17](https://github.com/cosmos/evm/blob/main/x/precisebank/types/keys.go#L17)
+```go
+FractionalBalancePrefix = []byte{0x01}
+FractionalBalanceKey(address) = address.Bytes()
+```
+
+---
+
+### remainder
+
+**What It Stores**: A module-level reserve balance that backs all fractional units in circulation.
+
+**Type**: Integer (sdkmath.Int)
+
+**Purpose**: Maintains invariant that total fractional balances equal the module reserve
+
+**Invariant**:
+
+$$
+\text{remainder} = \sum_{n \in \mathcal{A}} f(n)
+$$
+
+Where:
+- `remainder` = Module reserve in fractional units
+- $\sum f(n)$ = Sum of all account fractional balances
+
+**Why Needed**: Since fractional units aren't tracked in x/bank's total supply, this reserve account holds integer units to back them. When fractional balances sum to 10^12, one integer unit is held in reserve.
+
+**Example**:
+```
+Account 1 fractional: 400,000,000,000 aatom
+Account 2 fractional: 600,000,000,000 aatom
+Total fractional: 1,000,000,000,000 aatom = 1 ustake
+
+Module reserve: 1 ustake held in x/bank to back these fractional units
+Remainder in precisebank: 1,000,000,000,000 aatom
+```
+
+**Storage Key**: [keys.go:22](https://github.com/cosmos/evm/blob/main/x/precisebank/types/keys.go#L22)
+```go
+RemainderBalanceKey = []byte{0x02}
+```
+
+**Source**: [remainder_amount.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/remainder_amount.go)
+
+---
+
+## Operations
+
+### Transfer
+
+When transferring fractional amounts, PreciseBank handles the complexity automatically:
+
+**Example Transfer**: Alice sends 1.5 ustake + 500 billion aatom to Bob
+
+```
+Alice initial:
+  x/bank: 10 ustake
+  x/precisebank: 500,000,000,000 aatom
+  Total: 10,500,000,000,000 aatom
+
+Bob initial:
+  x/bank: 5 ustake
+  x/precisebank: 300,000,000,000 aatom
+  Total: 5,300,000,000,000 aatom
+
+Transfer amount: 2,000,000,000,000 aatom
+  = 2 ustake + 0 aatom fractional
+
+After transfer:
+Alice:
+  x/bank: 8 ustake (10 - 2)
+  x/precisebank: 500,000,000,000 aatom (unchanged - no fractional change)
+  Total: 8,500,000,000,000 aatom
+
+Bob:
+  x/bank: 7 ustake (5 + 2)
+  x/precisebank: 300,000,000,000 aatom (unchanged)
+  Total: 7,300,000,000,000 aatom
+```
+
+**Complex Transfer**: Alice sends 1,234,567,890,123 aatom to Bob
+
+```
+Transfer: 1,234,567,890,123 aatom
+  = 1 ustake + 234,567,890,123 aatom fractional
+
+Alice:
+  x/bank: 10 - 1 = 9 ustake
+  x/precisebank: 500,000,000,000 - 234,567,890,123 = 265,432,109,877 aatom
+  Total: 9,265,432,109,877 aatom
+
+Bob:
+  x/bank: 5 + 1 = 6 ustake
+  x/precisebank: 300,000,000,000 + 234,567,890,123 = 534,567,890,123 aatom
+  Total: 6,534,567,890,123 aatom
+```
+
+**Source**: [send.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/send.go)
+
+---
+
+### Mint
+
+**Operation**: Create new fractional units
+
+```go
+// Mint 1.5 ustake worth of fractional units (1,500,000,000,000 aatom)
+preciseBankKeeper.MintCoins(ctx, moduleName, coins)
+```
+
+**Process**:
+1. Split amount into integer and fractional parts
+2. Mint integer part via x/bank
+3. Update fractional balance in x/precisebank
+4. Update remainder to maintain backing invariant
+
+**Source**: [mint.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/mint.go)
+
+---
+
+### Burn
+
+**Operation**: Destroy fractional units
+
+```go
+// Burn 2.3 ustake worth of fractional units (2,300,000,000,000 aatom)
+preciseBankKeeper.BurnCoins(ctx, moduleName, coins)
+```
+
+**Process**:
+1. Split amount into integer and fractional parts
+2. Burn integer part via x/bank
+3. Update fractional balance in x/precisebank
+4. Update remainder to maintain backing invariant
+
+**Source**: [burn.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/burn.go)
+
+---
+
+## Keeper Interface
+
+PreciseBank implements the full `BankKeeper` interface, making it a drop-in replacement:
+
+**Source**: [keeper.go:16](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/keeper.go#L16)
+```go
+var _ evmtypes.BankKeeper = Keeper{}
+```
+
+**Key Methods**:
+- `SendCoins(ctx, from, to, coins)` - Transfer with fractional precision
+- `MintCoins(ctx, module, coins)` - Create new fractional units
+- `BurnCoins(ctx, module, coins)` - Destroy fractional units
+- `GetBalance(ctx, addr, denom)` - Get extended balance (integer + fractional)
+- `SpendableCoins(ctx, addr)` - Get spendable balances with fractional precision
+
+**Passthrough Methods**: Methods not requiring fractional logic delegate directly to x/bank ([keeper.go:44-50](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/keeper.go#L44-L50)):
+- `GetSupply()` - Total supply
+- `IterateTotalSupply()` - Supply iteration
+
+---
+
+## Queries
+
+### gRPC Queries
+
+**Query Fractional Balance**:
+```bash
+# Query fractional balance for specific address
+evmd query precisebank fractional-balance cosmos1abc... --chain-id mychain-1
+```
+
+**Query Total Fractional Balances**:
+```bash
+# Sum of all fractional balances in the system
+evmd query precisebank total-fractional-balances --chain-id mychain-1
+```
+
+**Query Remainder**:
+```bash
+# Query module reserve backing fractional units
+evmd query precisebank remainder --chain-id mychain-1
+```
+
+**Source**: [grpc_query.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/grpc_query.go)
+
+---
+
+## EVM Integration
+
+### In Solidity Contracts
+
+From the EVM perspective, users interact with the extended denomination:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Example {
+    // Native token precompile (astake with 18 decimals)
+    IERC20 constant NATIVE = IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+
+    function deposit() external payable {
+        // User sends astake (18 decimals)
+        // PreciseBank automatically handles conversion to/from ustake
+        require(msg.value >= 1e18, "Minimum 1 STAKE");
+
+        // Transfer uses full 18-decimal precision
+        // 1.5 STAKE = 1,500,000,000,000,000,000 astake
+        NATIVE.transfer(address(this), 1.5e18);
+    }
+
+    function getBalance(address user) external view returns (uint256) {
+        // Returns balance in astake (18 decimals)
+        // PreciseBank computes: (b(n) * 10^12) + f(n)
+        return NATIVE.balanceOf(user);
+    }
+}
+```
+
+**Behind the Scenes**:
+- `transfer(recipient, 1.5e18 astake)`
+- PreciseBank: Transfers 1 ustake via x/bank + 500,000,000,000 aatom fractional
+- User sees seamless 18-decimal precision
+
+---
+
+## Events
+
+PreciseBank emits events for fractional balance changes:
+
+### SendCoins Event
+
+```json
+{
+  "type": "precisebank_send",
+  "attributes": [
+    {"key": "from", "value": "cosmos1abc..."},
+    {"key": "to", "value": "cosmos1def..."},
+    {"key": "amount", "value": "1234567890123astake"}
+  ]
+}
+```
+
+### MintCoins Event
+
+```json
+{
+  "type": "precisebank_mint",
+  "attributes": [
+    {"key": "minter", "value": "evm"},
+    {"key": "amount", "value": "1000000000000astake"}
+  ]
+}
+```
+
+### BurnCoins Event
+
+```json
+{
+  "type": "precisebank_burn",
+  "attributes": [
+    {"key": "burner", "value": "evm"},
+    {"key": "amount", "value": "500000000000astake"}
+  ]
+}
+```
+
+**Source**: [events.go](https://github.com/cosmos/evm/blob/main/x/precisebank/types/events.go)
+
+---
+
+## Common Issues and Solutions
+
+### Issue: "Fractional amount exceeds conversion factor"
+
+**Symptom**: Transaction fails with fractional validation error
+
+**Cause**: Fractional balance >= 10^12 (should have been converted to integer unit)
+
+**Solution**: This indicates a bug in the keeper logic. Report to Cosmos EVM team.
+
+### Issue: Balances Don't Match Between Cosmos/EVM
+
+**Symptom**: User sees different balance in Cosmos vs MetaMask
+
+**Cause**:
+- PreciseBank not integrated correctly in app.go
+- VM module not using PreciseBankKeeper
+- Missing `extended_denom_options` configuration
+
+**Solution**:
+```go
+// In app.go - WRONG:
+app.VMKeeper = vmkeeper.NewKeeper(..., app.BankKeeper, ...)
+
+// In app.go - CORRECT:
+app.VMKeeper = vmkeeper.NewKeeper(..., app.PreciseBankKeeper, ...)
+```
+
+### Issue: Chain Won't Start After Adding PreciseBank
+
+**Symptom**: Genesis validation fails
+
+**Cause**: Missing `extended_denom_options` in VM params
+
+**Solution**: Add to genesis.json:
+```json
+{
+  "vm": {
+    "params": {
+      "extended_denom_options": [{
+        "native_denom": "ustake",
+        "extended_denom": "astake"
+      }]
+    }
+  }
+}
+```
+
+### Issue: Total Supply Mismatch
+
+**Symptom**: Sum of balances doesn't equal total supply
+
+**Cause**: Remainder not properly maintained
+
+**Solution**: Query remainder and verify:
+```bash
+# Remainder should equal sum of all fractional balances
+evmd query precisebank remainder
+evmd query precisebank total-fractional-balances
+```
+
+---
+
+## Testing and Verification
+
+### Verify Integration
+
+**1. Check module is loaded**:
+```bash
+evmd query precisebank params
+```
+
+**2. Query remainder (should be 0 at genesis)**:
+```bash
+evmd query precisebank remainder
+```
+
+**3. Send fractional amount via EVM**:
+```bash
+# Use MetaMask or web3 to send 1.5 STAKE
+# Then check fractional balance:
+evmd query precisebank fractional-balance cosmos1abc...
+```
+
+**4. Verify invariant**:
+```bash
+# Total fractional balances should equal remainder
+TOTAL=$(evmd query precisebank total-fractional-balances -o json | jq -r '.total')
+REMAINDER=$(evmd query precisebank remainder -o json | jq -r '.remainder')
+[ "$TOTAL" == "$REMAINDER" ] && echo "Invariant maintained" || echo "ERROR: Invariant broken"
+```
+
+---
+
+## Performance Considerations
+
+**Storage**: Fractional balances add one storage entry per account with non-zero fractional amount
+
+**Gas Cost**: Fractional operations add minimal gas overhead (~5-10% more than standard bank operations)
+
+**Scaling**: Module has been tested with millions of accounts, no performance degradation
+
+**Optimization**: Fractional balances are only created when needed. Transfers of exact integer amounts don't create fractional entries.
+
+---
+
+## Related Documentation
+
+- [Building Your Chain Guide](/evm/v0.5.0/documentation/getting-started/build-a-chain/overview) - Main configuration walkthrough
+- [Token Configuration Guide](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Decimal configuration
+- [VM Module](/evm/v0.5.0/documentation/cosmos-sdk/modules/vm) - extended_denom_options setup
+- [ERC20 Module](/evm/v0.5.0/documentation/cosmos-sdk/modules/erc20) - Token pair configuration
+
+---
+
+## Source Code References
+
+- **Module Implementation**: [x/precisebank](https://github.com/cosmos/evm/tree/main/x/precisebank)
+- **README (Math Background)**: [x/precisebank/README.md](https://github.com/cosmos/evm/blob/main/x/precisebank/README.md)
+- **Keeper**: [keeper/keeper.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/keeper.go)
+- **Fractional Balance Logic**: [types/fractional_balance.go](https://github.com/cosmos/evm/blob/main/x/precisebank/types/fractional_balance.go)
+- **Send Operations**: [keeper/send.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/send.go)
+- **Mint Operations**: [keeper/mint.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/mint.go)
+- **Burn Operations**: [keeper/burn.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/burn.go)
+- **Remainder Management**: [keeper/remainder_amount.go](https://github.com/cosmos/evm/blob/main/x/precisebank/keeper/remainder_amount.go)
+- **Storage Keys**: [types/keys.go](https://github.com/cosmos/evm/blob/main/x/precisebank/types/keys.go)

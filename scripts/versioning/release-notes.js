@@ -270,7 +270,7 @@ ${sectionsContent}
 
 async function updateReleaseNotes(content) {
   // Create directory if it doesn't exist
-  const outputPath = path.join(__dirname, '..', '..', 'docs', SUBDIR, 'next', 'changelog', 'release-notes.mdx');
+  const outputPath = path.join(__dirname, '..', '..', SUBDIR, 'next', 'changelog', 'release-notes.mdx');
   const dir = path.dirname(outputPath);
 
   if (!fs.existsSync(dir)) {

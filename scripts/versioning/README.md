@@ -15,7 +15,7 @@ The versioning system provides:
 
 ### Version Structure
 
-```
+```sh
 docs/
 ├── evm/
 │   ├── next/                  # Working directory (always contains latest docs)
@@ -25,7 +25,7 @@ docs/
 │   ├── v0.4.x/               # Frozen snapshot (copied from next/)
 │   │   ├── .version-frozen   # Marker file
 │   │   ├── .version-metadata.json
-│   │   ├── documentation/    # Snapshot from docs/evm/next/
+│   │   ├── documentation/    # Snapshot from evm/next/
 │   │   ├── api-reference/
 │   │   └── changelog/
 │   └── v0.5.0/               # Another frozen snapshot
@@ -50,13 +50,14 @@ The `next` directory is the **working directory** for active documentation devel
 5. **Continued Work**: After freezing, development continues in `next/` for the upcoming release
 
 **Example workflow:**
+
 ```bash
-# Before freeze: Working on v0.5.0 in docs/evm/next/
+# Before freeze: Working on v0.5.0 in evm/next/
 # Run freeze with version v0.5.0
 npm run freeze
 # After freeze:
-#   - docs/evm/v0.5.0/ created (frozen snapshot with updated links)
-#   - docs/evm/next/ unchanged (continues as working directory for v0.6.0)
+#   - evm/v0.5.0/ created (frozen snapshot with updated links)
+#   - evm/next/ unchanged (continues as working directory for v0.6.0)
 ```
 
 ### Navigation Structure
@@ -70,14 +71,29 @@ Docs now use product-specific dropdowns with per-product versions:
       {
         "dropdown": "EVM",
         "versions": [
-          { "version": "next", "tabs": [/* docs/evm/next/... */] },
-          { "version": "v0.4.x", "tabs": [/* docs/evm/v0.4.x/... */] }
+          {
+            "version": "next",
+            "tabs": [
+              /* evm/next/... */
+            ]
+          },
+          {
+            "version": "v0.4.x",
+            "tabs": [
+              /* evm/v0.4.x/... */
+            ]
+          }
         ]
       },
       {
         "dropdown": "SDK",
         "versions": [
-          { "version": "v0.53", "tabs": [/* docs/sdk/v0.53/... */] }
+          {
+            "version": "v0.53",
+            "tabs": [
+              /* sdk/v0.53/... */
+            ]
+          }
         ]
       }
     ]
@@ -133,7 +149,8 @@ The system automatically discovers products and versions at runtime:
 4. **Default Configuration**: Creates sensible defaults for new products not yet in `versions.json`
 
 This means:
-- New products under `./docs/` are automatically recognized
+
+- New products at repo root are automatically recognized
 - Manually created version directories are automatically tracked
 - The `versions.json` file is the source of truth for repository configuration
 - Version arrays are kept in sync with the filesystem
@@ -143,6 +160,7 @@ This means:
 ### Prerequisites
 
 1. **Google Sheets API Access**
+
    - Service account key saved as `service-account-key.json`
    - See [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) for detailed setup
 
@@ -169,7 +187,7 @@ The script will:
 3. Prompt for the freeze version (e.g., `v0.5.0`, `v0.5.x`)
 4. Prompt for the new development version
 5. Check/update release notes for that product; if missing, auto‑fetch from GitHub
-6. Create a frozen copy at `docs/<subdir>/<version>/`
+6. Create a frozen copy at `<subdir>/<version>/`
 7. Snapshot EIP data to a Google Sheets tab and generate versioned EIP reference (EVM only)
 8. Update navigation (clone `next` entry to `<version>`) and versions registry (per‑product)
 9. Create metadata files
@@ -200,7 +218,7 @@ npm run freeze
 
 **What it does:**
 
-- Creates frozen copy of `docs/<subdir>/next/` at `docs/<subdir>/<version>/`
+- Creates frozen copy of `<subdir>/next/` at `<subdir>/<version>/`
 - Calls sheets-manager for Google Sheets operations (EVM only)
 - Updates all internal links in frozen version
 - Updates navigation structure and version registry
@@ -237,7 +255,7 @@ npm run release-notes [version|latest] [evm|sdk|ibc]
 
 - Fetches changelog from the product's GitHub repository (auto-detects `CHANGELOG.md`/variants)
 - Parses and converts to Mintlify format
-- Updates release notes file in `docs/<subdir>/next/`
+- Updates release notes file in `<subdir>/next/`
 
 **Repository Sources:**
 
@@ -251,11 +269,11 @@ Release notes are fetched from GitHub repositories configured in `versions.json`
 
 All three repositories use similar changelog formats with minor variations:
 
-| Repository | Version Format | Example |
-|------------|----------------|---------|
-| cosmos/evm | `## v0.4.1` | No brackets |
+| Repository        | Version Format | Example       |
+| ----------------- | -------------- | ------------- |
+| cosmos/evm        | `## v0.4.1`    | No brackets   |
 | cosmos/cosmos-sdk | `## [v0.53.0]` | With brackets |
-| cosmos/ibc-go | `## [v10.4.0]` | With brackets |
+| cosmos/ibc-go     | `## [v10.4.0]` | With brackets |
 
 The parser handles both formats automatically through flexible regex matching. Sections like "Features", "Bug Fixes", "Improvements" are recognized regardless of case variations.
 
@@ -311,18 +329,21 @@ Active development uses it without props (defaults to main sheet):
 ### Version Freeze Process
 
 1. **Preparation Phase**
+
    - Pick product subdirectory (`evm`, `sdk`, `ibc`)
    - Determine current version to freeze from `versions.json` for that product (or prompt)
    - Prompt for new development version
    - Check/update release notes (auto‑fetch when missing)
 
 2. **Freeze Phase**
-   - Copy `docs/<subdir>/next/` to version directory (e.g., `docs/evm/v0.4.x/`)
+
+   - Copy `<subdir>/next/` to version directory (e.g., `evm/v0.4.x/`)
    - (EVM only) Create Google Sheets tab with version name and copy EIP data
 
 3. **Update Phase**
+
    - (EVM only) Generate MDX with sheet tab reference
-   - Update internal links (`/docs/<subdir>/next/` → `/docs/<subdir>/<version>/`)
+   - Update internal links (`/<subdir>/next/` → `/<subdir>/<version>/`)
    - Keep snippet imports unchanged (`/snippets/`)
    - Update navigation structure
 
@@ -337,10 +358,12 @@ Active development uses it without props (defaults to main sheet):
 The system handles three types of paths:
 
 1. **Document paths**: Updated to version-specific
-   - Before: `/docs/evm/next/documentation/concepts/accounts`
-   - After: `/docs/evm/v0.4.x/documentation/concepts/accounts`
+
+   - Before: `/evm/next/documentation/concepts/accounts`
+   - After: `/evm/v0.4.x/documentation/concepts/accounts`
 
 2. **Snippet imports**: Remain unchanged (shared)
+
    - Always: `/snippets/icons.mdx`
 
 3. **External links**: Remain unchanged
@@ -425,10 +448,10 @@ Enter the new development version (e.g., v0.5.0): v0.5.0
 ### Update Release Notes Only
 
 ```bash
-# Fetch latest release notes into docs/evm/next
+# Fetch latest release notes into evm/next
 node scripts/versioning/release-notes.js latest evm
 
-# Or fetch specific release into docs/evm/next
+# Or fetch specific release into evm/next
 node scripts/versioning/release-notes.js v0.4.1 evm
 ```
 
@@ -443,7 +466,7 @@ npm run freeze  # Full workflow includes navigation updates
 
 ### Version Management
 
-- Development happens in `docs/<subdir>/next/` directory
+- Development happens in `<subdir>/next/` directory
 - Frozen versions include `.version-frozen` marker
 - Previous versions can be updated if needed
 
@@ -476,7 +499,7 @@ If you need to remove a test version:
 
 ```bash
 # Remove frozen directory
-rm -rf docs/<subdir>/v0.5.0/
+rm -rf <subdir>/v0.5.0/
 
 # Update per-product entries in versions.json or re-run version manager
 
@@ -486,7 +509,7 @@ rm -rf docs/<subdir>/v0.5.0/
 
 ## File Structure
 
-```
+```sh
 scripts/versioning/
 ├── README.md                     # This file
 ├── GSHEET-SETUP.md              # Google Sheets API setup guide
