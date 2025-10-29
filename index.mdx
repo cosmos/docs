@@ -9,58 +9,146 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
   dangerouslySetInnerHTML={{
     __html: `
       (function() {
-        const css = \`
-          .nav-tabs,
-          div.nav-tabs,
-          .nav-tabs-item,
-          button[aria-haspopup="menu"],
-          button[data-state],
-          button.group[class*="rounded-full"] {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            height: 0 !important;
-            width: 0 !important;
-            overflow: hidden !important;
-            position: absolute !important;
-            left: -9999px !important;
-          }
-        \`;
+        // Navigation management for index page
+        const indexNavManager = {
+          styleId: 'hide-nav-styles-index',
+          intervalId: null,
 
-        const style = document.createElement('style');
-        style.id = 'hide-nav-styles';
-        style.innerHTML = css;
+          css: \`
+            .nav-tabs,
+            div.nav-tabs,
+            .nav-tabs-item,
+            button[aria-haspopup="menu"],
+            button[data-state],
+            button.group[class*="rounded-full"] {
+              display: none !important;
+              visibility: hidden !important;
+              opacity: 0 !important;
+              height: 0 !important;
+              width: 0 !important;
+              overflow: hidden !important;
+              position: absolute !important;
+              left: -9999px !important;
+            }
+          \`,
 
-        function isIndexPage() {
-          const path = window.location.pathname;
-          return path === '/' || path === '/index' || path === '/index.mdx';
-        }
+          isIndexPage() {
+            const path = window.location.pathname;
+            return path === '/' || path === '/index' || path === '/index.mdx';
+          },
 
-        function manageStyles() {
-          const existingStyle = document.getElementById('hide-nav-styles');
+          scrollToTop() {
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
 
-          if (isIndexPage()) {
-            // On index page - inject styles
-            if (!existingStyle) {
+            // Also scroll the main content area if it exists
+            const mainContent = document.querySelector('main');
+            if (mainContent) mainContent.scrollTop = 0;
+          },
+
+          injectStyles() {
+            if (!document.getElementById(this.styleId)) {
+              const style = document.createElement('style');
+              style.id = this.styleId;
+              style.innerHTML = this.css;
               (document.head || document.documentElement).appendChild(style);
             }
-          } else {
-            // Not on index page - remove styles if they exist
+          },
+
+          removeStyles() {
+            const existingStyle = document.getElementById(this.styleId);
             if (existingStyle) {
               existingStyle.remove();
             }
+          },
+
+          manageNavigation() {
+            if (this.isIndexPage()) {
+              this.injectStyles();
+              this.scrollToTop();
+
+              // Start monitoring if not already
+              if (!this.intervalId) {
+                this.intervalId = setInterval(() => {
+                  if (this.isIndexPage()) {
+                    this.injectStyles();
+                  } else {
+                    this.cleanup();
+                  }
+                }, 500);
+              }
+            } else {
+              this.cleanup();
+            }
+          },
+
+          cleanup() {
+            this.removeStyles();
+            if (this.intervalId) {
+              clearInterval(this.intervalId);
+              this.intervalId = null;
+            }
+          },
+
+          interceptNavigation() {
+            // Intercept link clicks to manage navigation
+            document.addEventListener('click', (e) => {
+              const link = e.target.closest('a[href]');
+              if (link && link.href) {
+                const url = new URL(link.href, window.location.href);
+
+                // Special handling for logo clicks that should go to index
+                const isLogoLink = link.querySelector('img[alt*="logo"]') ||
+                                   link.textContent.includes('Cosmos Documentation home');
+
+                if (isLogoLink && url.pathname === '/') {
+                  // Force navigation to index page
+                  e.preventDefault();
+                  window.location.href = '/';
+                  return;
+                }
+
+                // If navigating TO index page, ensure scroll to top
+                if (url.pathname === '/' || url.pathname === '/index') {
+                  setTimeout(() => this.scrollToTop(), 0);
+                }
+
+                // If navigating FROM index page to another page, ensure cleanup
+                if (this.isIndexPage() && url.pathname !== window.location.pathname) {
+                  setTimeout(() => this.cleanup(), 0);
+                }
+              }
+            }, true);
+          },
+
+          init() {
+            // Initial setup
+            this.manageNavigation();
+
+            // Set up event listeners
+            document.addEventListener('DOMContentLoaded', () => this.manageNavigation());
+            window.addEventListener('load', () => this.manageNavigation());
+            window.addEventListener('popstate', () => this.manageNavigation());
+
+            // Intercept navigation
+            this.interceptNavigation();
+
+            // Watch for URL changes (for Mintlify's client-side routing)
+            let lastUrl = window.location.href;
+            const urlObserver = new MutationObserver(() => {
+              if (window.location.href !== lastUrl) {
+                lastUrl = window.location.href;
+                this.manageNavigation();
+              }
+            });
+
+            urlObserver.observe(document, { subtree: true, childList: true });
           }
-        }
+        };
 
-        manageStyles();
-        document.addEventListener('DOMContentLoaded', manageStyles);
-        window.addEventListener('load', manageStyles);
-
-        // Watch for navigation changes
-        window.addEventListener('popstate', manageStyles);
-
-        // Keep checking, but only inject on index page
-        setInterval(manageStyles, 500);
+        // Initialize the navigation manager
+        indexNavManager.init();
       })();
     `
   }}
@@ -446,7 +534,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
       <TopicCardGrid cols={3}>
         <TopicCard
           title="Cosmos SDK"
-          titleHref="https://docs.cosmos.network/sdk/"
+          titleHref="/sdk/"
           linkLabel="GO TO DOCS"
           description="Modular framework for building secure, high-performance application-specific blockchains"
           color="#999999"
@@ -462,7 +550,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
         <TopicCard
           title="Cosmos EVM"
-          titleHref="https://docs.cosmos.network/evm/"
+          titleHref="/evm/"
           linkLabel="GO TO DOCS"
           description="EVM compatibility layer with Solidity support and access to Cosmos SDK features"
           color="#aaaaaa"
@@ -477,7 +565,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
         <TopicCard
           title="IBC Protocol"
-          titleHref="https://docs.cosmos.network/ibc/"
+          titleHref="/ibc/"
           linkLabel="GO TO DOCS"
           description="Inter-Blockchain Communication protocol for secure cross-chain transfers and messaging"
           color="#888888"
