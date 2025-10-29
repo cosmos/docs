@@ -13,7 +13,6 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
           .nav-tabs,
           div.nav-tabs,
           .nav-tabs-item,
-          a.nav-tabs-item,
           button[aria-haspopup="menu"],
           button[data-state],
           button.group[class*="rounded-full"] {
@@ -32,18 +31,36 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
         style.id = 'hide-nav-styles';
         style.innerHTML = css;
 
-        function injectStyles() {
-          if (!document.getElementById('hide-nav-styles')) {
-            (document.head || document.documentElement).appendChild(style);
+        function isIndexPage() {
+          const path = window.location.pathname;
+          return path === '/' || path === '/index' || path === '/index.mdx';
+        }
+
+        function manageStyles() {
+          const existingStyle = document.getElementById('hide-nav-styles');
+
+          if (isIndexPage()) {
+            // On index page - inject styles
+            if (!existingStyle) {
+              (document.head || document.documentElement).appendChild(style);
+            }
+          } else {
+            // Not on index page - remove styles if they exist
+            if (existingStyle) {
+              existingStyle.remove();
+            }
           }
         }
 
-        injectStyles();
-        document.addEventListener('DOMContentLoaded', injectStyles);
-        window.addEventListener('load', injectStyles);
+        manageStyles();
+        document.addEventListener('DOMContentLoaded', manageStyles);
+        window.addEventListener('load', manageStyles);
 
-        // Keep re-injecting in case Mintlify removes it
-        setInterval(injectStyles, 500);
+        // Watch for navigation changes
+        window.addEventListener('popstate', manageStyles);
+
+        // Keep checking, but only inject on index page
+        setInterval(manageStyles, 500);
       })();
     `
   }}
@@ -60,63 +77,127 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
     opacity: 0 !important;
   }
 
+  /* Hide version dropdown button */
+  button[aria-haspopup="menu"],
+  button[data-state],
+  button.group[class*="rounded-full"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+  }
+`}</style>
+
+<script>{`
+  // Aggressive navigation hiding
+  function hideNavElements() {
+    const selectors = [
+      '.nav-tabs',
+      'div.nav-tabs',
+      '.nav-tabs-item',
+      'a.nav-tabs-item',
+      '.link.nav-tabs-item',
+      'button[aria-haspopup="menu"]',
+      'button[data-state]',
+      'button.group',
+      'button[class*="bg-background-light"]',
+      'button[class*="bg-background-dark"]',
+      'header button:not([aria-label*="theme"]):not([aria-label*="Theme"])',
+      'header a.link',
+      'header .link',
+      '[class*="rounded-full"]:not([aria-label*="theme"]):not([aria-label*="Theme"])',
+      '[class*="lg:flex"]',
+      'nav',
+      '[role="navigation"]',
+      'header a:not([href="/"])',
+      '[class*="version"]',
+      '[class*="Version"]',
+      '[class*="breadcrumb"]'
+    ];
+
+    selectors.forEach(selector => {
+      try {
+        document.querySelectorAll(selector).forEach(el => {
+          el.style.setProperty('display', 'none', 'important');
+          el.style.setProperty('visibility', 'hidden', 'important');
+          el.style.setProperty('opacity', '0', 'important');
+          el.style.setProperty('pointer-events', 'none', 'important');
+          el.style.setProperty('position', 'absolute', 'important');
+          el.style.setProperty('left', '-9999px', 'important');
+        });
+      } catch(e) {}
+    });
+  }
+
+  // Theme detection
+  function applyTheme() {
+    const html = document.documentElement;
+    const theme = html.getAttribute('data-theme') ||
+                  (html.classList.contains('dark') ? 'dark' : 'light');
+    const customContent = document.getElementById('custom-index-content');
+    if (customContent) {
+      customContent.setAttribute('data-theme', theme);
+    }
+  }
+
+  // Run immediately and repeatedly
+  if (typeof window !== 'undefined') {
+    hideNavElements();
+    setTimeout(hideNavElements, 0);
+    setTimeout(hideNavElements, 100);
+    setTimeout(hideNavElements, 500);
+    setTimeout(hideNavElements, 1000);
+
+    window.addEventListener('load', hideNavElements);
+    document.addEventListener('DOMContentLoaded', hideNavElements);
+
+    // Apply theme on load
+    applyTheme();
+    setTimeout(applyTheme, 0);
+    setTimeout(applyTheme, 100);
+    setTimeout(applyTheme, 500);
+    window.addEventListener('load', applyTheme);
+    document.addEventListener('DOMContentLoaded', applyTheme);
+
+    // Watch for dynamic content and theme changes
+    const observer = new MutationObserver(() => {
+      hideNavElements();
+      applyTheme();
+    });
+
+    // Watch HTML element for theme changes
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class']
+    });
+
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style']
+      });
+    } else {
+      setTimeout(() => {
+        if (document.body) {
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
+          });
+        }
+      }, 100);
+    }
+  }
+`}</script>
+
+<style>{`
   /* Theme-aware custom index styles */
   #custom-index-content {
     min-height: 100vh;
     font-family: system-ui, -apple-system, sans-serif;
     transition: background-color 0.3s ease, color 0.3s ease;
-  }
-
-  /* Migration Banner */
-  .migration-banner {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 12px 20px;
-    margin-bottom: 0;
-  }
-
-  #custom-index-content[data-theme="light"] .migration-banner {
-    background: linear-gradient(135deg, #e8f4f8 0%, #d4e7f0 100%);
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  .migration-content {
-    max-width: 1200px;
-    margin: 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-  }
-
-  .migration-icon {
-    flex-shrink: 0;
-    color: #60a5fa;
-  }
-
-  #custom-index-content[data-theme="light"] .migration-icon {
-    color: #2563eb;
-  }
-
-  .migration-text {
-    font-size: 14px;
-    line-height: 1.5;
-    color: rgba(255, 255, 255, 0.9);
-    text-align: center;
-  }
-
-  #custom-index-content[data-theme="light"] .migration-text {
-    color: rgba(0, 0, 0, 0.8);
-  }
-
-  @media (max-width: 768px) {
-    .migration-banner {
-      padding: 10px 16px;
-    }
-
-    .migration-text {
-      font-size: 13px;
-    }
   }
 
   /* Dark theme (default) */
@@ -365,7 +446,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
       <TopicCardGrid cols={3}>
         <TopicCard
           title="Cosmos SDK"
-          titleHref="/sdk/"
+          titleHref="https://docs.cosmos.network/sdk/"
           linkLabel="GO TO DOCS"
           description="Modular framework for building secure, high-performance application-specific blockchains"
           color="#999999"
@@ -381,7 +462,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
         <TopicCard
           title="Cosmos EVM"
-          titleHref="/evm/"
+          titleHref="https://docs.cosmos.network/evm/"
           linkLabel="GO TO DOCS"
           description="EVM compatibility layer with Solidity support and access to Cosmos SDK features"
           color="#aaaaaa"
@@ -396,7 +477,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 
         <TopicCard
           title="IBC Protocol"
-          titleHref="/ibc/"
+          titleHref="https://docs.cosmos.network/ibc/"
           linkLabel="GO TO DOCS"
           description="Inter-Blockchain Communication protocol for secure cross-chain transfers and messaging"
           color="#888888"
