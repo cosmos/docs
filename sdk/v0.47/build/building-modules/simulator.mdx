@@ -1,0 +1,1628 @@
+---
+title: Module Simulation
+---
+
+<Note>
+
+### Pre-requisite Readings
+
+* [Cosmos Blockchain Simulator](/sdk/v0.47/learn/advanced/simulation)
+</Note>
+
+## Synopsis
+
+This document details how to define each module simulation functions to be
+integrated with the application `SimulationManager`.
+
+* [Simulation package](#simulation-package)
+  * [Store decoders](#store-decoders)
+  * [Randomized genesis](#randomized-genesis)
+  * [Randomized parameter changes](#randomized-parameter-changes)
+  * [Random weighted operations](#random-weighted-operations)
+  * [Random proposal contents](#random-proposal-contents)
+* [Registering simulation functions](#registering-simulation-functions)
+* [App Simulator manager](#app-simulator-manager)
+
+## Simulation package
+
+Every module that implements the Cosmos SDK simulator needs to have a `x/<module>/simulation`
+package which contains the primary functions required by the fuzz tests: store
+decoders, randomized genesis state and parameters, weighted operations and proposal
+contents.
+
+### Store decoders
+
+Registering the store decoders is required for the `AppImportExport`. This allows
+for the key-value pairs from the stores to be decoded (*i.e* unmarshalled)
+to their corresponding types. In particular, it matches the key to a concrete type
+and then unmarshals the value from the `KVPair` to the type provided.
+
+You can use the example [here](https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/x/distribution/simulation/decoder.go) from the distribution module to implement your store decoders.
+
+### Randomized genesis
+
+The simulator tests different scenarios and values for genesis parameters
+in order to fully test the edge cases of specific modules. The `simulator` package from each module must expose a `RandomizedGenState` function to generate the initial random `GenesisState` from a given seed.
+
+Once the module genesis parameter are generated randomly (or with the key and
+values defined in a `params` file), they are marshaled to JSON format and added
+to the app genesis JSON to use it on the simulations.
+
+You can check an example on how to create the randomized genesis [here](https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/x/staking/simulation/genesis.go).
+
+### Randomized parameter changes
+
+The simulator is able to test parameter changes at random. The simulator package from each module must contain a `RandomizedParams` func that will simulate parameter changes of the module throughout the simulations lifespan.
+
+You can see how an example of what is needed to fully test parameter changes [here](https://github.com/cosmos/cosmos-sdk/blob/v0.47.0-rc1/x/staking/simulation/params.go)
+
+### Random weighted operations
+
+Operations are one of the crucial parts of the Cosmos SDK simulation. They are the transactions
+(`Msg`) that are simulated with random field values. The sender of the operation
+is also assigned randomly.
+
+Operations on the simulation are simulated using the full [transaction cycle](/sdk/v0.47/learn/advanced/transactions) of a
+`ABCI` application that exposes the `BaseApp`.
+
+Shown below is how weights are set:
+
+```go expandable
+package simulation
+
+import (
+    
+	"fmt"
+    "math/rand"
+    "cosmossdk.io/math"
+    "github.com/cosmos/cosmos-sdk/baseapp"
+    "github.com/cosmos/cosmos-sdk/codec"
+    "github.com/cosmos/cosmos-sdk/testutil"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+    "github.com/cosmos/cosmos-sdk/x/simulation"
+    "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+    "github.com/cosmos/cosmos-sdk/x/staking/types"
+)
+
+// Simulation operation weights constants
+//
+//nolint:gosec // these are not hardcoded credentials
+const (
+	DefaultWeightMsgCreateValidator           int = 100
+	DefaultWeightMsgEditValidator             int = 5
+	DefaultWeightMsgDelegate                  int = 100
+	DefaultWeightMsgUndelegate                int = 100
+	DefaultWeightMsgBeginRedelegate           int = 100
+	DefaultWeightMsgCancelUnbondingDelegation int = 100
+
+	OpWeightMsgCreateValidator           = "op_weight_msg_create_validator"
+	OpWeightMsgEditValidator             = "op_weight_msg_edit_validator"
+	OpWeightMsgDelegate                  = "op_weight_msg_delegate"
+	OpWeightMsgUndelegate                = "op_weight_msg_undelegate"
+	OpWeightMsgBeginRedelegate           = "op_weight_msg_begin_redelegate"
+	OpWeightMsgCancelUnbondingDelegation = "op_weight_msg_cancel_unbonding_delegation"
+)
+
+// WeightedOperations returns all the operations from the module with their respective weights
+func WeightedOperations(
+	appParams simtypes.AppParams, cdc codec.JSONCodec, ak types.AccountKeeper,
+	bk types.BankKeeper, k *keeper.Keeper,
+)
+
+simulation.WeightedOperations {
+    var (
+		weightMsgCreateValidator           int
+		weightMsgEditValidator             int
+		weightMsgDelegate                  int
+		weightMsgUndelegate                int
+		weightMsgBeginRedelegate           int
+		weightMsgCancelUnbondingDelegation int
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgCreateValidator, &weightMsgCreateValidator, nil,
+		func(_ *rand.Rand) {
+    weightMsgCreateValidator = DefaultWeightMsgCreateValidator
+},
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgEditValidator, &weightMsgEditValidator, nil,
+		func(_ *rand.Rand) {
+    weightMsgEditValidator = DefaultWeightMsgEditValidator
+},
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgDelegate, &weightMsgDelegate, nil,
+		func(_ *rand.Rand) {
+    weightMsgDelegate = DefaultWeightMsgDelegate
+},
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgUndelegate, &weightMsgUndelegate, nil,
+		func(_ *rand.Rand) {
+    weightMsgUndelegate = DefaultWeightMsgUndelegate
+},
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgBeginRedelegate, &weightMsgBeginRedelegate, nil,
+		func(_ *rand.Rand) {
+    weightMsgBeginRedelegate = DefaultWeightMsgBeginRedelegate
+},
+	)
+
+appParams.GetOrGenerate(cdc, OpWeightMsgCancelUnbondingDelegation, &weightMsgCancelUnbondingDelegation, nil,
+		func(_ *rand.Rand) {
+    weightMsgCancelUnbondingDelegation = DefaultWeightMsgCancelUnbondingDelegation
+},
+	)
+
+return simulation.WeightedOperations{
+    simulation.NewWeightedOperation(
+			weightMsgCreateValidator,
+			SimulateMsgCreateValidator(ak, bk, k),
+		),
+		simulation.NewWeightedOperation(
+			weightMsgEditValidator,
+			SimulateMsgEditValidator(ak, bk, k),
+		),
+		simulation.NewWeightedOperation(
+			weightMsgDelegate,
+			SimulateMsgDelegate(ak, bk, k),
+		),
+		simulation.NewWeightedOperation(
+			weightMsgUndelegate,
+			SimulateMsgUndelegate(ak, bk, k),
+		),
+		simulation.NewWeightedOperation(
+			weightMsgBeginRedelegate,
+			SimulateMsgBeginRedelegate(ak, bk, k),
+		),
+		simulation.NewWeightedOperation(
+			weightMsgCancelUnbondingDelegation,
+			SimulateMsgCancelUnbondingDelegate(ak, bk, k),
+		),
+}
+}
+
+// SimulateMsgCreateValidator generates a MsgCreateValidator with random values
+func SimulateMsgCreateValidator(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    simAccount, _ := simtypes.RandomAcc(r, accs)
+    address := sdk.ValAddress(simAccount.Address)
+
+		// ensure the validator doesn't exist already
+		_, found := k.GetValidator(ctx, address)
+    if found {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCreateValidator, "validator already exists"), nil, nil
+}
+    denom := k.GetParams(ctx).BondDenom
+    balance := bk.GetBalance(ctx, simAccount.Address, denom).Amount
+    if !balance.IsPositive() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCreateValidator, "balance is negative"), nil, nil
+}
+
+amount, err := simtypes.RandPositiveInt(r, balance)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCreateValidator, "unable to generate positive amount"), nil, err
+}
+    selfDelegation := sdk.NewCoin(denom, amount)
+    account := ak.GetAccount(ctx, simAccount.Address)
+    spendable := bk.SpendableCoins(ctx, account.GetAddress())
+
+var fees sdk.Coins
+
+		coins, hasNeg := spendable.SafeSub(selfDelegation)
+    if !hasNeg {
+    fees, err = simtypes.RandomFees(r, ctx, coins)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCreateValidator, "unable to generate fees"), nil, err
+}
+	
+}
+    description := types.NewDescription(
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+		)
+    maxCommission := sdk.NewDecWithPrec(int64(simtypes.RandIntBetween(r, 0, 100)), 2)
+    commission := types.NewCommissionRates(
+			simtypes.RandomDecAmount(r, maxCommission),
+			maxCommission,
+			simtypes.RandomDecAmount(r, maxCommission),
+		)
+
+msg, err := types.NewMsgCreateValidator(address, simAccount.ConsKey.PubKey(), selfDelegation, description, commission, math.OneInt())
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, msg.Type(), "unable to create CreateValidator message"), nil, err
+}
+    txCtx := simulation.OperationInput{
+    R:             r,
+    App:           app,
+    TxGen:         moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:           nil,
+    Msg:           msg,
+    MsgType:       msg.Type(),
+    Context:       ctx,
+    SimAccount:    simAccount,
+    AccountKeeper: ak,
+    ModuleName:    types.ModuleName,
+}
+
+return simulation.GenAndDeliverTx(txCtx, fees)
+}
+}
+
+// SimulateMsgEditValidator generates a MsgEditValidator with random values
+func SimulateMsgEditValidator(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    if len(k.GetAllValidators(ctx)) == 0 {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgEditValidator, "number of validators equal zero"), nil, nil
+}
+
+val, ok := testutil.RandSliceElem(r, k.GetAllValidators(ctx))
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgEditValidator, "unable to pick a validator"), nil, nil
+}
+    address := val.GetOperator()
+    newCommissionRate := simtypes.RandomDecAmount(r, val.Commission.MaxRate)
+    if err := val.Commission.ValidateNewRate(newCommissionRate, ctx.BlockHeader().Time); err != nil {
+			// skip as the commission is invalid
+			return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgEditValidator, "invalid commission rate"), nil, nil
+}
+
+simAccount, found := simtypes.FindAccount(accs, sdk.AccAddress(val.GetOperator()))
+    if !found {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgEditValidator, "unable to find account"), nil, fmt.Errorf("validator %s not found", val.GetOperator())
+}
+    account := ak.GetAccount(ctx, simAccount.Address)
+    spendable := bk.SpendableCoins(ctx, account.GetAddress())
+    description := types.NewDescription(
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+			simtypes.RandStringOfLength(r, 10),
+		)
+    msg := types.NewMsgEditValidator(address, description, &newCommissionRate, nil)
+    txCtx := simulation.OperationInput{
+    R:               r,
+    App:             app,
+    TxGen:           moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:             nil,
+    Msg:             msg,
+    MsgType:         msg.Type(),
+    Context:         ctx,
+    SimAccount:      simAccount,
+    AccountKeeper:   ak,
+    Bankkeeper:      bk,
+    ModuleName:      types.ModuleName,
+    CoinsSpentInMsg: spendable,
+}
+
+return simulation.GenAndDeliverTxWithRandFees(txCtx)
+}
+}
+
+// SimulateMsgDelegate generates a MsgDelegate with random values
+func SimulateMsgDelegate(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    denom := k.GetParams(ctx).BondDenom
+    if len(k.GetAllValidators(ctx)) == 0 {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "number of validators equal zero"), nil, nil
+}
+
+simAccount, _ := simtypes.RandomAcc(r, accs)
+
+val, ok := testutil.RandSliceElem(r, k.GetAllValidators(ctx))
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "unable to pick a validator"), nil, nil
+}
+    if val.InvalidExRate() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "validator's invalid echange rate"), nil, nil
+}
+    amount := bk.GetBalance(ctx, simAccount.Address, denom).Amount
+    if !amount.IsPositive() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "balance is negative"), nil, nil
+}
+
+amount, err := simtypes.RandPositiveInt(r, amount)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "unable to generate positive amount"), nil, err
+}
+    bondAmt := sdk.NewCoin(denom, amount)
+    account := ak.GetAccount(ctx, simAccount.Address)
+    spendable := bk.SpendableCoins(ctx, account.GetAddress())
+
+var fees sdk.Coins
+
+		coins, hasNeg := spendable.SafeSub(bondAmt)
+    if !hasNeg {
+    fees, err = simtypes.RandomFees(r, ctx, coins)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "unable to generate fees"), nil, err
+}
+	
+}
+    msg := types.NewMsgDelegate(simAccount.Address, val.GetOperator(), bondAmt)
+    txCtx := simulation.OperationInput{
+    R:             r,
+    App:           app,
+    TxGen:         moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:           nil,
+    Msg:           msg,
+    MsgType:       msg.Type(),
+    Context:       ctx,
+    SimAccount:    simAccount,
+    AccountKeeper: ak,
+    ModuleName:    types.ModuleName,
+}
+
+return simulation.GenAndDeliverTx(txCtx, fees)
+}
+}
+
+// SimulateMsgUndelegate generates a MsgUndelegate with random values
+func SimulateMsgUndelegate(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    val, ok := testutil.RandSliceElem(r, k.GetAllValidators(ctx))
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "validator is not ok"), nil, nil
+}
+    valAddr := val.GetOperator()
+    delegations := k.GetValidatorDelegations(ctx, val.GetOperator())
+    if delegations == nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "keeper does have any delegation entries"), nil, nil
+}
+
+		// get random delegator from validator
+    delegation := delegations[r.Intn(len(delegations))]
+    delAddr := delegation.GetDelegatorAddr()
+    if k.HasMaxUnbondingDelegationEntries(ctx, delAddr, valAddr) {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "keeper does have a max unbonding delegation entries"), nil, nil
+}
+    totalBond := val.TokensFromShares(delegation.GetShares()).TruncateInt()
+    if !totalBond.IsPositive() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "total bond is negative"), nil, nil
+}
+
+unbondAmt, err := simtypes.RandPositiveInt(r, totalBond)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "invalid unbond amount"), nil, err
+}
+    if unbondAmt.IsZero() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgUndelegate, "unbond amount is zero"), nil, nil
+}
+    msg := types.NewMsgUndelegate(
+			delAddr, valAddr, sdk.NewCoin(k.BondDenom(ctx), unbondAmt),
+		)
+
+		// need to retrieve the simulation account associated with delegation to retrieve PrivKey
+		var simAccount simtypes.Account
+    for _, simAcc := range accs {
+    if simAcc.Address.Equals(delAddr) {
+    simAccount = simAcc
+				break
+}
+	
+}
+		// if simaccount.PrivKey == nil, delegation address does not exist in accs. Return error
+    if simAccount.PrivKey == nil {
+    return simtypes.NoOpMsg(types.ModuleName, msg.Type(), "account private key is nil"), nil, fmt.Errorf("delegation addr: %s does not exist in simulation accounts", delAddr)
+}
+    account := ak.GetAccount(ctx, delAddr)
+    spendable := bk.SpendableCoins(ctx, account.GetAddress())
+    txCtx := simulation.OperationInput{
+    R:               r,
+    App:             app,
+    TxGen:           moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:             nil,
+    Msg:             msg,
+    MsgType:         msg.Type(),
+    Context:         ctx,
+    SimAccount:      simAccount,
+    AccountKeeper:   ak,
+    Bankkeeper:      bk,
+    ModuleName:      types.ModuleName,
+    CoinsSpentInMsg: spendable,
+}
+
+return simulation.GenAndDeliverTxWithRandFees(txCtx)
+}
+}
+
+// SimulateMsgCancelUnbondingDelegate generates a MsgCancelUnbondingDelegate with random values
+func SimulateMsgCancelUnbondingDelegate(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    if len(k.GetAllValidators(ctx)) == 0 {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgDelegate, "number of validators equal zero"), nil, nil
+}
+
+simAccount, _ := simtypes.RandomAcc(r, accs)
+
+val, ok := testutil.RandSliceElem(r, k.GetAllValidators(ctx))
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "validator is not ok"), nil, nil
+}
+    if val.IsJailed() || val.InvalidExRate() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "validator is jailed"), nil, nil
+}
+    valAddr := val.GetOperator()
+
+unbondingDelegation, found := k.GetUnbondingDelegation(ctx, simAccount.Address, valAddr)
+    if !found {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "account does have any unbonding delegation"), nil, nil
+}
+
+		// This is a temporary fix to make staking simulation pass. We should fetch
+		// the first unbondingDelegationEntry that matches the creationHeight, because
+		// currently the staking msgServer chooses the first unbondingDelegationEntry
+		// with the matching creationHeight.
+		//
+		// ref: https://github.com/cosmos/cosmos-sdk/issues/12932
+    creationHeight := unbondingDelegation.Entries[r.Intn(len(unbondingDelegation.Entries))].CreationHeight
+
+		var unbondingDelegationEntry types.UnbondingDelegationEntry
+    for _, entry := range unbondingDelegation.Entries {
+    if entry.CreationHeight == creationHeight {
+    unbondingDelegationEntry = entry
+				break
+}
+	
+}
+    if unbondingDelegationEntry.CompletionTime.Before(ctx.BlockTime()) {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "unbonding delegation is already processed"), nil, nil
+}
+    if !unbondingDelegationEntry.Balance.IsPositive() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "delegator receiving balance is negative"), nil, nil
+}
+    cancelBondAmt := simtypes.RandomAmount(r, unbondingDelegationEntry.Balance)
+    if cancelBondAmt.IsZero() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgCancelUnbondingDelegation, "cancelBondAmt amount is zero"), nil, nil
+}
+    msg := types.NewMsgCancelUnbondingDelegation(
+			simAccount.Address, valAddr, unbondingDelegationEntry.CreationHeight, sdk.NewCoin(k.BondDenom(ctx), cancelBondAmt),
+		)
+    spendable := bk.SpendableCoins(ctx, simAccount.Address)
+    txCtx := simulation.OperationInput{
+    R:               r,
+    App:             app,
+    TxGen:           moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:             nil,
+    Msg:             msg,
+    MsgType:         msg.Type(),
+    Context:         ctx,
+    SimAccount:      simAccount,
+    AccountKeeper:   ak,
+    Bankkeeper:      bk,
+    ModuleName:      types.ModuleName,
+    CoinsSpentInMsg: spendable,
+}
+
+return simulation.GenAndDeliverTxWithRandFees(txCtx)
+}
+}
+
+// SimulateMsgBeginRedelegate generates a MsgBeginRedelegate with random values
+func SimulateMsgBeginRedelegate(ak types.AccountKeeper, bk types.BankKeeper, k *keeper.Keeper)
+
+simtypes.Operation {
+    return func(
+		r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+    allVals := k.GetAllValidators(ctx)
+
+srcVal, ok := testutil.RandSliceElem(r, allVals)
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "unable to pick validator"), nil, nil
+}
+    srcAddr := srcVal.GetOperator()
+    delegations := k.GetValidatorDelegations(ctx, srcAddr)
+    if delegations == nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "keeper does have any delegation entries"), nil, nil
+}
+
+		// get random delegator from src validator
+    delegation := delegations[r.Intn(len(delegations))]
+    delAddr := delegation.GetDelegatorAddr()
+    if k.HasReceivingRedelegation(ctx, delAddr, srcAddr) {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "receveing redelegation is not allowed"), nil, nil // skip
+}
+
+		// get random destination validator
+		destVal, ok := testutil.RandSliceElem(r, allVals)
+    if !ok {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "unable to pick validator"), nil, nil
+}
+    destAddr := destVal.GetOperator()
+    if srcAddr.Equals(destAddr) || destVal.InvalidExRate() || k.HasMaxRedelegationEntries(ctx, delAddr, srcAddr, destAddr) {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "checks failed"), nil, nil
+}
+    totalBond := srcVal.TokensFromShares(delegation.GetShares()).TruncateInt()
+    if !totalBond.IsPositive() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "total bond is negative"), nil, nil
+}
+
+redAmt, err := simtypes.RandPositiveInt(r, totalBond)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "unable to generate positive amount"), nil, err
+}
+    if redAmt.IsZero() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "amount is zero"), nil, nil
+}
+
+		// check if the shares truncate to zero
+		shares, err := srcVal.SharesFromTokens(redAmt)
+    if err != nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "invalid shares"), nil, err
+}
+    if srcVal.TokensFromShares(shares).TruncateInt().IsZero() {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "shares truncate to zero"), nil, nil // skip
+}
+
+		// need to retrieve the simulation account associated with delegation to retrieve PrivKey
+		var simAccount simtypes.Account
+    for _, simAcc := range accs {
+    if simAcc.Address.Equals(delAddr) {
+    simAccount = simAcc
+				break
+}
+	
+}
+
+		// if simaccount.PrivKey == nil, delegation address does not exist in accs. Return error
+    if simAccount.PrivKey == nil {
+    return simtypes.NoOpMsg(types.ModuleName, types.TypeMsgBeginRedelegate, "account private key is nil"), nil, fmt.Errorf("delegation addr: %s does not exist in simulation accounts", delAddr)
+}
+    account := ak.GetAccount(ctx, delAddr)
+    spendable := bk.SpendableCoins(ctx, account.GetAddress())
+    msg := types.NewMsgBeginRedelegate(
+			delAddr, srcAddr, destAddr,
+			sdk.NewCoin(k.BondDenom(ctx), redAmt),
+		)
+    txCtx := simulation.OperationInput{
+    R:               r,
+    App:             app,
+    TxGen:           moduletestutil.MakeTestEncodingConfig().TxConfig,
+    Cdc:             nil,
+    Msg:             msg,
+    MsgType:         msg.Type(),
+    Context:         ctx,
+    SimAccount:      simAccount,
+    AccountKeeper:   ak,
+    Bankkeeper:      bk,
+    ModuleName:      types.ModuleName,
+    CoinsSpentInMsg: spendable,
+}
+
+return simulation.GenAndDeliverTxWithRandFees(txCtx)
+}
+}
+```
+
+As you can see, the weights are predefined in this case. Options exist to override this behavior with different weights. One option is to use `*rand.Rand` to define a random weight for the operation, or you can inject your own predefined weights.
+
+Here is how one can override the above package `simappparams`.
+
+```go expandable
+#!/usr/bin/make -f
+
+PACKAGES_NOSIMULATION=$(shell go list ./... | grep -v '/simulation')
+
+PACKAGES_SIMTEST=$(shell go list ./... | grep '/simulation')
+
+export VERSION := $(shell echo $(shell git describe --always --match "v*") | sed 's/^v//')
+
+export TMVERSION := $(shell go list -m github.com/tendermint/tendermint | sed 's:.* ::')
+
+export COMMIT := $(shell git log -1 --format='%H')
+
+LEDGER_ENABLED ?= true
+BINDIR ?= $(GOPATH)/bin
+BUILDDIR ?= $(CURDIR)/build
+SIMAPP = ./simapp
+MOCKS_DIR = $(CURDIR)/tests/mocks
+HTTPS_GIT := https://github.com/cosmos/cosmos-sdk.git
+DOCKER := $(shell which docker)
+
+PROJECT_NAME = $(shell git remote get-url origin | xargs basename -s .git)
+
+DOCS_DOMAIN=docs.cosmos.network
+# RocksDB is a native dependency, so we don't assume the library is installed.
+# Instead, it must be explicitly enabled and we warn when it is not.
+ENABLE_ROCKSDB ?= false
+
+# process build tags
+build_tags = netgo
+    ifeq ($(LEDGER_ENABLED),true)
+    ifeq ($(OS),Windows_NT)
+
+GCCEXE = $(shell where gcc.exe 2> NUL)
+    ifeq ($(GCCEXE),)
+      $(error gcc.exe not installed for ledger support, please install or set LEDGER_ENABLED=false)
+
+else
+      build_tags += ledger
+    endif
+  else
+    UNAME_S = $(shell uname -s)
+    ifeq ($(UNAME_S),OpenBSD)
+      $(warning OpenBSD detected, disabling ledger support (https://github.com/cosmos/cosmos-sdk/issues/1988))
+
+else
+      GCC = $(shell command -v gcc 2> /dev/null)
+    ifeq ($(GCC),)
+        $(error gcc not installed for ledger support, please install or set LEDGER_ENABLED=false)
+
+else
+        build_tags += ledger
+      endif
+    endif
+  endif
+endif
+    ifeq (secp,$(findstring secp,$(COSMOS_BUILD_OPTIONS)))
+
+build_tags += libsecp256k1_sdk
+endif
+    ifeq (legacy,$(findstring legacy,$(COSMOS_BUILD_OPTIONS)))
+
+build_tags += app_v1
+endif
+    whitespace :=
+whitespace += $(whitespace)
+    comma := ,
+build_tags_comma_sep := $(subst $(whitespace),$(comma),$(build_tags))
+
+# process linker flags
+
+ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=sim \
+		  -X github.com/cosmos/cosmos-sdk/version.AppName=simd \
+		  -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
+		  -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT) \
+		  -X "github.com/cosmos/cosmos-sdk/version.BuildTags=$(build_tags_comma_sep)" \
+			-X github.com/tendermint/tendermint/version.TMCoreSemVer=$(TMVERSION)
+    ifeq ($(ENABLE_ROCKSDB),true)
+
+BUILD_TAGS += rocksdb_build
+  test_tags += rocksdb_build
+endif
+
+# DB backend selection
+    ifeq (cleveldb,$(findstring cleveldb,$(COSMOS_BUILD_OPTIONS)))
+
+build_tags += gcc
+endif
+    ifeq (badgerdb,$(findstring badgerdb,$(COSMOS_BUILD_OPTIONS)))
+
+BUILD_TAGS += badgerdb
+endif
+# handle rocksdb
+    ifeq (rocksdb,$(findstring rocksdb,$(COSMOS_BUILD_OPTIONS)))
+    ifneq ($(ENABLE_ROCKSDB),true)
+    $(error Cannot use RocksDB backend unless ENABLE_ROCKSDB=true)
+
+endif
+  CGO_ENABLED=1
+  BUILD_TAGS += rocksdb
+endif
+# handle boltdb
+    ifeq (boltdb,$(findstring boltdb,$(COSMOS_BUILD_OPTIONS)))
+
+BUILD_TAGS += boltdb
+endif
+    ifeq (,$(findstring nostrip,$(COSMOS_BUILD_OPTIONS)))
+
+ldflags += -w -s
+endif
+ldflags += $(LDFLAGS)
+    ldflags := $(strip $(ldflags))
+
+build_tags += $(BUILD_TAGS)
+
+build_tags := $(strip $(build_tags))
+
+BUILD_FLAGS := -tags "$(build_tags)" -ldflags '$(ldflags)'
+# check for nostrip option
+    ifeq (,$(findstring nostrip,$(COSMOS_BUILD_OPTIONS)))
+
+BUILD_FLAGS += -trimpath
+endif
+
+# Check for debug option
+    ifeq (debug,$(findstring debug,$(COSMOS_BUILD_OPTIONS)))
+
+BUILD_FLAGS += -gcflags "all=-N -l"
+endif
+
+all: tools build lint test vulncheck
+
+# The below include contains the tools and runsim targets.
+include contrib/devtools/Makefile
+
+###############################################################################
+###                                  Build                                  ###
+###############################################################################
+
+BUILD_TARGETS := build install
+
+build: BUILD_ARGS=-o $(BUILDDIR)/
+
+build-linux-amd64:
+	GOOS=linux GOARCH=amd64 LEDGER_ENABLED=false $(MAKE)
+
+build
+	
+build-linux-arm64:
+	GOOS=linux GOARCH=arm64 LEDGER_ENABLED=false $(MAKE)
+
+build
+
+$(BUILD_TARGETS): go.sum $(BUILDDIR)/
+	cd ${
+    CURRENT_DIR
+}/simapp && go $@ -mod=readonly $(BUILD_FLAGS) $(BUILD_ARGS) ./...
+
+$(BUILDDIR)/:
+	mkdir -p $(BUILDDIR)/
+
+cosmovisor:
+	$(MAKE) -C tools/cosmovisor cosmovisor
+
+.PHONY: build build-linux-amd64 build-linux-arm64 cosmovisor
+
+mocks: $(MOCKS_DIR)
+	@go install github.com/golang/mock/mockgen@v1.6.0
+	sh ./scripts/mockgen.sh
+.PHONY: mocks
+
+vulncheck: $(BUILDDIR)/
+	GOBIN=$(BUILDDIR)
+
+go install golang.org/x/vuln/cmd/govulncheck@latest
+	$(BUILDDIR)/govulncheck ./...
+
+$(MOCKS_DIR):
+	mkdir -p $(MOCKS_DIR)
+
+distclean: clean tools-clean
+clean:
+	rm -rf \
+    $(BUILDDIR)/ \
+    artifacts/ \
+    tmp-swagger-gen/
+
+.PHONY: distclean clean
+
+###############################################################################
+###                          Tools & Dependencies                           ###
+###############################################################################
+
+go.sum: go.mod
+	echo "Ensure dependencies have not been modified ..." >&2
+	go mod verify
+	go mod tidy
+
+###############################################################################
+###                              Documentation                              ###
+###############################################################################
+
+update-swagger-docs: statik
+	$(BINDIR)/statik -src=client/docs/swagger-ui -dest=client/docs -f -m
+	@if [ -n "$(git status --porcelain)" ]; then \
+        echo "\033[91mSwagger docs are out of sync!!!\033[0m";\
+        exit 1;\
+    else \
+        echo "\033[92mSwagger docs are in sync\033[0m";\
+    fi
+.PHONY: update-swagger-docs
+
+godocs:
+	@echo "--> Wait a few seconds and visit http://localhost:6060/pkg/github.com/cosmos/cosmos-sdk/types"
+	godoc -http=:6060
+
+# This builds the docs.cosmos.network docs using docusaurus.
+# Old documentation, which have not been migrated to docusaurus are generated with vuepress.
+build-docs:
+	@echo "building docusaurus docs"
+	@cd docs && npm ci && npm run build
+	mv docs/build ~/output
+
+	@echo "building old docs"
+	@cd docs && \
+			while read -r branch path_prefix; do \
+			echo "building vuepress ${
+    branch
+}
+
+docs" ; \
+			(git clean -fdx && git reset --hard && git checkout ${
+    branch
+} && npm install && VUEPRESS_BASE="/${
+    path_prefix
+}/" npm run build) ; \
+			mkdir -p ~/output/${
+    path_prefix
+} ; \
+			cp -r .vuepress/dist/* ~/output/${
+    path_prefix
+}/ ; \
+	done < vuepress_versions ;	
+
+	@echo "setup domain"
+	@echo $(DOCS_DOMAIN) > ~/output/CNAME
+
+.PHONY: build-docs
+
+###############################################################################
+###                           Tests & Simulation                            ###
+###############################################################################
+
+test: test-unit
+test-e2e:
+	$(MAKE) -C tests test-e2e
+test-e2e-cov:
+	$(MAKE) -C tests test-e2e-cov
+test-integration:
+	$(MAKE) -C tests test-integration
+test-integration-cov:
+	$(MAKE) -C tests test-integration-cov
+test-all: test-unit test-e2e test-integration test-ledger-mock test-race
+
+TEST_PACKAGES=./...
+TEST_TARGETS := test-unit test-unit-amino test-unit-proto test-ledger-mock test-race test-ledger test-race
+
+# Test runs-specific rules. To add a new test target, just add
+# a new rule, customise ARGS or TEST_PACKAGES ad libitum, and
+# append the new rule to the TEST_TARGETS list.
+test-unit: test_tags += cgo ledger test_ledger_mock norace
+test-unit-amino: test_tags += ledger test_ledger_mock test_amino norace
+test-ledger: test_tags += cgo ledger norace
+test-ledger-mock: test_tags += ledger test_ledger_mock norace
+test-race: test_tags += cgo ledger test_ledger_mock
+test-race: ARGS=-race
+test-race: TEST_PACKAGES=$(PACKAGES_NOSIMULATION)
+$(TEST_TARGETS): run-tests
+
+# check-* compiles and collects tests without running them
+# note: go test -c doesn't support multiple packages yet (https://github.com/golang/go/issues/15513)
+
+CHECK_TEST_TARGETS := check-test-unit check-test-unit-amino
+check-test-unit: test_tags += cgo ledger test_ledger_mock norace
+check-test-unit-amino: test_tags += ledger test_ledger_mock test_amino norace
+$(CHECK_TEST_TARGETS): EXTRA_ARGS=-run=none
+$(CHECK_TEST_TARGETS): run-tests
+
+ARGS += -tags "$(test_tags)"
+SUB_MODULES = $(shell find . -type f -name 'go.mod' -print0 | xargs -0 -n1 dirname | sort)
+
+CURRENT_DIR = $(shell pwd)
+
+run-tests:
+    ifneq (,$(shell which tparse 2>/dev/null))
+	@echo "Starting unit tests"; \
+	finalec=0; \
+    for module in $(SUB_MODULES); do \
+		cd ${
+    CURRENT_DIR
+}/$module; \
+		echo "Running unit tests for module $module"; \
+		go test -mod=readonly -json $(ARGS) $(TEST_PACKAGES) ./... | tparse; \
+		ec=$?; \
+    if [ "$ec" -ne '0' ]; then finalec=$ec; fi; \
+	done; \
+	exit $finalec
+else
+	@echo "Starting unit tests"; \
+	finalec=0; \
+    for module in $(SUB_MODULES); do \
+		cd ${
+    CURRENT_DIR
+}/$module; \
+		echo "Running unit tests for module $module"; \
+		go test -mod=readonly $(ARGS) $(TEST_PACKAGES) ./... ; \
+		ec=$?; \
+    if [ "$ec" -ne '0' ]; then finalec=$ec; fi; \
+	done; \
+	exit $finalec
+endif
+
+.PHONY: run-tests test test-all $(TEST_TARGETS)
+
+test-sim-nondeterminism:
+	@echo "Running non-determinism test..."
+	@cd ${
+    CURRENT_DIR
+}/simapp && go test -mod=readonly -run TestAppStateDeterminism -Enabled=true \
+		-NumBlocks=100 -BlockSize=200 -Commit=true -Period=0 -v -timeout 24h
+
+test-sim-custom-genesis-fast:
+	@echo "Running custom genesis simulation..."
+	@echo "By default, ${
+    HOME
+}/.gaiad/config/genesis.json will be used."
+	@cd ${
+    CURRENT_DIR
+}/simapp && go test -mod=readonly -run TestFullAppSimulation -Genesis=${
+    HOME
+}/.gaiad/config/genesis.json \
+		-Enabled=true -NumBlocks=100 -BlockSize=200 -Commit=true -Seed=99 -Period=5 -v -timeout 24h
+
+test-sim-import-export: runsim
+	@echo "Running application import/export simulation. This may take several minutes..."
+	@cd ${
+    CURRENT_DIR
+}/simapp && $(BINDIR)/runsim -Jobs=4 -SimAppPkg=. -ExitOnFail 50 5 TestAppImportExport
+
+test-sim-after-import: runsim
+	@echo "Running application simulation-after-import. This may take several minutes..."
+	@cd ${
+    CURRENT_DIR
+}/simapp && $(BINDIR)/runsim -Jobs=4 -SimAppPkg=. -ExitOnFail 50 5 TestAppSimulationAfterImport
+
+test-sim-custom-genesis-multi-seed: runsim
+	@echo "Running multi-seed custom genesis simulation..."
+	@echo "By default, ${
+    HOME
+}/.gaiad/config/genesis.json will be used."
+	@cd ${
+    CURRENT_DIR
+}/simapp && $(BINDIR)/runsim -Genesis=${
+    HOME
+}/.gaiad/config/genesis.json -SimAppPkg=. -ExitOnFail 400 5 TestFullAppSimulation
+
+test-sim-multi-seed-long: runsim
+	@echo "Running long multi-seed application simulation. This may take awhile!"
+	@cd ${
+    CURRENT_DIR
+}/simapp && $(BINDIR)/runsim -Jobs=4 -SimAppPkg=. -ExitOnFail 500 50 TestFullAppSimulation
+
+test-sim-multi-seed-short: runsim
+	@echo "Running short multi-seed application simulation. This may take awhile!"
+	@cd ${
+    CURRENT_DIR
+}/simapp && $(BINDIR)/runsim -Jobs=4 -SimAppPkg=. -ExitOnFail 50 10 TestFullAppSimulation
+
+test-sim-benchmark-invariants:
+	@echo "Running simulation invariant benchmarks..."
+	cd ${
+    CURRENT_DIR
+}/simapp && @go test -mod=readonly -benchmem -bench=BenchmarkInvariants -run=^$ \
+	-Enabled=true -NumBlocks=1000 -BlockSize=200 \
+	-Period=1 -Commit=true -Seed=57 -v -timeout 24h
+
+.PHONY: \
+test-sim-nondeterminism \
+test-sim-custom-genesis-fast \
+test-sim-import-export \
+test-sim-after-import \
+test-sim-custom-genesis-multi-seed \
+test-sim-multi-seed-short \
+test-sim-multi-seed-long \
+test-sim-benchmark-invariants
+
+SIM_NUM_BLOCKS ?= 500
+SIM_BLOCK_SIZE ?= 200
+SIM_COMMIT ?= true
+
+test-sim-benchmark:
+	@echo "Running application benchmark for numBlocks=$(SIM_NUM_BLOCKS), blockSize=$(SIM_BLOCK_SIZE). This may take awhile!"
+	@go test -mod=readonly -benchmem -run=^$ $(SIMAPP) -bench ^BenchmarkFullAppSimulation$  \
+		-Enabled=true -NumBlocks=$(SIM_NUM_BLOCKS) -BlockSize=$(SIM_BLOCK_SIZE) -Commit=$(SIM_COMMIT) -timeout 24h
+
+test-sim-profile:
+	@echo "Running application benchmark for numBlocks=$(SIM_NUM_BLOCKS), blockSize=$(SIM_BLOCK_SIZE). This may take awhile!"
+	@go test -mod=readonly -benchmem -run=^$ $(SIMAPP) -bench ^BenchmarkFullAppSimulation$ \
+		-Enabled=true -NumBlocks=$(SIM_NUM_BLOCKS) -BlockSize=$(SIM_BLOCK_SIZE) -Commit=$(SIM_COMMIT) -timeout 24h -cpuprofile cpu.out -memprofile mem.out
+
+.PHONY: test-sim-profile test-sim-benchmark
+
+test-rosetta:
+	docker build -t rosetta-ci:latest -f contrib/rosetta/rosetta-ci/Dockerfile .
+	docker-compose -f contrib/rosetta/docker-compose.yaml up --abort-on-container-exit --exit-code-from test_rosetta --build
+.PHONY: test-rosetta
+
+benchmark:
+	@go test -mod=readonly -bench=. $(PACKAGES_NOSIMULATION)
+.PHONY: benchmark
+
+###############################################################################
+###                                Linting                                  ###
+###############################################################################
+
+golangci_lint_cmd=golangci-lint
+golangci_version=v1.50.0
+
+lint:
+	@echo "--> Running linter"
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(golangci_version)
+	@$(golangci_lint_cmd)
+
+run --timeout=10m
+
+lint-fix:
+	@echo "--> Running linter"
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(golangci_version)
+	@$(golangci_lint_cmd)
+
+run --fix --out-format=tab --issues-exit-code=0
+
+.PHONY: lint lint-fix
+    format:
+	@go install mvdan.cc/gofumpt@latest
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(golangci_version)
+
+find . -name '*.go' -type f -not -path "./vendor*" -not -path "*.git*" -not -path "./client/docs/statik/statik.go" -not -path "./tests/mocks/*" -not -name "*.pb.go" -not -name "*.pb.gw.go" -not -name "*.pulsar.go" -not -path "./crypto/keys/secp256k1/*" | xargs gofumpt -w -l
+	$(golangci_lint_cmd)
+
+run --fix
+.PHONY: format
+
+###############################################################################
+###                                 Devdoc                                  ###
+###############################################################################
+
+DEVDOC_SAVE = docker commit `docker ps -a -n 1 -q` devdoc:local
+
+devdoc-init:
+	$(DOCKER)
+
+run -it -v "$(CURDIR):/go/src/github.com/cosmos/cosmos-sdk" -w "/go/src/github.com/cosmos/cosmos-sdk" tendermint/devdoc echo
+	# TODO make this safer
+	$(call DEVDOC_SAVE)
+
+devdoc:
+	$(DOCKER)
+
+run -it -v "$(CURDIR):/go/src/github.com/cosmos/cosmos-sdk" -w "/go/src/github.com/cosmos/cosmos-sdk" devdoc:local bash
+
+devdoc-save:
+	# TODO make this safer
+	$(call DEVDOC_SAVE)
+
+devdoc-clean:
+	docker rmi -f $(docker images -f "dangling=true" -q)
+
+devdoc-update:
+	docker pull tendermint/devdoc
+
+.PHONY: devdoc devdoc-clean devdoc-init devdoc-save devdoc-update
+
+###############################################################################
+###                                Protobuf                                 ###
+###############################################################################
+
+protoVer=0.11.2
+protoImageName=ghcr.io/cosmos/proto-builder:$(protoVer)
+
+protoImage=$(DOCKER)
+
+run --rm -v $(CURDIR):/workspace --workdir /workspace $(protoImageName)
+
+proto-all: proto-format proto-lint proto-gen
+
+proto-gen:
+	@echo "Generating Protobuf files"
+	@$(protoImage)
+
+sh ./scripts/protocgen.sh
+
+proto-swagger-gen:
+	@echo "Generating Protobuf Swagger"
+	@$(protoImage)
+
+sh ./scripts/protoc-swagger-gen.sh
+
+proto-format:
+	@$(protoImage)
+
+find ./ -name "*.proto" -exec clang-format -i {
+} \;
+
+proto-lint:
+	@$(protoImage)
+
+buf lint --error-format=json
+
+proto-check-breaking:
+	@$(protoImage)
+
+buf breaking --against $(HTTPS_GIT)#branch=main
+
+TM_URL              = https://raw.githubusercontent.com/tendermint/tendermint/v0.37.0-rc2/proto/tendermint
+
+TM_CRYPTO_TYPES     = proto/tendermint/crypto
+TM_ABCI_TYPES       = proto/tendermint/abci
+TM_TYPES            = proto/tendermint/types
+TM_VERSION          = proto/tendermint/version
+TM_LIBS             = proto/tendermint/libs/bits
+TM_P2P              = proto/tendermint/p2p
+
+proto-update-deps:
+	@echo "Updating Protobuf dependencies"
+
+	@mkdir -p $(TM_ABCI_TYPES)
+	@curl -sSL $(TM_URL)/abci/types.proto > $(TM_ABCI_TYPES)/types.proto
+
+	@mkdir -p $(TM_VERSION)
+	@curl -sSL $(TM_URL)/version/types.proto > $(TM_VERSION)/types.proto
+
+	@mkdir -p $(TM_TYPES)
+	@curl -sSL $(TM_URL)/types/types.proto > $(TM_TYPES)/types.proto
+	@curl -sSL $(TM_URL)/types/evidence.proto > $(TM_TYPES)/evidence.proto
+	@curl -sSL $(TM_URL)/types/params.proto > $(TM_TYPES)/params.proto
+	@curl -sSL $(TM_URL)/types/validator.proto > $(TM_TYPES)/validator.proto
+	@curl -sSL $(TM_URL)/types/block.proto > $(TM_TYPES)/block.proto
+
+	@mkdir -p $(TM_CRYPTO_TYPES)
+	@curl -sSL $(TM_URL)/crypto/proof.proto > $(TM_CRYPTO_TYPES)/proof.proto
+	@curl -sSL $(TM_URL)/crypto/keys.proto > $(TM_CRYPTO_TYPES)/keys.proto
+
+	@mkdir -p $(TM_LIBS)
+	@curl -sSL $(TM_URL)/libs/bits/types.proto > $(TM_LIBS)/types.proto
+
+	@mkdir -p $(TM_P2P)
+	@curl -sSL $(TM_URL)/p2p/types.proto > $(TM_P2P)/types.proto
+
+	$(DOCKER)
+
+run --rm -v $(CURDIR)/proto:/workspace --workdir /workspace $(protoImageName)
+
+buf mod update
+
+.PHONY: proto-all proto-gen proto-swagger-gen proto-format proto-lint proto-check-breaking proto-update-deps
+
+###############################################################################
+###                                Localnet                                 ###
+###############################################################################
+
+localnet-build-env:
+	$(MAKE) -C contrib/images simd-env
+localnet-build-dlv:
+	$(MAKE) -C contrib/images simd-dlv
+
+localnet-build-nodes:
+	$(DOCKER)
+
+run --rm -v $(CURDIR)/.testnets:/data cosmossdk/simd \
+			  testnet init-files --v 4 -o /data --starting-ip-address 192.168.10.2 --keyring-backend=test
+	docker-compose up -d
+
+localnet-stop:
+	docker-compose down
+
+# localnet-start will run a 4-node testnet locally. The nodes are
+# based off the docker images in: ./contrib/images/simd-env
+localnet-start: localnet-stop localnet-build-env localnet-build-nodes
+
+# localnet-debug will run a 4-node testnet locally in debug mode
+# you can read more about the debug mode here: ./contrib/images/simd-dlv/README.md
+localnet-debug: localnet-stop localnet-build-dlv localnet-build-nodes
+
+.PHONY: localnet-start localnet-stop localnet-debug localnet-build-env localnet-build-dlv localnet-build-nodes
+
+###############################################################################
+###                                rosetta                                  ###
+###############################################################################
+# builds rosetta test data dir
+rosetta-data:
+	-docker container rm data_dir_build
+	docker build -t rosetta-ci:latest -f contrib/rosetta/rosetta-ci/Dockerfile .
+	docker run --name data_dir_build -t rosetta-ci:latest sh /rosetta/data.sh
+	docker cp data_dir_build:/tmp/data.tar.gz "$(CURDIR)/contrib/rosetta/rosetta-ci/data.tar.gz"
+	docker container rm data_dir_build
+.PHONY: rosetta-data
+```
+
+For the last test a tool called [runsim](https://github.com/cosmos/tools/tree/master/cmd/runsim) is used, this is used to parallelize go test instances, provide info to Github and slack integrations to provide information to your team on how the simulations are running.
+
+### Random proposal contents
+
+Randomized governance proposals are also supported on the Cosmos SDK simulator. Each
+module must define the governance proposal `Content`s that they expose and register
+them to be used on the parameters.
+
+## Registering simulation functions
+
+Now that all the required functions are defined, we need to integrate them into the module pattern within the `module.go`:
+
+```go expandable
+package distribution
+
+import (
+    
+	"context"
+    "encoding/json"
+    "fmt"
+
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+    "github.com/spf13/cobra"
+	abci "github.com/tendermint/tendermint/abci/types"
+
+	modulev1 "cosmossdk.io/api/cosmos/distribution/module/v1"
+    "cosmossdk.io/core/appmodule"
+    "cosmossdk.io/depinject"
+
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+    "github.com/cosmos/cosmos-sdk/codec"
+	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	store "github.com/cosmos/cosmos-sdk/store/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/types/module"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+    "github.com/cosmos/cosmos-sdk/x/distribution/client/cli"
+    "github.com/cosmos/cosmos-sdk/x/distribution/exported"
+    "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+    "github.com/cosmos/cosmos-sdk/x/distribution/simulation"
+    "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	staking "github.com/cosmos/cosmos-sdk/x/staking/types"
+)
+
+// ConsensusVersion defines the current x/distribution module consensus version.
+const ConsensusVersion = 3
+
+var (
+	_ module.BeginBlockAppModule = AppModule{
+}
+	_ module.AppModuleBasic      = AppModuleBasic{
+}
+	_ module.AppModuleSimulation = AppModule{
+}
+)
+
+// AppModuleBasic defines the basic application module used by the distribution module.
+type AppModuleBasic struct {
+    cdc codec.Codec
+}
+
+// Name returns the distribution module's name.
+func (AppModuleBasic)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterLegacyAminoCodec registers the distribution module's types for the given codec.
+func (AppModuleBasic)
+
+RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    types.RegisterLegacyAminoCodec(cdc)
+}
+
+// DefaultGenesis returns default genesis state as raw bytes for the distribution
+// module.
+func (AppModuleBasic)
+
+DefaultGenesis(cdc codec.JSONCodec)
+
+json.RawMessage {
+    return cdc.MustMarshalJSON(types.DefaultGenesisState())
+}
+
+// ValidateGenesis performs genesis state validation for the distribution module.
+func (AppModuleBasic)
+
+ValidateGenesis(cdc codec.JSONCodec, config sdkclient.TxEncodingConfig, bz json.RawMessage)
+
+error {
+    var data types.GenesisState
+    if err := cdc.UnmarshalJSON(bz, &data); err != nil {
+    return fmt.Errorf("failed to unmarshal %s genesis state: %w", types.ModuleName, err)
+}
+
+return types.ValidateGenesis(&data)
+}
+
+// RegisterGRPCGatewayRoutes registers the gRPC Gateway routes for the distribution module.
+func (AppModuleBasic)
+
+RegisterGRPCGatewayRoutes(clientCtx sdkclient.Context, mux *gwruntime.ServeMux) {
+    if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
+    panic(err)
+}
+}
+
+// GetTxCmd returns the root tx command for the distribution module.
+func (AppModuleBasic)
+
+GetTxCmd() *cobra.Command {
+    return cli.NewTxCmd()
+}
+
+// GetQueryCmd returns the root query command for the distribution module.
+func (AppModuleBasic)
+
+GetQueryCmd() *cobra.Command {
+    return cli.GetQueryCmd()
+}
+
+// RegisterInterfaces implements InterfaceModule
+func (b AppModuleBasic)
+
+RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
+    types.RegisterInterfaces(registry)
+}
+
+// AppModule implements an application module for the distribution module.
+type AppModule struct {
+    AppModuleBasic
+
+	keeper        keeper.Keeper
+	accountKeeper types.AccountKeeper
+	bankKeeper    types.BankKeeper
+	stakingKeeper types.StakingKeeper
+
+	// legacySubspace is used solely for migration of x/params managed parameters
+	legacySubspace exported.Subspace
+}
+
+// NewAppModule creates a new AppModule object
+func NewAppModule(
+	cdc codec.Codec, keeper keeper.Keeper, accountKeeper types.AccountKeeper,
+	bankKeeper types.BankKeeper, stakingKeeper types.StakingKeeper, ss exported.Subspace,
+)
+
+AppModule {
+    return AppModule{
+    AppModuleBasic: AppModuleBasic{
+    cdc: cdc
+},
+		keeper:         keeper,
+		accountKeeper:  accountKeeper,
+		bankKeeper:     bankKeeper,
+		stakingKeeper:  stakingKeeper,
+		legacySubspace: ss,
+}
+}
+
+var _ appmodule.AppModule = AppModule{
+}
+
+// IsOnePerModuleType implements the depinject.OnePerModuleType interface.
+func (am AppModule)
+
+IsOnePerModuleType() {
+}
+
+// IsAppModule implements the appmodule.AppModule interface.
+func (am AppModule)
+
+IsAppModule() {
+}
+
+// Name returns the distribution module's name.
+func (AppModule)
+
+Name()
+
+string {
+    return types.ModuleName
+}
+
+// RegisterInvariants registers the distribution module invariants.
+func (am AppModule)
+
+RegisterInvariants(ir sdk.InvariantRegistry) {
+    keeper.RegisterInvariants(ir, am.keeper)
+}
+
+// RegisterServices registers module services.
+func (am AppModule)
+
+RegisterServices(cfg module.Configurator) {
+    types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+
+types.RegisterQueryServer(cfg.QueryServer(), keeper.NewQuerier(am.keeper))
+    m := keeper.NewMigrator(am.keeper, am.legacySubspace)
+    if err := cfg.RegisterMigration(types.ModuleName, 1, m.Migrate1to2); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", types.ModuleName, err))
+}
+    if err := cfg.RegisterMigration(types.ModuleName, 2, m.Migrate2to3); err != nil {
+    panic(fmt.Sprintf("failed to migrate x/%s from version 2 to 3: %v", types.ModuleName, err))
+}
+}
+
+// InitGenesis performs genesis initialization for the distribution module. It returns
+// no validator updates.
+func (am AppModule)
+
+InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) []abci.ValidatorUpdate {
+    var genesisState types.GenesisState
+	cdc.MustUnmarshalJSON(data, &genesisState)
+
+am.keeper.InitGenesis(ctx, genesisState)
+
+return []abci.ValidatorUpdate{
+}
+}
+
+// ExportGenesis returns the exported genesis state as raw bytes for the distribution
+// module.
+func (am AppModule)
+
+ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec)
+
+json.RawMessage {
+    gs := am.keeper.ExportGenesis(ctx)
+
+return cdc.MustMarshalJSON(gs)
+}
+
+// ConsensusVersion implements AppModule/ConsensusVersion.
+func (AppModule)
+
+ConsensusVersion()
+
+uint64 {
+    return ConsensusVersion
+}
+
+// BeginBlock returns the begin blocker for the distribution module.
+func (am AppModule)
+
+BeginBlock(ctx sdk.Context, req abci.RequestBeginBlock) {
+    BeginBlocker(ctx, req, am.keeper)
+}
+
+// AppModuleSimulation functions
+
+// GenerateGenesisState creates a randomized GenState of the distribution module.
+func (AppModule)
+
+GenerateGenesisState(simState *module.SimulationState) {
+    simulation.RandomizedGenState(simState)
+}
+
+// ProposalContents returns all the distribution content functions used to
+// simulate governance proposals.
+func (am AppModule)
+
+ProposalContents(simState module.SimulationState) []simtypes.WeightedProposalContent {
+    return nil
+}
+
+// RegisterStoreDecoder registers a decoder for distribution module's types
+func (am AppModule)
+
+RegisterStoreDecoder(sdr sdk.StoreDecoderRegistry) {
+    sdr[types.StoreKey] = simulation.NewDecodeStore(am.cdc)
+}
+
+// WeightedOperations returns the all the gov module operations with their respective weights.
+func (am AppModule)
+
+WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
+    return simulation.WeightedOperations(
+		simState.AppParams, simState.Cdc, am.accountKeeper, am.bankKeeper, am.keeper, am.stakingKeeper,
+	)
+}
+
+//
+// App Wiring Setup
+//
+
+func init() {
+    appmodule.Register(&modulev1.Module{
+},
+		appmodule.Provide(ProvideModule),
+	)
+}
+
+type DistrInputs struct {
+    depinject.In
+
+	Config *modulev1.Module
+	Key    *store.KVStoreKey
+	Cdc    codec.Codec
+
+	AccountKeeper types.AccountKeeper
+	BankKeeper    types.BankKeeper
+	StakingKeeper types.StakingKeeper
+
+	// LegacySubspace is used solely for migration of x/params managed parameters
+	LegacySubspace exported.Subspace
+}
+
+type DistrOutputs struct {
+    depinject.Out
+
+	DistrKeeper keeper.Keeper
+	Module      appmodule.AppModule
+	Hooks       staking.StakingHooksWrapper
+}
+
+func ProvideModule(in DistrInputs)
+
+DistrOutputs {
+    feeCollectorName := in.Config.FeeCollectorName
+    if feeCollectorName == "" {
+    feeCollectorName = authtypes.FeeCollectorName
+}
+
+	// default to governance authority if not provided
+    authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+    if in.Config.Authority != "" {
+    authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
+}
+    k := keeper.NewKeeper(
+		in.Cdc,
+		in.Key,
+		in.AccountKeeper,
+		in.BankKeeper,
+		in.StakingKeeper,
+		feeCollectorName,
+		authority.String(),
+	)
+    m := NewAppModule(in.Cdc, k, in.AccountKeeper, in.BankKeeper, in.StakingKeeper, in.LegacySubspace)
+
+return DistrOutputs{
+    DistrKeeper: k,
+    Module:      m,
+    Hooks:       staking.StakingHooksWrapper{
+    StakingHooks: k.Hooks()
+},
+}
+}
+```
+
+## App Simulator manager
+
+The following step is setting up the `SimulatorManager` at the app level. This
+is required for the simulation test files on the next step.
+
+```go
+type CustomApp struct {
+  ...
+  sm *module.SimulationManager
+}
+```
+
+Then at the instantiation of the application, we create the `SimulationManager`
+instance in the same way we create the `ModuleManager` but this time we only pass
+the modules that implement the simulation functions from the `AppModuleSimulation`
+interface described above.
+
+```go expandable
+func NewCustomApp(...) {
+  // create the simulation manager and define the order of the modules for deterministic simulations
+  app.sm = module.NewSimulationManager(
+    auth.NewAppModule(app.accountKeeper),
+    bank.NewAppModule(app.bankKeeper, app.accountKeeper),
+    supply.NewAppModule(app.supplyKeeper, app.accountKeeper),
+    gov.NewAppModule(app.govKeeper, app.accountKeeper, app.supplyKeeper),
+    mint.NewAppModule(app.mintKeeper),
+    distr.NewAppModule(app.distrKeeper, app.accountKeeper, app.supplyKeeper, app.stakingKeeper),
+    staking.NewAppModule(app.stakingKeeper, app.accountKeeper, app.supplyKeeper),
+    slashing.NewAppModule(app.slashingKeeper, app.accountKeeper, app.stakingKeeper),
+  )
+
+  // register the store decoders for simulation tests
+  app.sm.RegisterStoreDecoders()
+  ...
+}
+```
