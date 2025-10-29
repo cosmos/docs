@@ -1,7 +1,5 @@
 'use client'
 
-import React from 'react'
-
 export const TopicCard = ({ title, description, links = [], color = '#cccccc', titleHref = null, linkLabel = null, isMobile = false, isOpen = false, onToggle = () => {} }) => {
   const [isHovered, setIsHovered] = React.useState(false)
   const [isLight, setIsLight] = React.useState(false)
