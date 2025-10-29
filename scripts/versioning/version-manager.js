@@ -44,13 +44,21 @@ async function prompt(question) {
 }
 
 function listDocsSubdirs() {
-  const docsRoot = path.join(__dirname, '..', '..', 'docs');
-  if (!fs.existsSync(docsRoot)) return [];
-  return fs
-    .readdirSync(docsRoot, { withFileTypes: true })
+  const repoRoot = path.join(__dirname, '..', '..');
+  if (!fs.existsSync(repoRoot)) return [];
+  // List subdirectories at repo root that are products (evm, sdk, ibc, hub, etc.)
+  // Filter out non-product directories
+  const allDirs = fs.readdirSync(repoRoot, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name)
-    .filter(name => !name.startsWith('.'));
+    .filter(name => !name.startsWith('.') && name !== 'node_modules' && name !== 'scripts' && name !== 'snippets' && name !== 'assets');
+
+  // Only return directories that have version subdirectories (next, v0.x.x, etc.)
+  return allDirs.filter(dirName => {
+    const dirPath = path.join(repoRoot, dirName);
+    const contents = fs.readdirSync(dirPath, { withFileTypes: true });
+    return contents.some(d => d.isDirectory() && (d.name === 'next' || /^v\d+/.test(d.name)));
+  });
 }
 
 // --- Versions registry helpers (per-product) ---
@@ -70,10 +78,10 @@ function loadVersionsRegistry() {
     data = { products: {} };
   }
 
-  // Auto-discover products from docs/ directory and merge with existing config
+  // Auto-discover products from repo root and merge with existing config
   const subdirs = listDocsSubdirs();
   for (const subdir of subdirs) {
-    const base = path.join(__dirname, '..', '..', 'docs', subdir);
+    const base = path.join(__dirname, '..', '..', subdir);
     const entries = fs.readdirSync(base, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
@@ -192,7 +200,7 @@ function includesVersionInReleaseNotes(content, version) {
 }
 
 async function checkReleaseNotes(currentVersion, subdir) {
-  const releaseNotesPath = path.join(__dirname, '..', '..', 'docs', subdir, 'next', 'changelog', 'release-notes.mdx');
+  const releaseNotesPath = path.join(__dirname, '..', '..', subdir, 'next', 'changelog', 'release-notes.mdx');
   if (!fs.existsSync(releaseNotesPath)) return false;
   const content = fs.readFileSync(releaseNotesPath, 'utf8');
   return includesVersionInReleaseNotes(content, currentVersion);
@@ -205,7 +213,7 @@ function updateVersionsRegistry({ subdir, freezeVersion, newVersion }) {
 
   const product = data.products[subdir];
   // Ensure 'next' appears if folder exists
-  const nextPath = path.join(__dirname, '..', '..', 'docs', subdir, 'next');
+  const nextPath = path.join(__dirname, '..', '..', subdir, 'next');
   if (fs.existsSync(nextPath) && !product.versions.includes('next')) {
     product.versions.push('next');
   }
@@ -274,7 +282,7 @@ function updateNavigation(version, subdir) {
       printWarning(`No 'next' version found. Using '${templateVersion.version}' as template for creating frozen version '${version}'.`);
 
       // Create a 'next' version from the template
-      nextVersion = updatePaths(templateVersion, `docs/${subdir}/${templateVersion.version}/`, `docs/${subdir}/next/`);
+      nextVersion = updatePaths(templateVersion, `${subdir}/${templateVersion.version}/`, `${subdir}/next/`);
       if (nextVersion && typeof nextVersion === 'object') {
         nextVersion.version = 'next';
       }
@@ -296,9 +304,9 @@ Please add at least one version entry to docs.json before freezing:
 
   // Create the frozen version navigation from the template
   const sourcePrefix = templateVersion.version === 'next'
-    ? `docs/${subdir}/next/`
-    : `docs/${subdir}/${templateVersion.version}/`;
-  const targetPrefix = `docs/${subdir}/${version}/`;
+    ? `${subdir}/next/`
+    : `${subdir}/${templateVersion.version}/`;
+  const targetPrefix = `${subdir}/${version}/`;
 
   const versionedNavigation = updatePaths(templateVersion, sourcePrefix, targetPrefix);
   if (versionedNavigation && typeof versionedNavigation === 'object') {
@@ -337,10 +345,10 @@ function copyAndUpdateDocs(currentVersion, subdir) {
   // The 'next' directory is the working directory containing latest documentation.
   // It gets COPIED to create a frozen version snapshot, but the original 'next' remains unchanged
   // for continued development. This allows us to:
-  // 1. Preserve historical documentation at docs/<subdir>/<version>/
-  // 2. Continue updating docs in docs/<subdir>/next/ for future releases
-  const sourcePath = path.join(__dirname, '..', '..', 'docs', subdir, 'next');
-  const targetPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion);
+  // 1. Preserve historical documentation at <subdir>/<version>/
+  // 2. Continue updating docs in <subdir>/next/ for future releases
+  const sourcePath = path.join(__dirname, '..', '..', subdir, 'next');
+  const targetPath = path.join(__dirname, '..', '..', subdir, currentVersion);
 
   // Verify source exists
   if (!fs.existsSync(sourcePath)) {
@@ -353,11 +361,13 @@ function copyAndUpdateDocs(currentVersion, subdir) {
 
   // Update internal links in frozen version only (source 'next' remains unchanged)
   printInfo('Updating internal links in frozen version...');
-  const findCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' "s|/docs/${subdir}/next/|/docs/${subdir}/${currentVersion}/|g" {} \\;`;
+  // Convert /{subdir}/next/ links to /{subdir}/{version}/
+  const findCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' "s|/${subdir}/next/|/${subdir}/${currentVersion}/|g" {} \\;`;
   execSync(findCmd);
 
-  // Also ensure any remaining relative docs/ paths are properly prefixed
-  const fixRelativeCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' 's|href="/docs/documentation/|href="/docs/${subdir}/${currentVersion}/documentation/|g' {} \\;`;
+  // Convert incomplete paths that are missing the subdir prefix
+  // /documentation/ → /{subdir}/{version}/documentation/
+  const fixRelativeCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' 's|href="/documentation/|href="/${subdir}/${currentVersion}/documentation/|g' {} \\;`;
   execSync(fixRelativeCmd);
 
   printSuccess(`Documentation copied from 'next' to '${currentVersion}' and links updated`);
@@ -365,8 +375,8 @@ function copyAndUpdateDocs(currentVersion, subdir) {
 }
 
 function createVersionMetadata(currentVersion, newVersion, subdir) {
-  const metadataPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion, '.version-metadata.json');
-  const frozenPath = path.join(__dirname, '..', '..', 'docs', subdir, currentVersion, '.version-frozen');
+  const metadataPath = path.join(__dirname, '..', '..', subdir, currentVersion, '.version-metadata.json');
+  const frozenPath = path.join(__dirname, '..', '..', subdir, currentVersion, '.version-frozen');
 
   const metadata = {
     version: currentVersion,
@@ -400,7 +410,7 @@ async function main() {
     process.exit(1);
   }
   if (!choices.includes(subdir)) {
-    printWarning(`Subdirectory "${subdir}" not found under docs/. Proceeding anyway.`);
+    printWarning(`Subdirectory "${subdir}" not found at repo root. Proceeding anyway.`);
   }
 
   // Load and display versions registry context for the selected product
@@ -510,8 +520,8 @@ async function main() {
     console.log(' Version freeze completed successfully!');
     console.log('='.repeat(50));
     console.log(`\n Status:`);
-    console.log(`   ✓ Version ${currentVersion} frozen at docs/${subdir}/${currentVersion}/`);
-    console.log(`   ✓ Development continues with ${newVersion} in docs/${subdir}/next/`);
+    console.log(`   ✓ Version ${currentVersion} frozen at ${subdir}/${currentVersion}/`);
+    console.log(`   ✓ Development continues with ${newVersion} in ${subdir}/next/`);
     console.log(`   ✓ Navigation and registry updated`);
     if (subdir === 'evm' && !['1','true','yes'].includes(String(process.env.SKIP_SHEETS || '').toLowerCase())) {
       console.log(`   ✓ Google Sheets tab created: ${currentVersion}`);

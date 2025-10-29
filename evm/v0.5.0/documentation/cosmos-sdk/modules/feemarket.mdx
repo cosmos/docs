@@ -1,0 +1,863 @@
+# Fee Market Module Reference
+
+The Fee Market module (`x/feemarket`) implements EIP-1559 dynamic fee pricing, enabling base fee adjustment based on block utilization. This provides better fee predictability and network congestion management compared to static gas pricing.
+
+## Module Overview
+
+**Purpose**: Implement EIP-1559 dynamic fee market mechanism for EVM transactions
+
+**Key Functionality**:
+- Dynamic base fee calculation based on block gas usage
+- EIP-1559 base fee per gas with automatic adjustment
+- Priority fee (tip) support for transaction ordering
+- Minimum gas price enforcement
+- Configurable elasticity for block gas limits
+- Fee burning mechanism (base fee is burned)
+
+**Source Code**: [x/feemarket](https://github.com/cosmos/evm/tree/main/x/feemarket)
+**Parameter Defaults**: [x/feemarket/types/params.go](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go)
+
+---
+
+## EIP-1559 Overview
+
+EIP-1559 introduces a dynamic fee structure:
+
+**Transaction Fee Components**:
+- **Base Fee**: Algorithmically determined fee per gas unit (burned)
+- **Priority Fee (Tip)**: Optional additional fee paid to validators
+- **Max Fee**: Maximum fee per gas the user is willing to pay
+
+**Fee Calculation**:
+```
+effective_gas_price = base_fee + priority_fee
+total_fee = gas_used * effective_gas_price
+```
+
+**Base Fee Adjustment**:
+- Block > target gas: Base fee increases (up to 12.5% per block with default settings)
+- Block < target gas: Base fee decreases (down to 12.5% per block)
+- Block = target gas: Base fee remains constant
+
+**Benefits**:
+- Predictable fees for users (base fee visible before transaction)
+- Automatic congestion response (fees rise when busy, fall when quiet)
+- MEV reduction (base fee not capturable by validators)
+- Better UX (wallets can show reliable fee estimates)
+
+---
+
+## Configuration Methods
+
+The Fee Market module is configured through genesis.json before chain launch. Fee market parameters have defaults and typically don't require modification in local_node.sh unless testing specific scenarios.
+
+### Method 1: Direct JSON Editing
+
+Edit `~/.evmd/config/genesis.json` directly:
+
+```json
+{
+  "app_state": {
+    "feemarket": {
+      "params": {
+        "no_base_fee": false,
+        "base_fee": "1000000000",
+        "base_fee_change_denominator": 8,
+        "elasticity_multiplier": 2,
+        "enable_height": 0,
+        "min_gas_price": "0",
+        "min_gas_multiplier": "0.5"
+      }
+    }
+  }
+}
+```
+
+### Method 2: Using jq Command-Line Tool
+
+Programmatically modify genesis using jq:
+
+```bash
+GENESIS="$HOME/.evmd/config/genesis.json"
+TMP_GENESIS="$HOME/.evmd/config/tmp_genesis.json"
+
+# Disable EIP-1559 (use fixed gas pricing)
+jq '.app_state["feemarket"]["params"]["no_base_fee"]=true' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Set initial base fee (1 gwei)
+jq '.app_state["feemarket"]["params"]["base_fee"]="1000000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Adjust base fee change speed (slower adjustment)
+jq '.app_state["feemarket"]["params"]["base_fee_change_denominator"]=50' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+
+# Set minimum gas price floor (0.5 gwei)
+jq '.app_state["feemarket"]["params"]["min_gas_price"]="500000000"' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
+### Method 3: Runtime Configuration
+
+Fee market behavior can also be influenced at node startup via app.toml:
+
+```bash
+# In app.toml - sets node-level minimum (separate from consensus param)
+minimum-gas-prices = "1000000000atest"  # 1 gwei minimum
+```
+
+**Note**: The `minimum-gas-prices` in app.toml is a node-level filter. Genesis params are consensus-level and apply chain-wide.
+
+---
+
+## Parameters
+
+### no_base_fee
+
+**What It Does**: Completely disables the EIP-1559 dynamic base fee mechanism. When true, the chain uses only `min_gas_price` as a fixed minimum fee.
+
+**Type**: `bool`
+
+**Valid Values**:
+- `false` - Enable EIP-1559 dynamic base fee (recommended, Ethereum-compatible)
+- `true` - Disable EIP-1559, use fixed min_gas_price only (pre-London behavior)
+
+**Default**: `false` ([params.go:21](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L21))
+
+**Configuration**:
+```bash
+# Using jq - Disable EIP-1559
+jq '.app_state["feemarket"]["params"]["no_base_fee"]=true' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": true
+    }
+  }
+}
+```
+
+**Impact**:
+
+**When false (EIP-1559 enabled)**:
+- Base fee adjusts dynamically based on block utilization
+- Better fee predictability for users
+- Automatic congestion management
+- Base fee is burned (deflationary pressure)
+- Standard Ethereum behavior
+
+**When true (EIP-1559 disabled)**:
+- Simple fixed minimum gas price
+- Easier to understand for some users
+- No dynamic adjustment to congestion
+- All fees go to validators (no burning)
+- Pre-London Ethereum behavior
+
+**Use Cases**:
+- `false` - Recommended for production chains, Ethereum compatibility
+- `true` - Simplified fee model for private chains or specific use cases
+
+**Compatibility Note**: Setting to `true` breaks Ethereum EIP-1559 transaction compatibility. Modern wallets expect dynamic fees.
+
+---
+
+### base_fee
+
+**What It Does**: Sets the initial base fee per gas in wei at genesis. This is the starting point for EIP-1559 base fee algorithm.
+
+**Type**: `string` (decimal number representing wei)
+
+**Valid Values**: Any non-negative decimal value in wei
+
+**Default**: `"1000000000"` (1 gwei, [params.go:13](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L13))
+
+**Configuration**:
+```bash
+# Using jq - Set to 10 gwei
+jq '.app_state["feemarket"]["params"]["base_fee"]="10000000000"' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "base_fee": "10000000000"
+    }
+  }
+}
+```
+
+**Common Values**:
+- `"100000000"` (0.1 gwei) - Very low for testnets or L2s
+- `"1000000000"` (1 gwei) - Default, good starting point
+- `"10000000000"` (10 gwei) - Higher initial fee for expected high demand
+- `"100000000000"` (100 gwei) - Very high for mainnet launch with known demand
+
+**Impact**:
+- Sets initial transaction costs at chain launch
+- Adjusts up/down automatically after genesis based on block utilization
+- Should align with expected network usage and token economics
+- Too low: May cause congestion at launch
+- Too high: May deter early adoption
+
+**Recommendations**:
+- **Testnet**: 0.1-1 gwei (low cost for testing)
+- **L2/App-specific**: 0.1-1 gwei (optimize for low fees)
+- **General Purpose L1**: 1-10 gwei (balanced)
+- **High Demand Launch**: 10-100 gwei (prevent spam)
+
+**Validation**: Must be non-negative ([params.go:66-68](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L66-L68))
+
+**Related**: Works with `enable_height` to delay EIP-1559 activation
+
+---
+
+### base_fee_change_denominator
+
+**What It Does**: Controls how quickly the base fee can change per block. Acts as the denominator in the base fee change calculation.
+
+**Type**: `uint32`
+
+**Valid Values**: Any positive integer (cannot be 0)
+
+**Default**: `8` (standard EIP-1559, from go-ethereum params, [params.go:51](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L51))
+
+**Configuration**:
+```bash
+# Using jq - Slower adjustment (±2% per block)
+jq '.app_state["feemarket"]["params"]["base_fee_change_denominator"]=50' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "base_fee_change_denominator": 8
+    }
+  }
+}
+```
+
+**How It Works**:
+
+The maximum base fee change per block is calculated as:
+```
+max_change_per_block = base_fee / base_fee_change_denominator
+```
+
+**Common Values**:
+| Value | Max Change/Block | Description |
+|-------|------------------|-------------|
+| `4` | ±25% | Fast adjustment (2x change in ~3 blocks) |
+| `8` | ±12.5% | Standard EIP-1559 (2x change in ~6 blocks) |
+| `16` | ±6.25% | Slower (2x change in ~12 blocks) |
+| `50` | ±2% | Very slow (2x change in ~35 blocks) |
+| `100` | ±1% | Extremely slow (2x change in ~70 blocks) |
+
+**Impact**:
+
+**Lower Denominator (faster adjustment)**:
+- Pros: Responds quickly to sudden traffic spikes, less predictable attack surface
+- Cons: More volatile fees, harder to predict costs, potential for rapid increases
+
+**Higher Denominator (slower adjustment)**:
+- Pros: More stable fees, better predictability, smoother UX
+- Cons: Slower response to congestion, takes longer to reach equilibrium
+
+**Recommendations**:
+- **Standard chains**: `8` (matches Ethereum mainnet)
+- **High-throughput chains**: `4-8` (faster response to varying load)
+- **Stable fee chains**: `16-50` (prioritize predictability)
+- **Private networks**: `100+` (minimal fee variation)
+
+**Example Scenarios**:
+
+With `denominator=8`, starting from 10 gwei base fee:
+- Block 100% full: Next base fee = 11.25 gwei (+12.5%)
+- Block 50% full (target): Next base fee = 10 gwei (unchanged)
+- Block 0% full: Next base fee = 8.75 gwei (-12.5%)
+
+With `denominator=50`, same conditions:
+- Block 100% full: Next base fee = 10.2 gwei (+2%)
+- Block 0% full: Next base fee = 9.8 gwei (-2%)
+
+**Validation**: Cannot be 0 ([params.go:62-64](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L62-L64))
+
+**Related**: Works with `elasticity_multiplier` to determine target gas usage
+
+---
+
+### elasticity_multiplier
+
+**What It Does**: Defines the maximum block gas limit as a multiple of target gas. Allows blocks to temporarily exceed target during high demand.
+
+**Type**: `uint32`
+
+**Valid Values**: Any positive integer (cannot be 0)
+
+**Default**: `2` (standard EIP-1559, from go-ethereum params, [params.go:52](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L52))
+
+**Configuration**:
+```bash
+# Using jq - More elastic (3x target)
+jq '.app_state["feemarket"]["params"]["elasticity_multiplier"]=3' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "elasticity_multiplier": 2
+    }
+  }
+}
+```
+
+**How It Works**:
+```
+target_gas = block_gas_limit / elasticity_multiplier
+max_block_gas = target_gas * elasticity_multiplier
+```
+
+With elasticity_multiplier = 2:
+- If block gas limit is 30M gas
+- Target gas per block = 15M gas
+- Maximum gas per block = 30M gas (2x target)
+
+**Base Fee Adjustment Logic**:
+- Block gas used > target gas → Base fee increases
+- Block gas used = target gas → Base fee stays constant
+- Block gas used < target gas → Base fee decreases
+
+**Common Values**:
+| Value | Description | Use Case |
+|-------|-------------|----------|
+| `1` | No elasticity (hard limit = target) | Strictly controlled throughput |
+| `2` | Standard EIP-1559 (2x burst capacity) | Balanced flexibility (Ethereum mainnet) |
+| `3` | Higher elasticity (3x burst capacity) | High-variance workloads |
+| `4+` | Very elastic | Extreme burst tolerance |
+
+**Impact**:
+
+**Lower Multiplier (1-2)**:
+- Pros: More predictable block sizes, easier to provision resources
+- Cons: Less burst capacity, may reject transactions during spikes
+
+**Higher Multiplier (3-4+)**:
+- Pros: Better handles traffic spikes, fewer transaction rejections
+- Cons: More variable block sizes, requires higher validator specs, longer block times
+
+**Example with multiplier=2**:
+- Block gas limit: 30M gas
+- Target: 15M gas
+- If block uses 20M gas (above target): Base fee increases
+- If block uses 10M gas (below target): Base fee decreases
+- If block uses 15M gas (at target): Base fee unchanged
+
+**Recommendations**:
+- **Standard chains**: `2` (matches Ethereum mainnet)
+- **High-throughput chains**: `2-3` (handle variable load)
+- **Resource-constrained chains**: `1-2` (predictable requirements)
+- **Burst-heavy chains**: `3-4` (accommodate spikes)
+
+**Validation**: Cannot be 0 ([params.go:74-76](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L74-L76))
+
+**Related**: Interacts with consensus param `block.max_gas` which sets the absolute maximum
+
+---
+
+### enable_height
+
+**What It Does**: Block height at which EIP-1559 base fee mechanism activates. Useful for coordinated mainnet upgrades to enable EIP-1559 after launch.
+
+**Type**: `int64`
+
+**Valid Values**: Any non-negative integer
+
+**Default**: `0` (enabled from genesis, [params.go:19](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L19))
+
+**Configuration**:
+```bash
+# Using jq - Enable EIP-1559 at block 100000
+jq '.app_state["feemarket"]["params"]["enable_height"]=100000' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "enable_height": 0
+    }
+  }
+}
+```
+
+**Common Values**:
+- `0` - Enable from genesis (recommended for new chains)
+- `100000` - Enable at specific future block height
+- `-1` or very large number - Effectively disabled (use `no_base_fee` instead)
+
+**Impact**:
+
+**Before enable_height**:
+- Base fee mechanism is inactive
+- Falls back to `min_gas_price` behavior
+- Transactions use pre-EIP-1559 gas pricing
+
+**At and after enable_height**:
+- Base fee mechanism activates
+- Dynamic fee adjustment begins
+- Transactions must use EIP-1559 fee structure
+
+**Use Cases**:
+
+**New Chain (enable_height=0)**:
+```json
+{
+  "enable_height": 0,
+  "base_fee": "1000000000"
+}
+```
+- EIP-1559 active from block 1
+- Recommended for new chains
+
+**Coordinated Upgrade (enable_height=100000)**:
+```json
+{
+  "enable_height": 100000,
+  "base_fee": "5000000000"
+}
+```
+- Chain launches with fixed fees
+- Switches to dynamic fees at block 100000
+- Allows testing before enabling
+- All validators must be ready by block 100000
+
+**Recommendations**:
+- **New chains**: Set to `0` (enable from start)
+- **Existing chains**: Use governance + hard fork to change (cannot be done via enable_height after launch)
+- **Testing**: Use specific block height to test fee market behavior
+
+**Validation**: Cannot be negative ([params.go:70-72](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L70-L72))
+
+**Important**: This parameter is checked at each block. Setting it in genesis affects when the module begins calculating base fees.
+
+---
+
+### min_gas_price
+
+**What It Does**: Sets a global minimum gas price floor in native token decimals. Provides an absolute minimum fee even if the dynamic base fee drops lower.
+
+**Type**: `string` (decimal value)
+
+**Valid Values**: Any non-negative decimal value
+
+**Default**: `"0"` (disabled, [params.go:17](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L17))
+
+**Configuration**:
+```bash
+# Using jq - Set 0.5 gwei minimum
+jq '.app_state["feemarket"]["params"]["min_gas_price"]="500000000"' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "min_gas_price": "500000000"
+    }
+  }
+}
+```
+
+**Common Values**:
+- `"0"` - No minimum floor (rely on base fee only, default)
+- `"1000000000"` - 1 gwei minimum floor
+- `"10000000000"` - 10 gwei minimum floor
+- `"100000000"` - 0.1 gwei minimum for low-fee chains
+
+**How It Works**:
+```
+effective_minimum = max(min_gas_price, base_fee * min_gas_multiplier)
+if base_fee < effective_minimum:
+    use effective_minimum
+else:
+    use base_fee
+```
+
+**Impact**:
+
+**When min_gas_price = 0 (default)**:
+- Base fee can fall arbitrarily low during quiet periods
+- Purely market-driven pricing
+- May approach 0 on idle chains
+- Standard Ethereum behavior
+
+**When min_gas_price > 0**:
+- Prevents fees from falling below floor
+- Protects against spam during quiet periods
+- Creates fixed revenue for validators even at low usage
+- May discourage usage if set too high
+
+**Use Cases**:
+
+**Public Chain (min_gas_price=0)**:
+```json
+{
+  "min_gas_price": "0",
+  "min_gas_multiplier": "0.5"
+}
+```
+- Pure EIP-1559 with no floor
+- Fees determined entirely by supply/demand
+- Recommended for Ethereum compatibility
+
+**Spam Protection (min_gas_price=1000000000)**:
+```json
+{
+  "min_gas_price": "1000000000",
+  "min_gas_multiplier": "0"
+}
+```
+- 1 gwei absolute minimum
+- Prevents fee races to zero
+- Good for chains that want cost floor
+
+**Low-Fee L2 (min_gas_price=100000000)**:
+```json
+{
+  "min_gas_price": "100000000",
+  "min_gas_multiplier": "0"
+}
+```
+- 0.1 gwei minimum
+- Cheap transactions guaranteed
+- Suitable for high-throughput chains
+
+**Recommendations**:
+- **Ethereum-compatible chains**: `"0"` (no floor)
+- **Anti-spam focus**: `"1000000000"` - `"10000000000"` (1-10 gwei)
+- **Low-fee chains**: `"100000000"` (0.1 gwei)
+- **Private chains**: Higher values to prevent test spam
+
+**Validation**: Must be non-negative ([params.go:89-98](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L89-L98))
+
+**Node-Level Minimum**: Remember that nodes can also set `minimum-gas-prices` in app.toml, which filters transactions locally before consensus.
+
+---
+
+### min_gas_multiplier
+
+**What It Does**: Fraction of base fee to use as the effective minimum gas price. Creates a dynamic minimum that scales with base fee.
+
+**Type**: `string` (decimal value between 0 and 1)
+
+**Valid Values**: Decimal between `0` and `1` (inclusive)
+
+**Default**: `"0.5"` (50% of base fee, [params.go:15](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L15))
+
+**Configuration**:
+```bash
+# Using jq - Set to 80% of base fee
+jq '.app_state["feemarket"]["params"]["min_gas_multiplier"]="0.8"' genesis.json > tmp.json && mv tmp.json genesis.json
+```
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "min_gas_multiplier": "0.5"
+    }
+  }
+}
+```
+
+**How It Works**:
+```
+effective_minimum = max(min_gas_price, base_fee * min_gas_multiplier)
+```
+
+If base fee is 10 gwei and min_gas_multiplier is 0.5:
+- Effective minimum = 5 gwei
+- Transactions below 5 gwei are rejected
+- Even if base fee drops to 8 gwei next block, minimum becomes 4 gwei
+
+**Common Values**:
+| Value | Meaning | Use Case |
+|-------|---------|----------|
+| `"0"` | No multiplier-based minimum | Rely only on `min_gas_price` |
+| `"0.5"` | 50% of base fee (default) | Balanced protection |
+| `"0.8"` | 80% of base fee | Stricter minimum |
+| `"1.0"` | 100% of base fee | Force exact base fee payment |
+
+**Impact**:
+
+**Lower Multiplier (0-0.5)**:
+- Allows transactions with lower gas prices relative to base fee
+- More forgiving for users during fee spikes
+- May allow some low-fee spam
+- Better for adoption
+
+**Higher Multiplier (0.5-1.0)**:
+- Stricter minimum gas price requirements
+- Better spam protection
+- May frustrate users who try to pay slightly below base fee
+- Forces full EIP-1559 fee payment
+
+**Examples**:
+
+**Default (min_gas_multiplier=0.5)**:
+- Base fee = 10 gwei → Minimum = 5 gwei
+- Base fee = 100 gwei → Minimum = 50 gwei
+- Scales with congestion, always accepts at least 50% of base fee
+
+**Strict (min_gas_multiplier=1.0)**:
+- Base fee = 10 gwei → Minimum = 10 gwei
+- Forces exact base fee payment
+- No transactions accepted below current base fee
+
+**Permissive (min_gas_multiplier=0)**:
+- Minimum determined only by `min_gas_price`
+- If `min_gas_price=0`, can accept very low fees
+- High spam risk
+
+**Recommendations**:
+- **Standard chains**: `"0.5"` (default, good balance)
+- **High-value chains**: `"0.8"` - `"1.0"` (strict enforcement)
+- **Spam-prone chains**: `"0.8"` - `"1.0"` (better protection)
+- **Low-fee L2s**: `"0"` - `"0.3"` (maximize accessibility)
+
+**Validation**: Must be between 0 and 1 inclusive ([params.go:101-114](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go#L101-L114))
+
+**Interaction**: Works together with `min_gas_price`. The effective minimum is the maximum of both values.
+
+---
+
+## Complete Configuration Examples
+
+### Standard EIP-1559 Configuration (Recommended)
+
+Based on Ethereum mainnet defaults:
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false,
+      "base_fee": "1000000000",
+      "base_fee_change_denominator": 8,
+      "elasticity_multiplier": 2,
+      "enable_height": 0,
+      "min_gas_price": "0",
+      "min_gas_multiplier": "0.5"
+    }
+  }
+}
+```
+
+Using jq:
+```bash
+GENESIS="$HOME/.evmd/config/genesis.json"
+TMP="$HOME/.evmd/config/tmp_genesis.json"
+
+jq '.app_state["feemarket"]["params"]["no_base_fee"]=false' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["base_fee"]="1000000000"' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["base_fee_change_denominator"]=8' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["elasticity_multiplier"]=2' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["enable_height"]=0' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["min_gas_price"]="0"' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+jq '.app_state["feemarket"]["params"]["min_gas_multiplier"]="0.5"' "$GENESIS" >"$TMP" && mv "$TMP" "$GENESIS"
+```
+
+### Low-Fee L2 Configuration
+
+Optimized for low transaction costs:
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false,
+      "base_fee": "100000000",
+      "base_fee_change_denominator": 16,
+      "elasticity_multiplier": 3,
+      "enable_height": 0,
+      "min_gas_price": "100000000",
+      "min_gas_multiplier": "0.3"
+    }
+  }
+}
+```
+
+### Fixed Fee Configuration (Disabled EIP-1559)
+
+Simple fixed pricing model:
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": true,
+      "base_fee": "0",
+      "base_fee_change_denominator": 8,
+      "elasticity_multiplier": 2,
+      "enable_height": 0,
+      "min_gas_price": "1000000000",
+      "min_gas_multiplier": "0"
+    }
+  }
+}
+```
+
+### High-Stability Configuration
+
+Minimal fee volatility:
+
+```json
+{
+  "feemarket": {
+    "params": {
+      "no_base_fee": false,
+      "base_fee": "10000000000",
+      "base_fee_change_denominator": 50,
+      "elasticity_multiplier": 2,
+      "enable_height": 0,
+      "min_gas_price": "5000000000",
+      "min_gas_multiplier": "0.8"
+    }
+  }
+}
+```
+
+---
+
+## Runtime Configuration (app.toml)
+
+In addition to genesis parameters, individual nodes can set minimum gas prices in app.toml:
+
+```toml
+# app.toml
+[json-rpc]
+# Node will reject transactions below this price
+minimum-gas-prices = "1000000000atest"  # 1 gwei in atest token
+
+# Minimum priority fee for mempool ordering
+evm-timeout = "5s"
+evm-max-tx-gas-wanted = 0
+```
+
+**Important Distinction**:
+- **Genesis params** (feemarket module): Consensus-level, enforced by all validators
+- **app.toml params**: Node-level filter, can vary per node
+
+Node-level `minimum-gas-prices` must be >= consensus-level minimum or the node will fail to produce valid blocks.
+
+---
+
+## Monitoring and Adjusting
+
+### Query Current Base Fee
+
+```bash
+# Query current base fee
+evmd query feemarket base-fee
+
+# Query all fee market params
+evmd query feemarket params
+```
+
+### Via JSON-RPC
+
+```bash
+# Get current base fee via eth_gasPrice
+curl -X POST http://localhost:8545 -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_gasPrice","params":[],"id":1}'
+
+# Get specific block's base fee
+curl -X POST http://localhost:8545 -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
+  | jq '.result.baseFeePerGas'
+```
+
+### Governance Updates
+
+Fee market parameters can be updated via governance proposals after launch:
+
+```bash
+# Example: Update base_fee_change_denominator to 50 (slower adjustment)
+evmd tx gov submit-proposal param-change proposal.json --from validator --chain-id mychain-1
+
+# proposal.json
+{
+  "title": "Slow Down Base Fee Adjustment",
+  "description": "Reduce base fee volatility by setting denominator to 50",
+  "changes": [
+    {
+      "subspace": "feemarket",
+      "key": "BaseFeeChangeDenominator",
+      "value": "50"
+    }
+  ],
+  "deposit": "10000000atest"
+}
+```
+
+---
+
+## Common Issues and Solutions
+
+### Issue: Transactions Fail with "Gas Price Too Low"
+
+**Cause**: Transaction gas price < effective minimum (base_fee or min_gas_price)
+
+**Solution**:
+- Check current base fee: `evmd query feemarket base-fee`
+- Ensure wallet uses EIP-1559 transaction type
+- Set `maxFeePerGas` >= current base fee + desired priority fee
+- Check node's `minimum-gas-prices` in app.toml
+
+### Issue: Base Fee Too Volatile
+
+**Cause**: `base_fee_change_denominator` too low (fast adjustment)
+
+**Solution**:
+- Increase `base_fee_change_denominator` (e.g., from 8 to 50)
+- Requires governance proposal to change after launch
+- Plan for this in genesis if predictable fees are critical
+
+### Issue: Network Congestion Not Responding
+
+**Cause**: `base_fee_change_denominator` too high (slow adjustment)
+
+**Solution**:
+- Decrease `base_fee_change_denominator` for faster response
+- Increase `elasticity_multiplier` to allow bigger blocks during spikes
+- Requires governance proposal after launch
+
+### Issue: Fees Never Decrease
+
+**Cause**: Blocks consistently above target gas
+
+**Solution**:
+- Check if `elasticity_multiplier` is appropriate for traffic pattern
+- Consider increasing block gas limit in consensus params
+- Evaluate if chain throughput needs scaling
+
+---
+
+## Related Documentation
+
+- [Building Your Chain Guide](/evm/v0.5.0/documentation/getting-started/build-a-chain/overview) - Main configuration walkthrough
+- [Chain Customization Checklist](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Complete parameter checklist
+- [VM Module](/evm/v0.5.0/documentation/cosmos-sdk/modules/vm) - EVM configuration
+- [Token Configuration Guide](/evm/v0.5.0/documentation/getting-started/build-a-chain/quick-start) - Token economics setup
+- [EIP-1559 Specification](https://eips.ethereum.org/EIPS/eip-1559) - Original Ethereum proposal
+
+---
+
+## Source Code References
+
+- **Module Implementation**: [x/feemarket](https://github.com/cosmos/evm/tree/main/x/feemarket)
+- **Parameter Types**: [x/feemarket/types/params.go](https://github.com/cosmos/evm/blob/main/x/feemarket/types/params.go)
+- **Keeper Logic**: [x/feemarket/keeper](https://github.com/cosmos/evm/tree/main/x/feemarket/keeper)
+- **Genesis Setup**: [local_node.sh](https://github.com/cosmos/evm/blob/main/local_node.sh) (feemarket uses defaults)
