@@ -685,7 +685,7 @@ For issues or questions:
 
 - Check this README first
 - Review the migration report for specific errors
-- Check Mintlify docs: <https://mintlify.com/docs>
+- Check Mintlify docs: [https://docs.mintlify.com](https://docs.mintlify.com)
 - Open an issue in the repository
 
 ## License

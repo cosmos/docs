@@ -2699,6 +2699,86 @@ async function updateDocsJson(allVersionData, product = 'generic') {
 }
 
 /**
+ * Write navigation snippet to file for staging mode
+ */
+async function writeNavigationSnippet(allVersionData, product = 'generic') {
+  const productName = product.toUpperCase();
+
+  // Build navigation structure (same logic as updateDocsJson)
+  const productDropdown = {
+    dropdown: productName,
+    icon: getProductIcon(product),
+    versions: []
+  };
+
+  for (const [version, files] of Object.entries(allVersionData)) {
+    const versionData = {
+      version: version,
+      tabs: [
+        {
+          tab: 'Documentation',
+          groups: [
+            {
+              group: productName,
+              pages: []
+            }
+          ]
+        }
+      ]
+    };
+
+    // Sort files by sidebar position
+    const sortedFiles = resolveSidebarPositionConflicts(files);
+
+    // Group files by directory structure
+    const groupedPages = {};
+
+    for (const file of sortedFiles) {
+      const cleanRelativePath = file.relativePath
+        .replace(/\/(\d+-)/g, '/')
+        .replace(/^(\d+-)/, '')
+        .replace('.mdx', '');
+
+      const relativePath = cleanRelativePath;
+      const parts = relativePath.split('/');
+
+      if (parts.length === 1) {
+        versionData.tabs[0].groups[0].pages.push(`${product}/${version}/${relativePath}`);
+      } else {
+        const groupName = parts[0].replace(/^\d+-/, '').replace(/-/g, ' ')
+          .replace(/\b\w/g, l => l.toUpperCase());
+
+        if (!groupedPages[groupName]) {
+          groupedPages[groupName] = [];
+        }
+        groupedPages[groupName].push(`${product}/${version}/${relativePath}`);
+      }
+    }
+
+    for (const [groupName, pages] of Object.entries(groupedPages)) {
+      versionData.tabs[0].groups.push({
+        group: groupName,
+        pages: pages
+      });
+    }
+
+    productDropdown.versions.push(versionData);
+  }
+
+  // Write to tmp directory
+  const tmpDir = './tmp/migration-staging';
+  if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
+
+  const snippetPath = path.join(tmpDir, 'navigation-snippet.json');
+  fs.writeFileSync(snippetPath, JSON.stringify(productDropdown, null, 2));
+
+  console.log(`\n Navigation snippet written to: ${snippetPath}`);
+  console.log(` Add this to docs.json under navigation.dropdowns`);
+}
+
+/**
  * Migrate all versions from a Docusaurus repository to Mintlify format.
  * Processes both current (docs/) and versioned (versioned_docs/) directories from source repository.
  *
@@ -2924,17 +3004,21 @@ async function main() {
       console.error('Error: Product name is required');
       console.error('Usage: node migrate-docusaurus.js <source-repo> <target-dir> <product> [options]');
       console.error('\nOptions:');
-      console.error('  --update-nav   Update docs.json with navigation');
-      console.error('  --dry-run      Process files but don\'t write anything');
-      console.error('  --staging      Write to ./tmp/migration-staging instead of target');
-      console.error('\nExample: node migrate-docusaurus.js ~/repos/gaia ./hub hub --dry-run');
-      console.error('Valid products: sdk, ibc, evm, hub, cometbft, or your custom product name');
+      console.error('  --update-nav     Update docs.json with navigation');
+      console.error('  --dry-run        Process files but don\'t write anything');
+      console.error('  --staging        Write to ./tmp/migration-staging instead of target');
+      console.error('  --version <ver>  Migrate single version (e.g., --version v25)');
+      console.error('\nExamples:');
+      console.error('  All versions: node migrate-docusaurus.js ~/repos/gaia ./hub hub --dry-run');
+      console.error('  Single version: node migrate-docusaurus.js ../gaia/docs/docs ./hub hub --version v25 --dry-run');
+      console.error('\nValid products: sdk, ibc, evm, hub, cometbft, or your custom product name');
       process.exit(1);
     }
 
     // Parse additional arguments
     let dryRun = false;
     let useStaging = false;
+    let singleVersion = null;
     for (let i = 0; i < restArgs.length; i++) {
       if (restArgs[i] === '--update-nav') {
         updateNavigation = true;
@@ -2942,6 +3026,9 @@ async function main() {
         dryRun = true;
       } else if (restArgs[i] === '--staging') {
         useStaging = true;
+      } else if (restArgs[i] === '--version' && i + 1 < restArgs.length) {
+        singleVersion = restArgs[i + 1];
+        i++; // Skip next arg since we consumed it
       }
     }
 
@@ -2952,16 +3039,70 @@ async function main() {
     console.log(`Update navigation: ${updateNavigation}`);
     console.log(`Dry run: ${dryRun}`);
     console.log(`Staging mode: ${useStaging}`);
+    if (singleVersion) {
+      console.log(`Single version mode: ${singleVersion}`);
+    }
 
     // If staging mode, change target to temp directory
+    let actualTargetDir = targetDirectory;
     if (useStaging) {
       console.log('\nStaging mode: Files will be written to ./tmp/migration-staging');
       console.log(`Paths will point to: /${product}/[version]/\n`);
-      targetDirectory = './tmp/migration-staging';
-      updateNavigation = false; // Don't update nav in staging mode
+      actualTargetDir = './tmp/migration-staging';
+      // Note: Navigation can still be updated in staging mode if --update-nav is passed
     }
 
-    await migrateAllVersions(repoPath, targetDirectory, product, { updateNavigation, dryRun });
+    // Handle single version or all versions
+    if (singleVersion) {
+      // Single version migration
+      console.log(`\n=== Migrating Single Version: ${singleVersion} ===\n`);
+
+      // Ensure version has 'v' prefix
+      const finalVersion = singleVersion.startsWith('v') ? singleVersion : `v${singleVersion}`;
+
+      // Build target path
+      const versionTargetDir = path.join(actualTargetDir, finalVersion);
+
+      if (!dryRun) {
+        if (!fs.existsSync(versionTargetDir)) {
+          fs.mkdirSync(versionTargetDir, { recursive: true });
+        }
+      }
+
+      // Process the directory
+      const { converted: convertedFiles } = await processDirectory(repoPath, versionTargetDir, finalVersion, product, dryRun);
+
+      console.log(`\n Processed ${convertedFiles.length} files for version ${finalVersion}`);
+
+      // Copy images if not dry run
+      if (!dryRun) {
+        const staticPath = path.join(path.dirname(repoPath), 'static');
+        if (fs.existsSync(staticPath)) {
+          const assetsDir = path.join(path.dirname(actualTargetDir), 'assets', product, 'images');
+          console.log(`\nCopying images from ${staticPath} to ${assetsDir}...`);
+          copyStaticAssets(staticPath, assetsDir);
+        }
+      }
+
+      // Update navigation if requested and not in dry-run
+      if (updateNavigation && !dryRun) {
+        console.log('\nUpdating navigation...');
+        const versionData = {
+          [finalVersion]: convertedFiles
+        };
+
+        if (useStaging) {
+          // In staging mode, write navigation snippet to file instead of updating docs.json
+          await writeNavigationSnippet(versionData, product);
+        } else {
+          // In normal mode, update docs.json directly
+          await updateDocsJson(versionData, product);
+        }
+      }
+    } else {
+      // All versions migration
+      await migrateAllVersions(repoPath, actualTargetDir, product, { updateNavigation, dryRun });
+    }
 
     if (useStaging) {
       console.log(`\n Files are in: ./tmp/migration-staging`);
@@ -2973,16 +3114,19 @@ async function main() {
     console.error('Error: Not enough arguments');
     console.error('Usage: node migrate-docusaurus.js <source-repo> <target-dir> <product> [options]');
     console.error('\nOptions:');
-    console.error('  --update-nav   Update docs.json with navigation');
-    console.error('  --dry-run      Process files but don\'t write anything');
-    console.error('  --staging      Write to ./tmp/migration-staging instead of target');
-    console.error('\nExample: node migrate-docusaurus.js ~/repos/gaia ./hub hub --dry-run');
+    console.error('  --update-nav     Update docs.json with navigation');
+    console.error('  --dry-run        Process files but don\'t write anything');
+    console.error('  --staging        Write to ./tmp/migration-staging instead of target');
+    console.error('  --version <ver>  Migrate single version (e.g., --version v25)');
+    console.error('\nExamples:');
+    console.error('  All versions: node migrate-docusaurus.js ~/repos/gaia ./hub hub --dry-run');
+    console.error('  Single version: node migrate-docusaurus.js ../gaia/docs/docs ./hub hub --version v25 --dry-run');
     process.exit(1);
   }
 
   console.log('Migration options:');
-  console.log('1. Migrate single version (original behavior)');
-  console.log('2. Migrate all versions from repository');
+  console.log('1. Migrate single version (from any docs directory)');
+  console.log('2. Migrate all versions from repository (docs/ + versioned_docs/)');
   console.log('Enter choice (1 or 2):');
 
   const choice = await prompt('> ');
@@ -3048,132 +3192,118 @@ async function main() {
     return;
   }
 
-  // Original single-version flow
-  console.log('Enter source directory:');
-  let sourceBase = await prompt('> ');
-  sourceBase = sourceBase.trim();
+  // Single-version flow (option 1)
+  console.log('\nEnter source docs directory (e.g., ../gaia/docs/docs or ./versioned_docs/version-0.50):');
+  const sourceDir = (await prompt('> ')).trim();
 
-  // List available versions
-  if (fs.existsSync(sourceBase)) {
-    const versions = fs.readdirSync(sourceBase)
-      .filter(d => d.startsWith('version-'))
-      .map(d => d.replace('version-', ''));
-
-    console.log(`\nAvailable versions: ${versions.join(', ')}`);
-    console.log('Enter version to convert:');
-    const versionInput = await prompt('> ');
-    const sourceVersion = `version-${versionInput.trim()}`;
-    const sourceDir = path.join(sourceBase, sourceVersion);
-
-    if (!fs.existsSync(sourceDir)) {
-      console.error(`Source directory not found: ${sourceDir}`);
-      process.exit(1);
-    }
-
-    // Get target directory
-    console.log('\nEnter target directory:');
-    let targetDir = await prompt('> ');
-    targetDir = targetDir.trim();
-
-    // Confirm before proceeding
-    console.log('\n=== Conversion Summary ===');
-    console.log(`Source: ${sourceDir}`);
-    console.log(`Target: ${targetDir}`);
-    console.log(`Version: v${versionInput.trim()}`);
-    console.log('\nProceed with conversion? (y/n)');
-
-    const confirm = await prompt('> ');
-    if (confirm.toLowerCase() !== 'y') {
-      console.log('Conversion cancelled');
-      process.exit(0);
-    }
-
-    // Get product name (required)
-    console.log('\nEnter product name (e.g., sdk, ibc, evm, cometbft):');
-    let productName = (await prompt('> ')).trim();
-
-    while (!productName) {
-      console.log('Product name is required for proper link resolution.');
-      console.log('Enter product name (e.g., sdk, ibc, evm, cometbft):');
-      productName = (await prompt('> ')).trim();
-    }
-
-    // Ask about dry-run mode
-    console.log('\nDry run mode? (process files but don\'t write anything) (y/n):');
-    const dryRun = (await prompt('> ')).trim().toLowerCase() === 'y';
-
-    let actualTargetDir = targetDir;
-    let finalProductPath = productName;
-    let finalVersion = `v${versionInput.trim()}`;
-    let useStaging = false;
-
-    if (!dryRun) {
-      // Ask about staging mode (only if not dry run)
-      console.log('\nUse staging mode? (outputs to ./tmp but generates final paths) (y/n):');
-      useStaging = (await prompt('> ')).trim().toLowerCase() === 'y';
-
-      if (useStaging) {
-        console.log('\nStaging mode enabled!');
-        console.log('Files will be written to: ./tmp/migration-staging');
-        console.log(`But paths will point to: /${productName}/${finalVersion}/`);
-        console.log('\nYou can then manually copy files from ./tmp/migration-staging to your final location.\n');
-
-        actualTargetDir = './tmp/migration-staging';
-      }
-    }
-
-    let updateNav = false;
-    if (!dryRun && !useStaging) {
-      // Ask about navigation update (only if not dry run or staging)
-      console.log('\nUpdate navigation files (docs.json and versions.json)? (y/n):');
-      updateNav = (await prompt('> ')).trim().toLowerCase() === 'y';
-    }
-
-    // Process files
-    console.log('\nProcessing files...\n');
-
-    // Reset migration issues tracker for single version migration
-    migrationIssues.reset();
-
-    const convertedFiles = await processDirectory(sourceDir, actualTargetDir, finalVersion, productName, dryRun);
-
-    console.log(`\n Successfully converted ${convertedFiles.converted.length} files`);
-
-    if (dryRun) {
-      console.log('\n DRY RUN COMPLETE - No files were written');
-      console.log(' Review the migration report above for any errors or warnings');
-      console.log(' Run without --dry-run to perform the actual migration');
-    } else if (useStaging) {
-      console.log(`\n Files are in: ${actualTargetDir}`);
-      console.log(` Copy the sections you want to: ./${productName}/${finalVersion}/`);
-    }
-
-    // Create single-version data structure for navigation update
-    const singleVersionData = {};
-    singleVersionData[finalVersion] = convertedFiles.converted;
-
-    // Optionally update navigation (skip if staging or dry run mode)
-    if (updateNav && !useStaging && !dryRun) {
-      await updateDocsJson(singleVersionData, productName);
-    } else if (dryRun) {
-      console.log('\n--- Skipping navigation update (dry run mode) ---');
-    } else if (useStaging) {
-      console.log('\n--- Skipping navigation update (staging mode) ---');
-    } else {
-      console.log('\n--- Skipping navigation update ---');
-    }
-
-    // Generate and display migration report
-    const report = migrationIssues.generateReport();
-    if (report) {
-      console.log(report);
-    } else {
-      console.log('\n No issues detected during migration!\n');
-    }
-
-  } else {
-    console.error(`Source directory not found: ${sourceBase}`);
+  if (!fs.existsSync(sourceDir)) {
+    console.error(`Source directory not found: ${sourceDir}`);
     process.exit(1);
+  }
+
+  console.log('\nEnter version to import as (e.g., v25 or 0.50):');
+  let versionInput = (await prompt('> ')).trim();
+
+  // Add 'v' prefix if not present and not already formatted
+  let finalVersion = versionInput.startsWith('v') ? versionInput : `v${versionInput}`;
+
+  console.log('\nEnter target directory (e.g., ./hub):');
+  const targetBase = (await prompt('> ')).trim();
+
+  console.log('\nEnter product name (e.g., hub, sdk, ibc):');
+  let productName = (await prompt('> ')).trim();
+
+  while (!productName) {
+    console.log('Product name is required for proper link resolution.');
+    console.log('Enter product name:');
+    productName = (await prompt('> ')).trim();
+  }
+
+  // Ask about dry-run mode
+  console.log('\nDry run mode? (process files but don\'t write anything) (y/n):');
+  const dryRun = (await prompt('> ')).trim().toLowerCase() === 'y';
+
+  let actualTargetDir = path.join(targetBase, finalVersion);
+  let useStaging = false;
+
+  if (!dryRun) {
+    // Ask about staging mode (only if not dry run)
+    console.log('\nUse staging mode? (outputs to ./tmp but generates final paths) (y/n):');
+    useStaging = (await prompt('> ')).trim().toLowerCase() === 'y';
+
+    if (useStaging) {
+      console.log('\nStaging mode enabled!');
+      console.log('Files will be written to: ./tmp/migration-staging');
+      console.log(`But paths will point to: /${productName}/${finalVersion}/`);
+      console.log('\nYou can then manually copy files from ./tmp/migration-staging to your final location.\n');
+
+      actualTargetDir = './tmp/migration-staging';
+    }
+  }
+
+  let updateNav = false;
+  if (!dryRun && !useStaging) {
+    // Ask about navigation update (only if not dry run or staging)
+    console.log('\nUpdate navigation files (docs.json and versions.json)? (y/n):');
+    updateNav = (await prompt('> ')).trim().toLowerCase() === 'y';
+  }
+
+  // Show summary and confirm
+  console.log('\n=== Conversion Summary ===');
+  console.log(`Source: ${sourceDir}`);
+  console.log(`Target: ${actualTargetDir}`);
+  console.log(`Version: ${finalVersion}`);
+  console.log(`Product: ${productName}`);
+  console.log(`Dry run: ${dryRun}`);
+  console.log('\nProceed? (y/n)');
+
+  const confirm = await prompt('> ');
+  if (confirm.toLowerCase() !== 'y') {
+    console.log('Migration cancelled');
+    rl.close();
+    process.exit(0);
+  }
+
+  // Process files
+  console.log('\nProcessing files...\n');
+
+  // Reset migration issues tracker for single version migration
+  migrationIssues.reset();
+
+  const convertedFiles = await processDirectory(sourceDir, actualTargetDir, finalVersion, productName, dryRun);
+
+  console.log(`\n Successfully converted ${convertedFiles.converted.length} files`);
+
+  if (dryRun) {
+    console.log('\n DRY RUN COMPLETE - No files were written');
+    console.log(' Review the migration report above for any errors or warnings');
+    console.log(' Run without --dry-run to perform the actual migration');
+  } else if (useStaging) {
+    console.log(`\n Files are in: ${actualTargetDir}`);
+    console.log(` Copy to final location: ./${productName}/${finalVersion}/`);
+  }
+
+  // Create single-version data structure for navigation update
+  const singleVersionData = {};
+  singleVersionData[finalVersion] = convertedFiles.converted;
+
+  // Optionally update navigation (skip if staging or dry run mode)
+  if (updateNav && !useStaging && !dryRun) {
+    await updateDocsJson(singleVersionData, productName);
+  } else if (dryRun) {
+    console.log('\n--- Skipping navigation update (dry run mode) ---');
+  } else if (useStaging) {
+    console.log('\n--- Skipping navigation update (staging mode) ---');
+  } else {
+    console.log('\n--- Skipping navigation update ---');
+  }
+
+  // Generate and display migration report
+  const report = migrationIssues.generateReport();
+  if (report) {
+    console.log(report);
+  } else {
+    console.log('\n No issues detected during migration!\n');
   }
 
   rl.close();
