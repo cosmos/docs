@@ -7,10 +7,65 @@ Documentation for all parts of the Cosmos Stack.
 
 ## Project Structure
 
-- `docs/<product>/next/` - Active development documentation
-- `docs/<product>/<version>` - Versioned documentation, by major release.
-- `scripts/versioning/` - Versioning automation - see [README](scripts/versioning/README.md).
-- `snippets/` - Custom components - Due to platform limitations, components cannot be versioned. However, it is possible to feed specific / versioned data to a component through a prop in the import (see `evm/v0.4.x/documentation/evm-compatibility/eip-reference.mdx` for a working example).
+- `<product>/next/` - Active development documentation (e.g., `sdk/next/`, `evm/next/`, `ibc/next/`, `hub/next/`)
+- `<product>/<version>/` - Versioned documentation, by major release (e.g., `sdk/v0.53/`, `evm/v0.5.0/`, `hub/v25/`)
+- `scripts/versioning/` - Versioning automation - see [README](scripts/versioning/README.md)
+- `scripts/migration/` - Docusaurus to Mintlify migration tools - see [migrate.js](scripts/migration/migrate.js)
+- `assets/<product>/images/` - Static assets (images) for each product
+- `snippets/` - Custom components - Due to platform limitations, components cannot be versioned. However, it is possible to feed specific / versioned data to a component through a prop in the import (see `evm/v0.4.x/documentation/evm-compatibility/eip-reference.mdx` for a working example)
+
+## Migrating Documentation
+
+To migrate documentation from Docusaurus to Mintlify format:
+
+```bash
+# Interactive mode (recommended - includes prompts for dry-run and staging)
+cd scripts/migration
+node migrate.js
+
+# Non-interactive mode with options
+node migrate.js <source-repo-path> <target-directory> <product-name> [options]
+
+# Dry run - see what would be migrated without writing files
+node migrate.js ~/repos/gaia ./hub hub --dry-run
+
+# Staging mode - write to temp directory for review
+node migrate.js ~/repos/gaia ./hub hub --staging
+
+# Full migration with navigation updates
+node migrate.js ~/repos/gaia ./hub hub --update-nav
+```
+
+> **Note:** The interactive mode will prompt you for dry-run and staging options, making it easy to test before running a full migration.
+
+### Migration Options
+
+- `--dry-run` - Process all files and show conversion results without writing any files. Use this to:
+
+  - Preview what will be migrated
+  - Check for conversion errors before committing
+  - Validate the migration will work correctly
+
+- `--staging` - Write files to `./tmp/migration-staging` instead of the target directory. Use this to:
+
+  - Review converted files before copying to final location
+  - Make manual adjustments if needed
+  - Test the migration output
+
+- `--update-nav` - Automatically update `docs.json` with navigation structure (not recommended with `--staging`)
+
+### What the Migration Does
+
+The migration script will:
+
+- Convert Docusaurus MDX to Mintlify-compatible format
+- Resolve all relative links (`./`, `../`, implicit) to absolute paths
+- Copy static assets to `assets/<product>/images/`
+- Fix internal links to use the new structure (`/<product>/<version>/...`)
+- Remove numbered prefixes from file and directory names
+- Convert Docusaurus admonitions to Mintlify callouts
+- Generate proper frontmatter for Mintlify
+- Report any conversion errors or warnings
 
 ## Contributing
 
@@ -36,9 +91,9 @@ Create a branch
 
 Make your changes
 
-- Edit or add files under `docs/next/` as needed.
-- Follow existing file structure and naming conventions.
-- Ensure Markdown is valid and links resolve.
+- Edit or add files under `<product>/next/` as needed (e.g., `sdk/next/`, `evm/next/`, `ibc/next/`)
+- Follow existing file structure and naming conventions
+- Ensure Markdown is valid and links resolve
 
 Local testing & validation
 
