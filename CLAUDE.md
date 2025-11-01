@@ -34,11 +34,13 @@ node scripts/generate-evm-rpc-docs.js
 # Generate OpenAPI specification from methods documentation
 node scripts/generate-evm-rpc-openapi.js
 
-# Refresh release notes from cosmos/evm changelog
-./scripts/refresh-release-notes.sh
+# Manage changelogs (unified script for all products)
+cd scripts/versioning && npm run changelogs -- --product evm --target next
+cd scripts/versioning && npm run changelogs -- --product evm --target v0.5.0
+cd scripts/versioning && npm run changelogs -- --product evm --all
 
-# Parse changelog to Mintlify format
-node scripts/parse-evm-changelog.js
+# Version management (freeze versions, update navigation, etc.)
+cd scripts/versioning && npm run freeze
 ```
 
 ### Testing Precompiles
@@ -71,8 +73,9 @@ The documentation follows a hierarchical structure configured in `docs.json`:
 
 1. **Mintlify Framework**: Documentation uses Mintlify v4.2.7 with custom MDX components and interactive features. Configuration in `docs.json` controls navigation, theming, and search.
 
-2. **Script Automation**: Scripts in `/scripts` handle:
-   - Parsing cosmos/evm changelog to generate release notes
+2. **Script Automation**: Scripts in `/scripts` and `/scripts/versioning` handle:
+   - Unified changelog management for all products (evm, sdk, ibc, hub) with version-specific filtering
+   - Version freezing and Google Sheets integration for EIP data snapshots
    - Creating interactive RPC documentation from methods.mdx
    - Generating OpenAPI specifications for API testing
 
@@ -91,12 +94,15 @@ When updating documentation:
 2. Run `npx mint dev` to preview changes locally
 3. Validate with `npx mint broken-links` before committing
 4. For RPC changes: regenerate docs with `node scripts/generate-evm-rpc-docs.js`
-5. For release notes: use `./scripts/refresh-release-notes.sh` to sync from upstream
+5. For release notes: use `cd scripts/versioning && npm run changelogs -- --product <product> --target <version>` to update changelogs
+6. For version freezing: use `cd scripts/versioning && npm run freeze` to create versioned snapshots
 
 ### Integration Points
 
-- **GitHub Actions**: Automated changelog sync workflow
-- **Cosmos EVM Repository**: Release notes pulled from github.com/cosmos/evm
+- **GitHub Actions**: Automated changelog sync workflow triggers `manage-changelogs.js` on new releases
+- **Multi-Product Changelogs**: Release notes pulled from configured repositories (cosmos/evm, cosmos/cosmos-sdk, cosmos/ibc-go, cosmos/gaia)
+- **Version-Specific Filtering**: Automatically filters changelog versions based on target directory (e.g., v0.5.0 directory only shows v0.5.x releases)
+- **Google Sheets Integration**: EIP compatibility data versioned through Google Sheets tabs (EVM only)
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 

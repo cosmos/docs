@@ -275,6 +275,19 @@ function parseChangelog(content, versionFilter = null) {
     });
   }
 
+  // Fallback: if nothing parsed, create a single update with available content
+  if (updates.length === 0) {
+    console.warn('  ⚠ No versions parsed from changelog, creating fallback entry');
+    const nonEmpty = lines.filter(l => l.trim().length).slice(0, 100);
+    updates.push({
+      version: 'latest',
+      date: '',
+      sections: {
+        'Changes': nonEmpty.map(l => sanitizeLine(l.trim()))
+      }
+    });
+  }
+
   // Apply version filter if specified
   if (versionFilter) {
     return updates.filter(u => u.version.startsWith(versionFilter));

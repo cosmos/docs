@@ -475,7 +475,7 @@ async function main() {
       if (shouldFetchReleaseNotes) {
         printInfo(`Release notes missing for ${currentVersion} in ${subdir}. Fetching from GitHub...`);
         try {
-          execSync(`node "${path.join(__dirname, 'release-notes.js')}" latest ${subdir}`, { stdio: 'inherit' });
+          execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target next --freeze`, { stdio: 'inherit' });
         } catch (e) {
           printWarning('Failed to fetch release notes automatically (network/permissions). Proceeding.');
         }
@@ -491,6 +491,15 @@ async function main() {
 
     // 2. Copy and update documentation
     copyAndUpdateDocs(currentVersion, subdir);
+
+    // 2.5. Generate version-specific changelog for frozen version
+    printInfo(`Generating version-specific changelog for ${currentVersion}...`);
+    try {
+      execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target ${currentVersion} --freeze`, { stdio: 'inherit' });
+      printSuccess('Version-specific changelog generated');
+    } catch (e) {
+      printWarning('Failed to generate version-specific changelog. Proceeding.');
+    }
 
     // 3. Handle Google Sheets and EIP reference (EVM only)
     if (subdir === 'evm') {

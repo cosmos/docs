@@ -241,21 +241,54 @@ npm run sheets <version>
 - Generates EIP reference MDX with sheetTab prop
 - Handles authentication and error recovery
 
-#### `release-notes.js`
+#### `manage-changelogs.js`
 
-Standalone changelog and release notes management.
+Unified changelog management for all products. Handles version-specific filtering, automatic generation, and integration with the versioning workflow.
 
 **Usage:**
 
 ```bash
-npm run release-notes [version|latest] [evm|sdk|ibc]
+# Generate changelog for 'next' (all versions)
+npm run changelogs -- --product evm --target next
+
+# Generate changelog for specific version (e.g., v0.5.x releases for v0.5.0 directory)
+npm run changelogs -- --product evm --target v0.5.0
+
+# Generate all changelogs for a product
+npm run changelogs -- --product evm --all
+
+# Test generation without modifying files (output to ./tmp)
+npm run changelogs -- --product evm --all --staging
+
+# Called by versioning script during version freeze
+npm run changelogs -- --product evm --target v0.5.0 --freeze
 ```
+
+**Command-Line Options:**
+
+- `--product <name>` - Product name (evm, sdk, ibc, hub) [default: evm]
+- `--target <version>` - Target version directory (next, v0.5.0, v0.4.x, etc.)
+- `--filter <pattern>` - Version filter pattern (v0.5, v0.4, etc.) - auto-detected from target if not specified
+- `--all` - Generate changelogs for all versions of the product
+- `--freeze` - Flag indicating this is a version freeze operation
+- `--source <ref>` - Git ref to fetch from (main, tag, etc.) [default: main]
+- `--staging` - Output to ./tmp directory instead of actual locations for testing
 
 **What it does:**
 
-- Fetches changelog from the product's GitHub repository (auto-detects `CHANGELOG.md`/variants)
-- Parses and converts to Mintlify format
-- Updates release notes file in `<subdir>/next/`
+- Fetches changelog from the product's GitHub repository (tries multiple paths: `CHANGELOG.md`, `RELEASE_NOTES.md`, etc.)
+- Parses changelog and filters by version pattern when targeting versioned directories
+- Converts to Mintlify format with `<Update>` components
+- Updates release notes file in `<product>/<target>/changelog/release-notes.mdx`
+- Auto-generates appropriate Info messages (versioned pages link to 'next', 'next' links to upstream UNRELEASED)
+
+**Version Filtering:**
+
+The script automatically filters versions based on the target directory:
+
+- `next` → Shows all versions from the changelog
+- `v0.5.0` → Shows only v0.5.x versions (v0.5.0, v0.5.1, v0.5.2, etc.)
+- `v0.4.x` → Shows only v0.4.x versions
 
 **Repository Sources:**
 
@@ -264,18 +297,26 @@ Release notes are fetched from GitHub repositories configured in `versions.json`
 - **evm** → `cosmos/evm`
 - **sdk** → `cosmos/cosmos-sdk`
 - **ibc** → `cosmos/ibc-go`
+- **hub** → `cosmos/gaia`
 
 **Changelog Format Compatibility:**
 
-All three repositories use similar changelog formats with minor variations:
+All repositories use similar changelog formats with minor variations:
 
 | Repository        | Version Format | Example       |
 | ----------------- | -------------- | ------------- |
 | cosmos/evm        | `## v0.4.1`    | No brackets   |
 | cosmos/cosmos-sdk | `## [v0.53.0]` | With brackets |
 | cosmos/ibc-go     | `## [v10.4.0]` | With brackets |
+| cosmos/gaia       | `## [v25.0.0]` | With brackets |
 
 The parser handles both formats automatically through flexible regex matching. Sections like "Features", "Bug Fixes", "Improvements" are recognized regardless of case variations.
+
+**Integration:**
+
+- Called by `version-manager.js` during version freeze to generate version-specific changelogs
+- Triggered by GitHub Actions workflow when new releases are published
+- Can be run manually to update existing changelogs or add new releases
 
 ### Supporting Scripts
 
@@ -448,11 +489,17 @@ Enter the new development version (e.g., v0.5.0): v0.5.0
 ### Update Release Notes Only
 
 ```bash
-# Fetch latest release notes into evm/next
-node scripts/versioning/release-notes.js latest evm
+# Generate changelog for evm/next (all versions)
+cd scripts/versioning && npm run changelogs -- --product evm --target next
 
-# Or fetch specific release into evm/next
-node scripts/versioning/release-notes.js v0.4.1 evm
+# Generate changelog for specific version directory
+cd scripts/versioning && npm run changelogs -- --product evm --target v0.5.0
+
+# Generate all changelogs for a product
+cd scripts/versioning && npm run changelogs -- --product evm --all
+
+# Test changelog generation without modifying files
+cd scripts/versioning && npm run changelogs -- --product evm --all --staging
 ```
 
 ### Manual Navigation Update
@@ -515,7 +562,7 @@ scripts/versioning/
 ├── GSHEET-SETUP.md              # Google Sheets API setup guide
 ├── version-manager.js           # Main orchestration (ESM)
 ├── sheets-manager.js            # Google Sheets operations (ESM)
-├── release-notes.js             # Changelog management (ESM)
+├── manage-changelogs.js         # Unified changelog management (ESM)
 ├── test-versioning.js           # System testing (ESM)
 ├── restructure-navigation.js    # Navigation cleanup utility
 ├── package.json                 # Node dependencies with ESM support
