@@ -33,6 +33,7 @@ function parseArgs() {
     all: false,
     freeze: false,
     source: 'main',
+    staging: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -54,6 +55,9 @@ function parseArgs() {
         break;
       case '--source':
         config.source = args[++i];
+        break;
+      case '--staging':
+        config.staging = true;
         break;
       case '--help':
         printHelp();
@@ -78,6 +82,7 @@ Options:
   --all                 Generate changelogs for all versions of the product
   --freeze              Flag indicating this is a version freeze operation
   --source <ref>        Git ref to fetch from (main, tag, etc.) [default: main]
+  --staging             Output to ./tmp directory instead of actual locations
   --help                Show this help message
 
 Examples:
@@ -89,6 +94,9 @@ Examples:
 
   # Generate all changelogs for EVM
   node manage-changelogs.js --product evm --all
+
+  # Test generation for all products (output to ./tmp)
+  node manage-changelogs.js --product evm --all --staging
 
   # Called during version freeze
   node manage-changelogs.js --product evm --target v0.5.0 --freeze
@@ -280,11 +288,20 @@ function generateMintlifyContent(updates, repo, product, target) {
   const productLabel = product.toUpperCase();
   const isNext = target === 'next';
 
+  // Extract version label for versioned pages (e.g., v0.5.0 -> "0.5.x", v0.4.x -> "0.4.x")
+  let versionLabel = '';
+  if (!isNext) {
+    const match = target.match(/v?(\d+\.\d+)/);
+    if (match) {
+      versionLabel = `${match[1]}.x`;
+    }
+  }
+
   const infoMessage = isNext
     ? `This page tracks all releases and changes from the [${repo}](https://github.com/${repo}) repository.
   For the latest development updates, see the [UNRELEASED](https://github.com/${repo}/blob/main/CHANGELOG.md#unreleased) section.`
-    : `This page tracks all releases and changes from the [${repo}](https://github.com/${repo}) repository.
-  For the latest development updates, see the [next](/${product}/next/changelog/release-notes) version.`;
+    : `This page tracks releases and changes for version ${versionLabel} from the [${repo}](https://github.com/${repo}) repository.
+  For all releases, see the [next](/${product}/next/changelog/release-notes) version.`;
 
   const content = `---
 title: "Release Notes"
@@ -316,18 +333,34 @@ ${sectionsContent}
 }
 
 // Write changelog to file
-function writeChangelog(content, product, target) {
-  const outputPath = path.join(__dirname, '..', '..', product, target, 'changelog', 'release-notes.mdx');
-  const dir = path.dirname(outputPath);
+function writeChangelog(content, product, target, staging = false) {
+  let outputPath;
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (staging) {
+    // Output to ./tmp directory for testing
+    const tmpDir = path.join(__dirname, '..', '..', 'tmp', 'changelogs', product, target);
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    outputPath = path.join(tmpDir, 'release-notes.mdx');
+  } else {
+    // Normal output path
+    outputPath = path.join(__dirname, '..', '..', product, target, 'changelog', 'release-notes.mdx');
+    const dir = path.dirname(outputPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 
   fs.writeFileSync(outputPath, content);
   const versionCount = (content.match(/<Update/g) || []).length;
 
-  console.log(`  ✓ Updated ${outputPath} with ${versionCount} version(s)`);
+  if (staging) {
+    console.log(`  ✓ [STAGING] Written to ${outputPath} with ${versionCount} version(s)`);
+  } else {
+    console.log(`  ✓ Updated ${outputPath} with ${versionCount} version(s)`);
+  }
+
   return { outputPath, versionCount };
 }
 
@@ -365,7 +398,7 @@ async function generateChangelog(config, productConfig, target) {
     target
   );
 
-  const result = writeChangelog(content, config.product, target);
+  const result = writeChangelog(content, config.product, target, config.staging);
   console.log(`  Versions: ${updates.map(u => u.version).join(', ')}`);
 
   return result;

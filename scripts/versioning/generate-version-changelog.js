@@ -104,6 +104,10 @@ async function main() {
     const changelog = await fetchChangelog();
     const updates = parseChangelog(changelog);
 
+    // Extract version label for Info message (e.g., v0.5.0 -> "0.5.x")
+    const match = OUTPUT_DIR.match(/v?(\d+\.\d+)/);
+    const versionLabel = match ? `${match[1]}.x` : OUTPUT_DIR;
+
     const mintlifyContent = `---
 title: "Release Notes"
 description: "Release history and changelog for Cosmos EVM"
@@ -111,8 +115,8 @@ mode: "wide"
 ---
 
 <Info>
-  This page tracks all releases and changes from the [cosmos/evm](https://github.com/cosmos/evm) repository.
-  For the latest development updates, see the [next](/evm/next/changelog/release-notes) version.
+  This page tracks releases and changes for version ${versionLabel} from the [cosmos/evm](https://github.com/cosmos/evm) repository.
+  For all releases, see the [next](/evm/next/changelog/release-notes) version.
 </Info>
 
 ${updates.map(update => {
