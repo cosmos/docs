@@ -10,6 +10,11 @@ on:
         description: 'EVM release tag to sync'
         required: true
         type: string
+      product:
+        description: 'Product name (evm, sdk, ibc, etc.)'
+        required: false
+        default: 'evm'
+        type: string
 
 jobs:
   sync-changelog:
@@ -25,55 +30,83 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Fetch EVM changelog
-        id: fetch-changelog
+      - name: Determine product and release info
+        id: release-info
         run: |
-          # Get the release tag from either repository_dispatch or workflow_dispatch
+          # Get the release tag and product
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
             RELEASE_TAG="${{ github.event.client_payload.tag_name }}"
+            PRODUCT="evm"  # Default for repository_dispatch from cosmos/evm
           else
             RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+            PRODUCT="${{ github.event.inputs.product }}"
           fi
 
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "product=$PRODUCT" >> $GITHUB_OUTPUT
 
-          # Fetch the entire CHANGELOG.md from the EVM repo main branch
-          # We always pull from main to get the complete changelog
-          curl -s "https://raw.githubusercontent.com/cosmos/evm/main/CHANGELOG.md" > /tmp/changelog.md
+          # Extract version pattern (e.g., v0.5.0 -> v0.5, v0.4.1 -> v0.4)
+          VERSION_PATTERN=$(echo "$RELEASE_TAG" | grep -oE '^v[0-9]+\.[0-9]+')
+          echo "version_pattern=$VERSION_PATTERN" >> $GITHUB_OUTPUT
 
-          if [ ! -s /tmp/changelog.md ]; then
-            echo "Failed to fetch changelog or changelog is empty"
-            exit 1
+          # Determine target directory based on versions.json
+          # Read versions from versions.json for this product
+          if command -v jq &> /dev/null; then
+            VERSIONS=$(jq -r ".products.${PRODUCT}.versions[]" versions.json 2>/dev/null || echo "")
+
+            # Find matching version directory
+            TARGET_DIR=""
+            for version in $VERSIONS; do
+              if [[ "$version" == "next" ]]; then
+                continue
+              fi
+              # Check if version directory matches this release
+              if echo "$version" | grep -q "$VERSION_PATTERN"; then
+                TARGET_DIR="$version"
+                break
+              fi
+            done
+
+            if [[ -z "$TARGET_DIR" ]]; then
+              echo "No matching version directory found for $RELEASE_TAG"
+              TARGET_DIR="next"  # Fallback to next
+            fi
+
+            echo "target_dir=$TARGET_DIR" >> $GITHUB_OUTPUT
+          else
+            echo "jq not available, using next as target"
+            echo "target_dir=next" >> $GITHUB_OUTPUT
           fi
 
-          echo "Successfully fetched changelog ($(wc -l < /tmp/changelog.md) lines)"
+          echo "Release: $RELEASE_TAG"
+          echo "Product: $PRODUCT"
+          echo "Version Pattern: $VERSION_PATTERN"
+          echo "Target Directory: $TARGET_DIR"
 
-      - name: Parse and convert changelog  
-        id: convert
-        run: node scripts/versioning/release-notes.js ${{ steps.fetch-changelog.outputs.release_tag }}
-
-      - name: Update changelog file
+      - name: Generate changelog for 'next'
         run: |
-          CHANGELOG_FILE="docs/next/changelog/release-notes.mdx"
+          node scripts/versioning/manage-changelogs.js \
+            --product ${{ steps.release-info.outputs.product }} \
+            --target next
 
-          # Create directory if it doesn't exist
-          mkdir -p "$(dirname "$CHANGELOG_FILE")"
-
-          # Replace the entire file with the newly generated content
-          cp /tmp/release-notes.mdx "$CHANGELOG_FILE"
-
-          echo "Changelog updated with $(grep -c '<Update' "$CHANGELOG_FILE") versions"
+      - name: Generate changelog for version-specific directory
+        if: steps.release-info.outputs.target_dir != 'next'
+        run: |
+          node scripts/versioning/manage-changelogs.js \
+            --product ${{ steps.release-info.outputs.product }} \
+            --target ${{ steps.release-info.outputs.target_dir }} \
+            --filter ${{ steps.release-info.outputs.version_pattern }}
 
       - name: Commit and push changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          git add docs/next/changelog/release-notes.mdx
+          git add "${{ steps.release-info.outputs.product }}/*/changelog/release-notes.mdx"
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "docs: update EVM changelog for ${{ steps.fetch-changelog.outputs.release_tag }}"
+            git commit -m "docs: update ${{ steps.release-info.outputs.product }} changelog for ${{ steps.release-info.outputs.release_tag }}"
             git push
           fi

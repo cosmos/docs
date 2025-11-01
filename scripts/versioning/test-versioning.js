@@ -64,16 +64,16 @@ try {
   process.exit(1);
 }
 
-// Test 4: Test release notes fetching
-console.log('3. Testing release notes...');
+// Test 4: Test changelog management
+console.log('3. Testing changelog management...');
 try {
-  execSync(`node release-notes.js latest evm`, {
+  execSync(`node manage-changelogs.js --product evm --target next`, {
     cwd: __dirname,
     stdio: 'pipe'
   });
-  console.log('   ✓ Release notes fetch successful');
+  console.log('   ✓ Changelog management successful');
 } catch (error) {
-  console.log('    Release notes test failed (may be network issue)');
+  console.log('    Changelog test failed (may be network issue)');
 }
 
 console.log('');
@@ -84,7 +84,7 @@ console.log('');
 console.log(' All critical tests passed!');
 console.log('');
 console.log('Ready to use:');
-console.log('   npm run freeze     # Freeze current version');
-console.log('   npm run release-notes [version]  # Update release notes');
-console.log('   npm run sheets <version>        # Manage Google Sheets');
+console.log('   npm run freeze                   # Freeze current version');
+console.log('   npm run changelogs -- --product evm --target next  # Update changelogs');
+console.log('   npm run sheets <version>         # Manage Google Sheets');
 console.log('');
