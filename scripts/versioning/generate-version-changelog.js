@@ -107,7 +107,7 @@ async function main() {
     const mintlifyContent = `---
 title: "Release Notes"
 description: "Release history and changelog for Cosmos EVM"
-mode: "center"
+mode: "wide"
 ---
 
 <Info>
