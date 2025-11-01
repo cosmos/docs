@@ -7,7 +7,9 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const REPO = 'cosmos/evm';
-const SOURCE = 'main'; // Use main to get v0.5.0 release notes
+const SOURCE = 'main';
+const VERSION_PATTERN = process.argv[2] || 'v0.5'; // e.g., 'v0.5' matches v0.5.0, v0.5.1, etc.
+const OUTPUT_DIR = process.argv[3] || 'v0.5.0'; // Output directory name
 
 async function fetchChangelog() {
   console.log(`Fetching changelog from ${REPO}: ${SOURCE}...`);
@@ -93,8 +95,8 @@ function parseChangelog(content) {
     updates.push({ version: currentVersion, date: currentDate, sections });
   }
 
-  // Filter to only include v0.5.0
-  return updates.filter(u => u.version === 'v0.5.0');
+  // Filter to only include versions matching the pattern (e.g., v0.5.x)
+  return updates.filter(u => u.version.startsWith(VERSION_PATTERN));
 }
 
 async function main() {
@@ -105,12 +107,12 @@ async function main() {
     const mintlifyContent = `---
 title: "Release Notes"
 description: "Release history and changelog for Cosmos EVM"
-mode: "wide"
+mode: "center"
 ---
 
 <Info>
   This page tracks all releases and changes from the [cosmos/evm](https://github.com/cosmos/evm) repository.
-  For the latest development updates, see the [UNRELEASED](https://github.com/cosmos/evm/blob/main/CHANGELOG.md#unreleased) section.
+  For the latest development updates, see the [next](/evm/next/changelog/release-notes) version.
 </Info>
 
 ${updates.map(update => {
@@ -125,9 +127,14 @@ ${updates.map(update => {
   return `<Update label="${label}" description="${update.version}" tags={["EVM", "Release"]}>
 ${sectionsContent}
 </Update>`;
-}).join('\n\n')}`;
+}).join('\n\n')}
+`;
 
-    const outputPath = path.join(__dirname, '..', '..', 'evm', 'v0.5.0', 'changelog', 'release-notes.mdx');
+    const outputPath = path.join(__dirname, '..', '..', 'evm', OUTPUT_DIR, 'changelog', 'release-notes.mdx');
+    const dir = path.dirname(outputPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(outputPath, mintlifyContent);
     console.log(`✓ Updated ${outputPath} with ${updates.length} version(s)`);
     console.log(`  Versions: ${updates.map(u => u.version).join(', ')}`);
