@@ -319,7 +319,6 @@ function generateMintlifyContent(updates, repo, product, target) {
   const content = `---
 title: "Release Notes"
 description: "Release history and changelog for Cosmos ${productLabel}"
-mode: "wide"
 ---
 
 <Info>
