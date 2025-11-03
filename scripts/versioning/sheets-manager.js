@@ -194,7 +194,7 @@ import EIPCompatibilityTable from '/snippets/eip-compatibility-table.jsx'
 
 *This page displays a frozen snapshot of EIP compatibility data for version ${version}.*`;
 
-  const outputPath = path.join(__dirname, '..', '..', subdir, version, 'documentation', 'evm-compatibility', 'eip-reference.mdx');
+  const outputPath = path.join(__dirname, '..', '..', 'docs', subdir, version, 'documentation', 'evm-compatibility', 'eip-reference.mdx');
 
   // Ensure directory exists
   const dir = path.dirname(outputPath);
