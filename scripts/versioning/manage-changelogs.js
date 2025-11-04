@@ -335,7 +335,38 @@ ${updates.map(update => {
     .filter(s => s)
     .join('\n\n');
 
-  return `<Update label="${label}" description="${update.version}" tags={["${productLabel}", "Release"]}>
+  // Generate tags based on sections present in this release
+  const tags = [productLabel];
+  const sections = Object.keys(update.sections).map(s => s.toLowerCase());
+
+  // Add category tags based on sections
+  const hasFeatures = sections.some(s => s.includes('feature'));
+  const hasBugFixes = sections.some(s => s.includes('bug') || s.includes('fix'));
+  const hasImprovements = sections.some(s => s.includes('improvement'));
+  const hasDependencies = sections.some(s => s.includes('dependenc'));
+  const hasBreaking = sections.some(s => s.includes('breaking'));
+  const hasStateMachineBreaking = sections.some(s => s.includes('state machine breaking'));
+  const hasAPIBreaking = sections.some(s => s.includes('api') && s.includes('breaking'));
+  const hasSecurity = sections.some(s => s.includes('security'));
+  const hasDeprecated = sections.some(s => s.includes('deprecat'));
+  const hasTesting = sections.some(s => s.includes('testing'));
+  const hasDocumentation = sections.some(s => s.includes('documentation'));
+
+  if (hasFeatures) tags.push('Features');
+  if (hasBugFixes) tags.push('Bug Fixes');
+  if (hasImprovements) tags.push('Improvements');
+  if (hasDependencies) tags.push('Dependencies');
+  if (hasSecurity) tags.push('Security');
+  if (hasDeprecated) tags.push('Deprecated');
+  if (hasTesting) tags.push('Testing');
+  if (hasDocumentation) tags.push('Documentation');
+
+  // Add breaking change indicators (most important last for visibility)
+  if (hasAPIBreaking) tags.push('API Breaking');
+  if (hasStateMachineBreaking) tags.push('State Breaking');
+  if (hasBreaking && !hasStateMachineBreaking && !hasAPIBreaking) tags.push('Breaking');
+
+  return `<Update label="${label}" description="${update.version}" tags={${JSON.stringify(tags)}}>
 ${sectionsContent}
 </Update>`;
 }).join('\n\n')}
