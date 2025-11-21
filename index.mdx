@@ -35,7 +35,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
             #custom-nav-links {
               position: fixed !important;
               top: 20px !important;
-              right: 160px !important; /* moved left so theme toggle (moon) has space */
+              right: 100px !important;
               display: flex !important;
               gap: 24px !important;
               align-items: center !important;
@@ -235,7 +235,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 />
 
 <style>{`
-  /* Hide Mintlify navigation tabs only (leave header + theme toggle alone) */
+  /* Hide navigation tabs */
   .nav-tabs,
   div.nav-tabs,
   .nav-tabs-item,
@@ -245,8 +245,10 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
     opacity: 0 !important;
   }
 
-  /* Optionally hide version dropdown inside nav tabs if present */
-  .nav-tabs button[aria-haspopup="menu"] {
+  /* Hide version dropdown button */
+  button[aria-haspopup="menu"],
+  button[data-state],
+  button.group[class*="rounded-full"] {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
@@ -254,33 +256,107 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
 `}</style>
 
 <script>{`
-  // Keep #custom-index-content theme in sync with Mintlify (dark / light)
+  // Aggressive navigation hiding
+  function hideNavElements() {
+    const selectors = [
+      '.nav-tabs',
+      'div.nav-tabs',
+      '.nav-tabs-item',
+      'a.nav-tabs-item',
+      '.link.nav-tabs-item',
+      'button[aria-haspopup="menu"]',
+      'button[data-state]',
+      'button.group',
+      'button[class*="bg-background-light"]',
+      'button[class*="bg-background-dark"]',
+      'header button:not([aria-label*="theme"]):not([aria-label*="Theme"])',
+      'header a.link',
+      'header .link',
+      '[class*="rounded-full"]:not([aria-label*="theme"]):not([aria-label*="Theme"])',
+      '[class*="lg:flex"]',
+      'nav',
+      '[role="navigation"]',
+      'header a:not([href="/"])',
+      '[class*="version"]',
+      '[class*="Version"]',
+      '[class*="breadcrumb"]'
+    ];
+
+    selectors.forEach(selector => {
+      try {
+        document.querySelectorAll(selector).forEach(el => {
+          el.style.setProperty('display', 'none', 'important');
+          el.style.setProperty('visibility', 'hidden', 'important');
+          el.style.setProperty('opacity', '0', 'important');
+          el.style.setProperty('pointer-events', 'none', 'important');
+          el.style.setProperty('position', 'absolute', 'important');
+          el.style.setProperty('left', '-9999px', 'important');
+        });
+      } catch(e) {}
+    });
+  }
+
+  // Theme detection
   function applyTheme() {
     const html = document.documentElement;
-    const theme =
-      html.getAttribute('data-theme') ||
-      (html.classList.contains('dark') ? 'dark' : 'light');
-
+    const theme = html.getAttribute('data-theme') ||
+                  (html.classList.contains('dark') ? 'dark' : 'light');
     const customContent = document.getElementById('custom-index-content');
     if (customContent) {
       customContent.setAttribute('data-theme', theme);
     }
   }
 
+  // Run immediately and repeatedly
   if (typeof window !== 'undefined') {
+    hideNavElements();
+    setTimeout(hideNavElements, 0);
+    setTimeout(hideNavElements, 100);
+    setTimeout(hideNavElements, 500);
+    setTimeout(hideNavElements, 1000);
+
+    window.addEventListener('load', hideNavElements);
+    document.addEventListener('DOMContentLoaded', hideNavElements);
+
+    // Apply theme on load
     applyTheme();
+    setTimeout(applyTheme, 0);
+    setTimeout(applyTheme, 100);
+    setTimeout(applyTheme, 500);
     window.addEventListener('load', applyTheme);
     document.addEventListener('DOMContentLoaded', applyTheme);
 
-    // Watch for theme changes (e.g. clicking the moon)
+    // Watch for dynamic content and theme changes
     const observer = new MutationObserver(() => {
+      hideNavElements();
       applyTheme();
     });
 
+    // Watch HTML element for theme changes
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme', 'class'],
+      attributeFilter: ['data-theme', 'class']
     });
+
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style']
+      });
+    } else {
+      setTimeout(() => {
+        if (document.body) {
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
+          });
+        }
+      }, 100);
+    }
   }
 `}</script>
 
@@ -336,6 +412,7 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
   #custom-index-content[data-theme="light"] .heading-underline {
     background: #000000 !important;
   }
+
 
   /* Text colors */
   #custom-index-content[data-theme="dark"] .text,
@@ -795,7 +872,6 @@ import { TopicCard, TopicCardGrid } from '/snippets/topic-card-component.jsx';
         style={{
           borderRadius: '12px',
           padding: '40px',
-          marginBottom: '24px',
           transition: 'all 0.3s ease',
           transform: 'translateY(0)',
           cursor: 'default',
