@@ -1,0 +1,381 @@
+---
+title: "Adding EVM to an Existing Chain"
+description: "Guide for integrating the EVM module into a running Cosmos chain post-genesis"
+---
+
+## Overview
+
+Adding the EVM module to an existing Cosmos chain post-genesis is fully supported and has been successfully deployed in production environments. This guide covers the essential configuration requirements to ensure a smooth transition from a standard Cosmos chain to an EVM-compatible chain.
+
+<Info>
+The integration process focuses on two critical areas: account derivation setup and gas token configuration. Both must be properly configured before adding the EVM module to maintain compatibility with Ethereum tooling and wallets.
+</Info>
+
+## Prerequisites
+
+Before beginning the integration process, ensure you have:
+
+- A running Cosmos SDK chain with governance enabled
+- Access to modify the chain's configuration and codebase
+- Understanding of your chain's current account derivation setup
+- Knowledge of your gas token's decimal configuration
+
+<Warning>
+These changes require a coordinated chain upgrade via governance. All validators must upgrade simultaneously to maintain consensus.
+</Warning>
+
+---
+
+## 1) Address Derivation Setup
+
+Proper address derivation is critical for ensuring compatibility with Ethereum wallets, CLI tools, and block explorers. This setup consists of two components that work together to generate Ethereum-compatible addresses on your Cosmos chain.
+
+### Set Coin Type to 60
+
+The coin type is part of the BIP44 public key derivation path and must be set to `60` ([Ethereum's standard](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/crypto/hd/hdpath.go#L9)) for EVM compatibility. This ensures that wallets using standard Ethereum derivation paths can correctly generate keys for your chain.
+
+**Configure in your chain's initialization:**
+
+```go
+// Set the coin type in your SDK config
+config := sdk.GetConfig()
+config.SetCoinType(60) // Ethereum's coin type
+config.Seal()
+```
+
+**Reference implementation:** [evmd/config/bech32.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/config/bech32.go#L34)
+
+<Info>
+The coin type must be set during chain initialization and before the SDK config is sealed. Once sealed, the configuration cannot be modified.
+</Info>
+
+### Add EthSecp256k1 Key Type
+
+The `EthSecp256k1` key type enables Ethereum-style address derivation, which uses the last 20 bytes of the public key rather than hashing and Bech32 encoding. This makes it possible to convert between `0x` prefixed addresses and Cosmos Bech32 addresses.
+
+**Add to keyring and signing options:**
+
+```go
+import (
+    "github.com/cosmos/evm/crypto/hd"
+    ethermint "github.com/cosmos/evm/crypto/keyring"
+)
+
+// In your app initialization (app.go)
+
+// 1. Add EthSecp256k1 to keyring options
+options := keyring.Options{
+    SupportedAlgos: append(
+        keyring.SigningAlgoList{hd.EthSecp256k1},
+        keyring.SigningAlgoList{hd.Secp256k1}...,
+    ),
+    SupportedAlgosLedger: keyring.SigningAlgoList{hd.EthSecp256k1},
+}
+
+// 2. Add to encoding config's signing options
+encodingConfig := MakeEncodingConfig()
+encodingConfig.TxConfig = authtx.NewTxConfig(
+    appCodec,
+    []signingtypes.SignMode{
+        signingtypes.SignMode_SIGN_MODE_DIRECT,
+        signingtypes.SignMode_SIGN_MODE_LEGACY_AMINO_JSON,
+        signingtypes.SignMode_SIGN_MODE_EIP_191, // Add EIP-191 signing
+    },
+)
+```
+
+**Reference implementations:**
+- Keyring options: [cmd/evmd/cmd/root.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/cmd/evmd/cmd/root.go#L85)
+- Encoding config in app.go: [evmd/app.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/app.go#L214)
+- Encoding config helper: [encoding/config.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/encoding/config.go#L33)
+
+### Why This Matters
+
+The combination of coin type 60 and `EthSecp256k1` key type ensures:
+
+- **Wallet Compatibility**: MetaMask, Ledger, and other Ethereum wallets work seamlessly
+- **Address Conversion**: Users can easily convert between `0x` and Bech32 address formats
+- **Tooling Support**: Ethereum development tools (Hardhat, Foundry, Remix) function correctly
+- **Block Explorer Integration**: Standard Ethereum explorers can index and display transactions
+
+---
+
+## 2) Gas Token Decimals
+
+Ethereum uses 18 decimals for its gas token (1 wei = 10^-18 ETH), and maintaining this standard is strongly preferred for EVM compatibility. The decimal configuration affects how gas prices are calculated and displayed across all Ethereum tooling.
+
+### Option A: 18-Decimal Gas Token (Preferred)
+
+If your chain already uses an 18-decimal token as the gas token, no additional configuration is needed. The EVM module will work natively with your existing token.
+
+**Genesis configuration:**
+
+```json
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "base": "atoken",
+          "display": "token",
+          "name": "Token",
+          "symbol": "TKN",
+          "denom_units": [
+            {
+              "denom": "atoken",
+              "exponent": 0
+            },
+            {
+              "denom": "token",
+              "exponent": 18
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### Option B: Non-18-Decimal Token with PreciseBank
+
+For chains with non-18-decimal gas tokens (e.g., 6 decimals like `uatom`), use the [`x/precisebank`](https://github.com/cosmos/evm/tree/main/x/precisebank) module to track fractional balances at the EVM level while maintaining the native denomination for Cosmos transactions.
+
+The `precisebank` module wraps the standard `bank` module and stores fractional balances separately. For example, if someone transfers 0.5 × 10^-6 tokens (less than 1 `uatom`) via an EVM transaction, precisebank tracks this fractional amount even though the base denomination can't represent it.
+
+**Integration steps:**
+
+1. **Add precisebank to your imports:**
+
+```go
+import (
+    precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+    precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+)
+```
+
+2. **Initialize the keeper:**
+
+```go
+// In app.go
+app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[precisebanktypes.StoreKey]),
+    app.BankKeeper,
+    authtypes.NewModuleAddress(govtypes.ModuleName),
+)
+```
+
+3. **Wire precisebank into the EVM keeper:**
+
+```go
+app.EVMKeeper = evmkeeper.NewKeeper(
+    appCodec,
+    keys[evmtypes.StoreKey],
+    tkeys[evmtypes.TransientKey],
+    keys,
+    authtypes.NewModuleAddress(govtypes.ModuleName),
+    app.AccountKeeper,
+    app.PreciseBankKeeper, // Use PreciseBankKeeper instead of BankKeeper
+    app.StakingKeeper,
+    app.FeeMarketKeeper,
+    &app.ConsensusParamsKeeper,
+    &app.Erc20Keeper,
+    evmChainID,
+    tracer,
+)
+```
+
+<Warning>
+When using precisebank, ensure you configure the ExtendedDenomOptions in your VM params during the upgrade handler. See the [migration guide](/evm/next/documentation/migrations/migration-v0.4-to-v0.5#upgradehandler) for details.
+</Warning>
+
+### Decimal Configuration Summary
+
+| Token Type | Configuration | Module Required |
+|------------|---------------|-----------------|
+| 18-decimal native token | Standard setup | None |
+| Non-18-decimal token | ExtendedDenomOptions + precisebank | `x/precisebank` |
+
+---
+
+## 3) Upgrade Handler Implementation
+
+After configuring address derivation and gas token decimals, implement an upgrade handler to add the EVM module to your running chain.
+
+### Basic Upgrade Handler
+
+```go
+// app/upgrades.go
+func (app *App) RegisterUpgradeHandlers() {
+    const upgradeName = "add-evm"
+
+    app.UpgradeKeeper.SetUpgradeHandler(
+        upgradeName,
+        func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+            sdkCtx := sdk.UnwrapSDKContext(ctx)
+            sdkCtx.Logger().Info("Starting EVM module addition", "name", plan.Name)
+
+            // Initialize EVM module stores
+            fromVM[evmtypes.ModuleName] = 0
+            fromVM[feemarkettypes.ModuleName] = 0
+
+            // If using precisebank
+            fromVM[precisebanktypes.ModuleName] = 0
+
+            // Run module migrations to initialize stores
+            migrations, err := app.ModuleManager.RunMigrations(ctx, app.configurator, fromVM)
+            if err != nil {
+                return nil, err
+            }
+
+            // Initialize EVM coin info
+            if err := app.EVMKeeper.InitEvmCoinInfo(ctx); err != nil {
+                return nil, err
+            }
+
+            sdkCtx.Logger().Info("EVM module successfully added")
+            return migrations, nil
+        },
+    )
+}
+```
+
+### Setting Initial Parameters
+
+Configure the EVM module's initial parameters in your upgrade handler:
+
+```go
+// Set VM parameters
+vmParams := vmtypes.DefaultParams()
+vmParams.EvmDenom = "atoken" // Your gas token denom
+
+// For non-18-decimal tokens, set ExtendedDenomOptions
+if tokenDecimals != 18 {
+    vmParams.ExtendedDenomOptions = &vmtypes.ExtendedDenomOptions{
+        BaseDenom: "atoken",
+        DisplayDenom: "token",
+        DisplayDecimals: tokenDecimals, // e.g., 6 for uatom
+    }
+}
+
+if err := app.EVMKeeper.SetParams(ctx, vmParams); err != nil {
+    return nil, err
+}
+
+// Set fee market parameters
+feeMarketParams := feemarkettypes.DefaultParams()
+if err := app.FeeMarketKeeper.SetParams(ctx, feeMarketParams); err != nil {
+    return nil, err
+}
+```
+
+<Info>
+Refer to the [upgrade handlers documentation](/evm/next/documentation/migrations/upgrade-handlers) for more details on implementing and testing upgrade handlers.
+</Info>
+
+---
+
+## 4) Testing and Validation
+
+Before proposing the upgrade on mainnet, thoroughly test on a testnet or local network.
+
+### Pre-Upgrade Checklist
+
+- [ ] Coin type set to 60
+- [ ] EthSecp256k1 added to keyring and signing options
+- [ ] Gas token decimal configuration determined (18-decimal native or precisebank)
+- [ ] Upgrade handler implemented and tested
+- [ ] All module dependencies added to go.mod
+- [ ] Build completes successfully: `go build ./...`
+
+### Post-Upgrade Validation
+
+After the upgrade executes:
+
+1. **Verify address derivation:**
+   ```bash
+   # Create a new key with eth_secp256k1
+   <binary> keys add test-key --keyring-backend test --algo eth_secp256k1
+
+   # Verify the address format matches Ethereum expectations
+   ```
+
+2. **Test EVM transactions:**
+   ```bash
+   # Send a simple EVM transaction
+   # Verify it processes correctly and gas is calculated in wei
+   ```
+
+3. **Check module parameters:**
+   ```bash
+   <binary> query vm params
+   <binary> query feemarket params
+   ```
+
+4. **Validate cross-chain functionality:**
+   - Test sending EVM transactions from MetaMask
+   - Verify Cosmos-to-EVM address conversion
+   - Confirm precompiles are accessible (if configured)
+
+---
+
+## Key Considerations
+
+### Chain Halt Risk
+
+<Warning>
+Improper configuration can cause consensus failures. Always test the complete upgrade process on a testnet that mirrors your mainnet state before proposing the governance upgrade.
+</Warning>
+
+### Account Migration
+
+Existing accounts on your chain will continue to work after adding the EVM module. However:
+
+- Legacy accounts using `secp256k1` keys can still interact with Cosmos SDK modules
+- New EVM-compatible accounts should be created with `eth_secp256k1` keys
+- Consider providing tools or documentation for users to migrate to EVM-compatible keys
+
+### Existing Balances
+
+Token balances are preserved during the upgrade:
+
+- For 18-decimal tokens: No migration needed
+- For non-18-decimal tokens: Existing balances remain unchanged in the Cosmos SDK, but EVM interactions will use the precisebank wrapper for fractional precision
+
+### Module Dependencies
+
+The EVM module requires several supporting modules:
+
+- `x/vm` - Core EVM execution
+- `x/feemarket` - EIP-1559 fee market
+- `x/erc20` (optional) - Cosmos Coin ↔ ERC20 token conversion
+- `x/precisebank` (if using non-18-decimal tokens) - Fractional balance tracking
+
+Ensure all dependencies are added to your `go.mod` and properly wired in `app.go`.
+
+---
+
+## Next Steps
+
+After successfully adding the EVM module to your chain:
+
+1. **Configure Precompiles**: Set up [precompiled contracts](/evm/next/documentation/smart-contracts/precompiles/overview) to expose Cosmos SDK functionality to EVM smart contracts
+
+2. **Deploy Predeployed Contracts**: Consider deploying standard contracts like [Multicall3, Permit2, and Safe](/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts) at genesis
+
+3. **Integrate Tooling**: Update documentation for users on connecting wallets, using Hardhat/Foundry, and interacting with [block explorers](/evm/next/documentation/getting-started/tooling-and-resources/block-explorers)
+
+4. **Monitor Gas Usage**: Track EVM transaction gas usage and adjust fee market parameters as needed
+
+5. **Community Support**: Provide clear migration guides for developers and users transitioning to the EVM-enabled chain
+
+---
+
+## Additional Resources
+
+- [Cosmos EVM Module Documentation](/evm/next/documentation/overview)
+- [Upgrade Handlers Guide](/evm/next/documentation/migrations/upgrade-handlers)
+- [PreciseBank Module](/evm/next/documentation/cosmos-sdk/modules/precisebank)
+- [Address Encoding](/evm/next/documentation/concepts/accounts-and-keys)
+- [Cosmos EVM Repository](https://github.com/cosmos/evm)
