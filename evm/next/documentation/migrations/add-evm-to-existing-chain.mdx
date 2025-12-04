@@ -8,17 +8,17 @@ description: "Guide for integrating the EVM module into a running Cosmos chain p
 This guide covers the essential configuration requirements to ensure a smooth transition from a standard Cosmos chain to an EVM-compatible chain.
 
 <Info>
-The integration process focuses on two key areas: account derivation and gas token configuration. These must be set before adding the EVM module to ensure compatibility with Ethereum tooling. If you're pre-genesis and may add Cosmos EVM in the future, we strongly recommend completing steps 1 and 2 now to avoid major migrations later.
+The integration process focuses on two key areas: account derivation and gas token configuration. These must be set before adding the EVM module to ensure compatibility with Ethereum tooling. If you're pre-genesis and may add Cosmos EVM in the future, we strongly recommend completing steps 1 and 2a now to avoid major migrations later. 
 </Info>
 
 ## Prerequisites
 
 Before beginning the integration process, ensure you have:
 
-- A running Cosmos SDK chain with governance enabled
+- A running Cosmos SDK chain with [governance enabled](/evm/next/documentation/migrations/upgrade-handlers)
 - Access to modify the chain's configuration and codebase
-- Understanding of your chain's current account derivation setup
-- Knowledge of your gas token's decimal configuration
+- Understanding of your chain's current [account derivation](/evm/next/documentation/concepts/accounts) setup
+- Knowledge of your gas token's [decimal configuration](/evm/next/documentation/concepts/precision-handling)
 
 <Warning>
 These changes require a coordinated chain upgrade via governance.
@@ -62,16 +62,26 @@ The `EthSecp256k1` key type enables Ethereum-style address derivation, which use
 
 The combination of coin type 60 and `EthSecp256k1` key type ensures:
 
+- **Unified Account Access**: The same private key/mnemonic derives the same address on both Cosmos and EVM sides, so users see identical balances and can access the same funds through MetaMask or Cosmos wallets
 - **Wallet Compatibility**: MetaMask, Ledger, and other Ethereum wallets work seamlessly
-- **Address Conversion**: Users can easily convert between `0x` and Bech32 address formats
+- **Address Conversion**: Users can easily convert between `0x` and Bech32 address formats for the same underlying account
 - **Tooling Support**: Ethereum development tools (Hardhat, Foundry, Remix) function correctly
-- **Block Explorer Integration**: Standard Ethereum explorers can index and display transactions
+
+<Warning>
+**Critical:** If you don't set this up before adding the EVM module, private keys will derive completely different addresses on the EVM side than on the Cosmos side. This makes it extremely difficult to associate users' existing Cosmos-side balances and state with their EVM accounts, potentially requiring complex migration tooling or forcing users to manually transfer funds between their disconnected accounts.
+</Warning>
 
 ---
 
 ## 2) Gas Token Decimals
 
 Ethereum uses 18 decimals for its gas token (1 wei = 10^-18 ETH), and maintaining this standard is strongly preferred for EVM compatibility. The decimal configuration affects how gas prices are calculated and displayed across all Ethereum tooling.
+
+<Warning>
+**Strongly Recommended: Use 18-Decimal Tokens**
+
+If you are pre-genesis or planning to add EVM support in the future, configure your gas token with 18 decimals from the start. Non-18-decimal tokens require additional module dependencies (specifically the `x/precisebank` module) and introduce complexity in managing fractional balances. This workaround is available for post-genesis chains that cannot migrate their token decimals, but it adds overhead and should be avoided when possible.
+</Warning>
 
 ### Option A: 18-Decimal Gas Token (Preferred)
 
@@ -137,10 +147,10 @@ Before proposing the upgrade on mainnet, thoroughly test on a testnet or local n
 
 ### Pre-Upgrade Checklist
 
-- Coin type set to 60
-- EthSecp256k1 added to keyring and signing options
-- Gas token decimal configuration determined (18-decimal native or precisebank)
-- Upgrade handler implemented and tested
+- [] Coin type set to 60
+- [] EthSecp256k1 added to keyring and signing options
+- [] Gas token decimal configuration determined (18-decimal native or `x/precisebank`)
+- [] Upgrade handler implemented and tested
 
 ### Post-Upgrade Validation
 
@@ -156,9 +166,23 @@ After the upgrade executes:
 
 2. **Test EVM transactions:**
    ```bash
-   # Send a simple EVM transaction
-   # Verify it processes correctly and gas is calculated in wei
+   # Send a simple value transfer using Forge's cast
+   cast send <RECIPIENT_ADDRESS> \
+     --value 1ether \
+     --rpc-url http://localhost:8545 \
+     --private-key <YOUR_PRIVATE_KEY>
+
+   # Verify transaction succeeded and check the receipt
+   cast receipt <TX_HASH> --rpc-url http://localhost:8545
+
+   # Check balance to confirm transfer (value shown in wei)
+   cast balance <RECIPIENT_ADDRESS> --rpc-url http://localhost:8545
    ```
+
+   This confirms:
+   - EVM transactions are processed correctly
+   - Gas is calculated in wei (18 decimals)
+   - Ethereum tooling (Forge) works seamlessly with your chain
 
 3. **Check module parameters:**
    ```bash
@@ -186,7 +210,7 @@ Existing accounts on your chain will continue to work after adding the EVM modul
 
 Token balances are preserved during the upgrade:
 
-- For 18-decimal tokens: No migration needed
+- For 18-decimal tokens: No migration needed, just [ensure bank metadata is set properly](https://github.com/cosmos/evm/blob/d97c9e5370b224b5d48e03592bb4074a42cee289/evmd/upgrades.go#L31-51). 
 - For non-18-decimal tokens: Existing balances remain unchanged in the Cosmos SDK, but EVM interactions will use the precisebank wrapper for fractional precision
 
 ---
