@@ -1,0 +1,227 @@
+---
+title: "Adding EVM to an Existing Chain"
+description: "Guide for integrating the EVM module into a running Cosmos chain post-genesis"
+---
+
+## Overview
+
+This guide covers the essential configuration requirements to ensure a smooth transition from a standard Cosmos chain to an EVM-compatible chain.
+
+<Info>
+The integration process focuses on two key areas: account derivation and gas token configuration. These must be set before adding the EVM module to ensure compatibility with Ethereum tooling. If you're pre-genesis and may add Cosmos EVM in the future, we strongly recommend completing steps 1 and 2a now to avoid major migrations later. 
+</Info>
+
+## Prerequisites
+
+Before beginning the integration process, ensure you have:
+
+- A running Cosmos SDK chain with [governance enabled](/evm/next/documentation/migrations/upgrade-handlers)
+- Access to modify the chain's configuration and codebase
+- Understanding of your chain's current [account derivation](/evm/next/documentation/concepts/accounts) setup
+- Knowledge of your gas token's [decimal configuration](/evm/next/documentation/concepts/precision-handling)
+
+<Warning>
+These changes require a coordinated chain upgrade via governance.
+</Warning>
+
+---
+
+## 1) Address Derivation Setup
+
+Proper address derivation is critical for ensuring compatibility with Ethereum wallets, CLI tools, and block explorers. This setup consists of two components that work together to generate Ethereum-compatible addresses on your Cosmos chain.
+
+### Set Coin Type to 60
+
+The coin type is part of the BIP44 public key derivation path and must be set to `60` ([Ethereum's standard](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/crypto/hd/hdpath.go#L9)) for EVM compatibility. This ensures that wallets using standard Ethereum derivation paths can correctly generate keys for your chain.
+
+**Configure in your chain's initialization:**
+
+```go
+// Set the coin type in your SDK config
+config := sdk.GetConfig()
+config.SetCoinType(60) // Ethereum's coin type
+config.Seal()
+```
+
+**Reference implementation:** [evmd/config/bech32.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/config/bech32.go#L34)
+
+<Info>
+The coin type must be set during chain initialization and before the SDK config is sealed.
+</Info>
+
+### Add EthSecp256k1 Key Type
+
+The `EthSecp256k1` key type enables Ethereum-style address derivation, which uses the last 20 bytes of the public key rather than RIPEMD-160 hashing it before encoding. This makes it possible to convert between `0x` prefixed addresses and Cosmos Bech32 address encodings—both of which may be reverted back to the public key bytes.
+
+**Reference implementations:**
+- Keyring options: [cmd/evmd/cmd/root.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/cmd/evmd/cmd/root.go#L85)
+- Encoding config in app.go: [evmd/app.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/evmd/app.go#L214)
+- Encoding config helper: [encoding/config.go](https://github.com/cosmos/evm/blob/f1f4c2aee76243f0ffe0dd444e05b9cb2ef9898b/encoding/config.go#L33)
+
+### Why This Matters
+
+The combination of coin type 60 and `EthSecp256k1` key type ensures:
+
+- **Unified Account Access**: The same private key/mnemonic derives the same address on both Cosmos and EVM sides, so users see identical balances and can access the same funds through MetaMask or Cosmos wallets
+- **Wallet Compatibility**: MetaMask, Ledger, and other Ethereum wallets work seamlessly
+- **Address Conversion**: Users can easily convert between `0x` and Bech32 address formats for the same underlying account
+- **Tooling Support**: Ethereum development tools (Hardhat, Foundry, Remix) function correctly
+
+<Warning>
+**Critical:** If you don't set this up before adding the EVM module, private keys will derive completely different addresses on the EVM side than on the Cosmos side. This makes it extremely difficult to associate users' existing Cosmos-side balances and state with their EVM accounts, potentially requiring complex migration tooling or forcing users to manually transfer funds between their disconnected accounts.
+</Warning>
+
+---
+
+## 2) Gas Token Decimals
+
+Ethereum uses 18 decimals for its gas token (1 wei = 10^-18 ETH), and maintaining this standard is strongly preferred for EVM compatibility. The decimal configuration affects how gas prices are calculated and displayed across all Ethereum tooling.
+
+<Warning>
+**Strongly Recommended: Use 18-Decimal Tokens**
+
+If you are pre-genesis or planning to add EVM support in the future, configure your gas token with 18 decimals from the start. Non-18-decimal tokens require additional module dependencies (specifically the `x/precisebank` module) and introduce complexity in managing fractional balances. This workaround is available for post-genesis chains that cannot migrate their token decimals, but it adds overhead and should be avoided when possible.
+</Warning>
+
+### Option A: 18-Decimal Gas Token (Preferred)
+
+If your chain already uses an 18-decimal token as the gas token, no additional configuration is needed. The EVM module will work natively with your existing token.
+
+**Genesis configuration:**
+
+```json
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "base": "atoken",
+          "display": "token",
+          "name": "Token",
+          "symbol": "TKN",
+          "denom_units": [
+            {
+              "denom": "atoken",
+              "exponent": 0
+            },
+            {
+              "denom": "token",
+              "exponent": 18
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### Option B: Non-18-Decimal Token with PreciseBank
+
+For chains with non-18-decimal gas tokens (e.g., 6 decimals like `uatom`), use the [`x/precisebank`](https://github.com/cosmos/evm/tree/main/x/precisebank) module to track fractional balances at the EVM level while maintaining the native denomination for Cosmos transactions.
+
+The `precisebank` module wraps the standard `bank` module and stores fractional balances separately. For example, if someone transfers 0.5 × 10^-6 tokens (less than 1 `uatom`) via an EVM transaction, precisebank tracks this fractional amount even though the base denomination can't represent it.
+
+### Decimal Configuration Summary
+
+| Token Type | Configuration | Module Required |
+|------------|---------------|-----------------|
+| 18-decimal native token | Standard setup | None |
+| Non-18-decimal token | ExtendedDenomOptions + precisebank | `x/precisebank` |
+
+---
+
+## 3) Upgrade Handler Implementation
+
+After configuring address derivation and gas token decimals, implement an upgrade handler to add the EVM module to your running chain.
+
+<Info>
+Refer to the [upgrade handlers documentation](./upgrade-handlers) for more details on implementing and testing upgrade handlers.
+</Info>
+
+---
+
+## 4) Testing and Validation
+
+Before proposing the upgrade on mainnet, thoroughly test on a testnet or local network.
+
+### Pre-Upgrade Checklist
+
+- [] Coin type set to 60
+- [] EthSecp256k1 added to keyring and signing options
+- [] Gas token decimal configuration determined (18-decimal native or `x/precisebank`)
+- [] Upgrade handler implemented and tested
+
+### Post-Upgrade Validation
+
+After the upgrade executes:
+
+1. **Verify address derivation:**
+   ```bash
+   # Create a new key with eth_secp256k1
+   <binary> keys add test-key --keyring-backend test --algo eth_secp256k1
+
+   # Verify the address format matches Ethereum expectations
+   ```
+
+2. **Test EVM transactions:**
+   ```bash
+   # Send a simple value transfer using Forge's cast
+   cast send <RECIPIENT_ADDRESS> \
+     --value 1ether \
+     --rpc-url http://localhost:8545 \
+     --private-key <YOUR_PRIVATE_KEY>
+
+   # Verify transaction succeeded and check the receipt
+   cast receipt <TX_HASH> --rpc-url http://localhost:8545
+
+   # Check balance to confirm transfer (value shown in wei)
+   cast balance <RECIPIENT_ADDRESS> --rpc-url http://localhost:8545
+   ```
+
+   This confirms:
+   - EVM transactions are processed correctly
+   - Gas is calculated in wei (18 decimals)
+   - Ethereum tooling (Forge) works seamlessly with your chain
+
+3. **Check module parameters:**
+   ```bash
+   <binary> query vm params
+   <binary> query feemarket params
+   ```
+---
+
+## Key Considerations
+
+### Chain Halt Risk
+
+<Warning>
+Improper configuration can cause consensus failures. Always test the complete upgrade process on a testnet that mirrors your mainnet state before proposing the governance upgrade.
+</Warning>
+
+### Account Migration
+
+Existing accounts on your chain will continue to work after adding the EVM module. However:
+
+- Legacy accounts using `secp256k1` keys can still interact with Cosmos SDK modules
+- New EVM-compatible accounts should be created with `eth_secp256k1` keys
+
+<Note>
+If Step 1 (address derivation setup) was skipped, users importing their mnemonic into an Ethereum wallet will see a completely different address than their Cosmos account, with no visible balances or state. This is why proper address derivation must be configured before adding the EVM module.
+</Note>
+
+### Existing Balances
+
+Token balances are preserved during the upgrade:
+
+- For 18-decimal tokens: No migration needed, just [ensure bank metadata is set properly](https://github.com/cosmos/evm/blob/d97c9e5370b224b5d48e03592bb4074a42cee289/evmd/upgrades.go#L31-51). 
+- For non-18-decimal tokens: Existing balances remain unchanged in the Cosmos SDK, but EVM interactions will use the precisebank wrapper for fractional precision
+
+---
+
+## Additional Resources
+
+- [Upgrade Handlers Guide](/evm/next/documentation/migrations/upgrade-handlers)
+- [PreciseBank Module](/evm/next/documentation/cosmos-sdk/modules/precisebank)
+- [Address Encoding](/evm/next/documentation/concepts/encoding)
+- [Cosmos EVM Repository](https://github.com/cosmos/evm)
