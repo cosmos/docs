@@ -470,8 +470,11 @@ independently:
   Rust) may implement different optimizations here. We just provide
   necessary conditions on how the height may evolve.
   
-<!-- > `ValidAndVerified` is the function that is sometimes called "Light -->
-<!-- > Client" in the IBC context. -->
+{/*
+`ValidAndVerified` is the function that is sometimes called "Light
+Client" in the IBC context.
+*/}
+
 
 ## Definitions
 
