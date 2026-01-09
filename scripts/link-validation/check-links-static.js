@@ -1,3 +1,15 @@
+/**
+ * Static file link checker
+ * 
+ * This script scans .mdx files directly and validates links without requiring a running server.
+ * 
+ * Features:
+ * - Only checks .mdx files (not .md files)
+ * - Excludes links found inside code blocks (```...```)
+ * - Checks internal links (file existence)
+ * - Optionally checks external links (with --external flag)
+ * - Works even if the site has build errors
+ */
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
@@ -74,15 +86,52 @@ function checkUrl(url, timeout = 5000) {
 }
 
 /**
+ * Find all code block ranges in content
+ * Returns array of {start, end} objects for each code block
+ */
+function findCodeBlocks(content) {
+  const codeBlocks = [];
+  // Match code blocks: ```language\n...\n``` or ```\n...\n``` or ```language expandable\n...\n```
+  // Pattern: opening ``` (with optional language and attributes), content, closing ```
+  // The opening can have: ```, ```go, ```go expandable, etc.
+  const codeBlockRegex = /```[^\n]*\n[\s\S]*?\n```/g;
+  let match;
+  
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    codeBlocks.push({
+      start: match.index,
+      end: match.index + match[0].length
+    });
+  }
+  
+  return codeBlocks;
+}
+
+/**
+ * Check if a match index is inside any code block
+ */
+function isInCodeBlock(index, codeBlocks) {
+  return codeBlocks.some(block => index >= block.start && index < block.end);
+}
+
+/**
  * Extract links from markdown/MDX content
  */
 function extractLinks(content, filePath) {
   const links = [];
   
+  // Find all code blocks to exclude from link extraction
+  const codeBlocks = findCodeBlocks(content);
+  
   // Markdown links: [text](url)
   const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
   let match;
   while ((match = markdownLinkRegex.exec(content)) !== null) {
+    // Skip if this match is inside a code block
+    if (isInCodeBlock(match.index, codeBlocks)) {
+      continue;
+    }
+    
     const url = match[2].trim();
     if (url && !url.startsWith('#') && !url.startsWith('mailto:')) {
       links.push({
@@ -97,6 +146,11 @@ function extractLinks(content, filePath) {
   // HTML anchor tags: <a href="url">
   const htmlLinkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>/gi;
   while ((match = htmlLinkRegex.exec(content)) !== null) {
+    // Skip if this match is inside a code block
+    if (isInCodeBlock(match.index, codeBlocks)) {
+      continue;
+    }
+    
     const url = match[1].trim();
     if (url && !url.startsWith('#') && !url.startsWith('mailto:')) {
       links.push({
@@ -111,6 +165,11 @@ function extractLinks(content, filePath) {
   // Card components with href: <Card href="url">
   const cardLinkRegex = /<Card[^>]*href=["']([^"']+)["'][^>]*>/gi;
   while ((match = cardLinkRegex.exec(content)) !== null) {
+    // Skip if this match is inside a code block
+    if (isInCodeBlock(match.index, codeBlocks)) {
+      continue;
+    }
+    
     const url = match[1].trim();
     if (url && !url.startsWith('#') && !url.startsWith('mailto:')) {
       links.push({
@@ -146,7 +205,7 @@ function resolveUrl(url, basePath, baseUrl = '') {
     const relativePath = path.relative(process.cwd(), resolved);
     
     // Convert to web path
-    const webPath = '/' + relativePath.replace(/\\/g, '/').replace(/\.mdx?$/, '');
+    const webPath = '/' + relativePath.replace(/\\/g, '/').replace(/\.mdx$/, '');
     return baseUrl ? `${baseUrl}${webPath}` : webPath;
   }
 
@@ -154,7 +213,7 @@ function resolveUrl(url, basePath, baseUrl = '') {
   const dir = path.dirname(basePath);
   const resolved = path.resolve(dir, url);
   const relativePath = path.relative(process.cwd(), resolved);
-  const webPath = '/' + relativePath.replace(/\\/g, '/').replace(/\.mdx?$/, '');
+  const webPath = '/' + relativePath.replace(/\\/g, '/').replace(/\.mdx$/, '');
   return baseUrl ? `${baseUrl}${webPath}` : webPath;
 }
 
@@ -169,9 +228,7 @@ function checkInternalLink(url, basePath, projectRoot) {
   if (cleanUrl.startsWith('/')) {
     const possiblePaths = [
       path.join(projectRoot, cleanUrl.slice(1) + '.mdx'),
-      path.join(projectRoot, cleanUrl.slice(1) + '.md'),
       path.join(projectRoot, cleanUrl.slice(1), 'index.mdx'),
-      path.join(projectRoot, cleanUrl.slice(1), 'index.md'),
     ];
 
     for (const filePath of possiblePaths) {
@@ -186,9 +243,7 @@ function checkInternalLink(url, basePath, projectRoot) {
     
     const possiblePaths = [
       resolved + '.mdx',
-      resolved + '.md',
       path.join(resolved, 'index.mdx'),
-      path.join(resolved, 'index.md'),
     ];
 
     for (const filePath of possiblePaths) {
@@ -216,7 +271,7 @@ function findMarkdownFiles(dir, fileList = []) {
       if (!file.startsWith('.') && file !== 'node_modules') {
         findMarkdownFiles(filePath, fileList);
       }
-    } else if (file.endsWith('.mdx') || file.endsWith('.md')) {
+    } else if (file.endsWith('.mdx')) {
       fileList.push(filePath);
     }
   });
@@ -239,16 +294,16 @@ async function main() {
     projectRoot = path.join(projectRoot, '../..');
   }
 
-  console.log(chalk.blue('\n🔍 Scanning MDX/MD files for links...\n'));
+  console.log(chalk.blue('\n🔍 Scanning MDX files for links...\n'));
   console.log(chalk.gray(`   Project root: ${projectRoot}\n`));
 
-  // Find all markdown files (exclude node_modules and scripts/link-validation)
+  // Find all MDX files (exclude node_modules and scripts/link-validation)
   const files = findMarkdownFiles(projectRoot).filter(file => {
     const relativePath = path.relative(projectRoot, file);
     return !relativePath.includes('node_modules') && 
            !relativePath.startsWith('scripts/link-validation');
   });
-  console.log(chalk.gray(`   Found ${files.length} markdown files\n`));
+  console.log(chalk.gray(`   Found ${files.length} MDX files\n`));
 
   // Extract all links
   const allLinks = [];
