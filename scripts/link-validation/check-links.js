@@ -1,6 +1,17 @@
 const { SiteChecker } = require('broken-link-checker');
 const chalk = require('chalk');
 
+/**
+ * Live site link checker
+ * 
+ * This script crawls a live website and checks all links found on rendered pages.
+ * It checks both internal and external links.
+ * 
+ * Note: Code blocks are automatically excluded because they are rendered as <code> or <pre>
+ * elements in HTML, not as clickable links. This script checks the rendered HTML output.
+ * 
+ * The site should be running (e.g., via `npx mint dev`) for this to work.
+ */
 let hasBrokenLinks = false;
 let checkedLinks = 0;
 let brokenLinks = [];
