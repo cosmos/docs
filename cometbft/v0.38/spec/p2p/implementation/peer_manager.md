@@ -117,7 +117,7 @@ This is not done in the p2p package, but it is part of the procedure to set up a
 
 The picture below is a first attempt of illustrating the life cycle of an outbound peer:
 
-<img src="../images/p2p_state.png" width="50%" title="Outgoing peers lifecycle">
+![Outgoing peers lifecycle](../images/p2p_state.png)
 
 A peer can be in the following states:
 
