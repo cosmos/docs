@@ -1,9 +1,72 @@
 # Cosmos Documentation Hub
 
-Documentation for all parts of the Cosmos Stack.
+Welcome to the unified Documentation for the Cosmos stack.
 
-> [!NOTE]
-> This is a work in progress. More components (IBC, CometBFT, etc) will be migrated in the near future.
+This repository includes documentation for:
+
+- [Cosmos SDK](https://docs.cosmos.network/sdk/) - Modular framework for building secure, high-performance blockchains
+- [Cosmos EVM](https://docs.cosmos.network/evm/) - EVM compatibility layer with Solidity support and access to Cosmos SDK features
+- [IBC Protocol](https://docs.cosmos.network/ibc/) - Inter-Blockchain Communication protocol for secure cross-chain transfers and messaging
+- [Comet BFT](https://docs.cosmos.network/cometbft/) - Byzantine Fault Tolerant consensus engine achieving up to 10,000 TPS with instant finality
+- [Cosmos Hub](https://docs.cosmos.network/hub/) - The first interconnected blockchain in the Cosmos Network and home of the ATOM token
+
+## Contributing
+
+Please read the [Contributing Guidelines](./contributing.md) for more information on contribution policies.
+
+> [!IMPORTANT]
+> Previous versions will only be edited under specific circumstances. All external contributions should be within the 'next' directory.
+
+### Fork the repository
+
+- Click “Fork” in the GitHub UI to create your own copy.
+
+### Clone your fork
+
+```bash
+   git clone https://github.com/<your-username>/cosmos-docs.git
+   cd cosmos-docs
+```
+
+### Create a branch
+
+```bash
+   git checkout -b my-feature
+```
+
+### Make your changes
+
+- Edit or add files under `<product>/next/` as needed (e.g., `sdk/next/`, `evm/next/`, `ibc/next/`)
+- Follow existing file structure and naming conventions
+- Ensure Markdown is valid and links resolve
+
+### Local testing & validation
+
+```bash
+# Start a live-reload preview
+npx mint dev
+
+# Check for broken internal links
+npx mint broken-links
+```
+
+### Commit and push
+
+```bash
+   git add .
+   git commit -m "Brief description of your change"
+   git push origin my-feature
+```
+
+### Open a Pull Request
+
+- On GitHub, navigate to your fork.
+- Click “Compare & pull request.”
+- Provide a concise title and description.
+- Submit the PR for review.
+
+
+
 
 ## Project Structure
 
@@ -67,55 +130,3 @@ The migration script will:
 - Generate proper frontmatter for Mintlify
 - Report any conversion errors or warnings
 
-## Contributing
-
-> [!IMPORTANT]
-> Previous versions will only be edited under specific circumstances. All external contributions should be within the 'next' directory.
-
-Fork the repository
-
-- Click “Fork” in the GitHub UI to create your own copy.
-
-Clone your fork
-
-```bash
-   git clone https://github.com/<your-username>/cosmos-docs.git
-   cd cosmos-docs
-```
-
-Create a branch
-
-```bash
-   git checkout -b my-feature
-```
-
-Make your changes
-
-- Edit or add files under `<product>/next/` as needed (e.g., `sdk/next/`, `evm/next/`, `ibc/next/`)
-- Follow existing file structure and naming conventions
-- Ensure Markdown is valid and links resolve
-
-Local testing & validation
-
-```bash
-# Start a live-reload preview
-npx mint dev
-
-# Check for broken internal links
-npx mint broken-links
-```
-
-Commit and push
-
-```bash
-   git add .
-   git commit -m "Brief description of your change"
-   git push origin my-feature
-```
-
-Open a Pull Request
-
-- On GitHub, navigate to your fork.
-- Click “Compare & pull request.”
-- Provide a concise title and description.
-- Submit the PR for review.
