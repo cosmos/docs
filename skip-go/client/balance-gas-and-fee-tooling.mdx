@@ -1,0 +1,133 @@
+---
+title: 'Balances, Gas and Transaction Fee Utilities'
+description: 'This page details the utility functions for token balances, gas calculations, and transaction fees in Skip Go.'
+---
+
+## Getting token balances
+
+To query token balances, you can use the `balances` function or via the [REST API](https://docs.skip.build/go/api-reference/prod/info/post-v2infobalances). You have the option to specify a set of token denoms to query or leave the array empty to fetch balances for all denoms associated with an address.
+
+- **When no denoms are specified**: The response will include only the denoms for which you have a balance.
+- **When denoms are specified**: The response will include balances for all the specified denoms. If you have no balance for a given denom, it will be included with a balance of zero.
+
+If there is an error fetching a given denom (e.g. the chain is down), the response will include an error message for that denom.
+
+<Warning>
+The balance query is currently compatible with all Skip Go-supported assets, excluding cw20 assets, across svm, evm, and Cosmos chains.
+</Warning>
+
+<CodeGroup>
+```ts TypeScript (Client)
+const balances = await balances({
+  chains: {
+  "noble-1": {
+    address: noble.address, // noblef8js...
+    denoms: ["uusdc"]
+  },
+  "osmosis-1": {
+    address: osmosis.address, // osmois8fo...
+    denoms: [] // Fetch all denoms for address
+  },
+  apiUrl: "https://api.skip.build"
+}
+});
+```
+```JSON JSON (REST API)
+// POST /v2/info/balances
+{
+  "chains": {
+    "137": {
+      "address": "0x24a9267cE9e0a8F4467B584FDDa12baf1Df772B5",
+      "denoms": [
+        "polygon-native",
+        "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+      ]
+    },
+    "osmosis-1": {
+      "address": "osmo12xufazw43lanl8dkvf3l7y9zzm8n3zswftw2yc",
+      "denoms": [] // Fetch all denoms for address
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## Getting info about gas and fees
+
+ <Info>
+ **Video Overview**
+
+Here's a [video overview](https://www.loom.com/share/063e96e126d2422bb621b5b0ecf9be2c) of our gas and transaction fee tooling.
+
+</Info>
+
+These functions are useful for getting information about our default gas and fee values or for estimating the fee for a particular transaction (e.g. so you can build a working MAX button).
+
+### `getRecommendedGasPrice`
+
+This returns the gas price (i.e. the price of a single unit of gas) the API recommends you use for transactions on a particular chain.
+
+```ts
+async getRecommendedGasPrice({chainId, apiUrl, apiKey}: {chainId: string, apiUrl?:string, apiKey?: string}) -> GasPrice
+```
+
+`GasPrice` is a [cosmjs](https://cosmos.github.io/cosmjs/latest/stargate/classes/GasPrice.html) type giving the recommended fee denom and recommend price amount (fee/gas):
+
+```ts
+type GasPrice = {
+  denom: string;
+  amount: Decimal
+}
+```
+
+### `getFeeInfoForChain`
+
+This will return high, medium, and low gas prices for a particular chain, given by `chainId`, along with the default fee denom as a `FeeAsset` object:
+
+```ts
+async getFeeInfoForChain({chainId, apiUrl, apiKey}: {chainId: string, apiUrl?:string, apiKey?: string}) -> FeeAsset
+```
+
+```ts
+type FeeAsset = {
+  denom: string;
+  gasPrice: GasPriceInfo;
+};
+
+type GasPriceInfo = {
+  low: string;
+  average: string;
+  high: string;
+};
+```
+
+An undefined response indicates that the API cannot find up-to-date gas price information for the chain.
+
+## Settings on `ExecuteRouteOptions` for customizing how gas & fees are set on transactions
+
+### `ExecuteRouteOptions.getGasPrice`
+
+This field in `ExecuteRouteOptions` allows you to override our default gas price on a per chain basis for any transactions created in the router (e.g. in `executeRoute`):
+
+`getGasPrice?: (chainId: string) => Promise<GasPrice | undefined>;`
+
+The argument is a function that takes in a chain ID and returns a gas price for that chain as a `GasPrice` object from CosmJS
+
+```ts
+type GasPrice = {
+  denom: string;
+  amount: Decimal
+}
+```
+
+If you provide a function that only returns a price for a subset of chains, the router will use its default price in cases where yours is missing. If it can't find a default price for a chain, it will error.
+
+### `ExecuteRouteOptions.gasAmountMultiplier`
+
+This field in `ExecuteRouteOptions` allows you to override the default gas multiplier used by default in the SDK. The default value is 1.5. Increasing this value provides higher confidence that transactions will not run out of gas while executing, but increases the fee for the end user.
+
+The gas multiplier increases a transaction's `gasAmount` multiplicatively. To get a final gas amount, the router:
+
+- Simulates a transaction to get an initial gasAmount
+- Multiplies the gas consumed in the simulation by `gasAmountMultiplier`
