@@ -1,3 +1,6 @@
+---
+title: Methods
+---
 <!-- omit in toc -->
 # CCV: Technical Specification - Methods
 
