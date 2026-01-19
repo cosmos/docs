@@ -1,14 +1,12 @@
 ---
-title: Methods
+title: "Methods"
 ---
-<!-- omit in toc -->
 # CCV: Technical Specification - Methods
 
 [&uparrow; Back to main document](./README.md)
 
 [&uparrow; Back to technical specification](./technical_specification.md)
 
-<!-- omit in toc -->
 ## Outline
 
 - [General Methods](#general-methods)
@@ -33,7 +31,6 @@ To express the error conditions, the following specification of the sub-protocol
 
 The functions `BeginBlock()` and `EndBlock()` (see [Implemented Interfaces](./technical_specification.md#implemented-interfaces)) are split across the CCV sub-protocols.
 
-<!-- omit in toc -->
 #### **[CCV-PCF-BBLOCK.1]**
 
 ```typescript
@@ -57,7 +54,7 @@ function BeginBlock() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-EBLOCK.1]**
 
 ```typescript
@@ -91,7 +88,7 @@ function EndBlock(): [ValidatorUpdate] {
 
 ---
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-BBLOCK.1]**
 
 ```typescript
@@ -117,7 +114,6 @@ function BeginBlock() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
 #### **[CCV-CCF-EBLOCK.1]**
 
 ```typescript
@@ -147,7 +143,7 @@ function EndBlock(): [ValidatorUpdate] {
 
 [&uparrow; Back to Outline](#outline)
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-RCVP.1]**
 
 ```typescript
@@ -179,7 +175,7 @@ function onRecvPacket(packet: Packet): bytes {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-ACKP.1]**
 
 ```typescript
@@ -208,7 +204,6 @@ function onAcknowledgePacket(packet: Packet, ack: bytes) {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
 #### **[CCV-PCF-TOP.1]**
 
 ```typescript
@@ -241,7 +236,6 @@ function onTimeoutPacket(packet Packet) {
 
 ---
 
-<!-- omit in toc -->
 #### **[CCV-CCF-RCVP.1]**
 
 ```typescript
@@ -270,7 +264,6 @@ function onRecvPacket(packet: Packet): bytes {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
 #### **[CCV-CCF-ACKP.1]**
 
 ```typescript
@@ -302,7 +295,7 @@ function onAcknowledgePacket(packet: Packet, ack: bytes) {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-TOP.1]**
 
 ```typescript
@@ -344,7 +337,6 @@ function onTimeoutPacket(packet Packet) {
 
 The *initialization* sub-protocol enables a provider chain and a consumer chain to create a CCV channel -- a unique, ordered IBC channel for exchanging packets. As a prerequisite, the initialization sub-protocol MUST create two IBC clients, one on the provider chain to the consumer chain and one on the consumer chain to the provider chain. This is necessary to verify the identity of the two chains (as long as the clients are trusted).
 
-<!-- omit in toc -->
 #### **[CCV-PCF-INITG.1]**
 
 ```typescript
@@ -380,7 +372,6 @@ function InitGenesis(state: ProviderGenesisState): [ValidatorUpdate] {
   - The capability for the port `ProviderPortId` cannot be claimed.
   - For any consumer state in the `ProviderGenesisState`, the channel ID is not valid (cf. the validation function defined in [ICS 4](../../core/ics-004-channel-and-packet-semantics)).
 
-<!-- omit in toc -->
 #### **[CCV-PCF-HCAPROP.1]**
 
 ```typescript
@@ -403,7 +394,7 @@ function HandleConsumerAdditionProposal(p: ConsumerAdditionProposal) {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-BBLOCK-INIT.1]**
 
 ```typescript
@@ -433,7 +424,7 @@ function BeginBlockInit() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-CRCLIENT.1]**
 
 ```typescript
@@ -567,7 +558,7 @@ function CreateConsumerClient(p: ConsumerAdditionProposal) {
 > As a result, all further attempts on the consumer side to established the CCV channel will fail. 
 > This means that the consumer chain requires some sort of social consensus to either restart the process of becoming a consumer chain or transitioning back to a sovereign chain.
  
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-COINIT.1]**
 
 ```typescript
@@ -597,7 +588,7 @@ function onChanOpenInit(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-COTRY.1]**
 
 ```typescript
@@ -672,7 +663,7 @@ function onChanOpenTry(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-COACK.1]**
 
 ```typescript
@@ -698,7 +689,7 @@ function onChanOpenAck(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-COCONFIRM.1]**
 
 ```typescript
@@ -750,7 +741,7 @@ function onChanOpenConfirm(
 
 ---
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-INITG.1]**
 
 ```typescript
@@ -884,7 +875,7 @@ function InitGenesis(gs: ConsumerGenesisState): [ValidatorUpdate] {
 > **Note**: CCV assumes that all the correct validators in the initial validator set of the consumer chain receive the *same* consumer chain binary and consumer chain genesis state. 
 > Although the mechanism of disseminating the binary and the genesis state is outside the scope of this specification, a possible approach would entail including this information in the governance proposal on the provider chain.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-COINIT.1]**
 
 ```typescript
@@ -943,7 +934,7 @@ function onChanOpenInit(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-COTRY.1]**
 
 ```typescript
@@ -973,7 +964,7 @@ function onChanOpenTry(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-COACK.1]**
 
 ```typescript
@@ -1045,7 +1036,7 @@ function onChanOpenAck(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-COCONFIRM.1]**
 
 ```typescript
@@ -1070,7 +1061,7 @@ function onChanOpenConfirm(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-BBLOCK-INIT.1]**
 
 ```typescript
@@ -1108,7 +1099,7 @@ function BeginBlockInit() {
 
 [&uparrow; Back to Outline](#outline)
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-HCRPROP.1]**
 
 ```typescript
@@ -1131,7 +1122,7 @@ function HandleConsumerRemovalProposal(p: ConsumerRemovalProposal) {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-BBLOCK-CCR.1]**
 
 ```typescript
@@ -1162,7 +1153,7 @@ function BeginBlockCCR() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-STCC.1]**
 
 ```typescript
@@ -1250,7 +1241,7 @@ function StopConsumerChain(chainId: string, lockUnbonding: Bool) {
 > - The second scenario (i.e., a timeout) is only possible if the *Correct Relayer* assumption is violated (see the [Assumptions](./system_model_and_properties.md#assumptions) section), 
 > which is necessary to guarantee both the *Bond-Based Consumer Voting Power* and *Slashable Consumer Misbehavior* properties (see the [Assumptions](./system_model_and_properties.md#correctness-reasoning) section).
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-EBLOCK-CCR.1]**
 
 ```typescript
@@ -1296,7 +1287,7 @@ function EndBlockCCR() {
 > `vscTimeout` MUST be larger than `consumerUnbondingPeriod` and 
 > SHOULD account for the time needed to relay the `VSCPacket` to the consumer and the corresponding `VSCMaturedPacket` back to the provider.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-CCINIT.1]**
 
 ```typescript
@@ -1321,7 +1312,7 @@ function onChanCloseInit(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-CCCONFIRM.1]**
 
 ```typescript
@@ -1347,7 +1338,7 @@ function onChanCloseConfirm(
 
 ---
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-BBLOCK-CCR.1]**
 
 ```typescript
@@ -1380,7 +1371,7 @@ function BeginBlockCCR() {
 > **Note**: Once the CCV channel is closed, the provider chain can no longer provider security. As a result, the consumer chain MUST be shut down. 
 > For an example of how to do this in practice, see the Cosmos SDK [implementation](https://github.com/cosmos/cosmos-sdk/blob/0c0b4da114cf73ef5ae1ac5268241d69e8595a60/x/upgrade/abci.go#L71). 
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-CCINIT.1]**
 
 ```typescript
@@ -1410,7 +1401,7 @@ function onChanCloseInit(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-CCCONFIRM.1]**
 
 ```typescript
@@ -1443,7 +1434,7 @@ The *validator set update* sub-protocol enables the provider chain
 - to update the consumer chain on the voting power granted to validators on the provider chain
 - and to ensure the correct completion of unbonding operations for validators that produce blocks on the consumer chain.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-EBLOCK-VSU.1]**
 
 ```typescript
@@ -1528,7 +1519,7 @@ function EndBlockVSU() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-ACKVSC.1]**
 
 ```typescript
@@ -1554,7 +1545,7 @@ function onAcknowledgeVSCPacket(packet: Packet, ack: bytes) {
 - **Error Condition**
   - The acknowledgement is `VSCPacketError`.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-TOVSC.1]**
 
 ```typescript
@@ -1583,7 +1574,7 @@ function onTimeoutVSCPacket(packet: Packet) {
 - **Error Condition**
   - None
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-RCVMAT.1]**
 
 ```typescript
@@ -1637,7 +1628,7 @@ function onRecvVSCMaturedPacket(packet: Packet): bytes {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-GETUBS.1]**
 
 ```typescript
@@ -1669,7 +1660,7 @@ function GetUnbondingsFromVSC(
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-HOOK-AFUBOPCR.1]**
 
 ```typescript
@@ -1714,7 +1705,7 @@ function AfterUnbondingInitiated(opId: uint64) {
 
 ---
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-RCVVSC.1]**
 
 ```typescript
@@ -1752,7 +1743,7 @@ function onRecvVSCPacket(packet: Packet): bytes {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-ACKMAT.1]**
 
 ```typescript
@@ -1774,7 +1765,7 @@ function onAcknowledgeVSCMaturedPacket(packet: Packet, ack: bytes) {
 - **Error Condition**
   - The acknowledgement is `VSCMaturedPacketError`.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-TOMAT.1]**
 
 ```typescript
@@ -1798,7 +1789,7 @@ function onTimeoutVSCMaturedPacket(packet Packet) {
 - **Error Condition**
   - None
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-EBLOCK-VSU.1]**
 
 ```typescript
@@ -1842,7 +1833,7 @@ function EndBlockVSU(): [ValidatorUpdate] {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-HAREVSC.1]**
 
 ```typescript
@@ -1889,7 +1880,7 @@ function HandleReceivedVSCs(): [ValidatorUpdate] {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-UPVALS.1]**
 
 ```typescript
@@ -1941,7 +1932,7 @@ function UpdateValidatorSet(changes: [ValidatorUpdate]) {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-UMP.1]**
 
 ```typescript
@@ -1989,7 +1980,7 @@ function UnbondMaturePackets() {
 
 [&uparrow; Back to Outline](#outline)
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-EBLOCK-CIS.1]**
 
 ```typescript
@@ -2011,7 +2002,7 @@ function EndBlockCIS() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-PCF-RCVSLASH.1]**
 
 ```typescript
@@ -2076,7 +2067,7 @@ function onRecvSlashPacket(packet: Packet): bytes {
 
 ---
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-BBLOCK-CIS.1]**
 
 ```typescript
@@ -2097,7 +2088,7 @@ function BeginBlockCIS() {
 - **Error Condition**
   - None. 
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-ACKSLASH.1]**
 
 ```typescript
@@ -2123,7 +2114,7 @@ function onAcknowledgeSlashPacket(packet: Packet, ack: bytes) {
 - **Error Condition**
   - The acknowledgement is `SlashPacketError`.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-TOSLASH.1]**
 
 ```typescript
@@ -2147,7 +2138,7 @@ function onTimeoutSlashPacket(packet Packet) {
 - **Error Condition**
   - None
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-SNDSLASH.1]**
 
 ```typescript
@@ -2229,7 +2220,7 @@ function SendSlashRequest(
 > To avoid sending multiple slash requests for the same downtime infraction, the consumer CCV module uses an `outstandingDowntime` flag per validator. 
 > CCV assumes that the consumer ABCI application (e.g., the slashing module) is not including the downtime of a validator with `outstandingDowntime == TRUE` in the evidence for downtime.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-SNDPESLASH.1]**
 
 ```typescript
@@ -2280,7 +2271,7 @@ function SendPendingSlashRequests() {
 
 [&uparrow; Back to Outline](#outline)
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-EBLOCK-RD.1]**
 
 ```typescript
@@ -2303,7 +2294,7 @@ function EndBlockRD() {
 - **Error Condition**
   - None.
 
-<!-- omit in toc -->
+{/* omit in toc */}
 #### **[CCV-CCF-DISTRREW.1]**
 
 ```typescript
