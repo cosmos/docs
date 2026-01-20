@@ -1,37 +1,39 @@
 'use client'
 
-export const DocCard = ({ title, description, docsLink, githubLink }) => {
+export const DocCard = ({ title, description, docsLink, githubLink, isHighlighted }) => {
   return (
-      <div className="
-      rounded-[24px] md:rounded-[40px] p-6 md:p-10 lg:p-14
-      flex flex-col justify-between h-full
-      bg-white dark:bg-black
-      hover:bg-[#F5F5F5] dark:hover:bg-[#CFDADC]
-      border border-black/10
-      dark:border-white/10
-      transition-all duration-300
-      group
-    ">
-      <div className="flex flex-col gap-3 md:gap-4 mb-8 md:mb-12">
-        <h3 className="
-          text-gray-900 dark:text-white
-          group-hover:text-black
+      <div
+        className={`
+        rounded-[24px] md:rounded-[40px] p-6 md:p-10 lg:p-14
+        flex flex-col justify-between h-full
+        ${isHighlighted ? 'highlighted-card-bg' : 'bg-white dark:bg-black'}
+        ${!isHighlighted && 'hover:bg-[#F5F5F5] dark:hover:bg-[#CFDADC]'}
+        border border-black/10
+        dark:border-white/10
+        transition-all duration-300
+        group
+      `}
+      >
+      <div className="relative z-10 flex flex-col gap-3 md:gap-4 mb-8 md:mb-12">
+        <h3 className={`
+          ${isHighlighted ? 'text-black' : 'text-gray-900 dark:text-white'}
+          ${!isHighlighted && 'group-hover:text-black'}
           text-xl md:text-2xl leading-[1.5] tracking-[0.24px]
           transition-colors duration-300
-        ">
+        `}>
           {title}
         </h3>
-        <p className="
-          text-black/50 dark:text-white/50
-          group-hover:text-black/60
+        <p className={`
+          ${isHighlighted ? 'text-black' : 'text-black/50 dark:text-white/50'}
+          ${!isHighlighted && 'group-hover:text-black/60'}
           text-sm md:text-base leading-[1.6] tracking-[0.64px]
           transition-colors duration-300
-        ">
+        `}>
           {description}
         </p>
       </div>
 
-      <div className="flex gap-3 md:gap-4 items-center flex-wrap">
+      <div className="relative z-10 flex gap-3 md:gap-4 items-center flex-wrap">
         {docsLink && (
           <a
             href={docsLink}
