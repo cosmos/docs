@@ -9,7 +9,7 @@ export const CosmosStackLearn = () => {
     return (
       <button
         onClick={onClick}
-        className={`flex gap-2 h-12 md:h-14 items-center justify-center px-3 pr-4 md:pr-5 rounded-full transition-all duration-300 cursor-pointer ${
+        className={`flex gap-1 md:gap-2 h-8 md:h-14 items-center justify-center px-3 pr-4 md:pr-5 rounded-full transition-all duration-300 cursor-pointer ${
           isHighlighted
             ? 'bg-black hover:bg-black/90 dark:bg-[#F1F1F1] dark:hover:bg-white border border-transparent'
             : 'bg-[#323536]/20 hover:bg-[#323536]/30 dark:bg-[#323536] dark:opacity-70 dark:hover:opacity-100 dark:hover:bg-[#404243] border border-transparent'
@@ -21,7 +21,7 @@ export const CosmosStackLearn = () => {
           {icon()}
         </div>
         <p
-          className={`text-base md:text-lg lg:text-xl leading-none tracking-normal ${
+          className={`text-sm md:text-lg lg:text-xl leading-none tracking-normal ${
             isHighlighted ? 'text-white dark:text-black' : 'text-white dark:text-[#F1F1F1]'
           }`}
           style={{ fontFeatureSettings: "'ss09' 1" }}
