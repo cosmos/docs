@@ -70,8 +70,7 @@ during the version handshake,
 as well any error returned in this process are added to a queue of accepted connections.
 This queue is consumed by the `Accept` method.
 
-Handling accepted connection asynchronously was introduced due to this issue:
-[https://github.com/tendermint/tendermint/issues/2047](https://github.com/tendermint/tendermint/issues/2047)
+Handling accepted connection asynchronously was introduced due to this issue: https://github.com/tendermint/tendermint/issues/2047
 
 ## Connection Filtering
 
