@@ -1,3 +1,3 @@
 # Blockchain
 
-Deprecated see [core/data_structures.md](../core/data_structures.md)
+Deprecated see [core/data_structures.mdx](../core/data_structures.mdx)

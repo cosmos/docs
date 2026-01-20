@@ -6,7 +6,7 @@ parent:
 
 # Guides
 
-- [Installing CometBFT](./install.md)
-- [Quick-start using CometBFT](./quick-start.md)
-- [Creating a built-in application in Go](./go-built-in.md)
-- [Creating an external application in Go](./go.md)
+- [Installing CometBFT](./Install-CometBFT.mdx)
+- [Quick-start using CometBFT](./Quick-Start.mdx)
+- [Creating a built-in application in Go](./Creating-a-built-in-application-in-Go.mdx)
+- [Creating an external application in Go](./Creating-an-application-in-Go.mdx)
