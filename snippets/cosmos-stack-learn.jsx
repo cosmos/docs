@@ -35,7 +35,7 @@ export const CosmosStackLearn = () => {
   const technologies = [
     {
       name: "Cosmos SDK",
-      description: "The Cosmos SDK is a modular, open-source framework for building secure, high-performance dDistributed ledgers and blockchains. Easily spin up secure blockchains with custom business logic that can natively interoperate with any blockchain via a native integration with the Inter-Blockchain Communication Protocol. Use predefined modules for standard functionality or create custom modules for your use case and compliance requirements, covering permissioning, tokenization, compliance, state management.",
+      description: "The Cosmos SDK is a modular, open-source framework for building secure, high-performance distributed ledgers and blockchains. Easily spin up secure blockchains with custom business logic that can natively interoperate with any blockchain via a native integration with the Inter-Blockchain Communication Protocol. Use predefined modules for standard functionality or create custom modules for your use case and compliance requirements, covering permissioning, tokenization, compliance, state management.",
       icon: () => (
         <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect width="3.19996" height="3.19996" transform="matrix(1 8.74228e-08 8.74228e-08 -1 24 17.6187)" fill="currentColor"/>
@@ -107,18 +107,18 @@ export const CosmosStackLearn = () => {
   const selectedTechData = technologies.find(tech => tech.name === selectedTech)
 
   return (
-    <div className='w-full px-4 lg:px-12 lg:py-16'>
-      <div className='w-full px-4 md:px-8 lg:px-12 py-6 md:py-20 lg:py-28 rounded-[24px] md:rounded-[32px] bg-[#F5F5F5] dark:bg-[#1E1F20]'>
+    <div className='w-full px-8 lg:px-12 lg:py-16'>
+      <div className='w-full px-8 md:px-12 lg:px-24 py-12 md:py-20 lg:py-28 rounded-[24px] md:rounded-[32px] bg-[#F5F5F5] dark:bg-[#1E1F20]'>
         <div className='relative flex flex-col gap-12 md:gap-16 lg:gap-20 items-start justify-center'>
-          <div className='flex flex-col gap-12 items-start lg:items-center justify-start lg:justify-center w-full'>
+          <div className='flex flex-col gap-12 items-start justify-start w-full'>
             <p
-              className='text-black/70 dark:text-[#CFDADC] text-base md:text-lg lg:text-xl leading-relaxed tracking-wide'
+              className='text-black/70 dark:text-[#CFDADC] text-md leading-relaxed tracking-wide'
               style={{ fontFeatureSettings: "'ss09' 1" }}
             >
               Learn More about the Cosmos Stack
             </p>
 
-            <div className='flex gap-4 lg:gap-2 items-start flex-wrap justify-center w-full'>
+            <div className='flex gap-2 lg:gap-2 items-start flex-wrap justify-start w-full'>
               {technologies.map((tech, index) => (
                 <TechPill
                   key={index}
@@ -132,7 +132,7 @@ export const CosmosStackLearn = () => {
           </div>
 
           <p
-            className='text-black/70 dark:text-[#CFDADC] text-base md:text-xl lg:text-2xl leading-relaxed tracking-wide w-full whitespace-pre-wrap transition-opacity duration-300'
+            className='text-black/70 dark:text-[#CFDADC] text-md lg:text-lg leading-relaxed tracking-wide w-full whitespace-pre-wrap transition-opacity duration-300'
             style={{ fontFeatureSettings: "'ss09' 1, 'ss12' 1" }}
           >
             {selectedTechData?.description}

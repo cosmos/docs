@@ -13,7 +13,7 @@ export const CosmosStackDiagram = () => {
       />
 
       {/* Diagram Content */}
-      <div className="relative flex flex-col items-center justify-center w-full px-4 py-12 md:py-16">
+      <div className="relative flex flex-col items-center justify-center w-full px-4 py-32 md:py-28">
       {/* Top Card - Connectivity */}
       <div className="bg-black border border-solid border-white/5 flex flex-col gap-5 items-center justify-center p-4 md:p-7 rounded-[24px] w-full max-w-[721px]">
         <div className="flex flex-col-reverse md:flex-row gap-5 items-center px-0 md:px-4 w-full">

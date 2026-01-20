@@ -12,7 +12,7 @@ export const DocCard = ({ title, description, docsLink, githubLink }) => {
       transition-all duration-300
       group
     ">
-      <div className="flex flex-col gap-3 md:gap-4 mb-8 md:mb-12 lg:mb-14">
+      <div className="flex flex-col gap-3 md:gap-4 mb-8 md:mb-12">
         <h3 className="
           text-gray-900 dark:text-white
           group-hover:text-black
@@ -31,7 +31,7 @@ export const DocCard = ({ title, description, docsLink, githubLink }) => {
         </p>
       </div>
 
-      <div className="flex gap-3 md:gap-7 items-center flex-wrap">
+      <div className="flex gap-3 md:gap-4 items-center flex-wrap">
         {docsLink && (
           <a
             href={docsLink}
