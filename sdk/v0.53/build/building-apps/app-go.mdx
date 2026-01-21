@@ -1,13 +1,281 @@
 ---
 title: Overview of app.go
-description: >-
-  This section is intended to provide an overview of the SimApp app.go file and
-  is still a work in progress. For now please instead read the tutorials for a
-  deep dive on how to build a chain.
+description: Understanding the structure and purpose of the app.go file in Cosmos SDK applications
 ---
 
-This section is intended to provide an overview of the `SimApp` `app.go` file and is still a work in progress.
-For now please instead read the [tutorials](https://tutorials.cosmos.network) for a deep dive on how to build a chain.
+## What is app.go?
+
+The `app.go` file is the core of your Cosmos SDK application. It defines your blockchain application by composing together modules, keepers, and handlers that implement your chain's functionality. This file is where you wire together all the components that make your blockchain work.
+
+The `SimApp` implementation serves as a reference example and testing application for the Cosmos SDK, demonstrating how to properly structure and initialize a blockchain application.
+
+## Core Components
+
+### SimApp Struct
+
+The `SimApp` struct is the main application type that extends the ABCI application. It contains all the necessary components:
+
+```go
+type SimApp struct {
+    *baseapp.BaseApp           // Core ABCI application
+    legacyAmino       *codec.LegacyAmino
+    appCodec          codec.Codec
+    txConfig          client.TxConfig
+    interfaceRegistry types.InterfaceRegistry
+
+    // Store keys for accessing state
+    keys  map[string]*storetypes.KVStoreKey
+    tkeys map[string]*storetypes.TransientStoreKey
+
+    // Module keepers (business logic)
+    AccountKeeper         authkeeper.AccountKeeper
+    BankKeeper            bankkeeper.Keeper
+    StakingKeeper         *stakingkeeper.Keeper
+    // ... other keepers
+
+    // Module manager
+    ModuleManager      *module.Manager
+    BasicModuleManager module.BasicManager
+}
+```
+
+### Key Initialization Steps
+
+The `NewSimApp` constructor follows a specific initialization order:
+
+#### 1. Codec Setup
+
+```go
+interfaceRegistry, _ := types.NewInterfaceRegistryWithOptions(...)
+appCodec := codec.NewProtoCodec(interfaceRegistry)
+legacyAmino := codec.NewLegacyAmino()
+txConfig := tx.NewTxConfig(appCodec, tx.DefaultSignModes)
+```
+
+Codecs handle serialization and deserialization of messages and state. The interface registry enables protobuf Any type support.
+
+#### 2. BaseApp Creation
+
+```go
+bApp := baseapp.NewBaseApp(appName, logger, db, txConfig.TxDecoder(), baseAppOptions...)
+```
+
+BaseApp provides the core ABCI interface implementation and transaction processing pipeline.
+
+#### 3. Store Keys Registration
+
+```go
+keys := storetypes.NewKVStoreKeys(
+    authtypes.StoreKey, banktypes.StoreKey, stakingtypes.StoreKey,
+    // ... other module store keys
+)
+```
+
+Each module gets its own isolated key-value store for persisting state.
+
+#### 4. Keeper Initialization
+
+Keepers are initialized in dependency order. For example, the BankKeeper depends on AccountKeeper:
+
+```go
+app.AccountKeeper = authkeeper.NewAccountKeeper(...)
+app.BankKeeper = bankkeeper.NewBaseKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[banktypes.StoreKey]),
+    app.AccountKeeper,  // dependency
+    BlockedAddresses(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+    logger,
+)
+```
+
+#### 5. Module Manager Setup
+
+```go
+app.ModuleManager = module.NewManager(
+    genutil.NewAppModule(...),
+    auth.NewAppModule(...),
+    bank.NewAppModule(...),
+    // ... other modules
+)
+```
+
+The Module Manager orchestrates module lifecycle operations.
+
+### Module Account Permissions
+
+Module accounts are special accounts owned by modules rather than users:
+
+```go
+maccPerms = map[string][]string{
+    authtypes.FeeCollectorName:     nil,           // can receive fees
+    minttypes.ModuleName:           {authtypes.Minter},  // can mint tokens
+    stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
+    govtypes.ModuleName:            {authtypes.Burner},
+}
+```
+
+Permissions control what operations each module account can perform (minting, burning, staking).
+
+### Execution Order
+
+The Module Manager controls the order of operations during blockchain lifecycle events:
+
+#### Begin Block Order
+
+```go
+app.ModuleManager.SetOrderBeginBlockers(
+    upgradetypes.ModuleName,  // Check for upgrades first
+    minttypes.ModuleName,     // Mint new tokens
+    distrtypes.ModuleName,    // Distribute rewards
+    slashingtypes.ModuleName, // Process slashing
+    // ...
+)
+```
+
+This order ensures operations happen in the correct sequence (e.g., slashing happens after reward distribution).
+
+#### End Block Order
+
+```go
+app.ModuleManager.SetOrderEndBlockers(
+    crisistypes.ModuleName,  // Check invariants
+    govtypes.ModuleName,     // Process governance
+    stakingtypes.ModuleName, // Update validator set
+    // ...
+)
+```
+
+#### Genesis Order
+
+```go
+genesisModuleOrder := []string{
+    authtypes.ModuleName,    // Accounts must exist first
+    banktypes.ModuleName,    // Then balances
+    stakingtypes.ModuleName, // Then staking
+    // ...
+}
+```
+
+Genesis initialization must happen in dependency order.
+
+### ABCI Lifecycle Methods
+
+The application implements key ABCI methods that CometBFT calls:
+
+#### InitChainer
+
+```go
+func (app *SimApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+    var genesisState GenesisState
+    json.Unmarshal(req.AppStateBytes, &genesisState)
+    return app.ModuleManager.InitGenesis(ctx, app.appCodec, genesisState)
+}
+```
+
+Called once when the chain starts to initialize state from genesis.
+
+#### BeginBlocker & EndBlocker
+
+```go
+func (app *SimApp) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
+    return app.ModuleManager.BeginBlock(ctx)
+}
+
+func (app *SimApp) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
+    return app.ModuleManager.EndBlock(ctx)
+}
+```
+
+Called at the beginning and end of each block to perform module-specific logic.
+
+### Ante and Post Handlers
+
+#### AnteHandler
+
+The AnteHandler processes transactions before message execution:
+
+```go
+func (app *SimApp) setAnteHandler(txConfig client.TxConfig) {
+    anteHandler, err := NewAnteHandler(
+        HandlerOptions{
+            ante.HandlerOptions{
+                AccountKeeper:   app.AccountKeeper,
+                BankKeeper:      app.BankKeeper,
+                SignModeHandler: txConfig.SignModeHandler(),
+                FeegrantKeeper:  app.FeeGrantKeeper,
+                SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+            },
+            &app.CircuitKeeper,
+        },
+    )
+    app.SetAnteHandler(anteHandler)
+}
+```
+
+AnteHandlers typically:
+- Verify signatures
+- Deduct fees
+- Check sequence numbers
+- Validate transaction format
+
+#### PostHandler
+
+PostHandlers run after message execution:
+
+```go
+func (app *SimApp) setPostHandler() {
+    postHandler, err := posthandler.NewPostHandler(
+        posthandler.HandlerOptions{},
+    )
+    app.SetPostHandler(postHandler)
+}
+```
+
+PostHandlers can implement features like transaction tips.
+
+### API and Service Registration
+
+The application exposes gRPC and REST APIs:
+
+```go
+func (app *SimApp) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
+    // Register gRPC gateway routes
+    authtx.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+    cmtservice.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+
+    // Register module routes
+    app.BasicModuleManager.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+}
+```
+
+These routes allow clients to query state and submit transactions via HTTP.
+
+## Building Your Own Application
+
+When creating your own blockchain application:
+
+1. **Copy the SimApp structure** as a starting point
+2. **Add your custom modules** to the Module Manager
+3. **Initialize your module keepers** in dependency order
+4. **Set appropriate execution orders** for your modules
+5. **Configure module account permissions** as needed
+6. **Customize ante/post handlers** for your use case
+
+The key is understanding how components interact and ensuring proper initialization order.
+
+## Testing and Development
+
+SimApp serves as:
+- A **reference implementation** for building applications
+- A **testing harness** for SDK development
+- A **working example** of proper module composition
+
+You can use SimApp as a template for your own application, removing unneeded modules and adding custom ones.
+
+## Additional Resources
+
+For hands-on tutorials on running a node, see the [Cosmos SDK Node Tutorial](/sdk/v0.53/tutorials).
 
 ## Complete `app.go`
 
