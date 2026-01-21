@@ -54,7 +54,7 @@ export const DocCard = ({ title, description, docsLink, githubLink, isHighlighte
             </svg>
           </a>
         )}
-        {githubLink && (
+        {githubLink && !isHighlighted && (
           <a
             href={githubLink}
             target="_blank"
