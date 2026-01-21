@@ -215,7 +215,7 @@ export const MobileMenuDrawer = () => {
                   transition: 'opacity 0.4s ease-out 0.4s, transform 0.4s ease-out 0.4s'
                 }}>
                   <a
-                    href="/hub/v25/index"
+                    href="/enterprise/overview"
                     className="text-black dark:text-white hover:opacity-70"
                     style={{
                       textDecoration: 'none',
@@ -225,7 +225,7 @@ export const MobileMenuDrawer = () => {
                       transition: 'opacity 0.2s'
                     }}
                   >
-                    Relayer
+                    Cosmos Enterprise
                   </a>
                 </li>
               </ul>
