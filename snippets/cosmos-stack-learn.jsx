@@ -1,7 +1,3 @@
-'use client'
-
-import React, { useState } from 'react'
-
 export const CosmosStackLearn = () => {
   const [selectedTech, setSelectedTech] = useState('Cosmos SDK')
 

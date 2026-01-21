@@ -1,7 +1,3 @@
-'use client'
-
-import React from 'react'
-
 export const CosmosStackDiagram = () => {
   return (
     <div className="relative w-full rounded-[24px] md:rounded-[32px] overflow-hidden">

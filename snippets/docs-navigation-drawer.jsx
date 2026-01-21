@@ -1,5 +1,3 @@
-import React, { useEffect, useState } from 'react';
-
 export const DocsNavigationDrawer = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
