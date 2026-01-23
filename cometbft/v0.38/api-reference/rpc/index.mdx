@@ -1,0 +1,218 @@
+---
+title: "CometBFT RPC"
+description: "The RPC server provides an API for interacting with a CometBFT node, including blockchain data, transaction broadcasting, and node information."
+---
+
+CometBFT RPC is a remote procedure call protocol that provides access to blockchain data, transaction broadcasting, validator information, and node status. The RPC server supports multiple transport protocols to accommodate different use cases.
+
+CometBFT supports the following RPC protocols:
+
+* **URI over HTTP** - REST-like interface for simple queries
+* **JSONRPC over HTTP** - Standard JSON-RPC 2.0 protocol
+* **JSONRPC over WebSockets** - Persistent connection with subscription support
+
+## Configuration
+
+RPC can be configured by tuning parameters under the `[rpc]` section in the `$CMTHOME/config/config.toml` file or by using the `--rpc.X` command-line flags.
+
+### Default Settings
+
+The default RPC listen address is `tcp://127.0.0.1:26657`. To set another address, update the `laddr` config parameter:
+
+```toml
+[rpc]
+
+# TCP or UNIX socket address for the RPC server to listen on
+laddr = "tcp://127.0.0.1:26657"
+
+# A list of origins a cross-domain request can be executed from
+# Default value '[]' disables cors support
+# Use '["*"]' to allow any origin
+cors_allowed_origins = []
+
+# A list of methods the client is allowed to use with cross-domain requests
+cors_allowed_methods = ["HEAD", "GET", "POST"]
+
+# A list of non simple headers the client is allowed to use with cross-domain requests
+cors_allowed_headers = ["Origin", "Accept", "Content-Type", "X-Requested-With", "X-Server-Time"]
+```
+
+### CORS Configuration
+
+CORS (Cross-Origin Resource Sharing) can be enabled by setting the following config parameters:
+- `cors_allowed_origins` - List of allowed origin domains
+- `cors_allowed_methods` - HTTP methods allowed for CORS requests
+- `cors_allowed_headers` - Headers allowed in CORS requests
+
+## Protocol Examples
+
+### URI over HTTP
+
+A REST-like interface for simple queries:
+
+```bash
+# Get block at height 5
+curl http://localhost:26657/block?height=5
+
+# Get node status
+curl http://localhost:26657/status
+
+# Get validators at height 1
+curl http://localhost:26657/validators?height=1
+```
+
+### JSONRPC over HTTP
+
+JSONRPC requests can be POST'd to the root RPC endpoint:
+
+```bash
+# Get block at height 5
+curl --header "Content-Type: application/json" \
+  --request POST \
+  --data '{"method": "block", "params": ["5"], "id": 1}' \
+  http://localhost:26657
+
+# Broadcast a transaction
+curl --header "Content-Type: application/json" \
+  --request POST \
+  --data '{"method": "broadcast_tx_sync", "params": ["<tx_bytes>"], "id": 1}' \
+  http://localhost:26657
+```
+
+Response format:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "height": "5",
+    "hash": "...",
+    "time": "..."
+  }
+}
+```
+
+### JSONRPC over WebSockets
+
+JSONRPC requests can also be made via WebSocket for real-time updates. The WebSocket endpoint is at `/websocket`, e.g. `localhost:26657/websocket`.
+
+<Info>
+Asynchronous RPC functions like event `subscribe` and `unsubscribe` are **only available via WebSockets**.
+</Info>
+
+#### Subscribing to Events
+
+Using the [websocat](https://github.com/vi/websocat) tool, you can subscribe to 'NewBlock' events:
+
+```bash
+echo '{
+  "jsonrpc": "2.0",
+  "method": "subscribe",
+  "id": 0,
+  "params": {
+    "query": "tm.event='\''NewBlock'\''"
+  }
+}' | websocat -n -t ws://127.0.0.1:26657/websocket
+```
+
+You'll receive notifications as new events occur:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "result": {
+    "query": "tm.event='NewBlock'",
+    "data": {
+      "type": "tendermint/event/NewBlock",
+      "value": {
+        "block": { ... },
+        "result_begin_block": { ... },
+        "result_end_block": { ... }
+      }
+    }
+  }
+}
+```
+
+#### Available Event Types
+
+You can subscribe to the following event types:
+- `NewBlock` - Emitted when a new block is committed
+- `NewBlockHeader` - Emitted for new block headers
+- `Tx` - Emitted for transactions
+- `ValidatorSetUpdates` - Emitted when the validator set changes
+
+## Endpoint Categories
+
+The CometBFT RPC API is organized into several categories:
+
+| Category | Description | Example Methods |
+|----------|-------------|-----------------|
+| **Info** | Node information and blockchain data | `status`, `health`, `net_info`, `blockchain`, `block` |
+| **Tx** | Transaction broadcasting and queries | `broadcast_tx_sync`, `broadcast_tx_async`, `tx`, `tx_search` |
+| **ABCI** | Application Blockchain Interface queries | `abci_info`, `abci_query` |
+| **Evidence** | Evidence of misbehavior | `broadcast_evidence` |
+| **Unsafe** | Administrative operations (requires manual enablement) | `dial_seeds`, `dial_peers`, `unsafe_flush_mempool` |
+
+<Warning>
+**Unsafe Methods**: Methods in the "Unsafe" category can affect node operation and must be manually enabled in the configuration. They should only be used by node operators who understand the implications.
+</Warning>
+
+## Arguments
+
+Arguments which expect strings or byte arrays may be passed as:
+- Quoted strings: `"abc"`
+- `0x`-prefixed hex strings: `0x616263`
+
+## Common Use Cases
+
+### Querying Blockchain Data
+
+```bash
+# Get the latest block
+curl http://localhost:26657/block
+
+# Get block at specific height
+curl http://localhost:26657/block?height=100
+
+# Search for transactions
+curl 'http://localhost:26657/tx_search?query="tx.height>100"&prove=false'
+```
+
+### Broadcasting Transactions
+
+```bash
+# Synchronous broadcast (waits for CheckTx)
+curl http://localhost:26657/broadcast_tx_sync?tx=0x01234567
+
+# Asynchronous broadcast (returns immediately)
+curl http://localhost:26657/broadcast_tx_async?tx=0x01234567
+
+# Commit broadcast (waits for block inclusion)
+curl http://localhost:26657/broadcast_tx_commit?tx=0x01234567
+```
+
+### Node Status and Health
+
+```bash
+# Check node health
+curl http://localhost:26657/health
+
+# Get comprehensive node status
+curl http://localhost:26657/status
+
+# Get network information
+curl http://localhost:26657/net_info
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RPC Methods Reference" icon="book">
+    Browse the complete API reference in the sidebar - all ~30 RPC methods with interactive examples and detailed parameters
+  </Card>
+  <Card title="WebSocket Subscriptions" icon="plug" href="/cometbft/v0.38/docs/core/Subscribing-to-events-via-Websocket">
+    Learn more about subscribing to real-time events
+  </Card>
+</CardGroup>
