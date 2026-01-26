@@ -8,20 +8,20 @@ This document describes the lifecycle of a query in a Cosmos SDK application, fr
 </Note>
 
 <Note>
-**Pre-requisite Readings**
+**Prerequisite Readings**
 
 * [Transaction Lifecycle](/sdk/v0.53/learn/beginner/tx-lifecycle)
 </Note>
 
 ## Query Creation
 
-A [**query**](/sdk/v0.53/build/building-modules/messages-and-queries#queries) is a request for information made by end-users of applications through an interface and processed by a full-node. Users can query information about the network, the application itself, and application state directly from the application's stores or modules. Note that queries are different from [transactions](/sdk/v0.53/learn/advanced/transactions) (view the lifecycle [here](/sdk/v0.53/learn/beginner/tx-lifecycle)), particularly in that they do not require consensus to be processed (as they do not trigger state-transitions); they can be fully handled by one full-node.
+A [**query**](/sdk/v0.53/build/building-modules/messages-and-queries#queries) is a request for information made by end-users of applications through an interface and processed by a full-node. Users can query information about the network, the application itself, and application state directly from the application's stores or modules. Note that queries are different from [transactions](/sdk/v0.53/learn/advanced/transactions) (view the lifecycle [here](/sdk/v0.53/learn/beginner/tx-lifecycle)), particularly in that they do not require consensus to be processed (as they do not trigger state transitions); they can be fully handled by one full-node.
 
-For the purpose of explaining the query lifecycle, let's say the query, `MyQuery`, is requesting a list of delegations made by a certain delegator address in the application called `simapp`. As is to be expected, the [`staking`](/sdk/v0.53/build/modules/staking/README.mdx) module handles this query. But first, there are a few ways `MyQuery` can be created by users.
+For the purpose of explaining the query lifecycle, let's say `MyQuery` is requesting a list of delegations made by a certain delegator address in the application called `simapp`. As expected, the [`staking`](/sdk/v0.53/build/modules/staking/README.mdx) module handles this query. But first, there are a few ways `MyQuery` can be created by users.
 
 ### CLI
 
-The main interface for an application is the command-line interface. Users connect to a full-node and run the CLI directly from their machines - the CLI interacts directly with the full-node. To create `MyQuery` from their terminal, users type the following command:
+The main interface for an application is the command-line interface. Users connect to a full-node and run the CLI directly from their machines—the CLI interacts directly with the full-node. To create `MyQuery` from their terminal, users type the following command:
 
 ```bash
 simd query staking delegations <delegatorAddress>
@@ -41,7 +41,7 @@ The CLI understands a specific set of commands, defined in a hierarchical struct
 
 ### gRPC
 
-Another interface through which users can make queries is [gRPC](https://grpc.io) requests to a [gRPC server](/sdk/v0.53/learn/advanced/grpc_rest#grpc-server). The endpoints are defined as [Protocol Buffers](https://developers.google.com/protocol-buffers) service methods inside `.proto` files, written in Protobuf's own language-agnostic interface definition language (IDL). The Protobuf ecosystem developed tools for code-generation from `*.proto` files into various languages. These tools allow to build gRPC clients easily.
+Another interface through which users can make queries is [gRPC](https://grpc.io) requests to a [gRPC server](/sdk/v0.53/learn/advanced/grpc_rest#grpc-server). The endpoints are defined as [Protocol Buffers](https://developers.google.com/protocol-buffers) service methods inside `.proto` files, written in Protobuf's own language-agnostic interface definition language (IDL). The Protobuf ecosystem developed tools for code generation from `*.proto` files into various languages. These tools allow building gRPC clients easily.
 
 One such tool is [grpcurl](https://github.com/fullstorydev/grpcurl), and a gRPC request for `MyQuery` using this client looks like:
 
@@ -57,7 +57,7 @@ grpcurl \
 
 ### REST
 
-Another interface through which users can make queries is through HTTP Requests to a [REST server](/sdk/v0.53/learn/advanced/grpc_rest#rest-server). The REST server is fully auto-generated from Protobuf services, using [gRPC-gateway](https://github.com/grpc-ecosystem/grpc-gateway).
+Another interface through which users can make queries is through HTTP requests to a [REST server](/sdk/v0.53/learn/advanced/grpc_rest#rest-server). The REST server is fully auto-generated from Protobuf services, using [gRPC-gateway](https://github.com/grpc-ecosystem/grpc-gateway).
 
 An example HTTP request for `MyQuery` looks like:
 
@@ -75,12 +75,12 @@ The first thing that is created in the execution of a CLI command is a `client.C
 
 * **Codec**: The [encoder/decoder](/sdk/v0.53/learn/advanced/encoding) used by the application, used to marshal the parameters and query before making the CometBFT RPC request and unmarshal the returned response into a JSON object. The default codec used by the CLI is Protobuf.
 * **Account Decoder**: The account decoder from the [`auth`](/sdk/v0.53/build/modules/auth/auth) module, which translates `[]byte`s into accounts.
-* **RPC Client**: The CometBFT RPC Client, or node, to which requests are relayed.
+* **RPC Client**: The CometBFT RPC client, or node, to which requests are relayed.
 * **Keyring**: A [Key Manager](/sdk/v0.53/learn/beginner/accounts#keyring) used to sign transactions and handle other operations with keys.
 * **Output Writer**: A [Writer](https://pkg.go.dev/io/#Writer) used to output the response.
 * **Configurations**: The flags configured by the user for this command, including `--height`, specifying the height of the blockchain to query, and `--indent`, which indicates to add an indent to the JSON response.
 
-The `client.Context` also contains various functions such as `Query()`, which retrieves the RPC Client and makes an ABCI call to relay a query to a full-node.
+The `client.Context` also contains various functions such as `Query()`, which retrieves the RPC client and makes an ABCI call to relay a query to a full-node.
 
 ```go expandable
 package client
@@ -705,15 +705,15 @@ return keyring.New(sdk.KeyringServiceName(), backend, ctx.KeyringDir, ctx.Input,
 }
 ```
 
-The `client.Context`'s primary role is to store data used during interactions with the end-user and provide methods to interact with this data - it is used before and after the query is processed by the full-node. Specifically, in handling `MyQuery`, the `client.Context` is utilized to encode the query parameters, retrieve the full-node, and write the output. Prior to being relayed to a full-node, the query needs to be encoded into a `[]byte` form, as full-nodes are application-agnostic and do not understand specific types. The full-node (RPC Client) itself is retrieved using the `client.Context`, which knows which node the user CLI is connected to. The query is relayed to this full-node to be processed. Finally, the `client.Context` contains a `Writer` to write output when the response is returned. These steps are further described in later sections.
+The `client.Context`'s primary role is to store data used during interactions with the end-user and provide methods to interact with this data—it is used before and after the query is processed by the full-node. Specifically, in handling `MyQuery`, the `client.Context` is utilized to encode the query parameters, retrieve the full-node, and write the output. Prior to being relayed to a full-node, the query needs to be encoded into a `[]byte` form, as full-nodes are application-agnostic and do not understand specific types. The full-node (RPC client) itself is retrieved using the `client.Context`, which knows which node the user CLI is connected to. The query is relayed to this full-node to be processed. Finally, the `client.Context` contains a `Writer` to write output when the response is returned. These steps are further described in later sections.
 
 ### Arguments and Route Creation
 
-At this point in the lifecycle, the user has created a CLI command with all of the data they wish to include in their query. A `client.Context` exists to assist in the rest of the `MyQuery`'s journey. Now, the next step is to parse the command or request, extract the arguments, and encode everything. These steps all happen on the user side within the interface they are interacting with.
+At this point in the lifecycle, the user has created a CLI command with all of the data they wish to include in their query. A `client.Context` exists to assist in the rest of `MyQuery`'s journey. Now, the next step is to parse the command or request, extract the arguments, and encode everything. These steps all happen on the user side within the interface they are interacting with.
 
 #### Encoding
 
-In our case (querying an address's delegations), `MyQuery` contains an [address](/sdk/v0.53/learn/beginner/accounts#addresses) `delegatorAddress` as its only argument. However, the request can only contain `[]byte`s, as it is ultimately relayed to a consensus engine (e.g. CometBFT) of a full-node that has no inherent knowledge of the application types. Thus, the `codec` of `client.Context` is used to marshal the address.
+In our case (querying an address's delegations), `MyQuery` contains an [address](/sdk/v0.53/learn/beginner/accounts#addresses) `delegatorAddress` as its only argument. However, the request can only contain `[]byte`s, as it is ultimately relayed to a consensus engine (e.g., CometBFT) of a full-node that has no inherent knowledge of the application types. Thus, the `codec` of `client.Context` is used to marshal the address.
 
 Here is what the code looks like for the CLI command:
 
@@ -729,7 +729,7 @@ The Cosmos SDK leverages code generated from Protobuf services to make queries. 
 // Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/x/staking/client/cli/query.go#L308-L343
 ```
 
-Under the hood, the `client.Context` has a `Query()` function used to retrieve the pre-configured node and relay a query to it; the function takes the query fully-qualified service method name as path (in our case: `/cosmos.staking.v1beta1.Query/Delegations`), and arguments as parameters. It first retrieves the RPC Client (called the [**node**](/sdk/v0.53/learn/advanced/node)) configured by the user to relay this query to, and creates the `ABCIQueryOptions` (parameters formatted for the ABCI call). The node is then used to make the ABCI call, `ABCIQueryWithOptions()`.
+Under the hood, the `client.Context` has a `Query()` function used to retrieve the pre-configured node and relay a query to it; the function takes the query fully-qualified service method name as the path (in our case: `/cosmos.staking.v1beta1.Query/Delegations`), and arguments as parameters. It first retrieves the RPC client (called the [**node**](/sdk/v0.53/learn/advanced/node)) configured by the user to relay this query to, and creates the `ABCIQueryOptions` (parameters formatted for the ABCI call). The node is then used to make the ABCI call, `ABCIQueryWithOptions()`.
 
 Here is what the code looks like:
 
@@ -791,7 +791,7 @@ QueryStore(key []byte, storeName string) ([]byte, int64, error) {
     return ctx.queryStore(key, storeName, "key")
 }
 
-// QueryABCI performs a query to a CometBFT node with the provide RequestQuery.
+// QueryABCI performs a query to a CometBFT node with the provided RequestQuery.
 // It returns the ResultQuery obtained from the query. The height used to perform
 // the query is the RequestQuery Height if it is non-zero, otherwise the context
 // height is used.
@@ -810,7 +810,7 @@ sdk.AccAddress {
     return ctx.FromAddress
 }
 
-// GetFeePayerAddress returns the fee granter address from the context
+// GetFeePayerAddress returns the fee payer address from the context
 func (ctx Context)
 
 GetFeePayerAddress()
@@ -947,9 +947,9 @@ return false
 
 ## RPC
 
-With a call to `ABCIQueryWithOptions()`, `MyQuery` is received by a [full-node](/sdk/v0.53/learn/advanced/encoding) which then processes the request. Note that, while the RPC is made to the consensus engine (e.g. CometBFT) of a full-node, queries are not part of consensus and so are not broadcasted to the rest of the network, as they do not require anything the network needs to agree upon.
+With a call to `ABCIQueryWithOptions()`, `MyQuery` is received by a [full-node](/sdk/v0.53/learn/advanced/encoding) which then processes the request. Note that, while the RPC is made to the consensus engine (e.g., CometBFT) of a full-node, queries are not part of consensus and are not broadcasted to the rest of the network, as they do not require anything the network needs to agree upon.
 
-Read more about ABCI Clients and CometBFT RPC in the [CometBFT documentation](/cometbft/v0.38/docs/core/RPC).
+Read more about ABCI clients and CometBFT RPC in the [CometBFT documentation](/cometbft/v0.38/docs/core/RPC).
 
 ## Application Query Handling
 
@@ -965,7 +965,7 @@ Since `Query()` is an ABCI function, `baseapp` returns the response as an [`abci
 
 ### CLI Response
 
-The application [`codec`](/sdk/v0.53/learn/advanced/encoding) is used to unmarshal the response to a JSON and the `client.Context` prints the output to the command line, applying any configurations such as the output type (text, JSON or YAML).
+The application [`codec`](/sdk/v0.53/learn/advanced/encoding) is used to unmarshal the response to JSON, and the `client.Context` prints the output to the command line, applying any configurations such as the output type (text, JSON, or YAML).
 
 ```go expandable
 package client
@@ -1079,7 +1079,7 @@ WithInput(r io.Reader)
 
 Context {
 	// convert to a bufio.Reader to have a shared buffer between the keyring and the
-	// the Commands, ensuring a read from one advance the read pointer for the other.
+	// the Commands, ensuring a read from one advances the read pointer for the other.
 	// see https://github.com/cosmos/cosmos-sdk/issues/9566.
 	ctx.Input = bufio.NewReader(r)
 
