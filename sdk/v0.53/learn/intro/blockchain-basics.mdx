@@ -1,0 +1,127 @@
+---
+title: Introduction to Blockchains
+description: 'Learn the fundamentals of blockchains, state machines, and how Cosmos SDK applications work.'
+---
+
+import { BlockchainDemo } from '/snippets/blockchain-demo.jsx';
+
+## What Is a Blockchain?
+
+A blockchain is a decentralized ledger that multiple independent computers (called nodes) maintain together. Instead of relying on a single authority to track transactions and maintain state, blockchain networks distribute this responsibility across many nodes. Each node keeps its own copy of the ledger and works with other nodes to agree on what transactions are valid and in what order they should be applied.
+
+You can think of a blockchain or decentralized ledger as a shared spreadsheet that dozens of people maintain independently. Everyone has their own copy, and they all follow the same rules for updating it. When someone wants to make a change, the group agrees on whether that change is valid and what order it should happen in. If everyone follows the rules correctly, all copies end up identical. If someone tries to modify their copy without following the consensus rules, the other nodes will reject their version because it doesn't match what the network agreed upon. This makes blockchains resistant to tampering: you'd need to control a majority of the network to force through an invalid change.
+
+## State Machines: The Foundation of Blockchains
+
+At their core, blockchains are **replicated, deterministic state machines**. 
+
+### What Is a State Machine?
+
+In computer science, **State** represents all the current data in a system at a specific point in time. For example, in a bank application, the state includes all account balances. In the context of a blockchain or decentralized ledger, the state includes all account balances, smart contract data, and other information the chain tracks.
+
+A **state machine** is a system that moves from one state to another by applying transactions. Each transaction describes an action that should change the state.
+
+Here's a simple example of a state machine using a bank account:
+
+```text
+Current State:
+  User A's balance: $100
+  User B's balance: $50
+
+Transaction: User A sends $30 to User B
+
+New State:
+  User A's balance: $70
+  User B's balance: $80
+```
+
+The state machine takes the current state (User A has $100, User B has $50), applies a transaction (transfer $30), and produces a new state (User A has $70, User B has $80).
+
+### Why "Deterministic"?
+
+**Deterministic** means that the same transaction applied to the same state will always produce the same result. This property is critical for blockchains and decentralized ledgers.
+
+Using the bank example: if User A starts with $100 and sends User B $30, their balance will always become $70. It doesn't matter who processes this transaction, when they process it, or how many times they recalculate it from the initial state: the result will always be the same.
+
+In a blockchain, determinism ensures that all nodes independently arrive at the same final state. If the logic weren't deterministic, different nodes would end up with different versions of the ledger, and the network would break down.
+
+### Why "Replicated"?
+
+**Replicated** refers to the fact that many independent nodes each run their own copy of the same state machine. Instead of one central server maintaining the state, multiple independent nodes each maintain their own complete copy.
+
+When a new block is added to the blockchain, every node:
+1. Receives the block with its ordered list of transactions
+2. Independently executes each transaction through their local state machine
+3. Arrives at the same new state (thanks to determinism). 
+
+This replication is what makes blockchains decentralized and resilient. If any single node fails, goes offline, or acts maliciously, the network continues operating as long as a majority of the nodes still have complete, accurate copies of the state. The network doesn't depend on any one node being available or trustworthy.
+
+## How Blockchains Work
+
+With an understanding of state machines, the next step is to see how blockchains use them to maintain a shared ledger across many independent nodes.
+
+### Nodes
+
+A **node** is a computer that participates in the blockchain network. Each node stores a complete copy of the blockchain's state, receives and validates new transactions, participates in consensus to agree on new blocks, and executes transactions to update its local state. Anyone can typically run a node, which makes the network decentralized—no single entity controls the ledger.
+
+### Transactions
+
+A **transaction (tx)** is a request to change the blockchain's state. In Cosmos SDK blockchains, transactions contain one or more **messages** that represent the specific actions to be executed. These messages can represent many different actions:
+- Transferring tokens from one account to another
+- Creating or updating a smart contract
+- Staking tokens to become a validator
+- Voting on a governance proposal
+
+When a user creates a transaction, it gets broadcast to nodes in the network. Nodes verify that the transaction is valid (proper signature, sufficient balance, etc.) before accepting it.
+
+### Blocks
+
+Transactions are grouped together into **blocks** for efficiency. A block is a batch of transactions that the network processes together. Each block is cryptographically linked to the previous block, forming a **chain of blocks**. This chain structure creates a permanent, tamper-evident history: if someone tries to alter a past transaction, it would break the cryptographic link to all subsequent blocks, making the tampering obvious to the network.
+
+### From Transactions to Blocks
+
+Rather than processing transactions one at a time, blockchains group them into **blocks** for efficiency. Here's how it works:
+
+1. **Transaction pool**: Nodes collect valid transactions into a waiting area called the mempool
+2. **Block proposal**: A designated node (called a validator or block proposer) selects transactions from the mempool and proposes them as the next block
+3. **Consensus**: Nodes run a consensus algorithm to agree on which proposed block to accept and in what order
+4. **Block commitment**: Once consensus is reached, the block becomes final and is added to the blockchain
+5. **State transition**: Each node applies the transactions in the new block to their local state machine, updating their copy of the state
+
+```text
+Mempool (pending txs)
+        ↓
+    Block B
+[Tx1, Tx2, Tx3, ...]
+        ↓
+   Consensus
+        ↓
+Apply to State Machine
+        ↓
+   New State
+```
+
+This process repeats for every block, creating a chain of blocks—hence the name "blockchain."
+
+### How blocks are linked
+
+Each block contains a **block header** with metadata about the block. Critically, every block header includes a cryptographic hash of the previous block's header.
+
+A **hash** is like a digital fingerprint: it takes data of any size and produces a unique, fixed-length string of characters. For example, hashing the text "Hello World" might produce something like "a591a6d4...". The key property is that even a tiny change to the input (like changing "Hello World" to "Hello World!") produces a completely different hash. Hash functions are one-way, which means you can't reverse a hash back to the original data. Hash functions are also collision-resistant: no two different inputs produce the same hash.
+
+Cosmos blockchains use [SHA-256](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf) which was created by the NSA as the hash function for block headers and other cryptographic operations to securely link blocks together.
+
+This hashing mechanism creates a tamper-evident chain. You can see this in action in the demo below:
+
+### Blockchain Hashing Demo
+
+<BlockchainDemo />
+
+<Note>
+This is a simplified demonstration. Actual Cosmos SDK blocks include additional security features like validator signatures, timestamps, consensus information, and Merkle roots for transaction verification. The cryptographic linking shown here is just one part of blockchain security.
+</Note>
+
+If someone tries to alter a transaction in Block 1, it would change the contents of Block 1, which would change Block 1's hash. But Block 2 stores Block 1's original hash in its header. The mismatch would be immediately obvious, and Block 2 would be pointing to a hash that no longer matches Block 1. This broken link would invalidate Block 2 and all subsequent blocks, making the tampering evident to the entire network. This is why blockchains are resistant to any changes: you'd need to control a majority of the network to force through an invalid change.
+
+This cryptographic linking is what makes blockchain history **immutable**, or unchangeable. The further back in history a block is, the more subsequent blocks depend on it remaining unchanged, making older blocks increasingly difficult to tamper with.
+
