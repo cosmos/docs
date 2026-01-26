@@ -4,11 +4,11 @@ Welcome to the unified Documentation for the Cosmos stack.
 
 This repository includes documentation for:
 
-- [Cosmos SDK](https://docs.cosmos.network/sdk/) - Modular framework for building secure, high-performance blockchains
-- [Cosmos EVM](https://docs.cosmos.network/evm/) - EVM compatibility layer with Solidity support and access to Cosmos SDK features
-- [IBC Protocol](https://docs.cosmos.network/ibc/) - Inter-Blockchain Communication protocol for secure cross-chain transfers and messaging
-- [Comet BFT](https://docs.cosmos.network/cometbft/) - Byzantine Fault Tolerant consensus engine achieving up to 10,000 TPS with instant finality
-- [Cosmos Hub](https://docs.cosmos.network/hub/) - The first interconnected blockchain in the Cosmos Network and home of the ATOM token
+- [Cosmos SDK](/sdk/) - Modular framework for building secure, high-performance blockchains
+- [Cosmos EVM](/evm/) - EVM compatibility layer with Solidity support and access to Cosmos SDK features
+- [IBC Protocol](/ibc/) - Inter-Blockchain Communication protocol for secure cross-chain transfers and messaging
+- [Comet BFT](/cometbft/) - Byzantine Fault Tolerant consensus engine achieving up to 10,000 TPS with instant finality
+- [Cosmos Hub](/hub/) - The first interconnected blockchain in the Cosmos Network and home of the ATOM token
 
 ## Contributing
 
