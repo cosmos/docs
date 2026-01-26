@@ -15,12 +15,12 @@ export const CosmosStackDiagram = () => {
         <div className="flex flex-col-reverse md:flex-row gap-5 items-center px-0 md:px-4 w-full">
           <div className="flex-1 flex flex-col items-center md:items-start justify-center text-center md:text-left">
             <p className="text-lg md:text-2xl text-white leading-tight">
-              Connect any chain
+              Interoperate with any chain
             </p>
           </div>
           <div className="bg-[#323536] flex flex-col items-center justify-center px-3 py-1 md:px-5 md:py-2 rounded-full">
             <p className="text-[11px] md:text-[13px] text-white/60 tracking-[1.5px] uppercase font-medium leading-tight font-mono">
-              CONNECTIVITY
+              INTEROPERABILITY
             </p>
           </div>
         </div>
