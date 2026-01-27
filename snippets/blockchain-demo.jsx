@@ -1,17 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
 
 export const BlockchainDemo = () => {
+  // Define transaction pairs that rotate
+  const transactionPairs = [
+    { from: 'User A', to: 'User B' },
+    { from: 'User B', to: 'User C' },
+    { from: 'User C', to: 'User A' },
+  ];
+
   const [blocks, setBlocks] = useState([
-    { height: 1, previousHash: '0000', data: 'User A sends 100 to User B', hash: '' },
-    { height: 2, previousHash: '', data: 'User C sends 50 to User D', hash: '' },
-    { height: 3, previousHash: '', data: 'User E sends 25 to User F', hash: '' },
+    { height: 1, previousHash: '0000', transaction: { from: 'User A', to: 'User B', amount: 100 }, hash: '' },
+    { height: 2, previousHash: '', transaction: { from: 'User B', to: 'User C', amount: 50 }, hash: '' },
+    { height: 3, previousHash: '', transaction: { from: 'User C', to: 'User A', amount: 25 }, hash: '' },
   ]);
 
   const initialized = useRef(false);
 
   // SHA-256 hash function
-  const calculateHash = async (height, previousHash, data) => {
-    const text = `${height}${previousHash}${data}`;
+  const calculateHash = async (height, previousHash, transaction) => {
+    const txString = `${transaction.from}->${transaction.to}:${transaction.amount}`;
+    const text = `${height}${previousHash}${txString}`;
     const msgBuffer = new TextEncoder().encode(text);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -33,7 +41,7 @@ export const BlockchainDemo = () => {
         updatedBlocks[i].hash = await calculateHash(
           updatedBlocks[i].height,
           prevHash,
-          updatedBlocks[i].data
+          updatedBlocks[i].transaction
         );
       }
 
@@ -44,16 +52,16 @@ export const BlockchainDemo = () => {
     initializeHashes();
   }, []);
 
-  // Recalculate hash when a block's data changes
-  const handleDataChange = async (index, newData) => {
+  // Recalculate hash when amount changes
+  const handleAmountChange = async (index, newAmount) => {
     const updatedBlocks = [...blocks];
-    updatedBlocks[index].data = newData;
+    updatedBlocks[index].transaction.amount = newAmount;
 
     // Recalculate only this block's hash
     updatedBlocks[index].hash = await calculateHash(
       updatedBlocks[index].height,
       updatedBlocks[index].previousHash,
-      newData
+      updatedBlocks[index].transaction
     );
 
     setBlocks(updatedBlocks);
@@ -62,10 +70,16 @@ export const BlockchainDemo = () => {
   // Add a new block
   const addNewBlock = async () => {
     const lastBlock = blocks[blocks.length - 1];
+    const nextPairIndex = blocks.length % transactionPairs.length;
+    const newTransaction = {
+      ...transactionPairs[nextPairIndex],
+      amount: 10,
+    };
+
     const newBlock = {
       height: lastBlock.height + 1,
       previousHash: lastBlock.hash,
-      data: 'New Block',
+      transaction: newTransaction,
       hash: '',
     };
 
@@ -73,7 +87,7 @@ export const BlockchainDemo = () => {
     newBlock.hash = await calculateHash(
       newBlock.height,
       newBlock.previousHash,
-      newBlock.data
+      newBlock.transaction
     );
 
     setBlocks([...blocks, newBlock]);
@@ -132,18 +146,28 @@ export const BlockchainDemo = () => {
                   )}
                 </div>
 
-                {/* Data Field */}
+                {/* Transaction Field */}
                 <div className="mb-3">
                   <label className="block text-[10px] font-medium text-gray-500 dark:text-gray-400 mb-1 uppercase tracking-wider">
-                    Data
+                    Transaction
                   </label>
-                  <textarea
-                    value={block.data}
-                    onChange={(e) => handleDataChange(index, e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    rows={3}
-                    placeholder="Enter block data..."
-                  />
+                  <div className="bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-2.5">
+                    <div className="text-sm text-gray-900 dark:text-white mb-2">
+                      <span className="font-medium">{block.transaction.from}</span>
+                      <span className="text-gray-500 dark:text-gray-400"> sends </span>
+                      <span className="font-medium">{block.transaction.to}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">Amount:</span>
+                      <input
+                        type="number"
+                        value={block.transaction.amount}
+                        onChange={(e) => handleAmountChange(index, parseInt(e.target.value) || 0)}
+                        className="w-20 px-2 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        min="0"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {/* Current Hash */}
@@ -181,8 +205,8 @@ export const BlockchainDemo = () => {
       {/* Instructions */}
       <div className="mt-6 text-center">
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Try editing the data in any block and watch how it breaks the chain!
-          The hash will change, making all subsequent blocks invalid. Add new blocks to grow the chain.
+          Try changing the token amount in any block and watch how it breaks the chain!
+          The hash will change, making all subsequent blocks invalid.
         </p>
       </div>
     </div>
