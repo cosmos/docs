@@ -3,10 +3,6 @@ title: Cosmos SDK Architecture
 description: How Cosmos SDK implements blockchains through separation of consensus, interface, and application logic.
 ---
 
-{/* To do: define "SDK application", refine sdk section, make sure consensus basics are covered earlier */}
-
-## Introduction: From Blockchain Basics to Cosmos
-
 In [Introduction to Blockchains](/sdk/v0.53/learn/intro/blockchain-basics), you learned that a blockchain is a replicated, deterministic state machine maintained by independent nodes through consensus. The Cosmos SDK implements this model through a clean separation of concerns: CometBFT handles consensus, networking, and block production; ABCI (Application Blockchain Interface) defines the boundary between consensus and application; and the Cosmos SDK implements the application logic and state machine.
 
 This page explains the high-level architecture of Cosmos SDK blockchains: how components interact, what each layer is responsible for, and why this separation matters. 
@@ -34,19 +30,11 @@ The most basic Cosmos SDK blockchain application consists of three distinct laye
 +---------------------------------------+
 ```
 
-### CometBFT: The Consensus Engine
+- **[CometBFT](#cometbft)**: the consensus engine that handles networking, block production, and Byzantine Fault Tolerant consensus.
 
-[CometBFT](/cometbft/v0.38/docs/introduction/intro) sits at the foundation and handles consensus, networking, and block production. It manages peer-to-peer connections between nodes, determines which transactions get included in blocks and in what order, and reaches Byzantine Fault Tolerant (BFT) consensus on block proposals. Once consensus is reached, CometBFT replicates finalized blocks across all nodes and provides deterministic block ordering with instant finality: once a block is committed, it cannot be reverted.
+- **[ABCI](#abci-application-blockchain-interface)**: the strict interface boundary that defines when and how CometBFT invokes the application, enforcing separation between consensus and execution.
 
-Critically, CometBFT is application-agnostic by design. It treats transactions as opaque bytes and knows nothing about what they mean or how they should be executed. This separation allows the same consensus engine to power many different blockchain applications.
-
-### ABCI: Application Blockchain Interface
-
-ABCI is the strict interface boundary between CometBFT and the application. It defines when the business logic of the SDK application is invoked during the block lifecycle, what information is passed (transaction bytes and block metadata), and what the application must return (execution results and state commitments). This interface enforces the separation between consensus (managed by CometBFT) and execution (managed by the Cosmos SDK). The application cannot influence consensus decisions, and consensus cannot interpret application-specific logic.
-
-### Cosmos SDK: Application and State Machine
-
-The [Cosmos SDK](/sdk/v0.53/learn/intro/overview) implements the application-specific state machine. It defines transaction and message formats, validates transactions, executes state transitions, maintains application state across all modules, and produces cryptographic commitments to the state called the AppHash. Application logic is organized into modules (such as bank, staking, and governance), with each module responsible for a domain-specific part of the state machine.
+- **[Cosmos SDK](#cosmos-sdk-application)**: the framework for building the blockchain application (often simply called "the application"), which is the state machine that defines the business logic, executes transactions, maintains state across modules, and produces cryptographic state commitments.
 
 ### Separating Consensus and Application Logic
 
@@ -56,7 +44,7 @@ Separating consensus from application logic provides several benefits. Security 
 
 A blockchain is made up of nodes, or participants in the blockchain network. Each node runs a daemon process (for example, `simd` for a chain built with SimApp) that includes both a CometBFT instance for consensus and networking, and a Cosmos SDK application for the state machine and execution logic. The daemon participates in networking, reaches consensus with other nodes, and executes transactions to update the application state.
 
-Nodes can operate in different roles. There are two main types of nodes, **validators** and **full nodes:
+Nodes can operate in different roles. There are two main types of nodes, **validators** and **full nodes**:
 
 - **Validators** are nodes that participate in consensus by proposing and voting on blocks, with consensus power staked or attributed to them making them responsible for block production. They are in charge of validating blocks before voting, ensuring that only valid blocks are finalized.
 
@@ -74,7 +62,7 @@ CometBFT handles several core responsibilities:
 
 - **Peer-to-peer networking**: CometBFT manages node discovery, establishes and maintains connections with other validators and full nodes, and implements gossip protocols for propagating information across the network.
 
-- **Transaction propagation and mempool management**: When users submit transactions to a node, CometBFT gossips them to other nodes. Each node maintains a mempool (memory pool), which is a waiting area for valid transactions that have not yet been included in a block. The mempool holds transactions temporarily until a validator includes them in a block proposal.
+- **Transaction propagation and mempool management**: When users submit transactions to a node, CometBFT gossips them to other nodes. Each node maintains a **mempool** (memory pool), which is a waiting area for valid transactions that have not yet been included in a block. The mempool holds transactions temporarily until a validator includes them in a block proposal.
 
 - **Block proposal and transaction ordering**: CometBFT uses deterministic proposer selection to choose which validator will propose the next block. The proposer selects transactions from the mempool, orders them, and packages them into a block proposal.
 
@@ -104,13 +92,13 @@ ABCI is a strict request/response interface between CometBFT and a Cosmos SDK bl
 
 The ABCI is unidirectional: all calls flow from CometBFT to the application, and the application cannot call into or control CometBFT. The Cosmos SDK application must respond deterministically to all ABCI calls, producing the same results given the same inputs. 
 
-The ABCI itself is a stateless protocol containing no business logic, only interface definitions. 
+The ABCI itself is a stateless protocol containing no business logic. It only provides the interface definitions between the CometBFT consensus engine, which handles block production, and the Cosmos SDK application, which defines the business logic and state machine.
 
 ### Block Lifecycle Methods
 
-Modern Cosmos SDK applications (v0.50+) use ABCI 2.0, which provides several key methods that CometBFT invokes at different points in the block lifecycle.
+Modern Cosmos SDK applications (v0.50+) use ABCI 2.0, which provides several key methods that CometBFT calls at different points in the block lifecycle.
 
-As the driver of block production, CometBFT controls when the application is invoked. It calls the application through ABCI at specific points in the block lifecycle—to validate transactions for the mempool (CheckTx), to construct or evaluate block proposals (PrepareProposal and ProcessProposal), to execute finalized blocks (FinalizeBlock), and to persist state (Commit). The application responds to these calls but cannot initiate them. This means CometBFT, not the application, determines the timing and cadence of block production and state transitions.
+As the driver of block production, CometBFT controls when the Cosmos SDK application is invoked. It calls the application through ABCI at specific points during block production to validate transactions for the mempool (CheckTx), to construct or evaluate block proposals (PrepareProposal and ProcessProposal), to execute finalized blocks (FinalizeBlock), and to persist state (Commit). The SDK application responds to these calls but cannot initiate them. This means CometBFT, not the SDK application, determines the timing and cadence of block production and state transitions. This ABCI boundary also prevents application logic from influencing consensus.
 
 
 ```python
@@ -137,7 +125,6 @@ As the driver of block production, CometBFT controls when the application is inv
                                |          Execute transactions
                                |          EndBlock hooks
                                |          Return AppHash
-                               |
 6) Commit                      |
    Persist state --------------|--------> Persist to disk
                                |<-------- Return AppHash
@@ -153,39 +140,76 @@ As the driver of block production, CometBFT controls when the application is inv
 
 5. **FinalizeBlock** is invoked after consensus on a block is reached. This is where state transitions occur, executing the entire block atomically. BaseApp invokes lifecycle hooks in this order: PreBlock hooks (required in SDK v0.53), BeginBlock hooks, transaction execution, and EndBlock hooks. The application returns the new AppHash (a cryptographic commitment to the state) and any validator set changes.
 
-6. **Commit** is called after FinalizeBlock to persist the finalized state to disk and return the AppHash that gets included in the next block header.
+6. **Commit** is called after FinalizeBlock to persist the finalized state to the nodes' local disk and return the AppHash that gets included in the next block header.
 
 <Note>
-SDK v0.53 introduces **PreBlock** hooks, which run before BeginBlock. PreBlockers must be explicitly ordered using `SetOrderPreBlockers`. Some core modules (notably `x/auth`) require PreBlock execution—missing PreBlock wiring will cause runtime errors.
+SDK v0.53 introduces **PreBlock** hooks, which run before BeginBlock. PreBlockers must be explicitly ordered using `SetOrderPreBlockers`. Some core modules (notably `x/auth`) require PreBlock execution; missing PreBlock wiring will cause runtime errors.
 </Note>
 
-### Why This Separation Exists
+## Cosmos SDK Application
 
-The ABCI boundary prevents application logic from influencing consensus, enables consensus engine reuse across many applications, improves security by separating concerns, and simplifies testing by allowing applications to be tested independently of consensus mechanisms.
-
-## Cosmos SDK
-
-A Cosmos SDK application is a deterministic state machine that defines a blockchain's behavior. It focuses entirely on defining what state the blockchain tracks, what transactions are valid, and how transactions change state.
-
-### Responsibilities
-
-Cosmos SDK applications define transaction and message formats using Protocol Buffers for serialization, validate transactions by checking signatures and fees, execute message handlers to apply state transitions, maintain state across all modules, and produce the AppHash that cryptographically commits to the current state.
+A Cosmos SDK application is a deterministic state machine that defines a blockchain's behavior. It focuses entirely on defining what state the blockchain tracks, what transactions are valid, and how transactions change state. The applications defines transaction and message formats using Protocol Buffers for serialization, validates transactions by checking signatures and fees, executes message handlers to apply state transitions, maintains state across all modules, and produces the AppHash that cryptographically commits to the current state. 
 
 ### Application Structure
 
-A typical Cosmos SDK application consists of **BaseApp** (providing the ABCI implementation and execution framework), **Modules** (containing domain-specific logic like bank, staking, and governance), **Keepers** (providing interfaces for accessing module state while enforcing access control), and **app.go** (serving as the composition root that wires everything together).
+A typical Cosmos SDK application consists of:
+ - **[BaseApp](#baseapp-and-appgo)**: boilerplate code that provides the ABCI implementation and execution framework for a chain to interact with CometBFT.
+ - **[Modules](#modules-transactions-and-application-logic)**: building blocks of domain-specific logic such as transactions, custom business logic, and governance/permissioning.
+ - **[State Multistore](#kv-stores-and-multistore)**: a collection of key-value stores that store the state of the application, isolated by module.
+ - **[Keepers](#keepers)**: providing interfaces for accessing module state while enforcing access control.
+ - **[app.go](#baseapp-and-appgo)**: serving as the composition root that wires everything together.
 
-SDK v0.53 supports both manual wiring in app.go and declarative runtime-based wiring via `runtime.AppBuilder`, which reduces boilerplate and provides clear dependency graphs. SDK v0.53 also uses Governance v1 by default, where proposals are submitted via `MsgSubmitProposal` containing executable messages.
+SDK v0.53 supports both manual wiring in app.go and declarative runtime-based wiring via `runtime.AppBuilder`, which reduces boilerplate and provides clear dependency graphs. Modern SDK chains typically use Governance v1, where proposals are submitted via `MsgSubmitProposal` containing executable messages.
 
-## State, Storage, and Commitments
+### BaseApp and app.go
 
-### Application State Model
+`BaseApp` is the Cosmos SDK's standard implementation of the ABCI interface. It handles all ABCI method calls from CometBFT, routes messages to the appropriate [module handlers](#modules-transactions-and-application-logic), manages state versioning and caching, and enforces transaction execution semantics.
 
-Application state in the Cosmos SDK is a collection of key-value pairs. State is updated only during block execution (via FinalizeBlock), ensuring that state changes only occur when consensus is reached. All state changes are deterministic and replayable—executing the same block against the same initial state will always produce the same final state.
+Developers do not implement ABCI directly; instead, they extend `BaseApp` and register their modules, handlers, and execution logic with it.
 
-### KV Stores and Multistore
+The `app.go` file is the composition root of a Cosmos SDK application. This is where a specific blockchain is assembled by creating the BaseApp instance, instantiating all module keepers with their dependencies, registering store keys for each module's state, wiring module [lifecycle hooks](#block-lifecycle-hooks), and configuring transaction processing.
 
-Each module owns a namespaced key-value store, isolating its data from other modules. The multistore combines all module stores into a single, unified state representation with height-based versioning for historical queries.
+Modules also define genesis state initialization and migration logic to support chain upgrades, allowing application state to evolve safely over time.
+
+### Modules, Transactions, and Application Logic
+
+Modules are the building blocks of Cosmos SDK applications. Each module implements a specific domain of functionality: the bank module handles token transfers, the staking module manages validator delegation, the governance module implements on-chain proposals, and so on. Every module acts as its own mini state machine, processing transactions and updating state according to its own rules. Together, modules for the entire application form a single, cohesive state machine.
+
+A module provides its business logic through message handlers. Messages work like function calls that specify an operation (like "send 100 tokens to address X") with typed parameters. Users invoke module logic by submitting transactions that contain these messages. During execution, each message gets routed to its module's handler, which runs the business logic and updates state.
+
+In the Cosmos SDK, a **transaction** is a signed, serialized container that wraps one or more **messages**. Messages represent the actual operations to execute (like "send tokens" or "delegate stake"), while the transaction adds metadata like signatures, fees, and gas limits. Blocks contain transactions, and during block execution (FinalizeBlock), each transaction's messages are extracted and routed to the appropriate module handlers for execution.
+
+Modules define message types using Protocol Buffers (Protobuf), which provide type-safe, cross-language serialization. Modules also define state schemas (what data the module stores), state transitions (how messages modify state), queries (allowing clients to read module state), and optional lifecycle hooks for tasks that run at block boundaries.
+
+Transaction validation and preprocessing are handled by an **AnteHandler**, which runs before message execution to verify signatures, deduct fees, and enforce transaction validity rules. The AnteHandler executes for each transaction individually during the transaction execution phase. If it rejects a transaction (due to invalid signature, insufficient fees, etc.), the message handlers never run for that transaction. An optional **PostHandler** may run after message execution to perform additional checks or bookkeeping.
+
+### Block Lifecycle Hooks
+
+Beyond processing individual transactions, modules can define lifecycle hooks that run at specific points during block execution. These hooks allow modules to perform tasks at block boundaries, such as minting rewards, updating validator sets, or preparing state before transactions execute.
+
+During FinalizeBlock, BaseApp invokes module hooks in this sequence:
+1. **PreBlock** - Prepare state before block execution begins
+2. **BeginBlock** - Perform tasks at block start (e.g., minting rewards)
+3. **Transaction execution** - For each transaction: run AnteHandler, execute message handlers, run PostHandler (if configured)
+4. **EndBlock** - Perform tasks at block end (e.g., updating validator sets)
+
+Modules are coordinated by a **ModuleManager**, which orchestrates these lifecycle events along with genesis initialization and module upgrades.
+
+### State
+
+In a Cosmos SDK application, state is stored as a collection of key-value pairs in a **multistore**.
+
+State changes occur during block execution. After consensus finalizes a block, `FinalizeBlock` is invoked by CometBFT via the ABCI, which executes each transaction in the Cosmos SDK application in order. For each transaction, the messages are extracted and routed to their module **handlers**, which are functions that validate messages, execute the business logic of the module, and update state using [keepers](#keepers).  
+
+After executing the transactions in the block and updating state, each node computes the AppHash from its local state. The **AppHash** is a cryptographic proof of the state of the application at the end of the block, and is included in the next block header. This ensures that state updates only take effect once consensus is reached. By design, all state changes in a Cosmos SDK application are deterministic and replayable: executing the same block against the same initial state will always produce the same final state.
+
+#### Keepers
+
+Keepers are the gatekeepers to module state. They provide the only interface for accessing and mutating a module's state, enforce access control between modules, and encapsulate state access logic. Modules interact through keeper interfaces rather than directly accessing each other's state, enforcing modularity and preventing tight coupling.
+
+#### KV Stores and Multistore
+
+The state of a Cosmos SDK application is stored in a **multistore**, which is a collection of key-value stores. Each module owns a namespaced key-value store, isolating its data from other modules. The multistore combines all module stores into a single, unified state representation with height-based versioning for historical queries.
 
 ```text
 +-----------------------------------------+
@@ -199,7 +223,9 @@ Each module owns a namespaced key-value store, isolating its data from other mod
 +-----------------------------------------+
 ```
 
-### Merkle Trees and Commitments
+{/* todo: These KVStores only accept the []byte type as a value, and therefore any custom structure needs to be marshaled using a codec (link to encoding) before being stored.  also talk about signatures. and how comet uses bytes.*/}
+
+#### Merkle Trees and Commitments
 
 Application state is committed using Merkle tree structures. Each module store is organized as a Merkle tree, and the multistore root is a Merkle tree of module store roots. The AppHash is the root hash of this multistore structure, uniquely identifying a state version.
 
@@ -217,52 +243,28 @@ Application state is committed using Merkle tree structures. Each module store i
 
 CometBFT includes the AppHash in block headers, allowing anyone to verify state commitments. This is crucial for light clients, which can verify state without downloading all blocks.
 
-## Modules and Application Logic
+### How State Replicates Across Nodes
 
-Modules are the building blocks of Cosmos SDK applications. Each module implements a specific domain of functionality—the bank module handles token transfers, the staking module manages validator delegation, the governance module implements on-chain proposals, and so on.
+The state changes described above happen independently on every node in the network. CometBFT does not replicate application state directly—instead, it replicates blocks (ordered transactions) and consensus decisions. Each node then independently executes these blocks through its local Cosmos SDK application.
 
-Modules define message types (the transactions users can submit), state schemas (what data the module stores), state transitions (how messages modify state), queries (allowing clients to read module state), and optional lifecycle hooks for tasks that run at block boundaries.
+This design relies entirely on deterministic execution. When all nodes execute the same ordered transactions, deterministic execution guarantees they arrive at identical state. Nodes verify this agreement by comparing AppHash commitments. If execution were non-deterministic, nodes would compute different AppHashes and consensus would fail.
 
-### Keepers
+After executing a block, each node computes the AppHash from its local state. This AppHash is included in the next block header. Nodes with divergent state produce different AppHashes, and validators will not sign blocks with incorrect commitments. This makes state disagreement detectable and ensures that consensus implies state agreement across all honest nodes.
 
-Keepers are the gatekeepers to module state. They provide the only interface for accessing a module's state, enforce access control between modules, and encapsulate all state transition logic. Modules interact through keeper interfaces rather than directly accessing each other's state, enforcing modularity and preventing tight coupling.
+To maintain determinism, applications must avoid common pitfalls: use block time instead of local timestamps (which vary across nodes), use integer math instead of floating-point arithmetic (which can differ by hardware), use deterministic randomness seeded with block data, and include all necessary data in transactions rather than making external API calls.
 
-## BaseApp and app.go
-
-BaseApp is the Cosmos SDK's standard implementation of the ABCI interface. It handles all ABCI method calls from CometBFT, routes messages to the appropriate module handlers, manages state versioning and caching, and enforces transaction execution semantics. Developers don't implement ABCI directly—they extend BaseApp and register their modules with it.
-
-The `app.go` file is the composition root of a Cosmos SDK application. This is where a specific blockchain is assembled from SDK components by creating the BaseApp instance, instantiating all module keepers with their dependencies, registering store keys for each module's state, and wiring together block lifecycle hooks.
-
-## Replication and Determinism
-
-Understanding how state replicates across nodes is critical to understanding Cosmos SDK architecture. CometBFT does not replicate application state directly. Instead, it replicates blocks (ordered transactions) and consensus decisions (which blocks were committed). Each node then independently executes these blocks through their local application.
-
-State consistency relies entirely on deterministic execution. CometBFT ensures all nodes have the same ordered blocks. Each node independently executes these blocks through their local Cosmos SDK application. Deterministic execution guarantees that identical inputs produce identical outputs. Nodes verify state agreement by comparing AppHash commitments—if execution were non-deterministic, nodes would compute different AppHashes and fail to reach consensus.
-
-### Sources of Non-Determinism
-
-Applications must avoid sources of non-determinism. For example, using local timestamps breaks determinism because different nodes execute at different wall-clock times (use block time instead). Floating-point arithmetic can produce different results on different hardware (use integer math instead). Random number generation without deterministic seeds produces different values on each node (use deterministic PRNGs seeded with block data). External API calls or network requests can return different results for different nodes (all necessary data must be included in transactions).
-
-### AppHash as Proof of Agreement
-
-The AppHash serves as cryptographic proof of state agreement. After executing a block, each node computes the AppHash from its local state. This AppHash is included in the next block header. Nodes with divergent state will produce different AppHashes. Validators will not sign blocks with incorrect AppHashes, preventing consensus on invalid states. This makes state disagreement detectable and ensures that consensus implies state agreement across all honest nodes.
+{/* todo: integrate this info? https://docs.cosmos.network/sdk/v0.53/learn/intro/sdk-design */}
 
 
 ## Communication Layers
 
 Cosmos SDK blockchains use different communication mechanisms depending on the context.
 
-### Node-to-Node Communication
+- **Node-to-Node Communication**: Nodes communicate with each other using CometBFT's custom peer-to-peer gossip protocol. This handles transaction propagation across the network, block replication to all nodes, and consensus messages like votes and proposals. This communication is entirely within CometBFT and is application-agnostic.
 
-Nodes communicate with each other using CometBFT's custom peer-to-peer gossip protocol. This handles transaction propagation across the network, block replication to all nodes, and consensus messages like votes and proposals. This communication is entirely within CometBFT and is application-agnostic.
+- **Consensus to Application Communication**: CometBFT communicates with the Cosmos SDK application through ABCI using local function calls. This is in-process communication within the same daemon, not a network protocol. CometBFT invokes the application at key points in the block lifecycle, and the application returns execution results and state commitments.
 
-### Consensus to Application Communication
-
-CometBFT communicates with the Cosmos SDK application through ABCI using local function calls. This is in-process communication within the same daemon, not a network protocol. CometBFT invokes the application at key points in the block lifecycle, and the application returns execution results and state commitments.
-
-### Client to Node Communication
-
-Clients (wallets, explorers, and other external applications) interact with nodes through the Cosmos SDK's gRPC API, with HTTP/REST available via gRPC-Gateway. This external API allows clients to query application state and submit transactions for mempool inclusion. This communication is completely separate from consensus—clients never directly interact with CometBFT's consensus protocols.
+- **Client to Node Communication**: Clients (wallets, explorers, and other external applications) interact with nodes through the Cosmos SDK's gRPC API, with HTTP/REST available via gRPC-Gateway. This external API allows clients to query application state and submit transactions for mempool inclusion. This communication is completely separate from consensus—clients never directly interact with CometBFT's consensus protocols.
 
 ## Summary
 
