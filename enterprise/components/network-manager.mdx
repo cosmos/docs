@@ -1,4 +1,155 @@
 ---
 title: "Network Manager"
-description: "Coming Soon"
+description: "Unified deployment, orchestration, and lifecycle management for production Cosmos networks."
 ---
+
+The **Cosmos Network Manager** is a unified platform for deploying and operating **production-grade Cosmos-based blockchain networks**. It provides the infrastructure and tooling required to **provision, orchestrate, scale, and secure** a distributed ledger in environments with strict reliability, security, and auditability requirements.
+
+Operating a distributed ledger is fundamentally different from operating traditional infrastructure. **Genesis creation** requires isolated transaction generation, aggregation, and redistribution so every node starts with an identical state. **Network upgrades require all validators to halt at the same block height**, upgrade binaries, and restart in a coordinated sequence—capabilities that blockchain protocols do not natively provide. Validators must remain **isolated from external traffic** while preserving low-latency peer communication. In regulated environments, all changes must flow through **controlled, auditable workflows**.
+
+The Cosmos Network Manager addresses these challenges through two tightly integrated components:
+
+- **Infrastructure-as-Code (IaC) tooling**, which provisions foundational infrastructure and ledger-specific resources
+- **Fleet Manager**, which programmatically orchestrates node lifecycle operations across the network
+
+| Challenge | How The Cosmos Network Manager Addresses It |
+| :----------- | :------------ |
+| Coordination overhead | Fleet Manager automates genesis creation, coordinated upgrades, and lifecycle operations via API |
+| Network performance | Configurable topology with validator isolation, sentry nodes, and optimized peer settings |
+| Scaling | Decoupled IaC and orchestration layers enable independent horizontal and vertical scaling |
+| Security | Air-gapped deployment, CI/CD-enforced changes, strict network policies, encrypted storage |
+
+---
+
+## What The Cosmos Network Manager Provides
+
+### Deterministic Network Operations
+The Cosmos Network Manager replaces manual, error-prone node operations with **repeatable, programmatic workflows**. High-level API endpoints coordinate low-level actions across all nodes and return a single, authoritative result, enabling safe network initialization, upgrades, recovery procedures, and deterministic redeployment when required.
+
+### Infrastructure Automation
+CLI-based IaC tooling provisions and configures:
+- Kubernetes-based compute
+- Persistent storage and relational databases
+- Networking primitives and load balancers
+- Ledger node infrastructure and auxiliary services
+- **IBC relaying and attestation services**, including light client configuration, key management, and monitoring
+
+Hardware specifications are configurable and support both **horizontal and vertical scaling** without disrupting network operations.
+
+### Secure, Auditable Control Plane
+All network and infrastructure changes are designed to flow through **CI/CD-enforced workflows**, ensuring authenticated execution, full auditability, and alignment with enterprise security requirements. The platform supports **air-gapped deployment**, strict network policies, and encrypted storage by default.
+
+---
+
+## Architecture Overview
+
+The Cosmos Network Manager is composed of two core layers that remain decoupled but interoperable: the Infrastructure-as-Code (IaC) tooling and the Fleet Manager.
+
+![An overview of the architecture of the Cosmos Network Manager](/assets/enterprise/cosmos_network_manager.png)
+
+### Infrastructure-as-Code Tooling
+
+The IaC tooling provisions a Kubernetes environment alongside **relational database services (RDS), blob storage, and network primitives**. An **observability stack**, managed via ArgoCD, is deployed into the same environment.
+
+The tooling encapsulates all dependencies required to provision a ledger instance with minimal configuration, enabling teams to focus on application and protocol development rather than infrastructure management. It also allows individual engineers to spin up development and testing environments that mirror production topology.
+
+In addition to core ledger infrastructure, the IaC tooling provisions **IBC relaying and attestation services** required for interchain connectivity. This includes deployment and configuration of relayer processes, light client and IBC smart contract setup, optional remote signing via managed key services, and integration with the observability stack. Access to relaying infrastructure is governed through role-based access control and Kubernetes network policies.
+
+![Components deployed by the IaC tooling](/assets/enterprise/infrastructure_as_code.png)
+
+### Fleet Manager
+
+The **Fleet Manager** is responsible for **starting, operating, upgrading, and scaling** the ledger. It addresses the coordination challenges inherent to distributed ledger infrastructure through a **controller–agent architecture** that enables programmatic control over all nodes.
+
+The Fleet Manager can be deployed as a Kubernetes service or as a standalone component, depending on operational requirements.
+
+#### Controller–Agent Architecture
+
+- The Fleet Manager acts as the **controller**
+- Ledger nodes run lightweight **agent software** and must be explicitly registered
+
+Each agent consists of:
+- **Node Manager**, which controls the underlying Cosmos binary and tracks node state
+- **RPC Server**, which receives validated instructions from the Fleet Manager
+
+Agents rely exclusively on Cosmos SDK command-line utilities and have **no outbound network access**, acting only on instructions received via authenticated RPC calls. This design avoids SSH-based access patterns, reduces operational risk, and eliminates single points of failure.
+
+Node identity and operational credentials are managed as part of the Fleet Manager lifecycle. Validator and operator keys can be provisioned during initialization using managed key services, enabling remote signing and eliminating direct key material exposure on hosts. Key generation, rotation, and recovery workflows are designed to integrate with enterprise security controls and audit requirements.
+
+![An overview of the node orchestration functionality of the Fleet Manager](/assets/enterprise/fleet_manager.png)
+
+---
+
+## Network Lifecycle Operations
+
+The Cosmos Network Manager provides composable but decoupled methods for infrastructure provisioning and node orchestration.
+
+### Network Initialization
+- Registers provisioned hardware with the Fleet Manager
+- Aggregates validator inputs to generate a single canonical genesis
+- Distributes genesis and configuration artifacts
+- Starts all nodes deterministically with identical initial state
+
+### Coordinated Upgrades
+- Stops all nodes at a predefined block height
+- Distributes new binaries and configuration
+- Restarts nodes in a controlled sequence with safe rollback behavior
+
+These workflows integrate directly into CI/CD pipelines, ensuring all changes occur through authenticated, auditable processes.
+
+### Development and Debugging
+In non-production environments, engineers can:
+- Provision local or ephemeral ledger deployments
+- View node status and stream logs
+- Export genesis and state for debugging and testing
+
+The Network Manager supports **multiple isolated ledger deployments**, enabling strict separation between development, test, staging, and production environments while reusing the same operational workflows and tooling.
+
+---
+
+## Performance and Scalability
+
+Performance and scalability are achieved through a design that is **topology-aware, security-preserving, and operationally consistent**.
+
+### Topology-Aware Consensus
+Validators communicate directly over the CometBFT peer-to-peer network. The Fleet Manager initializes validators with a full validator address set marked as private peers, reducing peer-exchange overhead and preserving low-latency block propagation.
+
+Validators are isolated behind **sentry node architectures**, which relay blocks to RPC nodes without exposing validator endpoints.
+
+### Horizontal Scaling
+Query capacity scales independently from consensus by provisioning additional RPC nodes via IaC tooling and registering them with the Fleet Manager. This enables throughput increases without validator disruption.
+
+### Vertical Scaling
+CPU, memory, and storage resources are tunable via Kubernetes node groups. When scaling nodes under Fleet Manager control, agents automatically restart nodes with updated configurations through CI/CD-driven workflows.
+
+---
+
+## Security and Enterprise Guarantees
+
+Cosmos Network Manager is included as part of **Cosmos Enterprise** and benefits from enterprise-grade security and lifecycle commitments:
+
+- Air-gapped and restricted-network deployment support
+- Encrypted storage and managed secrets
+- Fine-grained access control using IAM, RBAC, and network policies
+- Long-term support branches and upgrade guidance
+- Incident response coordination and defined SLAs
+
+The Network Manager supports disaster recovery workflows through managed backups, state exports, and deterministic redeployment of ledger infrastructure using Infrastructure-as-Code.
+
+---
+
+## Who The Cosmos Network Manager Is For
+
+The Cosmos Network Manager is designed for:
+- Production Cosmos-based L1 networks
+- Enterprise and institutional operators
+- Teams with strict security, compliance, or audit requirements
+- Organizations integrating blockchain infrastructure into existing CI/CD and governance frameworks
+
+---
+
+## Availability
+
+The Cosmos Network Manager is available immediately as part of the Cosmos Enterprise subscription.
+
+Contact **institutions@cosmoslabs.io** to discuss deployment models and service levels.
