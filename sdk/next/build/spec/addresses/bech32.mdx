@@ -1,0 +1,203 @@
+---
+title: Address Encoding
+---
+
+The Cosmos SDK uses the Bech32 address format for all user-facing addresses. Bech32 encoding provides robust integrity checks through checksums and includes a human-readable prefix (HRP) that provides contextual information about the address type.
+
+## Address Types
+
+The SDK defines three distinct address types, each with its own Bech32 prefix:
+
+| Address Type | Bech32 Prefix | Example | Purpose |
+|--------------|---------------|---------|---------|
+| Account Address | `cosmos` | `cosmos1r5v5sr...` | User accounts, balances, transactions |
+| Validator Operator Address | `cosmosvaloper` | `cosmosvaloper1r5v5sr...` | Validator operator identity, staking operations |
+| Consensus Address | `cosmosvalcons` | `cosmosvalcons1r5v5sr...` | Validator consensus participation, block signing |
+
+Each address type also has a corresponding public key prefix:
+- Account public keys: `cosmospub`
+- Validator public keys: `cosmosvaloperpub`
+- Consensus public keys: `cosmosvalconspub`
+
+## Address Derivation
+
+Addresses are derived from public keys through cryptographic hashing. The process differs based on the key algorithm:
+
+### Secp256k1 Keys (Account Addresses)
+
+Account addresses use Bitcoin-style address derivation:
+
+```
+1. Public Key: 33 bytes (compressed secp256k1 public key)
+2. SHA-256 hash of public key: 32 bytes
+3. RIPEMD-160 hash of result: 20 bytes (final address)
+```
+
+**Implementation:** `crypto/keys/secp256k1/secp256k1.go`
+
+```go
+func (pubKey *PubKey) Address() crypto.Address {
+    sha := sha256.Sum256(pubKey.Key)           // Step 1: SHA-256
+    hasherRIPEMD160 := ripemd160.New()
+    hasherRIPEMD160.Write(sha[:])
+    return hasherRIPEMD160.Sum(nil)            // Step 2: RIPEMD-160 = 20 bytes
+}
+```
+
+### Ed25519 Keys (Consensus Addresses)
+
+Consensus addresses use truncated SHA-256:
+
+```
+1. Public Key: 32 bytes (Ed25519 public key)
+2. SHA-256 hash, truncated to first 20 bytes
+```
+
+**Implementation:** `crypto/keys/ed25519/ed25519.go`
+
+```go
+func (pubKey *PubKey) Address() crypto.Address {
+    return crypto.Address(tmhash.SumTruncated(pubKey.Key))  // SHA-256-20
+}
+```
+
+## Bech32 Encoding Process
+
+Once address bytes are derived, they're converted to Bech32 format:
+
+**Step 1: Convert from 8-bit to 5-bit encoding**
+
+```go
+// Address bytes (20 bytes = 160 bits)
+addressBytes := []byte{0x12, 0x34, ..., 0xab}  // 20 bytes
+
+// Convert to 5-bit groups for Bech32
+converted, _ := bech32.ConvertBits(addressBytes, 8, 5, true)
+```
+
+**Step 2: Encode with Human-Readable Prefix**
+
+```go
+// Combine HRP with converted bytes
+bech32Address, _ := bech32.Encode("cosmos", converted)
+// Result: "cosmos1r5v5srda7xfth3uckstjst6k05kmeyzptewwdk"
+```
+
+**Implementation:** `types/bech32/bech32.go`
+
+## Address Validation
+
+The SDK validates addresses through:
+
+1. **Format validation**: Ensures valid Bech32 encoding
+2. **Prefix validation**: Confirms correct HRP for address type
+3. **Length validation**: Verifies address is exactly 20 bytes when decoded
+
+```go
+func (bc Bech32Codec) StringToBytes(text string) ([]byte, error) {
+    hrp, bz, err := bech32.DecodeAndConvert(text)
+    if err != nil {
+        return nil, err
+    }
+
+    if hrp != bc.Bech32Prefix {
+        return nil, fmt.Errorf("invalid prefix")
+    }
+
+    return bz, sdk.VerifyAddressFormat(bz)  // Checks length = 20 bytes
+}
+```
+
+## Module Addresses
+
+Module accounts use deterministic address derivation defined in [ADR-028](https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-028-public-key-addresses.md):
+
+```go
+// Module address without derivation keys
+func Module(moduleName string) []byte {
+    return crypto.AddressHash([]byte(moduleName))
+}
+
+// Module address with derivation keys (new method)
+func Module(moduleName string, derivationKeys ...[]byte) []byte {
+    mKey := append([]byte(moduleName), 0)  // Null byte separator
+    addr := Hash("module", append(mKey, derivationKeys[0]...))
+    return addr  // 32 bytes (not 20 bytes like user addresses)
+}
+```
+
+Module addresses are longer (32 bytes vs 20 bytes) to reduce collision probability.
+
+## Validator Address Relationships
+
+A validator has three related addresses:
+
+1. **Operator Address** (`cosmosvaloper1...`): The validator's operational identity, derived from the operator's account key
+2. **Consensus Address** (`cosmosvalcons1...`): Derived from the validator's consensus public key (Ed25519), used for block signing
+3. **Account Address** (`cosmos1...`): The operator's account for receiving rewards
+
+```go
+// Validator stores its consensus pubkey
+type Validator struct {
+    OperatorAddress string    // cosmosvaloper1... (from operator's account)
+    ConsensusPubkey *Any      // Ed25519 public key for signing
+    // ...
+}
+
+// Consensus address is derived from the consensus pubkey
+func (v Validator) GetConsAddr() ([]byte, error) {
+    pk := v.ConsensusPubkey.GetCachedValue().(cryptotypes.PubKey)
+    return pk.Address().Bytes(), nil  // SHA-256-20 of Ed25519 pubkey
+}
+```
+
+## Performance: Address Caching
+
+The SDK caches Bech32-encoded addresses to optimize repeated conversions:
+
+```go
+var (
+    accAddrCache  *simplelru.LRU  // 60,000 entries
+    valAddrCache  *simplelru.LRU  // 500 entries
+    consAddrCache *simplelru.LRU  // 500 entries
+)
+```
+
+When `Address.String()` is called, the SDK:
+1. Checks the LRU cache for the encoded address
+2. Returns cached value if found
+3. Otherwise, performs Bech32 encoding and caches the result
+
+This significantly improves performance during block processing and state queries.
+
+## Complete Example
+
+Here's the full pipeline for creating an account address:
+
+```go
+// 1. Generate keypair
+privKey := secp256k1.GenPrivKey()          // 32 bytes
+pubKey := privKey.PubKey()                 // 33 bytes (compressed)
+
+// 2. Derive address bytes
+sha := sha256.Sum256(pubKey.Bytes())       // 32 bytes
+ripemd := ripemd160.Sum(sha[:])            // 20 bytes
+addrBytes := ripemd[:]
+
+// 3. Create AccAddress type
+accAddr := sdk.AccAddress(addrBytes)
+
+// 4. Convert to Bech32 string
+// Internally: bech32.ConvertAndEncode("cosmos", addrBytes)
+addressStr := accAddr.String()
+// Result: "cosmos1r5v5srda7xfth3uckstjst6k05kmeyzptewwdk"
+
+// 5. Use in account
+account := auth.NewBaseAccount(accAddr, pubKey, accountNumber, sequence)
+```
+
+## Related Concepts
+
+- [Accounts](/sdk/v0.53/learn/beginner/accounts) - Understanding account types and management
+- [Store](/sdk/v0.53/learn/advanced/store) - How addresses are used as keys in state storage
+- [Transactions](/sdk/v0.53/learn/advanced/transactions) - How addresses are used in transaction signing
