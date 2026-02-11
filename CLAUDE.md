@@ -113,3 +113,71 @@ When updating documentation:
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+
+## Documentation Style Guide
+
+### Writing Standards
+
+When writing or updating documentation, follow these style guidelines:
+
+- No bold text
+- No italics
+- No first person pronouns (I, we, us, our)
+- Be concise and direct
+- Write naturally, as a human would
+- No horizontal line breaks (---)
+- No emojis
+- Use paragraphs where appropriate for readability
+- Use unordered lists only where they improve clarity
+- Use ordered lists only for sequential steps or ranked items
+- Be clear, concise, and coherent
+
+### Mintlify Syntax
+
+The documentation uses Mintlify-specific MDX components. Use these components appropriately:
+
+**Callouts**: Use sparingly and only where they add value. Available types:
+```mdx
+<Note>General information or tips</Note>
+<Info>Informational content</Info>
+<Warning>Important warnings or cautions</Warning>
+<Tip>Helpful tips or best practices</Tip>
+<Check>Success messages or confirmations</Check>
+```
+
+**Code Blocks**: Always specify the language for syntax highlighting:
+```mdx
+```javascript
+const example = "code";
+```
+```
+
+**Tabs**: For showing multiple options or examples:
+```mdx
+<Tabs>
+  <Tab title="JavaScript">
+    Content for JavaScript
+  </Tab>
+  <Tab title="Python">
+    Content for Python
+  </Tab>
+</Tabs>
+```
+
+**Accordions**: For collapsible content sections:
+```mdx
+<Accordion title="Click to expand">
+  Hidden content here
+</Accordion>
+```
+
+**Cards**: For grouped navigation or features:
+```mdx
+<CardGroup cols={2}>
+  <Card title="Title" icon="icon-name" href="/path">
+    Description
+  </Card>
+</CardGroup>
+```
+
+Use these components only where appropriate. Do not overuse callouts or formatting that may distract from the technical content.
