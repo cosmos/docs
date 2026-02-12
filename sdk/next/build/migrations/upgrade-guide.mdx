@@ -2,518 +2,226 @@
 title: Upgrade Guide
 description: >-
   This document provides a full guide for upgrading a Cosmos SDK chain from
-  v0.50.x to v0.53.x.
+  v0.53.x to v0.54.x.
 ---
 
-This document provides a full guide for upgrading a Cosmos SDK chain from `v0.50.x` to `v0.53.x`.
+This document provides a full guide for upgrading a Cosmos SDK chain from `v0.53.x` to `v0.54.x`.
 
-This guide includes one **required** change and three **optional** features.
+This guide includes several **required** breaking changes for upgrading to v0.54.
 
-After completing this guide, applications will have:
+Key changes in v0.54:
 
-* The `x/protocolpool` module
-* The `x/epochs` module
-* Unordered Transaction support
+* Decouple `x/gov` from `x/staking`
+* Remove deprecated modules (`x/group`, `x/nft`, `x/circuit`, `x/crisis`)
+* Remove sr25519 cryptographic support
+* Update to log v2
+* New BondDenom validation in `x/staking`
 
 ## Table of Contents
 
-* [App Wiring Changes (REQUIRED)](#app-wiring-changes-required)
-* [Adding ProtocolPool Module (OPTIONAL)](#adding-protocolpool-module-optional)
-  * [ProtocolPool Manual Wiring](#protocolpool-manual-wiring)
-  * [ProtocolPool DI Wiring](#protocolpool-di-wiring)
-* [Adding Epochs Module (OPTIONAL)](#adding-epochs-module-optional)
-  * [Epochs Manual Wiring](#epochs-manual-wiring)
-  * [Epochs DI Wiring](#epochs-di-wiring)
-* [Enable Unordered Transactions (OPTIONAL)](#enable-unordered-transactions-optional)
+* [Update x/gov Keeper (REQUIRED)](#update-xgov-keeper-required)
+* [Handle Deprecated Modules](#handle-deprecated-modules)
+* [Remove sr25519 Support](#remove-sr25519-support)
+* [Update to Log v2](#update-to-log-v2)
+* [Update x/staking BondDenom Usage](#update-xstaking-bonddenom-usage)
 * [Upgrade Handler](#upgrade-handler)
 
-## App Wiring Changes **REQUIRED**
+## Update x/gov Keeper **REQUIRED**
 
-The `x/auth` module now contains a `PreBlocker` that *must* be set in the module manager's `SetOrderPreBlockers` method.
+The `x/gov` module has been decoupled from `x/staking`. The `CalculateVoteResultsAndVotingPowerFn` is now a required parameter to `keeper.NewKeeper` instead of requiring a `StakingKeeper`.
 
+### Update Keeper Initialization
+
+Replace the `StakingKeeper` parameter with `CalculateVoteResultsAndVotingPowerFn`:
+
+**Before (v0.53)**:
 ```go
-app.ModuleManager.SetOrderPreBlockers(
-    upgradetypes.ModuleName,
-    authtypes.ModuleName, // NEW
+app.GovKeeper = govkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[govtypes.StoreKey]),
+    app.AccountKeeper,
+    app.BankKeeper,
+    app.StakingKeeper, // OLD: StakingKeeper required
+    app.DistrKeeper,
+    app.MsgServiceRouter(),
+    govtypes.DefaultConfig(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 )
 ```
 
-## Adding ProtocolPool Module **OPTIONAL**
+**After (v0.54)**:
+```go
+app.GovKeeper = govkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[govtypes.StoreKey]),
+    app.AccountKeeper,
+    app.BankKeeper,
+    govkeeper.NewStakingVotePowerFn(app.StakingKeeper), // NEW: voting power function
+    app.DistrKeeper,
+    app.MsgServiceRouter(),
+    govtypes.DefaultConfig(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+```
+
+### Custom Voting Power Calculation
+
+If your application requires custom voting power calculations, implement a custom `CalculateVoteResultsAndVotingPowerFn`:
+
+```go
+customVotingFn := func(
+    ctx context.Context,
+    k govkeeper.Keeper,
+    proposal v1.Proposal,
+) (totalVoterPower math.LegacyDec, totalValPower math.Int, results map[v1.VoteOption]math.LegacyDec, err error) {
+    // Your custom implementation
+    return totalVoterPower, totalValPower, results, nil
+}
+
+app.GovKeeper = govkeeper.NewKeeper(
+    // ... other params ...
+    customVotingFn, // Use your custom function
+    // ... remaining params ...
+)
+```
+
+<Note>
+The `DistrKeeper` is now optional. If your application does not use the distribution module for proposal cancel destinations, you can pass `nil`.
+</Note>
+
+## Handle Deprecated Modules
+
+Four modules have been moved to `./contrib` and are no longer actively maintained:
+
+* `x/group`
+* `x/nft`
+* `x/circuit`
+* `x/crisis`
 
 <Warning>
-
-Using an external community pool such as `x/protocolpool` will cause the following `x/distribution` handlers to return an error:
-
-**QueryService**
-
-* `CommunityPool`
-
-**MsgService**
-
-* `CommunityPoolSpend`
-* `FundCommunityPool`
-
-If your services depend on this functionality from `x/distribution`, please update them to use either `x/protocolpool` or your custom external community pool alternatives.
-
+These modules are still available in the `contrib` directory but will not receive the same level of support as core modules. They will not be covered by the Cosmos SDK Bug Bounty program.
 </Warning>
 
-### Manual Wiring
+### If You Use These Modules
 
-Import the following:
+If your application uses any of these modules, you have two options:
+
+**Option 1: Continue Using from contrib**
+
+Update your imports to reference the contrib directory:
 
 ```go
-import (
-    
-    // ...
-    "github.com/cosmos/cosmos-sdk/x/protocolpool"
-    protocolpoolkeeper "github.com/cosmos/cosmos-sdk/x/protocolpool/keeper"
-    protocolpooltypes "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
-)
+// Before
+import "github.com/cosmos/cosmos-sdk/x/group"
+
+// After
+import "github.com/cosmos/cosmos-sdk/contrib/x/group"
 ```
 
-Set the module account permissions.
+**Option 2: Migrate to Alternatives**
+
+Consider migrating to alternative solutions or maintaining your own fork of these modules.
+
+## Remove sr25519 Support
+
+Support for the sr25519 cryptographic signature scheme has been removed in v0.54 as it was removed from CometBFT v1.x.
+
+<Warning>
+If your application uses sr25519 keys, you must migrate to a supported cryptographic scheme such as secp256k1, ed25519, or BLS 12-381.
+</Warning>
+
+### Action Required
+
+1. Audit your codebase for any sr25519 imports or usage
+2. Remove or replace any sr25519-specific code
+3. Migrate existing sr25519 keys to supported schemes before upgrading
 
 ```go
-maccPerms = map[string][]string{
-    // ...
-    protocolpooltypes.ModuleName:                nil,
-    protocolpooltypes.ProtocolPoolEscrowAccount: nil,
-}
+// Remove any imports like:
+// import "github.com/cosmos/cosmos-sdk/crypto/keys/sr25519"
+
+// Replace sr25519 usage with supported alternatives:
+import "github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+import "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+import "github.com/cosmos/cosmos-sdk/crypto/keys/bls12_381"
 ```
 
-Add the protocol pool keeper to your application struct.
+## Update to Log v2
+
+The Cosmos SDK has updated from log v1 to log v2. Applications using the logging package must update their imports and usage.
+
+### Update Imports
 
 ```go
-ProtocolPoolKeeper protocolpoolkeeper.Keeper
+// Before (v0.53)
+import "cosmossdk.io/log"
+
+// After (v0.54)
+import "cosmossdk.io/log/v2"
 ```
 
-Add the store key:
+### Update Logger Initialization
+
+Review your logger initialization code to ensure compatibility with log v2 APIs. Refer to the log v2 documentation for detailed migration instructions.
+
+## Update x/staking BondDenom Usage
+
+The `x/staking` module now validates that the `bond_denom` parameter in `MsgUpdateParams` references an existing denomination with non-zero supply.
+
+### Action Required
+
+If your application uses `MsgUpdateParams` to update staking parameters, ensure that:
+
+1. The `bond_denom` exists in the chain state
+2. The denomination has a non-zero supply
+
+<Note>
+This validation prevents setting invalid or non-existent bond denominations that could cause unexpected behavior.
+</Note>
 
 ```go
-keys := storetypes.NewKVStoreKeys(
-    // ...
-    protocolpooltypes.StoreKey,
-)
-```
-
-Instantiate the keeper.
-
-Make sure to do this before the distribution module instantiation, as you will pass the keeper there next.
-
-```go
-app.ProtocolPoolKeeper = protocolpoolkeeper.NewKeeper(
-    appCodec,
-    runtime.NewKVStoreService(keys[protocolpooltypes.StoreKey]),
-    app.AccountKeeper,
-    app.BankKeeper,
-    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-)
-```
-
-Pass the protocolpool keeper to the distribution keeper:
-
-```go
-app.DistrKeeper = distrkeeper.NewKeeper(
-    appCodec,
-    runtime.NewKVStoreService(keys[distrtypes.StoreKey]),
-    app.AccountKeeper,
-    app.BankKeeper,
-    app.StakingKeeper,
-    authtypes.FeeCollectorName,
-    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-    distrkeeper.WithExternalCommunityPool(app.ProtocolPoolKeeper), // NEW
-)
-```
-
-Add the protocolpool module to the module manager:
-
-```go
-app.ModuleManager = module.NewManager(
-    // ...
-    protocolpool.NewAppModule(appCodec, app.ProtocolPoolKeeper, app.AccountKeeper, app.BankKeeper),
-)
-```
-
-Add an entry for SetOrderBeginBlockers, SetOrderEndBlockers, SetOrderInitGenesis, and SetOrderExportGenesis.
-
-```go
-app.ModuleManager.SetOrderBeginBlockers(
-    // must come AFTER distribution.
-    distrtypes.ModuleName,
-    protocolpooltypes.ModuleName,
-)
-```
-
-```go
-app.ModuleManager.SetOrderEndBlockers(
-    // order does not matter.
-    protocolpooltypes.ModuleName,
-)
-```
-
-```go
-app.ModuleManager.SetOrderInitGenesis(
-    // order does not matter.
-    protocolpooltypes.ModuleName,   
-)
-```
-
-```go
-app.ModuleManager.SetOrderInitGenesis(
-    protocolpooltypes.ModuleName, // must be exported before bank.
-    banktypes.ModuleName,
-)
-```
-
-### DI Wiring
-
-Note: *as long as an external community pool keeper (here, `x/protocolpool`) is wired in DI configs, `x/distribution` will automatically use it for its external pool.*
-
-First, set up the keeper for the application.
-
-Import the protocolpool keeper:
-
-```go
-protocolpoolkeeper "github.com/cosmos/cosmos-sdk/x/protocolpool/keeper"
-```
-
-Add the keeper to your application struct:
-
-```go
-ProtocolPoolKeeper protocolpoolkeeper.Keeper
-```
-
-Add the keeper to the depinject system:
-
-```go
-depinject.Inject(
-    appConfig,
-    &appBuilder,
-    &app.appCodec,
-    &app.legacyAmino,
-    &app.txConfig,
-    &app.interfaceRegistry,
-    // ... other modules
-    &app.ProtocolPoolKeeper, // NEW MODULE!
-)
-```
-
-Next, set up configuration for the module.
-
-Import the following:
-
-```go
-import (
-    
-    protocolpoolmodulev1 "cosmossdk.io/api/cosmos/protocolpool/module/v1"
-    
-    _ "github.com/cosmos/cosmos-sdk/x/protocolpool" // import for side-effects
-    protocolpooltypes "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
-)
-```
-
-The protocolpool module has module accounts that handle funds. Add them to the module account permission configuration:
-
-```go
-moduleAccPerms = []*authmodulev1.ModuleAccountPermission{
-    // ...
-    {
-    Account: protocolpooltypes.ModuleName
-},
-    {
-    Account: protocolpooltypes.ProtocolPoolEscrowAccount
-},
-}
-```
-
-Next, add an entry for BeginBlockers, EndBlockers, InitGenesis, and ExportGenesis.
-
-```go
-BeginBlockers: []string{
-    // ...
-    // must be AFTER distribution.
-    distrtypes.ModuleName,
-    protocolpooltypes.ModuleName,
-},
-```
-
-```go
-EndBlockers: []string{
-    // ...
-    // order for protocolpool does not matter.
-    protocolpooltypes.ModuleName,
-},
-```
-
-```go
-InitGenesis: []string{
-    // ... must be AFTER distribution.
-    distrtypes.ModuleName,
-    protocolpooltypes.ModuleName,
-},
-```
-
-```go
-ExportGenesis: []string{
-    // ...
-    // Must be exported before x/bank.
-    protocolpooltypes.ModuleName, 
-    banktypes.ModuleName,
-},
-```
-
-Lastly, add an entry for protocolpool in the ModuleConfig.
-
-```go
-{
-    Name:   protocolpooltypes.ModuleName,
-    Config: appconfig.WrapAny(&protocolpoolmodulev1.Module{
-}),
-},
-```
-
-## Adding Epochs Module **OPTIONAL**
-
-### Manual Wiring
-
-Import the following:
-
-```go
-import (
-    
-    // ...
-    "github.com/cosmos/cosmos-sdk/x/epochs"
-    epochskeeper "github.com/cosmos/cosmos-sdk/x/epochs/keeper"
-    epochstypes "github.com/cosmos/cosmos-sdk/x/epochs/types"
-)
-```
-
-Add the epochs keeper to your application struct:
-
-```go
-EpochsKeeper epochskeeper.Keeper
-```
-
-Add the store key:
-
-```go
-keys := storetypes.NewKVStoreKeys(
-    // ...
-    epochstypes.StoreKey,
-)
-```
-
-Instantiate the keeper:
-
-```go
-app.EpochsKeeper = epochskeeper.NewKeeper(
-    runtime.NewKVStoreService(keys[epochstypes.StoreKey]),
-    appCodec,
-)
-```
-
-Set up hooks for the epochs keeper:
-
-To learn how to write hooks for the epoch keeper, see the [x/epoch README](https://github.com/cosmos/cosmos-sdk/blob/main/x/epochs/README.md)
-
-```go
-app.EpochsKeeper.SetHooks(
-    epochstypes.NewMultiEpochHooks(
-        // insert epoch hooks receivers here
-        app.SomeOtherModule
-    ),
-)
-```
-
-Add the epochs module to the module manager:
-
-```go
-app.ModuleManager = module.NewManager(
-    // ...
-    epochs.NewAppModule(appCodec, app.EpochsKeeper),
-)
-```
-
-Add entries for SetOrderBeginBlockers and SetOrderInitGenesis:
-
-```go
-app.ModuleManager.SetOrderBeginBlockers(
-    // ...
-    epochstypes.ModuleName,
-)
-```
-
-```go
-app.ModuleManager.SetOrderInitGenesis(
-    // ...
-    epochstypes.ModuleName,
-)
-```
-
-### DI Wiring
-
-First, set up the keeper for the application.
-
-Import the epochs keeper:
-
-```go
-epochskeeper "github.com/cosmos/cosmos-sdk/x/epochs/keeper"
-```
-
-Add the keeper to your application struct:
-
-```go
-EpochsKeeper epochskeeper.Keeper
-```
-
-Add the keeper to the depinject system:
-
-```go
-depinject.Inject(
-    appConfig,
-    &appBuilder,
-    &app.appCodec,
-    &app.legacyAmino,
-    &app.txConfig,
-    &app.interfaceRegistry,
-    // ... other modules
-    &app.EpochsKeeper, // NEW MODULE!
-)
-```
-
-Next, set up configuration for the module.
-
-Import the following:
-
-```go
-import (
-    
-    epochsmodulev1 "cosmossdk.io/api/cosmos/epochs/module/v1"
-    
-    _ "github.com/cosmos/cosmos-sdk/x/epochs" // import for side-effects
-    epochstypes "github.com/cosmos/cosmos-sdk/x/epochs/types"
-)
-```
-
-Add an entry for BeginBlockers and InitGenesis:
-
-```go
-BeginBlockers: []string{
-    // ...
-    epochstypes.ModuleName,
-},
-```
-
-```go
-InitGenesis: []string{
-    // ...
-    epochstypes.ModuleName,
-},
-```
-
-Lastly, add an entry for epochs in the ModuleConfig:
-
-```go
-{
-    Name:   epochstypes.ModuleName,
-    Config: appconfig.WrapAny(&epochsmodulev1.Module{
-}),
-},
-```
-
-## Enable Unordered Transactions **OPTIONAL**
-
-To enable unordered transaction support on an application, the `x/auth` keeper must be supplied with the `WithUnorderedTransactions` option.
-
-Note that unordered transactions require sequence values to be zero, and will **FAIL** if a non-zero sequence value is set.
-Please ensure no sequence value is set when submitting an unordered transaction.
-Services that rely on prior assumptions about sequence values should be updated to handle unordered transactions.
-Services should be aware that when the transaction is unordered, the transaction sequence will always be zero.
-
-```go
-app.AccountKeeper = authkeeper.NewAccountKeeper(
-		appCodec,
-		runtime.NewKVStoreService(keys[authtypes.StoreKey]),
-		authtypes.ProtoBaseAccount,
-		maccPerms,
-		authcodec.NewBech32Codec(sdk.Bech32MainPrefix),
-		sdk.Bech32MainPrefix,
-		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-		authkeeper.WithUnorderedTransactions(true), // new option!
-	)
-```
-
-If using dependency injection, update the auth module config.
-
-```go
-{
-    Name: authtypes.ModuleName,
-    Config: appconfig.WrapAny(&authmodulev1.Module{
-    Bech32Prefix:             "cosmos",
-    ModuleAccountPermissions: moduleAccPerms,
-    EnableUnorderedTransactions: true, // remove this line if you do not want unordered transactions.
-}),
-},
-```
-
-By default, unordered transactions use a transaction timeout duration of 10 minutes and a default gas charge of 2240 gas units.
-To modify these default values, pass in the corresponding options to the new `SigVerifyOptions` field in `x/auth's` `ante.HandlerOptions`.
-
-```go
-options := ante.HandlerOptions{
-    SigVerifyOptions: []ante.SigVerificationDecoratorOption{
-        // change below as needed.
-        ante.WithUnorderedTxGasCost(ante.DefaultUnorderedTxGasCost),
-        ante.WithMaxUnorderedTxTimeoutDuration(ante.DefaultMaxTimoutDuration),
-},
-}
-```
-
-```go
-anteDecorators := []sdk.AnteDecorator{
-	// ... other decorators ...
-    ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler, options.SigVerifyOptions...), // supply new options
+// When calling MsgUpdateParams, ensure bond_denom is valid:
+params := stakingtypes.Params{
+    BondDenom: "ustake", // Must exist with non-zero supply
+    // ... other params ...
 }
 ```
 
 ## Upgrade Handler
 
-The upgrade handler only requires adding the store upgrades for the modules added above.
-If your application is not adding `x/protocolpool` or `x/epochs`, you do not need to add the store upgrade.
+The v0.54 upgrade primarily involves API changes and does not require store upgrades. The upgrade handler should run the standard module migrations.
 
 ```go expandable
 // UpgradeName defines the on-chain upgrade name for the sample SimApp upgrade
-// from v050 to v053.
+// from v0.53 to v0.54.
 //
 // NOTE: This upgrade defines a reference implementation of what an upgrade
 // could look like when an application is migrating from Cosmos SDK version
-// v0.50.x to v0.53.x.
-const UpgradeName = "v050-to-v053"
+// v0.53.x to v0.54.x.
+const UpgradeName = "v053-to-v054"
 
-func (app SimApp)
-
-RegisterUpgradeHandlers() {
+func (app SimApp) RegisterUpgradeHandlers() {
     app.UpgradeKeeper.SetUpgradeHandler(
         UpgradeName,
         func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
-    return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
-},
+            // Run module migrations
+            return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+        },
     )
 
-upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
+    upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
     if err != nil {
-    panic(err)
-}
-    if upgradeInfo.Name == UpgradeName && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.Height) {
-    storeUpgrades := storetypes.StoreUpgrades{
-    Added: []string{
-    epochstypes.ModuleName, // if not adding x/epochs to your chain, remove this line.
-                protocolpooltypes.ModuleName, // if not adding x/protocolpool to your chain, remove this line.
-},
-}
+        panic(err)
+    }
 
-        // configure store loader that checks if version == upgradeHeight and applies store upgrades
-        app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, &storeUpgrades))
-}
+    if upgradeInfo.Name == UpgradeName && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.Height) {
+        // No store upgrades required for v0.54
+        // The deprecated modules (x/group, x/nft, x/circuit, x/crisis) remain in store
+        // but are moved to contrib in the codebase
+    }
 }
 ```
+
+<Note>
+No store keys need to be added or removed for the v0.54 upgrade. The deprecated modules remain in the store but have moved to the `contrib` directory in the codebase.
+</Note>
