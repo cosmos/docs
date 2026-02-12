@@ -1,0 +1,227 @@
+---
+title: Upgrade Guide
+description: >-
+  This document provides a full guide for upgrading a Cosmos SDK chain from
+  v0.53.x to v0.54.x.
+---
+
+This document provides a full guide for upgrading a Cosmos SDK chain from `v0.53.x` to `v0.54.x`.
+
+This guide includes several **required** breaking changes for upgrading to v0.54.
+
+Key changes in v0.54:
+
+* Decouple `x/gov` from `x/staking`
+* Remove deprecated modules (`x/group`, `x/nft`, `x/circuit`, `x/crisis`)
+* Remove sr25519 cryptographic support
+* Update to log v2
+* New BondDenom validation in `x/staking`
+
+## Table of Contents
+
+* [Update x/gov Keeper (REQUIRED)](#update-xgov-keeper-required)
+* [Handle Deprecated Modules](#handle-deprecated-modules)
+* [Remove sr25519 Support](#remove-sr25519-support)
+* [Update to Log v2](#update-to-log-v2)
+* [Update x/staking BondDenom Usage](#update-xstaking-bonddenom-usage)
+* [Upgrade Handler](#upgrade-handler)
+
+## Update x/gov Keeper **REQUIRED**
+
+The `x/gov` module has been decoupled from `x/staking`. The `CalculateVoteResultsAndVotingPowerFn` is now a required parameter to `keeper.NewKeeper` instead of requiring a `StakingKeeper`.
+
+### Update Keeper Initialization
+
+Replace the `StakingKeeper` parameter with `CalculateVoteResultsAndVotingPowerFn`:
+
+**Before (v0.53)**:
+```go
+app.GovKeeper = govkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[govtypes.StoreKey]),
+    app.AccountKeeper,
+    app.BankKeeper,
+    app.StakingKeeper, // OLD: StakingKeeper required
+    app.DistrKeeper,
+    app.MsgServiceRouter(),
+    govtypes.DefaultConfig(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+```
+
+**After (v0.54)**:
+```go
+app.GovKeeper = govkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[govtypes.StoreKey]),
+    app.AccountKeeper,
+    app.BankKeeper,
+    govkeeper.NewStakingVotePowerFn(app.StakingKeeper), // NEW: voting power function
+    app.DistrKeeper,
+    app.MsgServiceRouter(),
+    govtypes.DefaultConfig(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+```
+
+### Custom Voting Power Calculation
+
+If your application requires custom voting power calculations, implement a custom `CalculateVoteResultsAndVotingPowerFn`:
+
+```go
+customVotingFn := func(
+    ctx context.Context,
+    k govkeeper.Keeper,
+    proposal v1.Proposal,
+) (totalVoterPower math.LegacyDec, totalValPower math.Int, results map[v1.VoteOption]math.LegacyDec, err error) {
+    // Your custom implementation
+    return totalVoterPower, totalValPower, results, nil
+}
+
+app.GovKeeper = govkeeper.NewKeeper(
+    // ... other params ...
+    customVotingFn, // Use your custom function
+    // ... remaining params ...
+)
+```
+
+<Note>
+The `DistrKeeper` is now optional. If your application does not use the distribution module for proposal cancel destinations, you can pass `nil`.
+</Note>
+
+## Handle Deprecated Modules
+
+Four modules have been moved to `./contrib` and are no longer actively maintained:
+
+* `x/group`
+* `x/nft`
+* `x/circuit`
+* `x/crisis`
+
+<Warning>
+These modules are still available in the `contrib` directory but will not receive the same level of support as core modules. They will not be covered by the Cosmos SDK Bug Bounty program.
+</Warning>
+
+### If You Use These Modules
+
+If your application uses any of these modules, you have two options:
+
+**Option 1: Continue Using from contrib**
+
+Update your imports to reference the contrib directory:
+
+```go
+// Before
+import "github.com/cosmos/cosmos-sdk/x/group"
+
+// After
+import "github.com/cosmos/cosmos-sdk/contrib/x/group"
+```
+
+**Option 2: Migrate to Alternatives**
+
+Consider migrating to alternative solutions or maintaining your own fork of these modules.
+
+## Remove sr25519 Support
+
+Support for the sr25519 cryptographic signature scheme has been removed in v0.54 as it was removed from CometBFT v1.x.
+
+<Warning>
+If your application uses sr25519 keys, you must migrate to a supported cryptographic scheme such as secp256k1, ed25519, or BLS 12-381.
+</Warning>
+
+### Action Required
+
+1. Audit your codebase for any sr25519 imports or usage
+2. Remove or replace any sr25519-specific code
+3. Migrate existing sr25519 keys to supported schemes before upgrading
+
+```go
+// Remove any imports like:
+// import "github.com/cosmos/cosmos-sdk/crypto/keys/sr25519"
+
+// Replace sr25519 usage with supported alternatives:
+import "github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+import "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+import "github.com/cosmos/cosmos-sdk/crypto/keys/bls12_381"
+```
+
+## Update to Log v2
+
+The Cosmos SDK has updated from log v1 to log v2. Applications using the logging package must update their imports and usage.
+
+### Update Imports
+
+```go
+// Before (v0.53)
+import "cosmossdk.io/log"
+
+// After (v0.54)
+import "cosmossdk.io/log/v2"
+```
+
+### Update Logger Initialization
+
+Review your logger initialization code to ensure compatibility with log v2 APIs. Refer to the log v2 documentation for detailed migration instructions.
+
+## Update x/staking BondDenom Usage
+
+The `x/staking` module now validates that the `bond_denom` parameter in `MsgUpdateParams` references an existing denomination with non-zero supply.
+
+### Action Required
+
+If your application uses `MsgUpdateParams` to update staking parameters, ensure that:
+
+1. The `bond_denom` exists in the chain state
+2. The denomination has a non-zero supply
+
+<Note>
+This validation prevents setting invalid or non-existent bond denominations that could cause unexpected behavior.
+</Note>
+
+```go
+// When calling MsgUpdateParams, ensure bond_denom is valid:
+params := stakingtypes.Params{
+    BondDenom: "ustake", // Must exist with non-zero supply
+    // ... other params ...
+}
+```
+
+## Upgrade Handler
+
+The v0.54 upgrade primarily involves API changes and does not require store upgrades. The upgrade handler should run the standard module migrations.
+
+```go expandable
+// UpgradeName defines the on-chain upgrade name for the sample SimApp upgrade
+// from v0.53 to v0.54.
+//
+// NOTE: This upgrade defines a reference implementation of what an upgrade
+// could look like when an application is migrating from Cosmos SDK version
+// v0.53.x to v0.54.x.
+const UpgradeName = "v053-to-v054"
+
+func (app SimApp) RegisterUpgradeHandlers() {
+    app.UpgradeKeeper.SetUpgradeHandler(
+        UpgradeName,
+        func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+            // Run module migrations
+            return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+        },
+    )
+
+    upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
+    if err != nil {
+        panic(err)
+    }
+
+    if upgradeInfo.Name == UpgradeName && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.Height) {
+        // No store upgrades required for v0.54
+        // The deprecated modules (x/group, x/nft, x/circuit, x/crisis) remain in store
+        // but are moved to contrib in the codebase
+    }
+}
+```
+
+<Note>
+No store keys need to be added or removed for the v0.54 upgrade. The deprecated modules remain in the store but have moved to the `contrib` directory in the codebase.
+</Note>

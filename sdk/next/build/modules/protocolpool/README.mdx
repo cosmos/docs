@@ -1,0 +1,657 @@
+---
+title: 'x/protocolpool'
+---
+
+## Concepts
+
+`x/protocolpool` is a supplemental Cosmos SDK module that handles functionality for community pool funds. The module provides a separate module account for the community pool making it easier to track the pool assets. Starting with v0.53 of the Cosmos SDK, community funds can be tracked using this module instead of the `x/distribution` module. Funds are migrated from the `x/distribution` module's community pool to `x/protocolpool`'s module account automatically.
+
+This module is `supplemental`; it is not required to run a Cosmos SDK chain. `x/protocolpool` enhances the community pool functionality provided by `x/distribution` and enables custom modules to further extend the community pool.
+
+Note: *as long as an external commmunity pool keeper (here, `x/protocolpool`) is wired in DI configs, `x/distribution` will automatically use it for its external pool.*
+
+## Usage Limitations
+
+The following `x/distribution` handlers will now return an error when the `protocolpool` module is used with `x/distribution`:
+
+**QueryService**
+
+* `CommunityPool`
+
+**MsgService**
+
+* `CommunityPoolSpend`
+* `FundCommunityPool`
+
+If you have services that rely on this functionality from `x/distribution`, please update them to use the `x/protocolpool` equivalents.
+
+## State Transitions
+
+### FundCommunityPool
+
+FundCommunityPool can be called by any valid account to send funds to the `x/protocolpool` module account.
+
+```protobuf
+  // FundCommunityPool defines a method to allow an account to directly
+  // fund the community pool.
+  rpc FundCommunityPool(MsgFundCommunityPool) returns (MsgFundCommunityPoolResponse);
+```
+
+### CommunityPoolSpend
+
+CommunityPoolSpend can be called by the module authority (default governance module account) or any account with authorization to spend funds from the `x/protocolpool` module account to a receiver address.
+
+```protobuf
+  // CommunityPoolSpend defines a governance  operation for sending tokens from
+  // the community pool in the x/protocolpool module to another account, which
+  // could be the governance module itself. The authority is defined in the
+  // keeper.
+  rpc CommunityPoolSpend(MsgCommunityPoolSpend) returns (MsgCommunityPoolSpendResponse);
+```
+
+### CreateContinuousFund
+
+CreateContinuousFund is a message used to initiate a continuous fund for a specific recipient. The proposed percentage of funds will be distributed only on withdraw request for the recipient. The fund distribution continues until expiry time is reached or continuous fund request is canceled.
+NOTE:  This feature is designed to work with the SDK's default bond denom.
+
+```protobuf
+  // CreateContinuousFund defines a method to distribute a percentage of funds to an address continuously.
+  // This ContinuousFund can be indefinite or run until a given expiry time.
+  // Funds come from validator block rewards from x/distribution, but may also come from
+  // any user who funds the ProtocolPoolEscrow module account directly through x/bank.
+  rpc CreateContinuousFund(MsgCreateContinuousFund) returns (MsgCreateContinuousFundResponse);
+```
+
+### CancelContinuousFund
+
+CancelContinuousFund is a message used to cancel an existing continuous fund proposal for a specific recipient. Cancelling a continuous fund stops further distribution of funds, and the state object is removed from storage.
+
+```protobuf
+  // CancelContinuousFund defines a method for cancelling continuous fund.
+  rpc CancelContinuousFund(MsgCancelContinuousFund) returns (MsgCancelContinuousFundResponse);
+```
+
+## Messages
+
+### MsgFundCommunityPool
+
+This message sends coins directly from the sender to the community pool.
+
+<Tip>
+If you know the `x/protocolpool` module account address, you can directly use bank `send` transaction instead.
+</Tip>
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/proto/cosmos/protocolpool/v1/tx.proto#L43-L53
+```
+
+* The msg will fail if the amount cannot be transferred from the sender to the `x/protocolpool` module account.
+
+```go
+func (k Keeper)
+
+FundCommunityPool(ctx context.Context, amount sdk.Coins, sender sdk.AccAddress)
+
+error {
+    return k.bankKeeper.SendCoinsFromAccountToModule(ctx, sender, types.ModuleName, amount)
+}
+```
+
+### MsgCommunityPoolSpend
+
+This message distributes funds from the `x/protocolpool` module account to the recipient using `DistributeFromCommunityPool` keeper method.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/proto/cosmos/protocolpool/v1/tx.proto#L58-L69
+```
+
+The message will fail under the following conditions:
+
+* The amount cannot be transferred to the recipient from the `x/protocolpool` module account.
+* The `recipient` address is restricted
+
+```go
+func (k Keeper)
+
+DistributeFromCommunityPool(ctx context.Context, amount sdk.Coins, receiveAddr sdk.AccAddress)
+
+error {
+    return k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, receiveAddr, amount)
+}
+```
+
+### MsgCreateContinuousFund
+
+This message is used to create a continuous fund for a specific recipient. The proposed percentage of funds will be distributed only on withdraw request for the recipient. This fund distribution continues until expiry time is reached or continuous fund request is canceled.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/proto/cosmos/protocolpool/v1/tx.proto#L114-L130
+```
+
+The message will fail under the following conditions:
+
+* The recipient address is empty or restricted.
+* The percentage is zero/negative/greater than one.
+* The Expiry time is less than the current block time.
+
+<Warning>
+If two continuous fund proposals to the same address are created, the previous ContinuousFund will be updated with the new ContinuousFund.
+</Warning>
+
+```go expandable
+package keeper
+
+import (
+    
+	"context"
+    "fmt"
+    "cosmossdk.io/math"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+    "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
+)
+
+type MsgServer struct {
+    Keeper
+}
+
+var _ types.MsgServer = MsgServer{
+}
+
+// NewMsgServerImpl returns an implementation of the protocolpool MsgServer interface
+// for the provided Keeper.
+func NewMsgServerImpl(keeper Keeper)
+
+types.MsgServer {
+    return &MsgServer{
+    Keeper: keeper
+}
+}
+
+func (k MsgServer)
+
+FundCommunityPool(ctx context.Context, msg *types.MsgFundCommunityPool) (*types.MsgFundCommunityPoolResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+depositor, err := k.authKeeper.AddressCodec().StringToBytes(msg.Depositor)
+    if err != nil {
+    return nil, sdkerrors.ErrInvalidAddress.Wrapf("invalid depositor address: %s", err)
+}
+    if err := validateAmount(msg.Amount); err != nil {
+    return nil, err
+}
+
+	// send funds to community pool module account
+    if err := k.Keeper.FundCommunityPool(sdkCtx, msg.Amount, depositor); err != nil {
+    return nil, err
+}
+
+return &types.MsgFundCommunityPoolResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CommunityPoolSpend(ctx context.Context, msg *types.MsgCommunityPoolSpend) (*types.MsgCommunityPoolSpendResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+    if err := validateAmount(msg.Amount); err != nil {
+    return nil, err
+}
+
+recipient, err := k.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+
+	// distribute funds from community pool module account
+    if err := k.DistributeFromCommunityPool(sdkCtx, msg.Amount, recipient); err != nil {
+    return nil, err
+}
+
+sdkCtx.Logger().Debug("transferred from the community pool", "amount", msg.Amount.String(), "recipient", msg.Recipient)
+
+return &types.MsgCommunityPoolSpendResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CreateContinuousFund(ctx context.Context, msg *types.MsgCreateContinuousFund) (*types.MsgCreateContinuousFundResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+
+recipient, err := k.Keeper.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+
+	// deny creation if we know this address is blocked from receiving funds
+    if k.bankKeeper.BlockedAddr(recipient) {
+    return nil, fmt.Errorf("recipient is blocked in the bank keeper: %s", msg.Recipient)
+}
+
+has, err := k.ContinuousFunds.Has(sdkCtx, recipient)
+    if err != nil {
+    return nil, err
+}
+    if has {
+    return nil, fmt.Errorf("continuous fund already exists for recipient %s", msg.Recipient)
+}
+
+	// Validate the message fields
+	err = validateContinuousFund(sdkCtx, *msg)
+    if err != nil {
+    return nil, err
+}
+
+	// Check if total funds percentage exceeds 100%
+	// If exceeds, we should not setup continuous fund proposal.
+    totalStreamFundsPercentage := math.LegacyZeroDec()
+
+err = k.ContinuousFunds.Walk(sdkCtx, nil, func(key sdk.AccAddress, value types.ContinuousFund) (stop bool, err error) {
+    totalStreamFundsPercentage = totalStreamFundsPercentage.Add(value.Percentage)
+
+return false, nil
+})
+    if err != nil {
+    return nil, err
+}
+
+totalStreamFundsPercentage = totalStreamFundsPercentage.Add(msg.Percentage)
+    if totalStreamFundsPercentage.GT(math.LegacyOneDec()) {
+    return nil, fmt.Errorf("cannot set continuous fund proposal\ntotal funds percentage exceeds 100\ncurrent total percentage: %s", totalStreamFundsPercentage.Sub(msg.Percentage).MulInt64(100).TruncateInt().String())
+}
+
+	// Create continuous fund proposal
+    cf := types.ContinuousFund{
+    Recipient:  msg.Recipient,
+    Percentage: msg.Percentage,
+    Expiry:     msg.Expiry,
+}
+
+	// Set continuous fund to the state
+	err = k.ContinuousFunds.Set(sdkCtx, recipient, cf)
+    if err != nil {
+    return nil, err
+}
+
+return &types.MsgCreateContinuousFundResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CancelContinuousFund(ctx context.Context, msg *types.MsgCancelContinuousFund) (*types.MsgCancelContinuousFundResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+
+recipient, err := k.Keeper.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+    canceledHeight := sdkCtx.BlockHeight()
+    canceledTime := sdkCtx.BlockTime()
+
+has, err := k.ContinuousFunds.Has(sdkCtx, recipient)
+    if err != nil {
+    return nil, fmt.Errorf("cannot get continuous fund for recipient %w", err)
+}
+    if !has {
+    return nil, fmt.Errorf("cannot cancel continuous fund for recipient %s - does not exist", msg.Recipient)
+}
+    if err := k.ContinuousFunds.Remove(sdkCtx, recipient); err != nil {
+    return nil, fmt.Errorf("failed to remove continuous fund for recipient %s: %w", msg.Recipient, err)
+}
+
+return &types.MsgCancelContinuousFundResponse{
+    CanceledTime:   canceledTime,
+    CanceledHeight: uint64(canceledHeight),
+    Recipient:      msg.Recipient,
+}, nil
+}
+
+func (k MsgServer)
+
+UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.GetAuthority()); err != nil {
+    return nil, err
+}
+    if err := msg.Params.Validate(); err != nil {
+    return nil, fmt.Errorf("invalid params: %w", err)
+}
+    if err := k.Params.Set(sdkCtx, msg.Params); err != nil {
+    return nil, fmt.Errorf("failed to set params: %w", err)
+}
+
+return &types.MsgUpdateParamsResponse{
+}, nil
+}
+```
+
+### MsgCancelContinuousFund
+
+This message is used to cancel an existing continuous fund proposal for a specific recipient. Once canceled, the continuous fund will no longer distribute funds at each begin block, and the state object will be removed.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/x/protocolpool/proto/cosmos/protocolpool/v1/tx.proto#L136-L161
+```
+
+The message will fail under the following conditions:
+
+* The recipient address is empty or restricted.
+* The ContinuousFund for the recipient does not exist.
+
+```go expandable
+package keeper
+
+import (
+    
+	"context"
+    "fmt"
+    "cosmossdk.io/math"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+    "github.com/cosmos/cosmos-sdk/x/protocolpool/types"
+)
+
+type MsgServer struct {
+    Keeper
+}
+
+var _ types.MsgServer = MsgServer{
+}
+
+// NewMsgServerImpl returns an implementation of the protocolpool MsgServer interface
+// for the provided Keeper.
+func NewMsgServerImpl(keeper Keeper)
+
+types.MsgServer {
+    return &MsgServer{
+    Keeper: keeper
+}
+}
+
+func (k MsgServer)
+
+FundCommunityPool(ctx context.Context, msg *types.MsgFundCommunityPool) (*types.MsgFundCommunityPoolResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+depositor, err := k.authKeeper.AddressCodec().StringToBytes(msg.Depositor)
+    if err != nil {
+    return nil, sdkerrors.ErrInvalidAddress.Wrapf("invalid depositor address: %s", err)
+}
+    if err := validateAmount(msg.Amount); err != nil {
+    return nil, err
+}
+
+	// send funds to community pool module account
+    if err := k.Keeper.FundCommunityPool(sdkCtx, msg.Amount, depositor); err != nil {
+    return nil, err
+}
+
+return &types.MsgFundCommunityPoolResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CommunityPoolSpend(ctx context.Context, msg *types.MsgCommunityPoolSpend) (*types.MsgCommunityPoolSpendResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+    if err := validateAmount(msg.Amount); err != nil {
+    return nil, err
+}
+
+recipient, err := k.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+
+	// distribute funds from community pool module account
+    if err := k.DistributeFromCommunityPool(sdkCtx, msg.Amount, recipient); err != nil {
+    return nil, err
+}
+
+sdkCtx.Logger().Debug("transferred from the community pool", "amount", msg.Amount.String(), "recipient", msg.Recipient)
+
+return &types.MsgCommunityPoolSpendResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CreateContinuousFund(ctx context.Context, msg *types.MsgCreateContinuousFund) (*types.MsgCreateContinuousFundResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+
+recipient, err := k.Keeper.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+
+	// deny creation if we know this address is blocked from receiving funds
+    if k.bankKeeper.BlockedAddr(recipient) {
+    return nil, fmt.Errorf("recipient is blocked in the bank keeper: %s", msg.Recipient)
+}
+
+has, err := k.ContinuousFunds.Has(sdkCtx, recipient)
+    if err != nil {
+    return nil, err
+}
+    if has {
+    return nil, fmt.Errorf("continuous fund already exists for recipient %s", msg.Recipient)
+}
+
+	// Validate the message fields
+	err = validateContinuousFund(sdkCtx, *msg)
+    if err != nil {
+    return nil, err
+}
+
+	// Check if total funds percentage exceeds 100%
+	// If exceeds, we should not setup continuous fund proposal.
+    totalStreamFundsPercentage := math.LegacyZeroDec()
+
+err = k.ContinuousFunds.Walk(sdkCtx, nil, func(key sdk.AccAddress, value types.ContinuousFund) (stop bool, err error) {
+    totalStreamFundsPercentage = totalStreamFundsPercentage.Add(value.Percentage)
+
+return false, nil
+})
+    if err != nil {
+    return nil, err
+}
+
+totalStreamFundsPercentage = totalStreamFundsPercentage.Add(msg.Percentage)
+    if totalStreamFundsPercentage.GT(math.LegacyOneDec()) {
+    return nil, fmt.Errorf("cannot set continuous fund proposal\ntotal funds percentage exceeds 100\ncurrent total percentage: %s", totalStreamFundsPercentage.Sub(msg.Percentage).MulInt64(100).TruncateInt().String())
+}
+
+	// Create continuous fund proposal
+    cf := types.ContinuousFund{
+    Recipient:  msg.Recipient,
+    Percentage: msg.Percentage,
+    Expiry:     msg.Expiry,
+}
+
+	// Set continuous fund to the state
+	err = k.ContinuousFunds.Set(sdkCtx, recipient, cf)
+    if err != nil {
+    return nil, err
+}
+
+return &types.MsgCreateContinuousFundResponse{
+}, nil
+}
+
+func (k MsgServer)
+
+CancelContinuousFund(ctx context.Context, msg *types.MsgCancelContinuousFund) (*types.MsgCancelContinuousFundResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.Authority); err != nil {
+    return nil, err
+}
+
+recipient, err := k.Keeper.authKeeper.AddressCodec().StringToBytes(msg.Recipient)
+    if err != nil {
+    return nil, err
+}
+    canceledHeight := sdkCtx.BlockHeight()
+    canceledTime := sdkCtx.BlockTime()
+
+has, err := k.ContinuousFunds.Has(sdkCtx, recipient)
+    if err != nil {
+    return nil, fmt.Errorf("cannot get continuous fund for recipient %w", err)
+}
+    if !has {
+    return nil, fmt.Errorf("cannot cancel continuous fund for recipient %s - does not exist", msg.Recipient)
+}
+    if err := k.ContinuousFunds.Remove(sdkCtx, recipient); err != nil {
+    return nil, fmt.Errorf("failed to remove continuous fund for recipient %s: %w", msg.Recipient, err)
+}
+
+return &types.MsgCancelContinuousFundResponse{
+    CanceledTime:   canceledTime,
+    CanceledHeight: uint64(canceledHeight),
+    Recipient:      msg.Recipient,
+}, nil
+}
+
+func (k MsgServer)
+
+UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+    sdkCtx := sdk.UnwrapSDKContext(ctx)
+    if err := k.validateAuthority(msg.GetAuthority()); err != nil {
+    return nil, err
+}
+    if err := msg.Params.Validate(); err != nil {
+    return nil, fmt.Errorf("invalid params: %w", err)
+}
+    if err := k.Params.Set(sdkCtx, msg.Params); err != nil {
+    return nil, fmt.Errorf("failed to set params: %w", err)
+}
+
+return &types.MsgUpdateParamsResponse{
+}, nil
+}
+```
+
+## Client
+
+It takes the advantage of `AutoCLI`
+
+```go expandable
+package protocolpool
+
+import (
+    
+	"fmt"
+
+	autocliv1 "cosmossdk.io/api/cosmos/autocli/v1"
+	poolv1 "cosmossdk.io/api/cosmos/protocolpool/v1"
+    "github.com/cosmos/cosmos-sdk/version"
+)
+
+// AutoCLIOptions implements the autocli.HasAutoCLIConfig interface.
+func (am AppModule)
+
+AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+    Query: &autocliv1.ServiceCommandDescriptor{
+    Service: poolv1.Query_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+    RpcMethod: "CommunityPool",
+    Use:       "community-pool",
+    Short:     "Query the amount of coins in the community pool",
+    Example:   fmt.Sprintf(`%s query protocolpool community-pool`, version.AppName),
+},
+				{
+    RpcMethod: "ContinuousFunds",
+    Use:       "continuous-funds",
+    Short:     "Query all continuous funds",
+    Example:   fmt.Sprintf(`%s query protocolpool continuous-funds`, version.AppName),
+},
+				{
+    RpcMethod:      "ContinuousFund",
+    Use:            "continuous-fund <recipient>",
+    Short:          "Query a continuous fund by its recipient address",
+    Example:        fmt.Sprintf(`%s query protocolpool continuous-fund cosmos1...`, version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "recipient"
+}},
+},
+},
+},
+    Tx: &autocliv1.ServiceCommandDescriptor{
+    Service: poolv1.Msg_ServiceDesc.ServiceName,
+    RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+    RpcMethod:      "FundCommunityPool",
+    Use:            "fund-community-pool <amount>",
+    Short:          "Funds the community pool with the specified amount",
+    Example:        fmt.Sprintf(`%s tx protocolpool fund-community-pool 100uatom --from mykey`, version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "amount"
+}},
+},
+				{
+    RpcMethod: "CreateContinuousFund",
+    Use:       "create-continuous-fund <recipient> <percentage> <expiry>",
+    Short:     "Create continuous fund for a recipient with optional expiry",
+    Example:   fmt.Sprintf(`%s tx protocolpool create-continuous-fund cosmos1... 0.2 2023-11-31T12:34:56.789Z --from mykey`, version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "recipient"
+},
+						{
+    ProtoField: "percentage"
+},
+						{
+    ProtoField: "expiry",
+    Optional: true
+},
+},
+    GovProposal: true,
+},
+				{
+    RpcMethod: "CancelContinuousFund",
+    Use:       "cancel-continuous-fund <recipient>",
+    Short:     "Cancel continuous fund for a specific recipient",
+    Example:   fmt.Sprintf(`%s tx protocolpool cancel-continuous-fund cosmos1... --from mykey`, version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{
+    ProtoField: "recipient"
+},
+},
+    GovProposal: true,
+},
+				{
+    RpcMethod:      "UpdateParams",
+    Use:            "update-params-proposal <params>",
+    Short:          "Submit a proposal to update protocolpool module params. Note: the entire params must be provided.",
+    Example:        fmt.Sprintf(`%s tx protocolpool update-params-proposal '{ "enabled_distribution_denoms": ["stake", "foo"]
+}'`, version.AppName),
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{{
+    ProtoField: "params"
+}},
+    GovProposal:    true,
+},
+},
+},
+}
+}
+```
