@@ -2,30 +2,44 @@
 title: Accounts
 ---
 
-Accounts represent identities on a Cosmos SDK chain.
-They hold balances, authorize transactions with digital signatures, and prevent transaction replay using sequence numbers.
+In [Blockchain Architecture](/sdk/v0.53/learn/intro/sdk-app-architecture), you learned that transactions change state and must be signed and validated. But who creates and signs these transactions? The answer is accounts.
 
-Every account is controlled by a cryptographic keypair derived from a seed phrase.
-A seed phrase yields one or more private keys, each of which produces a public key and an account address.
+Accounts represent identities on a Cosmos SDK chain. They hold balances, authorize transactions with digital signatures, and prevent transaction replay using sequence numbers. Accounts are managed by the auth module (`x/auth`), which tracks account metadata like addresses, public keys, account numbers, and sequence numbers.
+
+Every account is controlled by a cryptographic keypair derived from a seed phrase. A seed phrase yields one or more private keys, each of which produces a public key and an account address.
 
 ## What is an account
 
-An account is an on-chain object that:
+An account is a container for a user's balances and a way to authorize transactions. 
+
+It is an on-chain object that:
 
 - Holds one or more token balances
 - Is identified by an address
 - Signs transactions
 - Tracks a sequence number
 
-Balances, the account number, and the sequence number are stored on-chain. The private key and seed phrase are never stored on-chain; they are kept locally by the user or wallet.
+The account's balances, account number, and sequence number are all stored on-chain. The private key and seed phrase are never stored on-chain; they are kept locally by the user or wallet.
 
-An account does not execute logic itself. Instead, it authorizes transactions. When a transaction is submitted and accepted, the account's sequence number increases and its state, such as balances, may change.
+An account does not execute logic itself; instead, it authorizes transactions. When a transaction is submitted and accepted, the account's sequence number increases and its state, such as balances, may change.
 
-## Keys, seed phrases, and addresses
+## Public and private keys
 
-Accounts are rooted in cryptographic keypairs. Cosmos SDK uses asymmetric cryptography, where a private key and public key form a pair.
+Accounts are rooted in cryptographic keypairs. Cosmos SDK uses asymmetric cryptography, where a private key and public key form a pair. This is a fundamental concept in cryptography and is used to secure data and transactions.
 
-A private key is derived from a seed phrase using a deterministic algorithm. Cosmos wallets follow common standards such as:
+- A **private key** is used to sign transactions. Before signing, the transaction data is serialized and hashed; the private key then produces a digital signature over this hash. This signature proves ownership of the private key without revealing it. Private keys must always remain secret. 
+
+- a **public key** is an identifying piece of information that is derived mathmatically from the private key. It is used to verify that a message was signed by the private key associated with the public key and is used to identify the account. The corresponding public key is derived mathematically from the private key and is used by the network to verify those signatures. Because the public key is derived from the private key through a one-way function, it is not possible to derive the private key from the public key. 
+
+## Seed phrases
+
+Most wallets do not generate raw private keys directly. Instead, they start from a seed phrase (mnemonic), a list of human-readable words such as:
+
+``` text
+apple maple river stone cloud frame picnic ladder jungle orbit solar velvet
+```
+
+A private key is then derived from the seed phrase using a deterministic algorithm. Cosmos wallets follow common standards such as:
 
 - BIP-39 (mnemonic phrases)
   https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
@@ -34,15 +48,13 @@ A private key is derived from a seed phrase using a deterministic algorithm. Cos
 - BIP-44 (multi-account derivation paths)
   https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki
 
-These standards define how a human-readable seed phrase is turned into a sequence of private keys.
+From the seed phrase, a binary seed is computed and used to derive a master private key. From that master key, specific private keys are derived along a path (for example: `m/44'/118'/0'/0/0`, where `118` is the Cosmos coin type). Each private key produces a public key.
 
-The private key remains secret. It is used to sign transactions. The corresponding public key is derived mathematically from the private key and is used by the network to verify those signatures. A public key cannot be used to recover the private key.
+Control of the seed phrase means control of the derived private keys and therefore control of the corresponding accounts. Losing the seed phrase without backing it up means losing access to the account forever.
 
-An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. The address is what users share and what appears in state and transactions.
+## Addresses
 
-At first use, a transaction includes a public key so that future signatures can be verified. Before that, the chain may know only the address. This separation is why accounts can be derived and displayed locally from a seed phrase even before any on-chain activity.
-
-Key relationships:
+An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. This address is what users share and what appears in state and transactions.
 
 ```
 Seed Phrase
@@ -54,11 +66,21 @@ Public Key
 Address
 ```
 
+An address is not the same thing as a public key. The address is derived from the public key, but it does not reveal the public key directly.
+
+When an account receives tokens for the first time, only the address is needed. The chain can credit balances to that address without knowing the public key.
+
+The public key is typically revealed on-chain the first time the account signs a transaction. That first transaction includes the public key so validators can verify the signature. After that, the chain stores the public key alongside the account metadata.
+
+This separation between address and public key is important: it allows accounts to be derived and displayed locally from a seed phrase before any on-chain activity. Users can generate addresses offline and receive funds without ever submitting a transaction. The account only needs to be initialized on-chain when the user sends their first transaction.
+
 ## Sequences and replay protection
 
 Each on-chain account tracks a sequence number. The sequence number starts at zero for a newly created account and increments by one after each successful transaction from that account.
 
-The sequence number exists to prevent replay attacks. A replay attack occurs when an old signed transaction is submitted a second time. Because the sequence number must be current, a previously signed transaction with an old sequence is rejected.
+The sequence number exists to prevent replay attacks, which occur when an old signed transaction is submitted a second time. Because the sequence number must be current, a previously signed transaction with an old sequence is rejected.
+
+Sequence numbers also ensure transactions from a single account execute in a specific order, which matters when transactions depend on each other (for example, sending tokens then immediately staking them).
 
 Example:
 
@@ -73,50 +95,48 @@ After second accepted transaction:
   sequence = 2
 ```
 
-If a signed transaction carries `sequence = 1` but the account's current sequence is `2`, the transaction is rejected.
-
-This ensures transactions are applied in order and cannot be reused.
+If a signed transaction carries `sequence = 1` but the account's current sequence is `2`, the transaction is rejected, ensuring that transactions are applied in order and cannot be reused.
 
 ## Balances
 
-Accounts hold token balances. These balances are stored on-chain as part of account state.
+Accounts are associated with token balances stored on-chain. Balances are managed by the bank module (`x/bank`) and indexed by account address. While account metadata (address, public key, sequence number) is stored in the auth module's state, token balances are stored separately in the bank module's state.
 
-When tokens are sent from one account to another, balances are updated in state. Conceptually, a token transfer decreases the sender's balance and increases the recipient's balance.
+When tokens are sent from one account to another, the bank module updates balances in state. Conceptually, a token transfer decreases the sender's balance and increases the recipient's balance.
 
-An account must have sufficient balance to cover:
-
-- The tokens being sent
-- Any associated transaction fees
-
-If the balance is insufficient, the transaction is rejected during validation.
-
----
+An account must have sufficient balance to cover the tokens being sent and any associated transaction fees. If the balance is insufficient, the transaction is rejected during validation.
 
 ## Types of accounts
 
 Cosmos SDK supports several account types that extend the base account model:
 
-- Base account: A standard account that holds balances and signs transactions.
-- Module account: Owned by a module rather than a user. Modules use these accounts to manage tokens for protocol logic.
-- Vesting account: Holds tokens that unlock gradually over time according to a schedule.
+- **Base account**: A standard account that holds balances and signs transactions. This is the most common account type for users.
+
+- **Module account**: Owned by a module rather than a user. Module accounts are derived from the module name and cannot be controlled by a private key. For example, the staking module uses a module account to hold all delegated tokens, and the distribution module uses a module account to hold rewards before they are distributed. This design allows protocol logic to custody tokens without requiring a private key holder, which is essential for decentralized operations.
+
+- **Vesting account**: Holds tokens that unlock gradually over time according to a schedule. Vesting accounts are often used for team allocations or investor tokens that vest over months or years. They restrict spending to only unlocked tokens while still allowing the account to participate in staking and governance.
 
 All account types rely on the same key and address structure but may impose additional rules on balance usage.
 
-## Accounts and transactions
+## Accounts and transaction authorization
 
-Accounts authorize transactions. A transaction includes:
+Accounts authorize transactions by producing digital signatures.
+
+A transaction includes:
 
 - One or more messages
 - A signature created using the private key
 - A sequence number
-- Fees
+- Associated fees
+
+When a transaction is signed, the transaction bytes are serialized and hashed. The private key then generates a digital signature over that hash. This signature proves that the holder of the private key approved the transaction, without revealing the private key itself.
 
 During execution:
 
-1. The signature is verified using the public key.
-2. The sequence number is checked.
-3. Fees are deducted from the account's balance.
-4. If execution succeeds, the sequence number increments and state updates are committed.
+1. The signature is verified using the account’s public key.
+2. The sequence number is checked against the account’s current sequence.
+3. Fees are deducted from the account’s balance.
+4. If validation passes, messages execute and may update state.
+5. If execution succeeds, the sequence number increments and state updates are committed.
 
 High-level flow:
 
@@ -134,12 +154,10 @@ Address
 State
 ```
 
-Accounts provide identity and authorization. Transactions carry intent.
-Modules execute logic.
-State stores the result.
+Accounts provide identity and authorization, transactions carry intent, and modules execute the logic. The result is stored in state.
 
 ## Summary
 
-Accounts are the foundation of user interaction with a Cosmos SDK chain. They connect cryptographic keys to on-chain identity, authorize transaction execution, and prevent replay attacks. Accounts also hold balances that change as transactions execute.
+Accounts are the foundation of user interaction with a Cosmos SDK chain. They connect cryptographic keys to on-chain identity, authorize transaction execution, and prevent replay attacks. 
 
-Understanding keys, addresses, balances, and sequence numbers provides the basis for understanding transactions and execution, which are covered next.
+Understanding keys, addresses, balances, and sequence numbers provides the basis for understanding how transactions flow through the system. The next page, [Transaction Lifecycle](/sdk/v0.53/learn/beginner/tx-lifecycle), follows a transaction from creation through mempool admission, consensus, and execution to show how accounts interact with the broader blockchain architecture.
