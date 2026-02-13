@@ -1,0 +1,217 @@
+---
+title: Transactions, Messages, and Queries
+---
+
+In the previous section, you learned that accounts authorize activity on a chain using digital signatures and sequence numbers. Accounts provide identity and permission, but transactions are the actual mechanism that authorizes and executes logic on the chain.
+
+## Interacting with a chain
+
+A Cosmos SDK blockchain is a deterministic state machine. Its state changes only when transactions are executed and committed in blocks.
+
+Users and applications interact with the blockchain in two fundamental ways:
+
+- **Transactions** modify state and are included in blocks. When a user wants to **change** something (transfer tokens, delegate stake, submit a governance proposal), they submit a transaction.
+- **Queries** read state and are not included in blocks. When a user wants to **inspect** something (check a balance, view delegations, read proposal details), they perform a query.
+
+Only transactions affect consensus state.
+
+## Transactions
+
+A **transaction** is a signed container that carries one or more actions to be executed on the blockchain.
+
+A transaction includes:
+
+- Messages - one or more actions you want to execute (send tokens, delegate stake, vote on a proposal)
+- Signatures - cryptographic proof that you authorize these actions
+- Sequence number - prevents someone from resubmitting your transaction (replay protection)
+- Gas limit - the maximum computational resources you're willing to spend
+- Fees - what you pay for the transaction to be processed
+
+The transaction itself does not define business logic. Instead, it packages intent (messages) to change state, proves authorization (signatures), and specifies execution limits (gas and fees). You can think of a transaction as an envelope you send to the blockchain, with a message inside containing instructions, a signature to prove authenticity, and a stamp to pay for postage.
+
+\```
+Transaction
+  ├── Message 1
+  ├── Message 2
+  ├── ...
+  ├── Signature(s)
+  ├── Sequence
+  ├── Gas limit
+  └── Fees
+\```
+
+In the Cosmos SDK, account metadata and transaction authorization are handled by the `x/auth` module. Transaction construction and encoding are configured through the SDK’s transaction system (commonly via `x/auth/tx`).
+
+## Messages
+
+A **message** (`sdk.Msg`) is the actual instruction inside a transaction. Each message is defined by a specific module and represents a single action. Messages are located in that module's `types` package (like `x/bank/types` or `x/staking/types`). Modules define which messages they support and the rules for executing them. While the transaction provides the envelope with signatures and fees, the message defines the specific action to execute.
+
+Examples include `MsgSend` (transfer tokens), `MsgDelegate` (delegate stake), and `MsgVote` (vote on proposals). 
+
+If a transaction contains multiple messages, they execute in order. The transaction only succeeds if all messages execute successfully; it is an atomic unit.
+
+## How messages are defined
+
+Messages in the Cosmos SDK are defined in each module's `types.proto` file using **Protocol Buffers (protobuf)**, which provides deterministic serialization, backward compatibility, and cross-language support. Each message is defined in a `.proto` file that specifies its fields, data types, and unique identifiers. From this schema, code is generated that allows the message to be constructed, serialized, and validated.
+
+Here's what an actual transaction looks like in JSON format:
+
+```json
+{
+  "body": {
+    "messages": [
+      {
+        "@type": "/cosmos.bank.v1beta1.MsgSend",
+        "from_address": "cosmos1...",
+        "to_address": "cosmos1...",
+        "amount": [{"denom": "uatom", "amount": "1000000"}]
+      }
+    ],
+    "memo": "",
+    "timeout_height": "0",
+    "extension_options": [],
+    "non_critical_extension_options": []
+  },
+  "auth_info": {
+    "signer_infos": [
+      {
+        "public_key": {
+          "@type": "/cosmos.crypto.secp256k1.PubKey",
+          "key": "A..."
+        },
+        "mode_info": {"single": {"mode": "SIGN_MODE_DIRECT"}},
+        "sequence": "0"
+      }
+    ],
+    "fee": {
+      "amount": [{"denom": "uatom", "amount": "500"}],
+      "gas_limit": "200000",
+      "payer": "",
+      "granter": ""
+    }
+  },
+  "signatures": ["MEUCIQDx..."]
+}
+```
+
+This transaction transfers 1 ATOM (1,000,000 uatom) from one account to another. You can see the message in the `body.messages` array, the sender's public key and sequence in `auth_info.signer_infos`, the fee and gas limit in `auth_info.fee`, and the cryptographic signature in the `signatures` array.
+
+When broadcast, this JSON is serialized into bytes using protobuf, ensuring every validator interprets the transaction identically.
+
+## Message order and atomicity
+
+When a transaction contains multiple messages, they are executed **in the order they appear** in the transaction.
+
+Order matters.
+
+For example, a transaction might:
+
+1. Send tokens to another account.
+2. Delegate those tokens to a validator.
+
+If the order were reversed, the delegation could fail due to insufficient balance.
+
+Messages inside a transaction are applied sequentially. The transaction succeeds only if all messages execute successfully.
+
+Conceptually:
+
+\```
+Transaction
+  ├── Msg 1 → execute
+  ├── Msg 2 → execute
+  ├── Msg 3 → execute
+\```
+
+If any message fails, the entire transaction fails, and none of its state changes are committed.
+
+Transactions behave as atomic units: they either fully succeed or fully fail.
+
+---
+
+## Blocks and state transitions
+
+A blockchain can be understood as a sequence of blocks. Each block contains an ordered list of transactions.
+
+When a new block is committed:
+
+1. Each transaction in the block is applied to the current state.
+2. Each transaction executes its messages in order.
+3. Modules update their portion of state.
+4. The resulting state becomes the starting point for the next block.
+
+Conceptually:
+
+\```
+State₀
+  ↓ apply Block 1 (Tx₁, Tx₂, Tx₃)
+State₁
+  ↓ apply Block 2 (Tx₄, Tx₅)
+State₂
+  ↓ apply Block 3 (...)
+State₃
+\```
+
+In this way, the blockchain is a deterministic sequence of state transitions driven entirely by transactions.
+
+Blocks group transactions. Transactions drive execution. Execution updates state.
+
+---
+
+
+---
+
+## What is a query?
+
+A **query** retrieves data from the blockchain’s state without modifying it.
+
+Queries:
+
+- Are read-only  
+- Do not require signatures  
+- Are not included in blocks  
+- Do not change consensus state  
+
+Modules define query services using protobuf. These services are exposed over gRPC (and REST via a gateway).
+
+For example:
+
+- Query an account’s balance (`x/bank`)  
+- Query staking delegations (`x/staking`)  
+- Query governance proposal details (`x/gov`)  
+
+---
+
+## How everything fits together
+
+<table>
+  <tr>
+    <th>Transaction Flow</th>
+    <th>Query Flow</th>
+  </tr>
+  <tr>
+    <td>
+<pre><code>User
+  ↓ signs
+Transaction
+  ↓ contains
+Message(s)
+  ↓ handled by
+Module(s)
+  ↓ update
+State</code></pre>
+    </td>
+    <td>
+<pre><code>User
+  ↓
+Query
+  ↓
+Module
+  ↓
+State (read-only)</code></pre>
+    </td>
+  </tr>
+</table>
+
+Transactions modify the blockchain. Messages define what modifications occur. Modules execute those modifications in order. Queries allow anyone to observe the resulting state.
+
+The next section follows a transaction from broadcast through validation, block inclusion, execution, and state commitment to show how these components work together in practice.
