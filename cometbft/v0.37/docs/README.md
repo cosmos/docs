@@ -1,8 +1,6 @@
 ---
 title: CometBFT Documentation
 description: CometBFT is a blockchain application platform.
-footer:
-  newsletter: false
 ---
 
 # CometBFT
