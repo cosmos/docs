@@ -9,15 +9,15 @@ the correct files eventually.
 # Light Client Sequential Supervisor
 {/* markdown-link-check-disable */}
 The light client implements a read operation of a
-[header](CMBC-HEADER-link) from the [blockchain](CMBC-SEQ-link), by
+header from the blockchain, by
 communicating with full nodes, a so-called primary and several
 so-called witnesses. As some full nodes may be faulty, this
 functionality must be implemented in a fault-tolerant way.
 
 In a Cosmos blockchain, the validator set may change with every
-new block.  The staking and unbonding mechanism induces a [security
-model](CMBC-FM-2THIRDS-link): starting at time *Time* of the
-[header](CMBC-HEADER-link),
+new block.  The staking and unbonding mechanism induces a security
+model: starting at time *Time* of the
+header,
 more than two-thirds of the next validators of a new block are correct
 for the duration of *TrustedPeriod*.
 
@@ -26,7 +26,7 @@ operation designed for this security model. That is, it is safe if the
 model assumptions are satisfied and makes progress if it communicates
 to a correct primary.
 
-However, if the [security model](CMBC-FM-2THIRDS-link) is violated,
+However, if the security model is violated,
 faulty peers (that have been validators at some point in the past) may
 launch attacks on the Cosmos network, and on the light
 client. These attacks as well as an axiomatization of blocks in
@@ -81,7 +81,7 @@ upcoming PRs.
 
 # Part I - Cosmos Blockchain
 
-See [verification spec](addLinksWhenDone)
+See verification spec
 
 # Part II - Sequential Problem Definition
 
@@ -106,7 +106,7 @@ The light client never stores a header which is not in the blockchain.
 ## Computational Model
 
 The light client communicates with remote processes only via the
-[verification](TODO) and the [detection](TODO) protocols. The
+verification and the detection protocols. The
 respective assumptions are given there.
 
 ## Distributed Problem Statement
@@ -133,7 +133,7 @@ The light client has a local data structure called LightStore
 that contains light blocks (that contain a header).
 
 > The light store exposes functions to query and update it. They are
-> specified [here](TODO:onceVerificationIsMerged).
+> specified here.
 
 **TODO:** reference light store invariant [LCV-INV-LS-ROOT.2] once
 verification is merged
@@ -164,8 +164,8 @@ wait for another input.
 
 [LC-DIST-SAFE.1] is guaranteed by the detector; in particular it
 follows from
-[[LCD-DIST-INV-STORE.1]](TODO)
-[[LCD-DIST-LIVE.1]](TODO)
+[LCD-DIST-INV-STORE.1]
+[LCD-DIST-LIVE.1]
 
 # Part IV - Light Client Supervisor Protocol
 
@@ -290,7 +290,7 @@ type LightStore struct {
 ```
 
 We use the functions that the LightStore exposes, which
-are defined in the [verification specification](TODO).
+are defined in the verification specification.
 
 ### Inputs
 

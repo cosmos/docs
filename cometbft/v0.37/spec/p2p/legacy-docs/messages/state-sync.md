@@ -113,7 +113,7 @@ A reciever to the request will use the state store to fetch the consensus params
 | Name     | Type   | Description                     | Field Number |
 |----------|--------|---------------------------------|--------------|
 | height   | uint64 | Height of the consensus params  | 1            |
-| consensus_params | [ConsensusParams](/cometbft/v0.37/spec/core/data_structures#ConsensusParams) | Consensus params at the height requested | 2 |
+| consensus_params | [ConsensusParams](/cometbft/v0.37/spec/core/data_structures#consensusparams) | Consensus params at the height requested | 2 |
 
 
 ### Message
