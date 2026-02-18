@@ -199,7 +199,7 @@ will need implement:
         * validated on receipt
     * read/write to/from IAVL+ tree
 
-![StateSync Architecture Diagram](img/state-sync.png)
+![StateSync Architecture Diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/state-sync.png)
 
 ## Implementation Path
 * Create StateSync reactor based on  [#3753](https://github.com/tendermint/tendermint/pull/3753)

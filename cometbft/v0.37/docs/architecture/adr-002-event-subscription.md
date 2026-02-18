@@ -13,7 +13,7 @@ Now you can't even subscribe to "all txs" in Tendermint.
 
 The goal is a simple and easy to use API for doing that.
 
-![Tx Send Flow Diagram](img/tags1.png)
+![Tx Send Flow Diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/tags1.png)
 
 ## Decision
 

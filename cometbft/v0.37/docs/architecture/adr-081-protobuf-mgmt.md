@@ -14,7 +14,7 @@ Accepted
 
 At present, we manage the [Protocol Buffers] schema files ("protos") that define
 our wire-level data formats within the Tendermint repository itself (see the
-[`proto`](../../proto/) directory). Recently, we have been making use of [Buf],
+[`proto`](https://github.com/cometbft/cometbft/tree/v0.37.x/proto) directory). Recently, we have been making use of [Buf],
 both locally and in CI, in order to generate Go stubs, and lint and check
 `.proto` files for breaking changes.
 
@@ -152,7 +152,7 @@ We currently aim to:
       CI accordingly - see [\#8003].
    4. Add [clang-format GitHub Action] to check `.proto` file formatting. Format
       checking should be considered a requirement for accepting PRs.
-3. Update the Tendermint [`Makefile`](../../Makefile) to primarily facilitate
+3. Update the Tendermint [`Makefile`](https://github.com/cometbft/cometbft/blob/v0.37.x/Makefile) to primarily facilitate
    local Protobuf stub generation, linting, formatting and breaking change
    checking. More specifically:
    1. This includes removing the dependency on Docker and introducing the

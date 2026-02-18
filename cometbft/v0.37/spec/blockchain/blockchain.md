@@ -1,3 +1,3 @@
 # Blockchain
 
-Deprecated see [core/data_structures.md](../core/data_structures.md)
+Deprecated see [core/data_structures.md](/cometbft/v0.37/spec/core/data_structures)

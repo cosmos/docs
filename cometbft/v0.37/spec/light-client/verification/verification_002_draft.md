@@ -25,7 +25,7 @@ that need to be checked, by exploiting the guarantees provided by the
 
 ## Previous Versions
 
-- [[001_published]](./verification_001_published.md)
+- [[001_published]](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/verification/verification_001_published.md)
  is thoroughly reviewed, and the protocol has been
 formalized in TLA+ and model checked.
 
@@ -45,7 +45,7 @@ client. As a result of the work on
   
 adaptations to the semantics and functions exposed by the LightStore
 needed to be made. In contrast to [version
-001](./verification_001_published.md) we specify the following:
+001](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/verification/verification_001_published.md) we specify the following:
 
 - `VerifyToTarget` and `Backwards` are called with a single lightblock
   as root of trust in contrast to passing the complete lightstore.
@@ -904,11 +904,11 @@ func Schedule(lightStore, nextHeight, targetHeight) Height
 
 ### Solving the distributed specification
 
-Analogous to [[001_published]](./verification_001_published.md#solving-the-distributed-specification)
+Analogous to [[001_published]](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/verification/verification_001_published.md#solving-the-distributed-specification)
 
 ## Liveness Scenarios
 
-Analogous to [[001_published]](./verification_001_published.md#liveness-scenarios)
+Analogous to [[001_published]](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/verification/verification_001_published.md#liveness-scenarios)
 
 # Part V - Supporting the IBC Relayer
 
@@ -927,7 +927,7 @@ For [IBC][ibc-rs] there are two additional challenges:
 
 1. it might be that some "older" header is needed, that is,
 *targetHeight < lightStore.LatestVerified()*.  The
-[supervisor](../supervisor/supervisor_002_draft.md) checks whether it is in this
+[supervisor](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/supervisor/supervisor_002_draft.md) checks whether it is in this
 case by calling `LatestPrevious` and `MinVerified` and if so it calls
 `Backwards`. All these functions are specified below.
 

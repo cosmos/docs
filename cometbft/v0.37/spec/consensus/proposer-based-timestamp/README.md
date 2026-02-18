@@ -11,10 +11,10 @@ which uses proposer-based timestamps.
 - [TLA+ Specification][proposertla]
 
 
-[algorithm]: ./pbts-algorithm_001_draft.md
+[algorithm]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts-algorithm_001_draft.md
 
-[sysmodel]: ./pbts-sysmodel_001_draft.md
+[sysmodel]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts-sysmodel_001_draft.md
 
-[main]: ./pbts_001_draft.md
+[main]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts_001_draft.md
 
-[proposertla]: ./tla/TendermintPBT_001_draft.tla
+[proposertla]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/tla/TendermintPBT_001_draft.tla

@@ -33,29 +33,29 @@
 
 # TLA+ modules
 
-- [TendermintAcc_004_draft](TendermintAcc_004_draft.tla) is the protocol
+- [TendermintAcc_004_draft](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/TendermintAcc_004_draft.tla) is the protocol
    specification,
 
-- [TendermintAccInv_004_draft](TendermintAccInv_004_draft.tla) contains an
+- [TendermintAccInv_004_draft](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/TendermintAccInv_004_draft.tla) contains an
    inductive invariant for establishing the protocol safety as well as the
    forking cases,
 
-- `MC_n<n>_f<f>`, e.g., [MC_n4_f1](MC_n4_f1.tla), contains fixed constants for
+- `MC_n<n>_f<f>`, e.g., [MC_n4_f1](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/MC_n4_f1.tla), contains fixed constants for
    model checking with the [Apalache model
    checker](https://github.com/informalsystems/apalache),
 
-- [TendermintAccTrace_004_draft](TendermintAccTrace_004_draft.tla) shows how
+- [TendermintAccTrace_004_draft](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/TendermintAccTrace_004_draft.tla) shows how
    to restrict the execution space to a fixed sequence of actions (e.g., to
    instantiate a counterexample),
 
-- [TendermintAccDebug_004_draft](TendermintAccDebug_004_draft.tla) contains
+- [TendermintAccDebug_004_draft](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/TendermintAccDebug_004_draft.tla) contains
    the useful definitions for debugging the protocol specification with TLC and
    Apalache.
 
 # Reasoning about fork scenarios
 
 The theorem statements can be found in
-[TendermintAccInv_004_draft.tla](TendermintAccInv_004_draft.tla).
+[TendermintAccInv_004_draft.tla](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/TendermintAccInv_004_draft.tla).
 
 First, we would like to show that `TypedInv` is an inductive invariant.
 Formally, the statement looks as follows:
@@ -93,7 +93,7 @@ THEOREM AgreementOrFork ==
 
 # Model checking results
 
-Check the report on [model checking with Apalache](./results/001indinv-apalache-report.md).
+Check the report on [model checking with Apalache](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/results/001indinv-apalache-report.md).
 
 To run the model checking experiments, use the script:
 

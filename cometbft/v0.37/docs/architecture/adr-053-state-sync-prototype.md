@@ -2,7 +2,7 @@
 
 State sync is now [merged](https://github.com/tendermint/tendermint/pull/4705). Up-to-date ABCI documentation is [available](https://github.com/tendermint/spec/pull/90), refer to it rather than this ADR for details.
 
-This ADR outlines the plan for an initial state sync prototype, and is subject to change as we gain feedback and experience. It builds on discussions and findings in [ADR-042](./adr-042-state-sync.md), see that for background information.
+This ADR outlines the plan for an initial state sync prototype, and is subject to change as we gain feedback and experience. It builds on discussions and findings in [ADR-042](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-042-state-sync.md), see that for background information.
 
 ## Changelog
 
@@ -30,7 +30,7 @@ This ADR outlines the plan for an initial state sync prototype, and is subject t
 
 State sync will allow a new node to receive a snapshot of the application state without downloading blocks or going through consensus. This bootstraps the node significantly faster than the current fast sync system, which replays all historical blocks.
 
-Background discussions and justifications are detailed in [ADR-042](./adr-042-state-sync.md). Its recommendations can be summarized as:
+Background discussions and justifications are detailed in [ADR-042](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-042-state-sync.md). Its recommendations can be summarized as:
 
 * The application periodically takes full state snapshots (i.e. eager snapshots).
 
@@ -251,4 +251,4 @@ Implemented
 
 ## References
 
-* [ADR-042](./adr-042-state-sync.md) and its references
+* [ADR-042](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-042-state-sync.md) and its references

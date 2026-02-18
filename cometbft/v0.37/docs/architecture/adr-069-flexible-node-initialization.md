@@ -12,13 +12,13 @@ Proposed.
 
 ## Context
 
-In an effort to support [Go-API-Stability](./adr-060-go-api-stability.md),
+In an effort to support [Go-API-Stability](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-060-go-api-stability.md),
 during the 0.35 development cycle, we have attempted to reduce the the API
 surface area by moving most of the interface of the `node` package into
 unexported functions, as well as moving the reactors to an `internal`
 package. Having this coincide with the 0.35 release made a lot of sense
 because these interfaces were _already_ changing as a result of the `p2p`
-[refactor](./adr-061-p2p-refactor-scope.md), so it made sense to think a bit
+[refactor](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-061-p2p-refactor-scope.md), so it made sense to think a bit
 more about how tendermint exposes this API.
 
 While the interfaces of the P2P layer and most of the node package are already
@@ -265,4 +265,4 @@ described by the following dependency graph makes replacing some of
 these components more difficult relative to other reactors or
 components.
 
-![consensus blockchain dependency graph](./img/consensus_blockchain.png)
+![consensus blockchain dependency graph](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/consensus_blockchain.png)

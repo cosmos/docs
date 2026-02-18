@@ -11,18 +11,18 @@ the methods from the `Reactor` interface are implemented.
 The actual operation of the PEX reactor is presented in documents describing
 the roles played by the PEX reactor in the p2p layer:
 
-- [Address Book](./addressbook.md): stores known peer addresses and information
+- [Address Book](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md): stores known peer addresses and information
   about peers to which the node is connected or has attempted to connect
-- [Peer Manager](./peer_manager.md): manages connections established with peers,
+- [Peer Manager](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/peer_manager.md): manages connections established with peers,
   defining when a node should dial peers and which peers it should dial
-- [Peer Exchange protocol](./pex-protocol.md): enables nodes to exchange peer
+- [Peer Exchange protocol](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md): enables nodes to exchange peer
   addresses, thus implementing a peer discovery service
 
 ## OnStart
 
 The `OnStart` method implements `BaseService` and starts the PEX reactor.
 
-The [address book](./addressbook.md), which is a `Service` is started.
+The [address book](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md), which is a `Service` is started.
 This loads the address book content from disk,
 and starts a routine that periodically persists the address book content to disk.
 
@@ -39,7 +39,7 @@ the `SeedMode` configuration parameter:
 - Regular nodes run the `ensurePeersRoutine` to check whether the node has
   enough outbound peers, dialing peers when necessary
 - Seed nodes run the `crawlPeersRoutine` to periodically start a new round
-  of [crawling](./pex-protocol.md#Crawling-peers) to discover as many peer
+  of [crawling](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#Crawling-peers) to discover as many peer
   addresses as possible
 
 ### Errors
@@ -76,7 +76,7 @@ The `AddPeer` method, from the `Reactor` interface,
 adds a new peer to the PEX protocol.
 
 If the new peer is an **inbound peer**, i.e., if the peer has dialed the node,
-the peer's address is [added to the address book](./addressbook.md#adding-addresses).
+the peer's address is [added to the address book](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#adding-addresses).
 Since the peer was authenticated when establishing a secret connection with it,
 the source of the peer address is trusted, and its source is set by the peer itself.
 In the case of an outbound peer, the node should already have its address in
@@ -84,7 +84,7 @@ the address book, as the switch has dialed the peer.
 
 If the peer is an **outbound peer**, i.e., if the node has dialed the peer,
 and the PEX protocol needs more addresses,
-the node [sends a PEX request](./pex-protocol.md#Requesting-Addresses) to the peer.
+the node [sends a PEX request](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#Requesting-Addresses) to the peer.
 The same is not done when inbound peers are added because they are deemed least
 trustworthy than outbound peers.
 
@@ -94,8 +94,8 @@ The `RemovePeer` method, from the `Reactor` interface,
 removes a peer from the PEX protocol.
 
 The peer's ID is removed from the tables tracking PEX requests
-[sent](./pex-protocol.md#misbehavior) but not yet replied
-and PEX requests [received](./pex-protocol.md#misbehavior-1).
+[sent](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#misbehavior) but not yet replied
+and PEX requests [received](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#misbehavior-1).
 
 ## Receive
 
@@ -105,7 +105,7 @@ handles a message received by the PEX protocol.
 A node receives two type of messages as part of the PEX protocol:
 
 - `PexRequest`: a request for addresses received from a peer, handled as
-  described [here](./pex-protocol.md#providing-addresses)
+  described [here](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#providing-addresses)
 - `PexAddrs`: a list of addresses received from a peer, as a reponse to a PEX
-  request sent by the node, as described [here](./pex-protocol.md#responses)
+  request sent by the node, as described [here](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#responses)
 

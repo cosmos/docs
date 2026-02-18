@@ -11,7 +11,7 @@ blockchain to quickly catch up by downloading many blocks in parallel from its p
 executing them against the ABCI application. We call the protocol executed by the Blockchain Reactor `fast-sync`.
 The current architecture diagram of the blockchain reactor can be found here:
 
-![Blockchain Reactor Architecture Diagram](img/bc-reactor.png)
+![Blockchain Reactor Architecture Diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/bc-reactor.png)
 
 The current architecture consists of dozens of routines and it is tightly depending on the `Switch`, making writing
 unit tests almost impossible. Current tests require setting up complex dependency graphs and dealing with concurrency.
@@ -26,7 +26,7 @@ the code low and this resulted in several issues (some are fixed in the meantime
 
 To remedy these issues we plan a major refactor of the blockchain reactor. The proposed architecture is largely inspired
 by ADR-30 and is presented on the following diagram:
-![Blockchain Reactor Refactor Diagram](img/bc-reactor-refactor.png)
+![Blockchain Reactor Refactor Diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/bc-reactor-refactor.png)
 
 We suggest a concurrency architecture where the core algorithm (we call it `Controller`) is extracted into a finite
 state machine. The active routine of the reactor is called `Executor` and is responsible for receiving and sending

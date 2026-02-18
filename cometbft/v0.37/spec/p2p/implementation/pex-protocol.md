@@ -29,7 +29,7 @@ the node *needs* peers addresses, a condition checked:
    addresses to a randomly selected peer
 
 A node needs more peer addresses when its addresses book has
-[less than 1000 records](./addressbook.md#need-for-addresses).
+[less than 1000 records](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#need-for-addresses).
 It is thus reasonable to assume that the common case is that a peer needs more
 peer addresses, so that PEX requests are sent whenever the above two situations happen.
 
@@ -55,13 +55,13 @@ the PEX reactor.
 After a PEX request is sent to a peer, the node expects to receive,
 as a response, a `PexAddrs` message from the peer.
 This message encodes a list of peer addresses that are
-[added to address book](./addressbook.md#adding-addresses),
+[added to address book](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#adding-addresses),
 having the peer from which the PEX response was received as their source.
 
 Received PEX responses are handled by the `ReceiveAddrs` method of the PEX reactor.
 In the case of a PEX response received from a peer which is configured as
 a seed node, the PEX reactor attempts immediately to dial the provided peer
-addresses, as detailed [here](./peer_manager.md#fast-dialing).
+addresses, as detailed [here](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/peer_manager.md#fast-dialing).
 
 ### Misbehavior
 
@@ -78,14 +78,14 @@ Sending a PEX response to a peer that has not requested peer addresses
 is also considered a misbehavior.
 So, if a PEX response is received from a peer that is not registered in
 the `requestsSent` set, a `ErrUnsolicitedList` error is produced.
-This leads the peer to be disconnected and [marked as a bad peer](./addressbook.md#bad-peers).
+This leads the peer to be disconnected and [marked as a bad peer](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#bad-peers).
 
 ## Providing Addresses
 
 When a node receives a `PexRequest` message from a peer,
 it replies with a `PexAddrs` message.
 
-This message encodes a [random selection of peer addresses](./addressbook.md#random-selection)
+This message encodes a [random selection of peer addresses](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#random-selection)
 retrieved from the address book.
 
 Sending a PEX response to a peer is implemented by the `SendAddrs` method of
@@ -102,7 +102,7 @@ The `receiveRequest` method is responsible for verifying this condition.
 The node keeps a `lastReceivedRequests` map with the time of the last PEX
 request received from every peer.
 If the interval between successive requests is less than the minimum accepted
-one, the peer is disconnected and [marked as a bad peer](./addressbook.md#bad-peers).
+one, the peer is disconnected and [marked as a bad peer](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#bad-peers).
 An exception is made for the first two PEX requests received from a peer.
 
 > The probably reason is that, when a new peer is added, the two conditions for
@@ -150,7 +150,7 @@ peers, the seed node sends a PEX request.
 
 Dialing a selected peer address can fail for multiple reasons.
 The seed node might have attempted to dial the peer too many times.
-In this case, the peer address is marked as [bad in the address book](./addressbook.md#bad-peers).
+In this case, the peer address is marked as [bad in the address book](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#bad-peers).
 The seed node might have attempted to dial the peer recently, without success,
 and the exponential `backoffDuration` has not yet passed.
 Or the current connection attempt might fail, which is registered in the address book.
@@ -186,13 +186,13 @@ Once the requested peer addresses are sent, the connection with the peer is clos
 
 Moreover, the selection of peer addresses provided to inbound peers by a seed
 node, although still essentially random, has a [bias toward old
-addresses](./addressbook.md#random-selection-with-bias).
+addresses](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#random-selection-with-bias).
 The selection bias is defined by `biasToSelectNewPeers`, hard-coded to `30%`,
 meaning that `70%` of the peer addresses provided by a seed node are expected
 to be old addresses.
 Although this nomenclature is not clear, *old* addresses are the addresses that
 survived the most in the address book, that is, are addresses that the seed
-node believes being from *good* peers (more details [here](./addressbook.md#good-peers)).
+node believes being from *good* peers (more details [here](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#good-peers)).
 
 Another distinction is on the handling of potential [misbehavior](#misbehavior-1)
 of peers requesting addresses.

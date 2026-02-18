@@ -143,7 +143,7 @@ the recursive version. There are two major reasons:
 
 _Fig. 1: Differences between recursive and non-recursive bisections_
 
-![Fig. 1](./img/adr-046-fig1.png)
+![Fig. 1](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/adr-046-fig1.png)
 
 Specification of the non-recursive bisection can be found
 [here](https://github.com/tendermint/spec/blob/zm_non-recursive-verification/spec/consensus/light-client/non-recursive-verification.md).

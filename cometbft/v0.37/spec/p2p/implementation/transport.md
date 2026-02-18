@@ -9,7 +9,7 @@ to [`Accept`](#accept) inbound connections from peers.
 The transport establishes raw TCP connections with peers
 and [upgrade](#connection-upgrade) them into authenticated secret connections.
 The established secret connection is then wrapped into `Peer` instance, which
-is returned to the caller, typically the [switch](./switch.md).
+is returned to the caller, typically the [switch](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/switch.md).
 
 ## Dial
 
@@ -216,7 +216,7 @@ For this reason, this method is not invoked with a started transport.
 > Note that the default list of supported channel IDs, including the default reactors,
 > is provided to the transport as its original `NodeInfo` record.
 
-[peer-sts]: ../legacy-docs/peer.md#authenticated-encryption-handshake
-[peer-handshake]: ../legacy-docs/peer.md#cometbft-version-handshake
+[peer-sts]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/legacy-docs/peer.md#authenticated-encryption-handshake
+[peer-handshake]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/legacy-docs/peer.md#cometbft-version-handshake
 [sts-paper]: https://link.springer.com/article/10.1007/BF00124891
 [sts-paper-pdf]: https://github.com/tendermint/tendermint/blob/0.1/docs/sts-final.pdf

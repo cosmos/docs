@@ -38,7 +38,7 @@ BlockResponse contains the block requested.
 
 | Name  | Type                                         | Description     | Field Number |
 |-------|----------------------------------------------|-----------------|--------------|
-| Block | [Block](../../../core/data_structures.md#block) | Requested Block | 1            |
+| Block | [Block](/cometbft/v0.37/spec/core/data_structures#block) | Requested Block | 1            |
 
 ### StatusRequest
 

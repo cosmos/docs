@@ -8,9 +8,9 @@ address is composed by an IP address or a DNS name plus a port number.
 The same node ID can be associated to multiple network addresses.
 
 There are two sources for the addresses stored in the address book.
-The [Peer Exchange protocol](./pex-protocol.md) stores in the address book
+The [Peer Exchange protocol](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md) stores in the address book
 the peer addresses it discovers, i.e., it learns from connected peers.
-And the [Switch](./switch.md) registers the addresses of peers with which it
+And the [Switch](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/switch.md) registers the addresses of peers with which it
 has interacted: to which it has dialed or from which it has accepted a
 connection.
 
@@ -22,11 +22,11 @@ Reactors, in they turn, report a peer as [good](#good-peers) when it behaves as
 expected, or as a [bad peer](#bad-peers), when it misbehaves.
 
 There are two entities that retrieve peer addresses from the address book.
-The [Peer Manager](./peer_manager.md) retrieves peer addresses to dial, so to
+The [Peer Manager](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/peer_manager.md) retrieves peer addresses to dial, so to
 establish outbound connections.
 This selection is random, but has a configurable bias towards peers that have
 been marked as good peers.
-The [Peer Exchange protocol](./pex-protocol.md) retrieves random samples of
+The [Peer Exchange protocol](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md) retrieves random samples of
 addresses to offer (send) to peers.
 This selection is also random but it includes, in particular for nodes that
 operate in seed mode, some bias toward peers marked as good ones.
@@ -303,7 +303,7 @@ The `MarkBad` method marks a peer as bad and bans it for a period of time.
 This method is only invoked within the PEX reactor, with a banning time of 24
 hours, for the following reasons:
 
-- A peer misbehaves in the [PEX protocol](./pex-protocol.md#misbehavior)
+- A peer misbehaves in the [PEX protocol](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#misbehavior)
 - When the `maxAttemptsToDial` limit (`16`) is reached for a peer
 - If an `ErrSwitchAuthenticationFailure` error is returned when dialing a peer
 

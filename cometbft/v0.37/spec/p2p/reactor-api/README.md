@@ -31,13 +31,13 @@ with the peers (for example, to send messages to them) or with the `Switch`.
 
 The remaining of the documentation is organized as follows:
 
-- [Reactor API](./reactor.md): documents the [`p2p.Reactor`][reactor-interface]
+- [Reactor API](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.md): documents the [`p2p.Reactor`][reactor-interface]
   interface and specifies the behaviour of the p2p layer when interacting with
   a reactor.
   In other words, the interaction of the p2p layer with the protocol layer (bottom-up).
 
-- [P2P API](./p2p-api.md): documents the interface provided by the p2p
+- [P2P API](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/p2p-api.md): documents the interface provided by the p2p
   layer to the reactors, through the `Switch` and `Peer` abstractions.
   In other words, the interaction of the protocol layer with the p2p layer (top-down).
 
-[reactor-interface]: ../../../p2p/base_reactor.go
+[reactor-interface]: https://github.com/cometbft/cometbft/blob/v0.37.x/p2p/base_reactor.go

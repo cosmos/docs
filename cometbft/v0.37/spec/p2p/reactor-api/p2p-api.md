@@ -300,12 +300,12 @@ could not be enqueued, because the channel's send queue is still full, after a
 The `TrySend()` method is a _non-blocking_ method, it _immediately_ returns
 `false` when the channel's send queue is full.
 
-[peer-interface]: ../../../p2p/peer.go
-[service-interface]: ../../../libs/service/service.go
-[switch-type]: ../../../p2p/switch.go
+[peer-interface]: https://github.com/cometbft/cometbft/blob/v0.37.x/p2p/peer.go
+[service-interface]: https://github.com/cometbft/cometbft/blob/v0.37.x/libs/service/service.go
+[switch-type]: https://github.com/cometbft/cometbft/blob/v0.37.x/p2p/switch.go
 
-[reactor-interface]: ../../../p2p/base_reactor.go
-[reactor-registration]: ./reactor.md#registration
-[reactor-channels]: ./reactor.md#registration
-[reactor-addpeer]: ./reactor.md#peer-management
-[reactor-removepeer]: ./reactor.md#stop-peer
+[reactor-interface]: https://github.com/cometbft/cometbft/blob/v0.37.x/p2p/base_reactor.go
+[reactor-registration]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.md#registration
+[reactor-channels]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.md#registration
+[reactor-addpeer]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.md#peer-management
+[reactor-removepeer]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.md#stop-peer

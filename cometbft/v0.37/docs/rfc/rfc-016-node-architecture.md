@@ -19,7 +19,7 @@ The following is a list of points of discussion around the architecture of the n
 
 The node object is currently stuffed with every component that possibly exists within Tendermint. In the constructor, all objects are built and interlaid with one another in some awkward dance. My guiding principle is that the node should only be made up of the components that it wants to have direct control of throughout its life. The node is a service which currently has the purpose of starting other services up in a particular order and stopping them all when commanded to do so. However, there are many services which are not direct dependents i.e. the mempool and evidence services should only be working when the consensus service is running. I propose to form more of a hierarchical structure of dependents which forces us to be clear about the relations that one component has to the other. More concretely, I propose the following dependency tree:
 
-![node dependency tree](./images/node-dependency-tree.svg)
+![node dependency tree](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/rfc/images/node-dependency-tree.svg)
 
 Many of the further discussion topics circle back to this representation of the node.
 
@@ -48,7 +48,7 @@ The block executor is an important component that is currently used by both cons
 ### The Interprocess communication systems: RPC, P2P, ABCI, and Events
 
 The schematic supplied above shows the relations between the different services, the node, the block executor, and the storage layer. Represented as colored dots are the components responsible for different roles of interprocess communication (IPC). These components permeate throughout the code base, seeping into most services. What can provide powerful functionality on one hand can also become a twisted vine, creating messy corner cases and convoluting the protocols themselves. A lot of the thinking around
-how we want our IPC systens to function has been summarised in this [RFC](./rfc-002-ipc-ecosystem.md). In this section, I'd like to focus the reader on the relation between the IPC and the node structure. An issue that has frequently risen is that the RPC has control of the components where it strikes me as being more logical for the component to dictate the information that is emitted/available and the knobs it wishes to expose. The RPC is also inextricably tied to the node instance and has situations where it is passed pointers directly to the storage engine and other components.
+how we want our IPC systens to function has been summarised in this [RFC](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/rfc/rfc-002-ipc-ecosystem.md). In this section, I'd like to focus the reader on the relation between the IPC and the node structure. An issue that has frequently risen is that the RPC has control of the components where it strikes me as being more logical for the component to dictate the information that is emitted/available and the knobs it wishes to expose. The RPC is also inextricably tied to the node instance and has situations where it is passed pointers directly to the storage engine and other components.
 
 I am currently convinced of the approach that the p2p layer takes and would like to see other IPC components follow suit. This would mean that the RPC and events system would be constructed in the node yet would pass the adequate methods to register endpoints and topics to the sub components. For example,
 

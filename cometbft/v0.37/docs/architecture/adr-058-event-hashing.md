@@ -109,8 +109,8 @@ and how this ought to ultimately be done by Tendermint.**
 
 ## References
 
-- [ADR 021](./adr-021-abci-events.md)
-- [Indexing transactions](../app-dev/indexing-transactions.md)
+- [ADR 021](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-021-abci-events.md)
+- [Indexing transactions](/cometbft/v0.37/docs/app-dev/indexing-transactions)
 
 ## Appendix A. Alternative proposals
 

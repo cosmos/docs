@@ -3,7 +3,7 @@ order: 6
 title: Introduction
 ---
 
-In the section [CometBFT's expected behaviour](./abci++_comet_expected_behavior.md#valid-method-call-sequences),
+In the section [CometBFT's expected behaviour](/cometbft/v0.37/spec/abci/abci++_comet_expected_behavior#valid-method-call-sequences),
 we presented the most common behaviour, usually referred to as the good case.
 However, the grammar specified in the same section is more general and covers more scenarios
 that an Application designer needs to account for.

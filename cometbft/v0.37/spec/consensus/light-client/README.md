@@ -7,4 +7,4 @@ parent:
 
 # Light Client Protocol
 
-Deprecated, please see [light-client](../../light-client/README.md).
+Deprecated, please see [light-client](/cometbft/v0.37/spec/light-client/README).

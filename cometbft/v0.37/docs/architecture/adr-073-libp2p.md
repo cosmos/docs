@@ -230,6 +230,6 @@ the implementation timeline.
 - [ADR 62: P2P Architecture][adr62]
 - [P2P Roadmap RFC][rfc]
 
-[adr61]: ./adr-061-p2p-refactor-scope.md
-[adr62]: ./adr-062-p2p-architecture.md
-[rfc]: ../rfc/rfc-000-p2p-roadmap.rst
+[adr61]: https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-061-p2p-refactor-scope.md
+[adr62]: https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-062-p2p-architecture.md
+[rfc]: https://github.com/cometbft/cometbft/blob/v0.37.x/docs/rfc/rfc-000-p2p-roadmap.rst

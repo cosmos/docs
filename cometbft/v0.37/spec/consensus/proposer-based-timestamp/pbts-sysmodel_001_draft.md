@@ -184,7 +184,7 @@ Let `b` be a block with a valid commit that contains at least one `precommit` me
 
 Back to [main document][main].
 
-[main]: ./pbts_001_draft.md
+[main]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts_001_draft.md
 
 [arXiv]: https://arxiv.org/abs/1807.04938
 

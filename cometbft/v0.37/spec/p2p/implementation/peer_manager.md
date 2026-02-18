@@ -3,7 +3,7 @@
 The peer manager is responsible for establishing connections with peers.
 It defines when a node should dial peers and which peers it should dial.
 The peer manager is not an implementation abstraction of the p2p layer,
-but a role that is played by the [PEX reactor](./pex.md).
+but a role that is played by the [PEX reactor](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex.md).
 
 ## Outbound peers
 
@@ -29,7 +29,7 @@ order to reach the target number of outbound peers.
 
 Once defined that the node needs additional outbound peers, the node queries
 the address book for candidate addresses.
-This is done using the [`PickAddress`](./addressbook.md#pick-address) method,
+This is done using the [`PickAddress`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#pick-address) method,
 which returns an address selected at random on the address book, with some bias
 towards new or old addresses.
 When the node has up to 3 outbound peers, the adopted bias is towards old
@@ -53,10 +53,10 @@ also does not wait until the connections are established.
 
 The third step of the `ensurePeers` method is to ensure that the address book
 has enough addresses.
-This is done, first, by [reinstating banned peers](./addressbook.md#Reinstating-addresses)
+This is done, first, by [reinstating banned peers](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#Reinstating-addresses)
 whose ban period has expired.
 Then, the node randomly selects a connected peer, which can be either an
-inbound or outbound peer, to [requests addresses](./pex-protocol.md#Requesting-Addresses)
+inbound or outbound peer, to [requests addresses](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#Requesting-Addresses)
 using the PEX protocol.
 Last, and this action is only performed if the node could not retrieve any new
 address to dial from the address book, the node dials the configured seed nodes
@@ -71,7 +71,7 @@ method, no suitable peer address to dial is retrieved from the address book
 (e.g., because it is empty).
 
 Once a connection with a seed node is established, the node immediately
-[sends a PEX request](./pex-protocol.md#Requesting-Addresses) to it, as it is
+[sends a PEX request](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#Requesting-Addresses) to it, as it is
 added as an outbound peer.
 When the corresponding PEX response is received, the addresses provided by the
 seed node are added to the address book.
@@ -108,7 +108,7 @@ Moreover, these peers are not removed from the address book in the case of
 multiple failed dial attempts.
 
 On startup, the node immediately tries to dial the configured persistent peers
-by calling the switch's [`DialPeersAsync`](./switch.md#manual-operation) method.
+by calling the switch's [`DialPeersAsync`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/switch.md#manual-operation) method.
 This is not done in the p2p package, but it is part of the procedure to set up a node.
 
 > TODO: the handling of persistent peers should be described in more detail.
@@ -122,14 +122,14 @@ The picture below is a first attempt of illustrating the life cycle of an outbou
 A peer can be in the following states:
 
 - Candidate peers: peer addresses stored in the address boook, that can be
-  retrieved via the [`PickAddress`](./addressbook.md#pick-address) method
-- [Dialing](./switch.md#dialing-peers): peer addresses that are currently being
+  retrieved via the [`PickAddress`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#pick-address) method
+- [Dialing](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/switch.md#dialing-peers): peer addresses that are currently being
   dialed. This state exists to ensure that a single dialing routine exist per peer.
-- [Reconnecting](./switch.md#reconnect-to-peer): persistent peers to which a node
+- [Reconnecting](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/switch.md#reconnect-to-peer): persistent peers to which a node
   is currently reconnecting, as a previous connection attempt has failed.
 - Connected peers: peers that a node has successfully dialed, added as outbound peers.
-- [Bad peers](./addressbook.md#bad-peers): peers marked as bad in the address
-  book due to exhibited [misbehavior](./pex-protocol.md#misbehavior).
+- [Bad peers](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/addressbook.md#bad-peers): peers marked as bad in the address
+  book due to exhibited [misbehavior](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/pex-protocol.md#misbehavior).
   Peers can be reinstated after being marked as bad.
 
 ## Pending of documentation

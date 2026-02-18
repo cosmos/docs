@@ -11,7 +11,7 @@ invoked and determines what the p2p layer expects from a reactor,
 this documentation focuses on the **temporal behaviour** that a reactor implementation
 should expect from the p2p layer. (That is, in which orders the functions may be called)
 
-This specification is accompanied by the [`reactor.qnt`](./reactor.qnt) file,
+This specification is accompanied by the [`reactor.qnt`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/reactor.qnt) file,
 a more comprehensive model of the reactor's operation written in
 [Quint][quint-repo], an executable specification language.
 The methods declared in the [`Reactor`][reactor-interface] interface are
@@ -98,11 +98,11 @@ reactor and the p2p layer.
 The `Switch` is the main component of the p2p layer, being responsible for
 establishing connections with peers and routing messages.
 The `Switch` instance provides a number of methods for all registered reactors,
-documented in the companion [API for Reactors](./p2p-api.md#switch-api) document.
+documented in the companion [API for Reactors](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/p2p-api.md#switch-api) document.
 
 ## Service interface
 
-A reactor must implement the [`Service`](../../../libs/service/service.go) interface,
+A reactor must implement the [`Service`](https://github.com/cometbft/cometbft/blob/v0.37.x/libs/service/service.go) interface,
 in particular, a startup `OnStart()` and a shutdown `OnStop()` methods:
 
 ```abnf
@@ -159,7 +159,7 @@ interacting with a misbehaving or slow peer. A practical example is reported on 
 It is up to the reactor to define how to process the `AddPeer(Peer)` event.
 The typical behavior is to start routines that, given some conditions or events,
 send messages to the added peer, using the provided `Peer` instance.
-The companion [API for Reactors](./p2p-api.md#peer-api) documents the methods
+The companion [API for Reactors](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/reactor-api/p2p-api.md#peer-api) documents the methods
 provided by `Peer` instances, available from when they are added to the reactors.
 
 ## Stop Peer
@@ -226,5 +226,5 @@ Two important observations regarding the implementation of the `Receive` method:
    In other words, while `Receive` does not return, other messages from the
    same sender are not delivered to any reactor.
 
-[reactor-interface]: ../../../p2p/base_reactor.go
+[reactor-interface]: https://github.com/cometbft/cometbft/blob/v0.37.x/p2p/base_reactor.go
 [quint-repo]: https://github.com/informalsystems/quint

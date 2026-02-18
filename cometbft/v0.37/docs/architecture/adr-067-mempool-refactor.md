@@ -71,7 +71,7 @@ can be addressed in an easy and extensible manner in the future.
 
 ### Current Design
 
-![mempool](./img/mempool-v0.jpeg)
+![mempool](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/mempool-v0.jpeg)
 
 At the core of the `v0` mempool reactor is a concurrent linked-list. This is the
 primary data structure that contains `Tx` objects that have passed `CheckTx`.

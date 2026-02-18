@@ -196,8 +196,8 @@ mutually exclusive.
 
 [rpc-service]: https://docs.tendermint.com/v0.34/rpc/
 [rpc-methods]: https://github.com/tendermint/tendermint/blob/v0.37.x/internal/rpc/core/routes.go#L12
-[events]: ./rfc-005-event-system.rst
-[rpc-transport]: ./rfc-002-ipc-ecosystem.md#rpc-transport
+[events]: https://github.com/cometbft/cometbft/blob/v0.37.x/docs/rfc/rfc-005-event-system.rst
+[rpc-transport]: https://github.com/cometbft/cometbft/blob/v0.37.x/docs/rfc/rfc-002-ipc-ecosystem.md#rpc-transport
 [ws]: https://datatracker.ietf.org/doc/html/rfc6455
 [json-response]: https://www.jsonrpc.org/specification#response_object
 [json-notify]: https://www.jsonrpc.org/specification#notification

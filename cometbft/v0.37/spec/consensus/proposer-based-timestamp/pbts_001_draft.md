@@ -255,15 +255,15 @@ This specification describes the changes needed to be done to the Tendermint con
 
 [arXiv]: https://arxiv.org/abs/1807.04938
 
-[tlatender]: ../../light-client/accountability/README.md
+[tlatender]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/light-client/accountability/README.md
 
-[bfttime]: ../bft-time.md
+[bfttime]: /cometbft/v0.37/spec/consensus/bft-time
 
-[lcspec]: ../../light-client/README.md
+[lcspec]: /cometbft/v0.37/spec/light-client/README
 
-[algorithm]: ./pbts-algorithm_001_draft.md
+[algorithm]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts-algorithm_001_draft.md
 
-[sysmodel]: ./pbts-sysmodel_001_draft.md
+[sysmodel]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts-sysmodel_001_draft.md
 
 
-[proposertla]: ./tla/TendermintPBT_001_draft.tla
+[proposertla]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/tla/TendermintPBT_001_draft.tla

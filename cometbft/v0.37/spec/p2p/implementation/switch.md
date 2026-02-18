@@ -3,7 +3,7 @@
 The switch is a core component of the p2p layer.
 It manages the procedures for [dialing peers](#dialing-peers) and
 [accepting](#accepting-peers) connections from peers, which are actually
-implemented by the [transport](./transport.md).
+implemented by the [transport](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/transport.md).
 It also manages the reactors, i.e., protocols implemented by the node that
 interact with its peers.
 Once a connection with a peer is established, the peer is [added](#add-peer) to
@@ -17,7 +17,7 @@ registered reactors.
 
 Dialing a peer is implemented by the `DialPeerWithAddress` method.
 
-This method is invoked by the [peer manager](./peer_manager.md#ensure-peers)
+This method is invoked by the [peer manager](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/peer_manager.md#ensure-peers)
 to dial a peer address and establish a connection with an outbound peer.
 
 The switch keeps a single dialing routine per peer ID.
@@ -28,13 +28,13 @@ for that peer, and it is removed when the method returns for whatever reason.
 The method returns immediately when invoked for a peer which ID is already in
 the `dialing` structure.
 
-The actual dialing is implemented by the [`Dial`](./transport.md#dial) method
+The actual dialing is implemented by the [`Dial`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/transport.md#dial) method
 of the transport configured for the switch, in the `addOutboundPeerWithConfig`
 method.
 If the transport succeeds establishing a connection, the returned `Peer` is
 added to the switch using the [`addPeer`](#add-peer) method.
 This operation can fail, returning an error. In this case, the switch invokes
-the transport's [`Cleanup`](./transport.md#cleanup) method to clean any resources
+the transport's [`Cleanup`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/transport.md#cleanup) method to clean any resources
 associated with the peer.
 
 If the transport fails to establish a connection with the peer that is configured
@@ -112,7 +112,7 @@ At most `reconnectBackOffAttempts`, hard-coded to 10, are made using this  appro
 The `acceptRoutine` method is a persistent routine that handles connections
 accepted by the transport configured for the switch.
 
-The [`Accept`](./transport.md#accept) method of the configured transport
+The [`Accept`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/transport.md#accept) method of the configured transport
 returns a `Peer` with which an inbound connection was established.
 The switch accepts a new peer if the maximum number of inbound peers was not
 reached, or if the peer was configured as an _unconditional peer_.
@@ -122,7 +122,7 @@ configuration parameter, whose default value is `40`.
 If accepted, the peer is added to the switch using the [`addPeer`](#add-peer) method.
 If the switch does not accept the established incoming connection, or if the
 `addPeer` method returns an error, the switch invokes the transport's
-[`Cleanup`](./transport.md#cleanup) method to clean any resources associated
+[`Cleanup`](https://github.com/cometbft/cometbft/blob/v0.37.x/spec/p2p/implementation/transport.md#cleanup) method to clean any resources associated
 with the peer.
 
 The transport's `Accept` method can also return a number of errors.

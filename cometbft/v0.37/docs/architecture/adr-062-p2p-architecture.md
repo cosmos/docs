@@ -12,7 +12,7 @@
 
 ## Context
 
-In [ADR 061](adr-061-p2p-refactor-scope.md) we decided to refactor the peer-to-peer (P2P) networking stack. The first phase is to redesign and refactor the internal P2P architecture, while retaining protocol compatibility as far as possible.
+In [ADR 061](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-061-p2p-refactor-scope.md) we decided to refactor the peer-to-peer (P2P) networking stack. The first phase is to redesign and refactor the internal P2P architecture, while retaining protocol compatibility as far as possible.
 
 ## Alternative Approaches
 
@@ -20,7 +20,7 @@ Several variations of the proposed design were considered, including e.g. callin
 
 [multiaddr](https://github.com/multiformats/multiaddr) was considered as a transport-agnostic peer address format over regular URLs, but it does not appear to have very widespread adoption, and advanced features like protocol encapsulation and tunneling do not appear to be immediately useful to us.
 
-There were also proposals to use LibP2P instead of maintaining our own P2P stack, which were rejected (for now) in [ADR 061](adr-061-p2p-refactor-scope.md).
+There were also proposals to use LibP2P instead of maintaining our own P2P stack, which were rejected (for now) in [ADR 061](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-061-p2p-refactor-scope.md).
 
 The initial version of this ADR had a byte-oriented multi-stream transport API, but this had to be abandoned/postponed to maintain backwards-compatibility with the existing MConnection protocol which is message-oriented. See the rejected RFC in [tendermint/spec#227](https://github.com/tendermint/spec/pull/227) for details.
 
@@ -51,7 +51,7 @@ The main abstractions in the new stack are:
 
 These abstractions are illustrated in the following diagram (representing the internals of node A) and described in detail below.
 
-![P2P Architecture Diagram](img/adr-062-architecture.svg)
+![P2P Architecture Diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/adr-062-architecture.svg)
 
 ### Transports
 
@@ -613,5 +613,5 @@ Was partially implemented in v0.35 ([#5670](https://github.com/tendermint/tender
 
 ## References
 
-* [ADR 061: P2P Refactor Scope](adr-061-p2p-refactor-scope.md)
+* [ADR 061: P2P Refactor Scope](https://github.com/cometbft/cometbft/blob/v0.37.x/docs/architecture/adr-061-p2p-refactor-scope.md)
 * [#5670 p2p: internal refactor and architecture redesign](https://github.com/tendermint/tendermint/issues/5670)

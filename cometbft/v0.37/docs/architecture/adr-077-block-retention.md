@@ -74,7 +74,7 @@ The returned `retain_height` would be the lowest height that satisfies:
 
 - Local config: archive nodes may want to retain more or all blocks, e.g. via a local config option `min-retain-blocks`. There may also be a need to vary rentention for other nodes, e.g. sentry nodes which do not need historical blocks.
 
-![Cosmos SDK block retention diagram](img/block-retention.png)
+![Cosmos SDK block retention diagram](https://raw.githubusercontent.com/cometbft/cometbft/v0.37.x/docs/architecture/img/block-retention.png)
 
 ## Status
 

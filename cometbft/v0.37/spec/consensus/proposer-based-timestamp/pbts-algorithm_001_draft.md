@@ -152,7 +152,7 @@ upon ⟨PROPOSAL, h_p, r, (v,t), ∗⟩ from proposer(h_p, r) AND 2f + 1 ⟨PREC
 
 Back to [main document][main].
 
-[main]: ./pbts_001_draft.md
+[main]: https://github.com/cometbft/cometbft/blob/v0.37.x/spec/consensus/proposer-based-timestamp/pbts_001_draft.md
 
 [arXiv]: https://arxiv.org/abs/1807.04938
 
