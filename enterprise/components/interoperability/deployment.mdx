@@ -1,0 +1,92 @@
+---
+title: "Deployment Overview"
+description: "End-to-end IBC v2 deployment for mint/burn transfers between Cosmos and EVM chains."
+---
+
+This document explains how an IBC v2 deployment works end-to-end to support mint/burn transfers between Cosmos and EVM chains.
+
+## System Architecture
+
+![IBC system diagram](/assets/enterprise/interoperability/system-diagram.png)
+
+**Legend**
+- Blue = on-chain contracts (EVM)
+- Purple = IBC / SDK modules
+- Orange = off-chain infrastructure
+- Dashed arrows = proofs / verification
+
+## Components
+
+### On-Chain
+
+**Cosmos Modules**
+
+- **Core IBC Modules** — Core IBC stack including the ICS 26 Router, ICS 26 Application Callbacks, and ICS 27 GMP.
+  - Specifications: [cosmos/ibc](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2)
+  - Implementations: [cosmos/ibc-go](https://github.com/cosmos/ibc-go/tree/main/modules)
+
+- **Attestor Light Client** — An attestor-based IBC light client that verifies IBC packets using quorum-signed ECDSA attestations from a fixed set of trusted signers, implemented in Go.
+  - Specification: [cosmos/ibc ics-026-application-callbacks](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2/core/ics-026-application-callbacks)
+  - Implementation: [cosmos/ibc-go attestor light client](https://github.com/cosmos/ibc-go/tree/main/modules/light-clients/attestations)
+
+- **Token Factory** — Chain-dependent module that handles core asset logic and is configured with the IBC stack to initiate outgoing and/or process incoming IBC packets.
+
+**EVM Contracts**
+
+- **Core IBC Contracts** — Core IBC contracts including the ICS 26 Router and ICS 27 GMP + Callbacks contracts.
+  - Specifications: [cosmos/ibc](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2)
+  - Implementations: [cosmos/solidity-ibc-eureka](https://github.com/cosmos/solidity-ibc-eureka/tree/main/contracts)
+
+- **Attestor Light Client** — An attestor-based IBC light client that verifies IBC packets using quorum-signed ECDSA attestations from a fixed set of trusted signers, implemented in Solidity.
+  - Specification: [cosmos/solidity-ibc-eureka design](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/light-clients/attestation/IBC_ATTESTOR_DESIGN.md)
+  - Implementation: [cosmos/solidity-ibc-eureka attestation](https://github.com/cosmos/solidity-ibc-eureka/tree/main/contracts/light-clients/attestation)
+
+- **Interchain Fungible Token (IFT)** — A set of rules and interfaces for creating and managing fungible tokens that can be transferred across different blockchain networks using ICS-27 GMP.
+  - Implementation: [cosmos/solidity-ibc-eureka IFTBase.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/mariuszzak/ift/contracts/IFTBase.sol)
+
+### Off-Chain
+
+- **Attestation Service** — A lightweight, blockchain-agnostic attestation service that provides cryptographically signed attestations of blockchain state for IBC cross-chain communication. See the [Attestor](/enterprise/components/interoperability/attestor) documentation for details.
+  - Implementation: [cosmos/ibc-attestor](https://github.com/cosmos/ibc-attestor) (Rust service in `apps/ibc-attestor/`)
+
+- **Proof API** — A gRPC server that can be queried by a client to get the data needed to generate transaction(s) for relaying IBC packets.
+  - Implementation: [cosmos/solidity-ibc-eureka proof-api](https://github.com/cosmos/solidity-ibc-eureka/tree/main/programs/relayer)
+
+- **Relayer** — A standalone, production-ready, request-driven relayer service for the IBC v2 Protocol. See the [Relayer](/enterprise/components/interoperability/relayer) documentation for details.
+
+## Example IBC Transfer Flows
+
+### Cosmos to EVM
+
+1. The user or client submits a transaction on the Cosmos source chain containing a burn/transfer message to the Token Factory module.
+   - The Token Factory module calls the IBC GMP module to make a GMP call to the mint function on the EVM destination chain's IFT contract.
+   - The GMP module calls the core IBC module to send a packet with the GMP payload to the ICS 26 Router on the EVM destination chain.
+   - The IBC modules emit the relevant packet information as an event.
+   - The Attestor continuously monitors blocks for relevant IBC events, parses a valid IBC transfer packet, and generates a signed attestation with associated blockchain state.
+
+2. The client submits a request to the relayer service to relay the IBC transfer packet.
+   - The relayer requests data necessary to submit the IBC transaction and proof on the destination chain from the Proof API.
+   - The Proof API queries each configured Attestor, aggregates signed attestations until the quorum threshold is reached, generates the IBC RecvPacket data, and responds to the relayer.
+
+3. The relayer submits the IBC RecvPacket transaction to the EVM destination chain.
+   - The ICS 26 Router contract parses the packet and executes core validation logic (sequencing, timeouts, etc.), then routes it to the relevant light client contract.
+   - The light client contract validates the IBC packet.
+   - The ICS 26 Router routes the validated packet to the GMP contract, which executes the IFT contract's mint function.
+   - The IFT contract mints and transfers the token to the destination address specified in the GMP payload.
+
+### EVM to Cosmos
+
+1. The user or client submits a transaction on the EVM source chain calling `iftTransfer` on the IFT contract.
+   - The IFT contract burns the tokens from the sender and calls the ICS 27 GMP contract with the necessary information for an IBC mint/burn transfer packet.
+   - The GMP contract calls the IBC Router contract to send a GMP call to mint tokens on the Cosmos destination chain.
+   - The IBC contracts emit the relevant packet information as an event.
+   - The Attestor generates a signed attestation of the packet and associated blockchain state.
+
+2. The client submits a request to the relayer service to relay the IBC transfer packet.
+   - The relayer requests data from the Proof API, which aggregates attestations and generates IBC RecvPacket data.
+
+3. The relayer submits the IBC RecvPacket transaction to the Cosmos destination chain.
+   - The core IBC modules parse the packet and execute core validation logic (sequencing, timeouts, etc.), then route it to the relevant light client module.
+   - The light client module validates the IBC packet.
+   - The IBC Core modules route the validated packet to the GMP application module.
+   - The GMP module calls the Token Factory module to mint tokens to the destination address specified in the GMP payload.

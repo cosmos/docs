@@ -1,0 +1,121 @@
+---
+title: "Attestor"
+description: "Lightweight, blockchain-agnostic attestation service for IBC cross-chain communication."
+---
+
+The IBC Attestor is a lightweight, blockchain-agnostic attestation service that provides cryptographically signed attestations of blockchain state for IBC cross-chain communication. IBC Attestors publish attestations on demand and are stateless: consumers of the service must send requests to the service's gRPC server to receive attestations.
+
+### Key Features
+
+- Multi-chain support via pluggable adapter pattern (EVM, Solana, Cosmos)
+- Flexible signing (local keystore or remote HSM/KMS)
+- gRPC API for attestation requests
+- Concurrent packet validation
+
+## Attestation Types
+
+IBC attestors support two kinds of attestations:
+
+- **State attestations** — A given chain has a block of height `x` where the block was produced at time `y`
+- **Packet attestations** — A given chain's state explicitly does or does not contain packet commitment `z`
+
+Both types use the same underlying [Attestation](https://github.com/cosmos/ibc-attestor/blob/main/proto/ibc_attestor/attestation.proto) proto type, but the `attested_data` field differs:
+- State attestations hold the height and timestamp of a block
+- Packet attestations contain the packets provided in the initial request and the height at which the commitments were found
+
+## Security Model
+
+Within the context of IBC relaying, attestors are an off-chain trusted service. Trust is established with on-chain components via two mechanisms:
+- Securely managed secp256k1 signing keys used by attestors to create attestations. The public parts of the keys must be registered with an on-chain light client.
+- An aggregation layer during relaying that asserts a configurable m-of-n signatures attest to the same state.
+
+**Trust assumptions per attestor instance:**
+- RPC endpoints provide accurate data
+- Private key is kept secure
+
+**Security guarantees per attestor instance:**
+- Packet commitments must be valid before signing: packet must match computed value; ack must exist on chain; receipt must be absent (zero)
+- Signatures are cryptographically sound and recoverable
+- Any heights in gRPC queries cannot be greater than the configured finalization height
+
+## Architecture
+
+### Component Structure
+
+```
+┌────────────────────────────────────────┐
+│           Attestor Binary              │
+│  ┌──────────────────────────────────┐  │
+│  │         gRPC Server              │  │
+│  │  - AttestationService            │  │
+│  │  - Reflection API                │  │
+│  │  - Logging & Tracing             │  │
+│  └────────┬──────────────┬──────────┘  │
+│           │              │             │
+│  ┌────────▼─────┐  ┌─────▼─────────┐   │
+│  │ Attestation  │  │    Signer     │   │
+│  │    Logic     │  │ - Local       │   │
+│  │ - State      │  │ - Remote      │   │
+│  │ - Packet     │  └───────────────┘   │
+│  └────────┬─────┘                      │
+│  ┌────────▼─────┐                      │
+│  │   Adapter    │                      │
+│  │ - EVM        │                      │
+│  │ - Solana     │                      │
+│  │ - Cosmos     │                      │
+│  └──────────────┘                      │
+└────────────────────────────────────────┘
+```
+
+## Operating an Attestor Instance
+
+### CLI and Configuration
+
+When running the attestor you need to specify:
+- What kind of chain (`--chain-type`) will be attested to
+- How the signer key (`--signer-type`) will be provided
+
+Each chain and signer type has its own configuration parameters captured under separate sections in the configuration TOML. See the [example EVM attestor config](https://github.com/cosmos/ibc-attestor/blob/main/apps/ibc-attestor/server.dev.toml) for reference.
+
+### Chain Adapters
+
+To add support for new kinds of chains, implement the `AttestationAdapter` and `AdapterBuilder` [interfaces](https://github.com/cosmos/ibc-attestor/blob/main/apps/ibc-attestor/src/adapter/mod.rs):
+
+- **`AttestationAdapter`** — Responsible for retrieving on-chain state and ensuring it can be parsed as a valid height and timestamp for a `StateAttestation`, or a valid 32-byte commitment path for an IBC Packet.
+- **`AdapterBuilder`** — Enables per-chain configurations needed by the `AttestationAdapter` implementation.
+
+The CLI must also be extended to support any new chain types.
+
+### Signing
+
+The IBC attestor supports two signing modes: **local** and **remote**. The remote signer is based on the Cosmos Labs remote signer which uses AWS KMS for key rotation.
+
+The attestor signing algorithm:
+1. Retrieve relevant chain/packet state via the chain adapter
+2. Encode the data using ABI format to facilitate EVM parsing
+3. Send the encoded message to the signer, which first hashes and then signs the data as an ECDSA 65-byte recoverable signature (`r||s||v`)
+
+Any new signer implementations **must guarantee**:
+- Arbitrary ABI-encoded data is hashed before signing
+- The signature is in the ECDSA 65-byte recoverable signature format (`r||s||v`)
+
+## Observability
+
+The IBC attestor uses a logging middleware to time requests, set trace IDs, and add structured fields to traces. These fields include:
+- Adapter kind
+- Signer kind
+- Requested height (where applicable)
+- Number of packets (where applicable)
+- Packet commitment kind (where applicable)
+
+### Logging
+
+- Logs are emitted in JSON format
+- Errors must be logged at occurrence to simplify line number tracing
+- Info logs are reserved for middleware and startup operations
+- Debug logs capture adapter and attestation creation operations
+
+### Tracing
+
+- OpenTelemetry-compatible spans
+- Minimal request time tracking
