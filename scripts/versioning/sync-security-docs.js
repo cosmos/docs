@@ -207,7 +207,7 @@ function transformToMDX(content, sourceFile, title) {
 
   const mdx = `---
 title: "${title}"
-description: "Security policy documentation for the Cosmos Stack"
+description: "Security and maintenance policy documentation for the Cosmos Stack"
 ---
 
 <Info>
