@@ -72,7 +72,7 @@ npx mint broken-links
 
 - `<product>/next/` - Active development documentation (e.g., `sdk/next/`, `evm/next/`, `ibc/next/`, `hub/next/`)
 - `<product>/<version>/` - Versioned documentation, by major release (e.g., `sdk/v0.53/`, `evm/v0.5.0/`, `hub/v25/`)
-- `scripts/versioning/` - Versioning automation - see [README](scripts/versioning/README.md)
+- `scripts/versioning/` - Versioning automation - see [README](/scripts/versioning/README.md)
 - `scripts/migration/` - Docusaurus to Mintlify migration tools - see [migrate.js](scripts/migration/migrate.js)
 - `assets/<product>/images/` - Static assets (images) for each product
 - `snippets/` - Custom components - Due to platform limitations, components cannot be versioned. However, it is possible to feed specific / versioned data to a component through a prop in the import (see `evm/v0.4.x/documentation/evm-compatibility/eip-reference.mdx` for a working example)
