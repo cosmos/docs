@@ -336,7 +336,7 @@ sdk/v0.53/security/              # Generated output directory
 
 ## Related Documentation
 
-- [Versioning System README](./README.md) - Documentation versioning for releases
+- [Versioning System README] README.md - Documentation versioning for releases
 - [cosmos/security Repository](https://github.com/cosmos/security) - Source of security documentation
 - [GitHub Actions Documentation](https://docs.github.com/en/actions) - Workflow automation
 - [Mintlify Documentation](https://mintlify.com/docs) - MDX reference
