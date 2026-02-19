@@ -1,0 +1,23 @@
+---
+order: 3
+---
+
+# Evidence
+
+## Channel
+
+Evidence has one channel. The channel identifier is listed below.
+
+| Name            | Number |
+|-----------------|--------|
+| EvidenceChannel | 56     |
+
+## Message Types
+
+### EvidenceList
+
+EvidenceList consists of a list of verified evidence. This evidence will already have been propagated throughout the network. EvidenceList is used in two places, as a p2p message and within the block [block](/cometbft/v0.37/spec/core/data_structures#block) as well.
+
+| Name     | Type                                                        | Description            | Field Number |
+|----------|-------------------------------------------------------------|------------------------|--------------|
+| evidence | repeated [Evidence](/cometbft/v0.37/spec/core/data_structures#evidence) | List of valid evidence | 1            |
