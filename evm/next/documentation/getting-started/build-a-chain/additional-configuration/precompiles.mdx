@@ -34,7 +34,7 @@ evmGenState.Params.ActiveStaticPrecompiles = []string{
 
 The full list of available addresses is defined in [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go).
 
-Precompiles can also be added after launch via a governance parameter change proposal targeting the `vm` module's `active_static_precompiles` param.
+Already-registered precompiles can also be enabled or disabled after launch via a governance parameter change proposal targeting the `vm` module's `active_static_precompiles` param. Adding a genuinely new custom precompile requires a chain upgrade, since the implementation lives in the Go binary.
 
 ## Adding a Custom Precompile
 
@@ -202,38 +202,11 @@ make install
 ./local_node.sh -y
 ```
 
-Once the chain is running, generate the calldata for your query:
+Once the chain is running, call the precompile and get a decoded result in one step:
 
 ```bash
-cast calldata "supplyOf(string)" "atest"
-# outputs: 0x3cda0103000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000056174657374000000000000000000000000000000000000000000000000000000
-```
-
-Then call via `curl`:
-
-```bash
-curl http://localhost:8545 \
-  -X POST \
-  -H "Content-Type: application/json" \
-  --data '{
-    "jsonrpc": "2.0",
-    "method": "eth_call",
-    "params": [{
-      "to": "0x0000000000000000000000000000000000000809",
-      "data": "0x3cda0103000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000056174657374000000000000000000000000000000000000000000000000000000"
-    }, "latest"],
-    "id": 1
-  }'
-# result: 0x000...52b8... (total atest supply as uint256)
-```
-
-<Note>
-`cast call` checks for EVM bytecode before executing. Precompiles have no bytecode, so use `eth_call` directly via curl instead.
-</Note>
-
-To decode the uint256 result:
-
-```bash
-python3 -c "print(0x00000000000000000000000000000000000000000052b8add30f455fe925bde4)"
-# 100004039136423103686884836
+cast call 0x0000000000000000000000000000000000000809 \
+  "supplyOf(string)(uint256)" "atest" \
+  --rpc-url http://localhost:8545
+# 100025807224055573593873019 [1e26]
 ```
