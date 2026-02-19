@@ -15,20 +15,24 @@ Write Solidity using [Hardhat](https://hardhat.org), [Foundry](https://book.getf
 
 ### Deployment
 
-Deploy using standard Ethereum tools by pointing them at your chain's RPC endpoint. Deployment transactions go through the JSON-RPC or Cosmos gRPC interface and are processed by the EVM module. Once deployed, contract bytecode is stored in chain state and callable at its Ethereum address like any other chain.
+[Deploy using standard Ethereum tools](/evm/next/documentation/getting-started/build-a-chain/quick-start#deploy-a-solidity-contract-with-forge) by pointing them at your chain's RPC endpoint. Deployment transactions go through the JSON-RPC or Cosmos gRPC interface and are processed by the EVM module. Once deployed, contract bytecode is stored in chain state and callable at its Ethereum address like any other chain.
 
 ### Upgrading
 
 Cosmos EVM supports all standard EVM upgrade patterns:
 
-- **Proxy patterns (EIP-1967, Transparent Proxy, UUPS)** — Delegate calls to an implementation contract. Upgrading means swapping the implementation address in the proxy without touching the proxy's storage or address.
-- **Diamond pattern (EIP-2535)** — Modular contracts split into "facets" that can be added, replaced, or removed independently. The diamond routes calls to the appropriate facet, enabling granular upgrades without redeploying the whole contract.
+- **Proxy patterns (EIP-1967, Transparent Proxy, UUPS)**: Delegate calls to an implementation contract. Upgrading means swapping the implementation address in the proxy without touching the proxy's storage or address.
+- **Diamond pattern (EIP-2535)**: Modular contracts split into "facets" that can be added, replaced, or removed independently. The diamond routes calls to the appropriate facet, enabling granular upgrades without redeploying the whole contract.
 
 Any upgrade architecture that works on Ethereum works on Cosmos EVM.
 
-## Supported EIPs
+## Supported Standards
 
-Cosmos EVM supports **all standard EVM opcodes up to the Prague hard fork**. The following are notable examples; the full list is [much longer](https://eips.ethereum.org/all).
+**Cosmos EVM supports all standard EVM opcodes, EIPs, and ERC token interfaces** up to the Prague hard fork.
+
+### EIPs
+
+The following are notable supported EIPs; the full list is [much longer](https://eips.ethereum.org/all).
 
 | EIP | Name | Purpose |
 |-----|------|---------|
@@ -40,17 +44,15 @@ Cosmos EVM supports **all standard EVM opcodes up to the Prague hard fork**. The
 | [EIP-4337](https://eips.ethereum.org/EIPS/eip-4337) | Account Abstraction | Smart contract wallets can pay fees, batch transactions, and use custom auth schemes |
 | [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) | Set Code for EOA | Temporarily assigns contract code to an EOA for sponsored transactions and complex auth |
 
-For a complete list, see the [Ethereum Improvement Proposal documentation](https://eips.ethereum.org/all).
+### ERCs
 
-## Supported ERCs
-
-Cosmos EVM supports **all standard ERC** token interfaces. The following are the most commonly used—any ERC standard that runs on the EVM is compatible.
+Any ERC standard that runs on the EVM is compatible with Cosmos EVM. The most commonly used are:
 
 - **[ERC-20](https://eips.ethereum.org/EIPS/eip-20) — Fungible Tokens:** Standard interface for currency representations with transfer, approval, and allowance mechanisms.
 - **[ERC-721](https://eips.ethereum.org/EIPS/eip-721) — Non-Fungible Tokens:** Standard for unique asset identifiers, digital certificates, or proof of ownership records.
 - **[ERC-1155](https://eips.ethereum.org/EIPS/eip-1155) — Multi-Token Standard:** Supports both fungible and non-fungible assets in a single contract, enabling batch operations and reduced deployment costs for complex asset systems.
 
-## Supported Opcodes
+### Opcodes
 
 Cosmos EVM supports **all EVM opcodes up to the Prague hard fork**. For the full reference, see [evm.codes](https://www.evm.codes/).
 
@@ -59,9 +61,9 @@ The following are **not supported**:
 - **[EIP-4844](https://eips.ethereum.org/EIPS/eip-4844) — Blob-Carrying Transactions:** Blob data and L2-specific functionality.
 - **[EIP-4399](https://eips.ethereum.org/EIPS/eip-4399) — PREVRANDAO:** The replacement of the `DIFFICULTY` opcode with `PREVRANDAO`.
 
-## Supported Tools
+## Tooling
 
-You can build on Cosmos EVM exactly as you would on Ethereum. Solidity contracts compile and deploy unchanged, and the full standard toolchain is supported without any custom configuration.
+Any tool that connects to a standard Ethereum JSON-RPC endpoint works with Cosmos EVM without custom configuration.
 
 | Tool | Category |
 |------|----------|
@@ -72,11 +74,32 @@ You can build on Cosmos EVM exactly as you would on Ethereum. Solidity contracts
 | [ethers.js](https://docs.ethers.org/v6/), [viem](https://viem.sh), [web3.js](https://web3js.org), [wagmi](https://wagmi.sh) | JavaScript libraries |
 | [Blockscout](https://github.com/blockscout/blockscout) | Block explorer |
 
-Any tool that connects to a standard Ethereum JSON-RPC endpoint is compatible with Cosmos EVM.
+### JSON-RPC
 
-## Capabilities Beyond Ethereum
+The JSON-RPC interface implements the full Ethereum spec. Point any standard tool at your chain's RPC endpoint and it works.
 
-The following features come on top of full Ethereum compatibility. None of the following change how existing contracts or tooling behave, but instead they add additional capabilities.
+<Card title="Ethereum RPC Compatibility" icon="code" href="/evm/next/api-reference/ethereum-json-rpc/methods">
+  Most standard Ethereum JSON-RPC methods are supported, with some returning stub values for compatibility. View the complete reference.
+</Card>
+
+All standard transaction, query, and subscription methods work as expected — `eth_sendRawTransaction`, `eth_call`, `eth_estimateGas`, event logs and filters, WebSocket subscriptions, and the debug namespace for tracing.
+
+A few things to know:
+- `eth_gasPrice` returns 0 — use EIP-1559 fee fields instead
+- Mining-related methods don't apply (consensus is handled by CometBFT)
+- `txpool` methods require the experimental mempool to be enabled
+
+## Beyond Ethereum
+
+Cosmos EVM adds capabilities on top of full Ethereum compatibility. None of these change how existing contracts or tooling behave.
+
+| Area | Ethereum | Cosmos EVM |
+|------|----------|------------|
+| **Block time** | ~12 seconds | 1–2 seconds |
+| **Finality** | 12+ blocks (~3 min) | 1 block (~2 seconds) |
+| **Reorganizations** | Possible | Not possible |
+| **Cross-chain** | Bridge protocols | Native IBC |
+| **Fee distribution** | Base fee burned | Distributed to validators |
 
 ### Finality
 
@@ -102,13 +125,23 @@ Cosmos EVM uses two independent chain IDs: a Cosmos Chain ID (string, e.g. `cosm
 ### Precompiled Contracts
 
 <CardGroup cols={2}>
-  <Card title="Cosmos Precompiles" icon="cube" href="/evm/next/documentation/smart-contracts/precompiles">
-    Access Cosmos SDK modules (staking, governance, IBC) via precompiled contracts.
+  <Card title="Precompile Overview" icon="cube" href="/evm/next/documentation/smart-contracts/precompiles/overview">
+    Full list of built-in Cosmos precompiles and their addresses.
   </Card>
-  <Card title="Standard Precompiles" icon="shield-check" href="https://www.evm.codes/precompiled">
-    All Ethereum cryptographic precompiles are supported (ecrecover, sha256, etc.)
+  <Card title="Add a Custom Precompile" icon="wrench" href="/evm/next/documentation/getting-started/build-a-chain/additional-configuration/precompiles">
+    Enable built-in precompiles or add your own to your chain.
   </Card>
 </CardGroup>
+
+All standard Ethereum cryptographic precompiles (ecrecover, sha256, etc.) are also supported — see [evm.codes/precompiled](https://www.evm.codes/precompiled) for the full reference.
+
+### Predeployed Contracts
+
+Cosmos EVM ships with standard EVM infrastructure contracts already in chain state at their canonical addresses — Create2, Multicall3, Permit2, Safe Singleton Factory, and EIP-2935 block hash storage. Any tooling that depends on these contracts at their well-known addresses works without extra setup.
+
+<Card title="Predeployed Contracts" icon="box" href="/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts">
+  Full list of preinstalled contracts and their addresses.
+</Card>
 
 #### Key Precompile Addresses
 
@@ -120,55 +153,25 @@ Cosmos EVM uses two independent chain IDs: a Cosmos Chain ID (string, e.g. `cosm
 | **Bank** | `0x0000000000000000000000000000000000000804` |
 | **Governance** | `0x0000000000000000000000000000000000000805` |
 
-### JSON-RPC API
-
-The JSON-RPC interface is compatible with the full Ethereum tooling ecosystem without modification. Any tool that speaks standard Ethereum JSON-RPC works by pointing it at your chain's RPC endpoint.
-
-<Card title="Ethereum RPC Compatibility" icon="code" href="/evm/next/api-reference/ethereum-json-rpc/methods">
-  Most standard Ethereum JSON-RPC methods are supported, with some returning stub values for compatibility. View the complete reference.
-</Card>
-
-**Compatible tools include:**
-
-| Category | Tools |
-|----------|-------|
-| Development frameworks | Foundry (Forge, Cast), Hardhat, Truffle, Remix IDE |
-| Wallets | MetaMask, WalletConnect, Ledger |
-| Libraries | ethers.js, web3.js, viem, wagmi |
-| Block explorers | Etherscan-compatible, Blockscout |
-
-**Core functionality:**
-- All standard transaction methods (`eth_sendRawTransaction`, `eth_call`, `eth_estimateGas`)
-- Block and receipt queries
-- Account balances and nonces
-- Event logs and filters
-- WebSocket subscription support
-- Debug namespace (tracing and profiling)
-
-**Implementation notes:**
-- Some methods return stub values for compatibility (e.g., `eth_gasPrice` returns 0)
-- Mining-related methods are not applicable (Cosmos uses CometBFT consensus)
-- `txpool` methods require experimental mempool configuration
-
 ### Performance
 
 Cosmos EVM gas estimation is optimized: plain ETH transfers return 21000 immediately without simulation, and complex transactions use initial execution results to tighten the binary search bounds, making `eth_estimateGas` significantly faster across the board.
 
-The Cosmos EVM mempool follows standard Ethereum behavior (gas price + nonce ordering, multiple transactions per account per block). Pool limits, timeouts, and priority functions are configurable per chain. An optional experimental mempool adds nonce gap handling and automatic transaction promotion.
+The Cosmos EVM mempool follows standard Ethereum behavior (gas price + nonce ordering, multiple transactions per account per block). Pool limits, timeouts, and priority functions are [configurable per chain](/evm/next/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration). An optional experimental mempool adds nonce gap handling and automatic transaction promotion.
 
 ## Resources
 
 <CardGroup cols={2}>
-  <Card title="Integration Guide" icon="plug" href="/evm/next/documentation/getting-started/build-a-chain/overview">
-    Add EVM support to your Cosmos chain
+  <Card title="Quick Start" icon="rocket" href="/evm/next/documentation/getting-started/build-a-chain/quick-start">
+    Deploy a chain and your first contract end-to-end.
   </Card>
-  <Card title="Concepts" icon="book" href="/evm/next/documentation/concepts/overview">
-    Deep dive into architecture and design
+  <Card title="Tooling & Resources" icon="wrench" href="/evm/next/documentation/getting-started/tooling-and-resources">
+    Full list of supported tools, libraries, and frameworks.
   </Card>
-  <Card title="GitHub Repository" icon="github" href="https://github.com/cosmos/evm">
-    Source code and issue tracker
+  <Card title="Precompile Overview" icon="cube" href="/evm/next/documentation/smart-contracts/precompiles/overview">
+    Built-in Cosmos precompiles and their addresses.
   </Card>
-  <Card title="Precompiles Docs" icon="code" href="/evm/next/documentation/smart-contracts/precompiles/overview">
-    Using Cosmos functionality through Solidity
+  <Card title="Predeployed Contracts" icon="box" href="/evm/next/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts">
+    Standard EVM contracts available at genesis.
   </Card>
 </CardGroup>
