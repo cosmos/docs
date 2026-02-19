@@ -1,0 +1,239 @@
+---
+title: "Precompile Configuration"
+description: "Choose which precompiles are active on your chain and add custom ones."
+---
+
+[Precompiles](/evm/next/documentation/smart-contracts/precompiles/overview) are smart contract interfaces at fixed addresses where the implementation runs as native Go code. Cosmos EVM ships with precompiles for staking, governance, IBC, and more. As a chain builder you control which ones are active and can add your own. for more information and to see the full list of available precompiles, see the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview).
+
+## Enabling Precompiles
+
+Precompiles are enabled via the `active_static_precompiles` parameter in the `vm` module. Only addresses listed here are callable at runtime. For the full list of built-in precompiles and their addresses, see the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview).
+
+Set this in your genesis configuration ([`evmd/genesis.go`](https://github.com/cosmos/evm/blob/main/evmd/genesis.go)):
+
+```go
+func NewEVMGenesisState() *evmtypes.GenesisState {
+    evmGenState := evmtypes.DefaultGenesisState()
+
+    // Enable all available precompiles
+    evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+
+    return evmGenState
+}
+```
+
+To enable only a specific subset, pass the addresses explicitly. Addresses must be in sorted order:
+
+```go
+evmGenState.Params.ActiveStaticPrecompiles = []string{
+    evmtypes.StakingPrecompileAddress,      // 0x0000000000000000000000000000000000000800
+    evmtypes.DistributionPrecompileAddress, // 0x0000000000000000000000000000000000000801
+    evmtypes.BankPrecompileAddress,         // 0x0000000000000000000000000000000000000804
+}
+```
+
+The full list of available addresses is defined in [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go).
+
+Precompiles can also be added after launch via a governance parameter change proposal targeting the `vm` module's `active_static_precompiles` param.
+
+## Adding a Custom Precompile
+
+The following example adds a stateful `DenomSupply` precompile with a single `supplyOf` method that reads total token supply directly from the Cosmos bank module. This demonstrates the core pattern for basic precompiles: injecting a Cosmos SDK keeper and using `RunNativeAction` to access live chain state from an EVM call.
+
+### 1. Create the precompile package
+
+Create a directory `precompiles/denomsupply/` with two files.
+
+`precompiles/denomsupply/abi.json` — the Solidity ABI:
+
+```json
+[
+  {
+    "inputs": [{"internalType": "string", "name": "denom", "type": "string"}],
+    "name": "supplyOf",
+    "outputs": [{"internalType": "uint256", "name": "amount", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
+```
+
+`precompiles/denomsupply/denomsupply.go` — the implementation:
+
+```go
+package denomsupply
+
+import (
+    "bytes"
+    _ "embed"
+    "fmt"
+
+    "github.com/ethereum/go-ethereum/accounts/abi"
+    "github.com/ethereum/go-ethereum/common"
+    "github.com/ethereum/go-ethereum/core/vm"
+
+    cmn "github.com/cosmos/evm/precompiles/common"
+    evmtypes "github.com/cosmos/evm/x/vm/types"
+
+    storetypes "cosmossdk.io/store/types"
+    sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+var _ vm.PrecompiledContract = &Precompile{}
+
+var (
+    //go:embed abi.json
+    f   []byte
+    ABI abi.ABI
+)
+
+func init() {
+    var err error
+    ABI, err = abi.JSON(bytes.NewReader(f))
+    if err != nil {
+        panic(err)
+    }
+}
+
+// Precompile queries the total supply of a Cosmos denomination from the bank module.
+type Precompile struct {
+    cmn.Precompile
+    bankKeeper cmn.BankKeeper
+}
+
+func NewPrecompile(bankKeeper cmn.BankKeeper) *Precompile {
+    return &Precompile{
+        Precompile: cmn.Precompile{
+            KvGasConfig:          storetypes.GasConfig{},
+            TransientKVGasConfig: storetypes.GasConfig{},
+            ContractAddress:      common.HexToAddress(evmtypes.DenomSupplyPrecompileAddress),
+        },
+        bankKeeper: bankKeeper,
+    }
+}
+
+func (p Precompile) RequiredGas(_ []byte) uint64 {
+    return 3_000
+}
+
+// Run executes the precompile inside the Cosmos EVM context.
+// RunNativeAction bridges the EVM execution environment to the Cosmos SDK,
+// providing an sdk.Context with access to all module state.
+func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readonly bool) ([]byte, error) {
+    return p.RunNativeAction(evm, contract, func(ctx sdk.Context) ([]byte, error) {
+        method, args, err := cmn.SetupABI(ABI, contract, readonly, p.IsTransaction)
+        if err != nil {
+            return nil, err
+        }
+
+        switch method.Name {
+        case "supplyOf":
+            denom, ok := args[0].(string)
+            if !ok {
+                return nil, fmt.Errorf("invalid argument: expected string")
+            }
+            coin := p.bankKeeper.GetSupply(ctx, denom)
+            return method.Outputs.Pack(coin.Amount.BigInt())
+        }
+
+        return nil, fmt.Errorf("unknown method: %s", method.Name)
+    })
+}
+
+// IsTransaction returns false because supplyOf is a read-only query.
+func (Precompile) IsTransaction(_ *abi.Method) bool {
+    return false
+}
+```
+
+The struct embeds `cmn.Precompile` rather than handling context directly. `RunNativeAction` sets up the SDK context, manages gas metering, and handles snapshot/revert so that precompile calls participate correctly in EVM transaction atomicity. Inside the closure, `p.bankKeeper` provides access to the bank module's state.
+
+### 2. Register the address
+
+In [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go), add a constant and include it in `AvailableStaticPrecompiles`. Addresses must be appended in sorted order:
+
+```go
+const DenomSupplyPrecompileAddress = "0x0000000000000000000000000000000000000809"
+
+var AvailableStaticPrecompiles = []string{
+    // ... existing addresses ...
+    MathPrecompileAddress,
+    DenomSupplyPrecompileAddress, // appended in sorted order
+}
+```
+
+### 3. Add a builder method
+
+In [`precompiles/types/static_precompiles.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/static_precompiles.go), add a `With` method. Pass any keepers your precompile needs as parameters:
+
+```go
+func (s StaticPrecompiles) WithDenomSupplyPrecompile(bankKeeper cmn.BankKeeper) StaticPrecompiles {
+    denomSupplyPrecompile := denomsupplyprecompile.NewPrecompile(bankKeeper)
+    s[denomSupplyPrecompile.Address()] = denomSupplyPrecompile
+    return s
+}
+```
+
+### 4. Wire it into the app
+
+In [`precompiles/types/defaults.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/defaults.go), add your method to the builder chain. The `bankKeeper` is already a parameter of `DefaultStaticPrecompiles`:
+
+```go
+precompiles := NewStaticPrecompiles().
+    // ... existing precompiles ...
+    WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...).
+    WithMathPrecompile().
+    WithDenomSupplyPrecompile(bankKeeper)
+```
+
+### 5. Activate at genesis
+
+Add the address to `active_static_precompiles` in your genesis setup and in `local_node.sh` if you're using that script for local development:
+
+```go
+// evmd/genesis.go
+evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+```
+
+### 6. Build and verify
+
+```bash
+make install
+./local_node.sh -y
+```
+
+Once the chain is running, generate the calldata for your query:
+
+```bash
+cast calldata "supplyOf(string)" "atest"
+# outputs: 0x3cda0103000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000056174657374000000000000000000000000000000000000000000000000000000
+```
+
+Then call via `curl`:
+
+```bash
+curl http://localhost:8545 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  --data '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [{
+      "to": "0x0000000000000000000000000000000000000809",
+      "data": "0x3cda0103000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000056174657374000000000000000000000000000000000000000000000000000000"
+    }, "latest"],
+    "id": 1
+  }'
+# result: 0x000...52b8... (total atest supply as uint256)
+```
+
+<Note>
+`cast call` checks for EVM bytecode before executing. Precompiles have no bytecode, so use `eth_call` directly via curl instead.
+</Note>
+
+To decode the uint256 result:
+
+```bash
+python3 -c "print(0x00000000000000000000000000000000000000000052b8add30f455fe925bde4)"
+# 100004039136423103686884836
+```
