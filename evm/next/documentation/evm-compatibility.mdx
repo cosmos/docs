@@ -5,29 +5,26 @@ keywords: ['differences', 'ethereum', 'evm', 'cosmos', 'CometBFT', 'consensus', 
 
 Cosmos EVM provides full Ethereum compatibility for Cosmos SDK chains. Existing contracts, tools, and workflows run without modification: deploy Solidity contracts, connect MetaMask, and use the same libraries and frameworks you already know.
 
-## Key Compatibility Areas
+## Solidity Smart Contracts
 
-Cosmos EVM maintains all critical EVM behaviors that developers expect. The table below shows how we've addressed each compatibility requirement.
+The Cosmos EVM smart contract development flow is identical to the flow on Ethereum. Contracts that work on Ethereum work on Cosmos EVM without code changes. The same tools, the same Solidity, the same patterns.
 
-| Feature | Ethereum Behavior | Cosmos EVM Implementation |  Compatible? |
-|---------|------------------|---------------------------|---------------|
-| **Transaction Ordering** | Gas price + nonce ordering | Fee priority + nonce ordering with configurable MinTip |  Yes |
-| **Multiple Txs per Block** | Multiple per account | Multiple per account |  Yes |
-| **Mempool Behavior** | Pending pool for transactions | ExperimentalEVMMempool with unified EVM/Cosmos pools |  Yes |
-| **Nonce Management** | Sequential nonce enforcement | Sequential nonce enforcement with gap queuing |  Yes |
-| **EIP-1559 (Dynamic Fees)** | Base fee + priority fee | Base fee + priority fee (distributed, not burned) |  Yes |
-| **EIP-7702 (Set Code)** | Account code delegation | Full support with authorization lists |  Yes |
-| **Address Format** | 0x addresses | 0x addresses (+ cosmos1 alias) |  Yes |
-| **Smart Contracts** | EVM bytecode execution | Full EVM bytecode execution |  Yes |
-| **Gas Metering** | Standard gas costs | Standard gas costs |  Yes |
-| **Event Logs** | Ethereum event system | Full event compatibility |  Yes |
-| **JSON-RPC API** | Standard Ethereum RPC | Full RPC implementation |  Yes |
-| **Block Time** | 12 seconds | 1-2 seconds |  Faster |
-| **Finality** | 12+ blocks (~3min) | 1 block (~2s) |  Instant |
-| **Reorganizations** | Possible | Not possible |  More secure |
-| **Cross-chain** | Bridge protocols | Native IBC |  Enhanced |
+### Development
 
-**You can build on Cosmos EVM exactly like you would on Ethereum.** Every essential feature works identically, from deploying contracts to managing transactions. The enhancements (faster blocks, instant finality, IBC) are pure additions that don't break any existing patterns or workflows.
+Write Solidity using [Hardhat](https://hardhat.org), [Foundry](https://book.getfoundry.sh), or [Remix](https://remix.ethereum.org) with no custom configuration needed. Point your tooling at your chain's JSON-RPC endpoint and chain ID and you're set. See the [tooling overview](/evm/next/documentation/getting-started/tooling-and-resources) for a full list of supported tools, and the [quick-start guide](/evm/next/documentation/getting-started/build-a-chain/quick-start#deploy-a-solidity-contract-with-forge) for a step-by-step contract deployment walkthrough.
+
+### Deployment
+
+Deploy using standard Ethereum tools by pointing them at your chain's RPC endpoint. Deployment transactions go through the JSON-RPC or Cosmos gRPC interface and are processed by the EVM module. Once deployed, contract bytecode is stored in chain state and callable at its Ethereum address like any other chain.
+
+### Upgrading
+
+Cosmos EVM supports all standard EVM upgrade patterns:
+
+- **Proxy patterns (EIP-1967, Transparent Proxy, UUPS)** — Delegate calls to an implementation contract. Upgrading means swapping the implementation address in the proxy without touching the proxy's storage or address.
+- **Diamond pattern (EIP-2535)** — Modular contracts split into "facets" that can be added, replaced, or removed independently. The diamond routes calls to the appropriate facet, enabling granular upgrades without redeploying the whole contract.
+
+Any upgrade architecture that works on Ethereum works on Cosmos EVM.
 
 ## Supported EIPs
 
@@ -125,24 +122,33 @@ Cosmos EVM uses two independent chain IDs: a Cosmos Chain ID (string, e.g. `cosm
 
 ### JSON-RPC API
 
+The JSON-RPC interface is compatible with the full Ethereum tooling ecosystem without modification. Any tool that speaks standard Ethereum JSON-RPC works by pointing it at your chain's RPC endpoint.
+
 <Card title="Ethereum RPC Compatibility" icon="code" href="/evm/next/api-reference/ethereum-json-rpc/methods">
   Most standard Ethereum JSON-RPC methods are supported, with some returning stub values for compatibility. View the complete reference.
 </Card>
 
-**Core functionality for developers:**
--  All standard transaction methods (`eth_sendRawTransaction`, `eth_call`, `eth_estimateGas`)
--  Block and receipt queries
--  Account balances and nonces
--  Event logs and filters
--  Web3 utilities and net info
--  Debug namespace (partial - tracing and profiling methods available)
--  Websocket subscription support
+**Compatible tools include:**
+
+| Category | Tools |
+|----------|-------|
+| Development frameworks | Foundry (Forge, Cast), Hardhat, Truffle, Remix IDE |
+| Wallets | MetaMask, WalletConnect, Ledger |
+| Libraries | ethers.js, web3.js, viem, wagmi |
+| Block explorers | Etherscan-compatible, Blockscout |
+
+**Core functionality:**
+- All standard transaction methods (`eth_sendRawTransaction`, `eth_call`, `eth_estimateGas`)
+- Block and receipt queries
+- Account balances and nonces
+- Event logs and filters
+- WebSocket subscription support
+- Debug namespace (tracing and profiling)
 
 **Implementation notes:**
 - Some methods return stub values for compatibility (e.g., `eth_gasPrice` returns 0)
 - Mining-related methods are not applicable (Cosmos uses CometBFT consensus)
 - `txpool` methods require experimental mempool configuration
-- Debug namespace includes functional tracing and profiling tools
 
 ### Performance
 
