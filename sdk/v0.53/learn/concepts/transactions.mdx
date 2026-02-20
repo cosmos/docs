@@ -21,13 +21,14 @@ A **transaction** is a signed container that carries one or more actions to be e
 
 A transaction includes:
 
-- Messages - one or more actions you want to execute (send tokens, delegate stake, vote on a proposal)
-- Signatures - cryptographic proof that you authorize these actions
-- Sequence number - prevents someone from resubmitting your transaction (replay protection)
-- Gas limit - the maximum computational resources you're willing to spend
-- Fees - what you pay for the transaction to be processed
+- Messages: one or more actions you want to execute (send tokens, delegate stake, vote on a proposal)
+- Signatures: cryptographic proof that you authorize these actions
+- Sequence number: prevents someone from resubmitting your transaction (replay protection)
+- Gas limit: the maximum computational resources you're willing to spend
+- Fees: what you pay for the transaction to be processed
 
 The transaction itself does not define business logic. Instead, it packages intent (messages) to change state, proves authorization (signatures), and specifies execution limits (gas and fees). You can think of a transaction as an envelope you send to the blockchain, with a message inside containing instructions, a signature to prove authenticity, and a stamp to pay for postage.
+
 
 \```
 Transaction
@@ -40,21 +41,21 @@ Transaction
   └── Fees
 \```
 
-In the Cosmos SDK, account metadata and transaction authorization are handled by the `x/auth` module. Transaction construction and encoding are configured through the SDK’s transaction system (commonly via `x/auth/tx`).
+In the Cosmos SDK, account metadata and transaction authorization are handled by the `x/auth` module. Transaction construction and encoding are configured through the SDK's transaction system (commonly via `x/auth/tx`).
 
 ## Messages
 
 A **message** (`sdk.Msg`) is the actual instruction inside a transaction. Each message is defined by a specific module and represents a single action. Messages are located in that module's `types` package (like `x/bank/types` or `x/staking/types`). Modules define which messages they support and the rules for executing them. While the transaction provides the envelope with signatures and fees, the message defines the specific action to execute.
 
-Examples include `MsgSend` (transfer tokens), `MsgDelegate` (delegate stake), and `MsgVote` (vote on proposals). 
+Examples include `MsgSend` (transfer tokens), `MsgDelegate` (delegate stake), and `MsgVote` (vote on proposals).
 
 If a transaction contains multiple messages, they execute in order. The transaction only succeeds if all messages execute successfully; it is an atomic unit.
 
-## How messages are defined
+### How messages are defined
 
-Messages in the Cosmos SDK are defined in each module's `types.proto` file using **Protocol Buffers (protobuf)**, which provides deterministic serialization, backward compatibility, and cross-language support. Each message is defined in a `.proto` file that specifies its fields, data types, and unique identifiers. From this schema, code is generated that allows the message to be constructed, serialized, and validated.
+Messages in the Cosmos SDK are defined in each module's `tx.proto` file using **Protocol Buffers (protobuf)**, which provides deterministic serialization, backward compatibility, and cross-language support. Each message is defined in a `.proto` file that specifies its fields, data types, and unique identifiers. From this schema, code is generated that allows the message to be constructed, serialized, and validated.
 
-Here's what an actual transaction looks like in JSON format:
+Here's an example of a transaction in JSON format:
 
 ```json
 {
@@ -98,7 +99,7 @@ This transaction transfers 1 ATOM (1,000,000 uatom) from one account to another.
 
 When broadcast, this JSON is serialized into bytes using protobuf, ensuring every validator interprets the transaction identically.
 
-## Message order and atomicity
+### Message order and atomicity
 
 When a transaction contains multiple messages, they are executed **in the order they appear** in the transaction.
 
@@ -124,9 +125,11 @@ If any message fails, the entire transaction fails, and none of its state change
 
 Transactions behave as atomic units: they either fully succeed or fully fail.
 
----
+<Note>
+In v0.53, transactions support an optional **unordered** mode. When `unordered=true`, the sequence number is bypassed and replay protection is handled via a `timeout_timestamp` instead. This enables fire-and-forget and concurrent transaction submission without coordinating sequence numbers. Unordered transactions must have a `timeout_timestamp` set and a sequence of `0`.
+</Note>
 
-## Blocks and state transitions
+## Blocks and transactions
 
 A blockchain can be understood as a sequence of blocks. Each block contains an ordered list of transactions.
 
@@ -151,35 +154,22 @@ State₃
 
 In this way, the blockchain is a deterministic sequence of state transitions driven entirely by transactions.
 
-Blocks group transactions. Transactions drive execution. Execution updates state.
+Blocks group transactions, transactions drive execution, and execution updates state.
 
----
+## Queries
 
+A **query** retrieves data from the blockchain's state without modifying it.
 
----
-
-## What is a query?
-
-A **query** retrieves data from the blockchain’s state without modifying it.
-
-Queries:
-
-- Are read-only  
-- Do not require signatures  
-- Are not included in blocks  
-- Do not change consensus state  
-
-Modules define query services using protobuf. These services are exposed over gRPC (and REST via a gateway).
+Queries are read-only. They don't require signatures, aren't included in blocks, and don't affect consensus state. Modules define query services using protobuf, exposed over gRPC and REST.
 
 For example:
 
-- Query an account’s balance (`x/bank`)  
-- Query staking delegations (`x/staking`)  
-- Query governance proposal details (`x/gov`)  
+- Query an account's balance (the `x/bank` module)
+- Query staking delegations (the `x/staking` module)
+- Query governance proposal details (the `x/gov` module)
 
----
 
-## How everything fits together
+## Transaction and query flow
 
 <table>
   <tr>
