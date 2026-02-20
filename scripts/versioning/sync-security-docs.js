@@ -226,7 +226,7 @@ ${sanitized}
 async function generateSecurityPolicyPage() {
   console.log('\n📄 Generating Security Policy page...');
   const content = await fetchFromGitHub('POLICY.md');
-  const mdx = transformToMDX(content, 'POLICY.md', 'Security Policy');
+  const mdx = transformToMDX(content, 'POLICY.md', 'Security and Maintenance Policy');
 
   const outputPath = path.join(OUTPUT_DIR, 'security-policy.mdx');
   fs.writeFileSync(outputPath, mdx, 'utf8');
@@ -369,7 +369,7 @@ ${auditsContent}
 
 ## Additional Resources
 
-- [Security Policy](./security-policy) - Release and maintenance policy
+- [Security and Maintenance Policy](./security-policy) - Release and maintenance policy
 - [Bug Bounty Program](./bug-bounty) - Report vulnerabilities and earn rewards
 - [cosmos/security Repository](https://github.com/${SECURITY_REPO}) - Complete security documentation
 `;
