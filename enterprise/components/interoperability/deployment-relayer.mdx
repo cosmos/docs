@@ -1,0 +1,661 @@
+---
+title: "Deployment"
+description: "How to deploy and operate the IBC v2 Relayer service"
+---
+
+## Overview
+
+The IBC v2 Relayer is a request-driven service that relays IBC v2 packets between Cosmos SDK chains and EVM-compatible chains (Ethereum, Base, Optimism, Arbitrum, Polygon, etc.). It exposes a gRPC API for submitting transactions to relay and tracking relay progress, and runs a background dispatcher that polls for pending packets.
+
+The relayer is stateful — it persists packet state in PostgreSQL — and connects to two external services: a **Proof API** that generates relay transactions, and a **signing service** (local key file or remote gRPC signer) that authorizes those transactions.
+
+---
+
+## Components
+
+### 1. Relayer (this service)
+
+The core relay process. Exposes:
+- **gRPC API** on port `9000` (configurable) — for submitting and tracking relay requests
+- **Prometheus metrics** on port `8888` (configurable) — for observability
+
+**Images**:
+- `platform-relayer` — the relayer process itself
+- `platform-relayer-migrate` — one-shot migration runner (golang-migrate), must run before the relayer starts
+
+### 2. PostgreSQL (required)
+
+The relayer stores all packet state in PostgreSQL. The schema is applied by the migration container before the relayer starts. Credentials are passed via the `POSTGRES_USER` and `POSTGRES_PASSWORD` environment variables (both default to `relayer`).
+
+### 3. Proof API (required)
+
+The relayer delegates proof and transaction generation to an external Proof API service. This is the [IBC Eureka Relayer / Proof API](https://github.com/cosmos/solidity-ibc-eureka/tree/main/programs/relayer). The relayer connects to it via gRPC (`ibcv2_proof_api.grpc_address`).
+
+The Proof API itself depends on:
+- **IBC Attestor instances** — one per chain being attested (see the [Attestor Deployment guide](/enterprise/components/interoperability/deployment-attestor))
+- **Chain RPC endpoints** — for both chains in each relay pair
+
+### 4. Signing Service (required)
+
+Two modes:
+
+| Mode | When to use | Config field |
+|------|------------|--------------|
+| **Local key file** | Development, low-security deployments | `signing.keys_path` |
+| **Remote signer** (gRPC) | Production, key isolation via KMS/HSM | `signing.grpc_address` |
+
+If `signing.grpc_address` is set, it takes precedence and the key file is ignored. If neither is set, the relayer will not start.
+
+### 5. Chain RPC Endpoints (required)
+
+The relayer queries chain state directly for gas estimation and transaction submission:
+
+| Chain Type | Required |
+|-----------|---------|
+| Cosmos | Tendermint RPC (`cosmos.rpc`) + Cosmos gRPC (`cosmos.grpc`) |
+| EVM | JSON-RPC HTTP endpoint (`evm.rpc`) |
+
+---
+
+## Pre-Deployment: On-Chain Setup
+
+Before the relayer can relay packets, IBC light clients must be created on both chains and counterparty information registered. This is a one-time setup per chain pair.
+
+**Required steps (via the Proof API):**
+
+1. **Deploy IBC contracts on the EVM chain** — ICS26 Router and ICS20 Transfer contracts
+2. **Create a light client on the EVM chain** tracking the Cosmos chain state
+3. **Create a light client on the Cosmos chain** tracking the EVM chain state
+4. **Register counterparty info on the Cosmos chain** — associates the Cosmos client ID with the EVM client ID and merkle prefix
+5. **Register the light client address on the EVM router** — maps the client ID to the deployed light client contract
+
+The `counterparty_chains` map in `ibcv2` config must reflect these client IDs:
+```yaml
+# On the Cosmos chain: client ID "my-client-0" points to EVM chain "1"
+ibcv2:
+  counterparty_chains:
+    my-client-0: "1"
+
+# On the EVM chain: client ID "attestations-0" points to Cosmos chain "cosmoshub-4"
+ibcv2:
+  counterparty_chains:
+    attestations-0: "cosmoshub-4"
+```
+
+---
+
+## Building the Images
+
+The repository contains a single Dockerfile for both the relayer and the migration runner.
+
+```bash
+# Build the relayer image
+docker build \
+  --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+  --build-arg VCS_REF=$(git rev-parse HEAD) \
+  --build-arg VERSION=$(git describe --tags) \
+  -t platform-relayer:latest \
+  -f Dockerfile.relayer \
+  .
+
+# Build the migrations image (uses golang-migrate base)
+# The migration container expects migration files at /migrations
+docker build -t platform-relayer-migrate:latest -f docker/Dockerfile.migrate .
+```
+
+The Dockerfile uses a three-stage build:
+1. **Builder** — Go 1.24 on Debian Trixie, compiles the binary with `CGO_ENABLED=0`
+2. **Certs** — Installs CA certificates from Debian Trixie
+3. **Runtime** — `gcr.io/distroless/static-debian13:nonroot`; minimal, runs as `nonroot:nonroot`
+
+---
+
+## Database Migrations
+
+Migrations **must run and complete** before the relayer process starts. They are idempotent and can be run on every deploy.
+
+### Option 1: Docker Compose (development)
+
+The included `docker-compose.yml` handles this automatically:
+
+```bash
+docker compose up -d
+```
+
+This starts PostgreSQL and runs migrations via `migrate/migrate` before the relayer boots.
+
+### Option 2: Migration container
+
+```bash
+docker run --rm \
+  --network host \
+  platform-relayer-migrate:latest \
+  -database "postgres://relayer:relayer@localhost:5432/relayer?sslmode=disable" \
+  up
+```
+
+### Option 3: Generic migrate image with local migration files
+
+```bash
+docker run --rm \
+  -v $(pwd)/db/migrations:/migrations \
+  --network host \
+  migrate/migrate \
+  -path /migrations \
+  -database "postgres://relayer:relayer@localhost:5432/relayer?sslmode=disable" \
+  up
+```
+
+### Option 4: migrate CLI directly
+
+```bash
+migrate -path ./db/migrations \
+  -database "postgres://relayer:relayer@localhost:5432/relayer?sslmode=disable" \
+  up
+```
+
+---
+
+## Configuration
+
+The relayer is configured via a YAML file passed with `--config`. See the [Relayer Configuration Reference](/enterprise/components/interoperability/relayer#configuration-reference) for full details. Below is a practical deployment example.
+
+### Cosmos ↔ EVM example
+
+```yaml
+postgres:
+  hostname: postgres
+  port: "5432"
+  database: relayer
+
+metrics:
+  prometheus_address: "0.0.0.0:8888"
+
+relayer_api:
+  address: "0.0.0.0:9000"
+
+ibcv2_proof_api:
+  grpc_address: "proof-api:50051"
+  grpc_tls_enabled: false
+
+signing:
+  keys_path: "/mnt/relayer/relayerkeys.json"   # local signing
+  # grpc_address: "signer:9006"                # remote signing (takes precedence if set)
+  # cosmos_wallet_key: "my-cosmos-wallet-id"
+  # evm_wallet_key: "my-evm-wallet-id"
+
+chains:
+  cosmoshub:
+    chain_name: "cosmoshub"
+    chain_id: "cosmoshub-4"
+    type: cosmos
+    environment: mainnet
+    gas_token_symbol: ATOM
+    gas_token_coingecko_id: cosmos
+    gas_token_decimals: 6
+    supported_bridges:
+      - ibcv2
+    cosmos:
+      gas_price: 0.005
+      ibcv2_tx_fee_denom: uatom
+      rpc: "https://rpc.cosmos-hub.example.com"
+      grpc: "grpc.cosmos-hub.example.com:9090"
+      grpc_tls_enabled: true
+      address_prefix: cosmos
+    ibcv2:
+      counterparty_chains:
+        08-wasm-0: "1"    # client ID on cosmoshub → ethereum chain ID
+      finality_offset: 10
+      recv_batch_size: 50
+      recv_batch_timeout: 10s
+      recv_batch_concurrency: 3
+      ack_batch_size: 50
+      ack_batch_timeout: 10s
+      ack_batch_concurrency: 3
+      timeout_batch_size: 50
+      timeout_batch_timeout: 10s
+      timeout_batch_concurrency: 3
+      should_relay_success_acks: true
+      should_relay_error_acks: true
+    signer_gas_alert_thresholds:
+      ibcv2:
+        warning_threshold: "10000000"   # 10 ATOM
+        critical_threshold: "1000000"   # 1 ATOM
+
+  ethereum:
+    chain_name: ethereum
+    chain_id: "1"
+    type: evm
+    environment: mainnet
+    gas_token_symbol: ETH
+    gas_token_coingecko_id: ethereum
+    gas_token_decimals: 18
+    supported_bridges:
+      - ibcv2
+    evm:
+      rpc: "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+      contracts:
+        ics_26_router_address: "0x..."
+        ics_20_transfer_address: "0x..."
+      gas_fee_cap_multiplier: 1.5
+      gas_tip_cap_multiplier: 1.2
+    ibcv2:
+      counterparty_chains:
+        attestations-0: "cosmoshub-4"    # client ID on ethereum → cosmoshub chain ID
+      recv_batch_size: 100
+      recv_batch_timeout: 10s
+      recv_batch_concurrency: 5
+      ack_batch_size: 100
+      ack_batch_timeout: 10s
+      ack_batch_concurrency: 5
+      timeout_batch_size: 100
+      timeout_batch_timeout: 10s
+      timeout_batch_concurrency: 5
+      should_relay_success_acks: true
+      should_relay_error_acks: true
+    signer_gas_alert_thresholds:
+      ibcv2:
+        warning_threshold: "1000000000000000000"  # 1 ETH
+        critical_threshold: "500000000000000000"  # 0.5 ETH
+```
+
+---
+
+## Key Management
+
+### Local signing (`keys_path`)
+
+Create a JSON file mapping chain IDs to private keys:
+
+```json
+{
+  "cosmoshub-4": {
+    "name": "Cosmos Hub",
+    "address": "cosmos1...",
+    "private_key": "abc123..."
+  },
+  "1": {
+    "name": "Ethereum",
+    "address": "0xYourAddress",
+    "private_key": "0xabc123..."
+  }
+}
+```
+
+- **EVM chains**: hex-encoded ECDSA private key with `0x` prefix
+- **Cosmos chains**: hex-encoded secp256k1 private key (no `0x` prefix)
+
+See `config/local/ibcv2keys.json.example` for the full format.
+
+### Remote signing (`grpc_address`)
+
+Point `signing.grpc_address` at a gRPC signing service implementing the `SignerService` proto (see `proto/signer/signerservice.proto`). The platform signer service is compatible out of the box.
+
+```yaml
+signing:
+  grpc_address: "signer-service:9006"
+  cosmos_wallet_key: "a2794a01-eba7-4481-8b48-8a3a141e7cd3"
+  evm_wallet_key: "9be20bf7-c3b7-4967-9851-a150f07f66ba"
+```
+
+Pass the bearer token via environment variable:
+
+```bash
+SERVICE_ACCOUNT_TOKEN=<k8s-service-account-token> ./relayer --config config.yml
+```
+
+The relayer sends this token as an `authorization: Bearer <token>` header on every signing RPC call.
+
+---
+
+## CLI Flags
+
+```
+/bin/relayer
+  --config <PATH>          Path to YAML config file (default: ./config/local/config.yml)
+  --ibcv2-relaying         Enable the relay dispatcher (default: true)
+```
+
+---
+
+## Docker Deployment
+
+### Building and running
+
+```bash
+# Build
+docker build -t platform-relayer:latest -f Dockerfile.relayer .
+
+# Run (remote signer)
+docker run -d \
+  --name platform-relayer \
+  -p 9000:9000 \
+  -p 8888:8888 \
+  -v /path/to/config:/mnt/relayer:ro \
+  -e POSTGRES_USER=relayer \
+  -e POSTGRES_PASSWORD=relayer \
+  platform-relayer:latest \
+  --config /mnt/relayer/relayer.yml
+
+# Run (local key file)
+docker run -d \
+  --name platform-relayer \
+  -p 9000:9000 \
+  -p 8888:8888 \
+  -v /path/to/config:/mnt/relayer:ro \
+  -e POSTGRES_USER=relayer \
+  -e POSTGRES_PASSWORD=relayer \
+  platform-relayer:latest \
+  --config /mnt/relayer/relayer.yml
+```
+
+### Full Docker Compose (with all dependencies)
+
+```yaml
+services:
+  postgres:
+    image: postgres:18
+    restart: always
+    environment:
+      POSTGRES_USER: relayer
+      POSTGRES_PASSWORD: relayer
+      POSTGRES_DB: relayer
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks:
+      - relayer
+    healthcheck:
+      test: pg_isready -U relayer -d relayer
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    image: platform-relayer-migrate:latest
+    command: >
+      -database postgres://relayer:relayer@postgres:5432/relayer?sslmode=disable up
+    networks:
+      - relayer
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  relayer:
+    image: platform-relayer:latest
+    command: ["--config", "/mnt/relayer/relayer.yml"]
+    ports:
+      - "9000:9000"   # gRPC API
+      - "8888:8888"   # Prometheus metrics
+    volumes:
+      - ./config/relayer.yml:/mnt/relayer/relayer.yml:ro
+      - ./config/keys.json:/mnt/relayer/relayerkeys.json:ro  # if using local signing
+    environment:
+      POSTGRES_USER: relayer
+      POSTGRES_PASSWORD: relayer
+      # SERVICE_ACCOUNT_TOKEN: <token>  # if using remote signer
+    networks:
+      - relayer
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+networks:
+  relayer:
+
+volumes:
+  pgdata:
+```
+
+---
+
+## Kubernetes Deployment
+
+### Startup ordering
+
+Deploy in this order:
+1. PostgreSQL
+2. Migration job (wait for completion)
+3. Relayer deployment
+
+### Migration Job
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: relayer-migrate
+  namespace: ibc
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: platform-relayer-migrate:latest
+          args:
+            - -database
+            - $(DATABASE_URL)
+            - up
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: relayer-db-secret
+                  key: url
+```
+
+### Relayer Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-relayer
+  namespace: ibc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: platform-relayer
+  template:
+    metadata:
+      labels:
+        app: platform-relayer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8888"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: relayer
+          image: platform-relayer:latest
+          args: ["--config", "/mnt/relayer/relayer.yml"]
+          ports:
+            - name: grpc
+              containerPort: 9000
+            - name: metrics
+              containerPort: 8888
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: relayer-db-creds
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: relayer-db-creds
+                  key: password
+            - name: SERVICE_ACCOUNT_TOKEN    # if using remote signer
+              valueFrom:
+                secretKeyRef:
+                  name: relayer-signer-token
+                  key: token
+          volumeMounts:
+            - name: config
+              mountPath: /mnt/relayer
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: relayer-config    # contains relayer.yml
+              - secret:
+                  name: relayer-keys      # contains relayerkeys.json (local signing only)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-relayer
+  namespace: ibc
+spec:
+  selector:
+    app: platform-relayer
+  ports:
+    - name: grpc
+      port: 9000
+      targetPort: 9000
+    - name: metrics
+      port: 8888
+      targetPort: 8888
+```
+
+> **Note:** Run exactly **one replica**. The relayer is not designed for active-active horizontal scaling — multiple instances would compete on database state and double-submit transactions.
+
+---
+
+## Ports
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| `9000` | gRPC (HTTP/2) | Relay API — `Relay`, `Status` RPCs used by clients |
+| `8888` | HTTP | Prometheus metrics scrape endpoint |
+
+Both ports are configurable via `relayer_api.address` and `metrics.prometheus_address` in the YAML config.
+
+---
+
+## Networking
+
+### Docker
+
+The relayer must share a Docker network with:
+- PostgreSQL
+- Proof API service
+- Any chain RPC containers (if running locally)
+
+When relaying to chains managed by Kurtosis (e.g. Optimism L2), the relayer container also needs to join the Kurtosis network (e.g. `kt-optimism`) so it can resolve Kurtosis service hostnames.
+
+### RPC endpoint authentication
+
+For RPC endpoints that require HTTP basic auth, store credentials in an environment variable and reference it by name in the config:
+
+```yaml
+evm:
+  rpc: "https://eth-mainnet.example.com"
+  rpc_basic_auth_var: "ETH_RPC_AUTH"  # env var containing "user:password"
+```
+
+```bash
+ETH_RPC_AUTH="myuser:mypassword" ./relayer --config config.yml
+```
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `POSTGRES_USER` | No | `relayer` | Database username |
+| `POSTGRES_PASSWORD` | No | `relayer` | Database password |
+| `SERVICE_ACCOUNT_TOKEN` | Remote signer only | — | Bearer token sent on signer gRPC calls |
+| `<rpc_basic_auth_var>` | If set in config | — | Basic auth credentials for a chain RPC endpoint (variable name defined per-chain in config) |
+
+---
+
+## Health Checking
+
+The relayer exposes an HTTP health endpoint at `/health` on the gRPC port (e.g. `GET http://localhost:9000/health`). The service is considered healthy when it returns HTTP 200. Startup typically takes up to 60 seconds while the relayer establishes connections to PostgreSQL, the Proof API, and all configured chain RPCs.
+
+---
+
+## Startup Ordering
+
+```
+PostgreSQL ready
+      ↓
+Migration job completes (exits 0)
+      ↓
+Relayer starts
+  ├── connects to PostgreSQL
+  ├── connects to Proof API (ibcv2_proof_api.grpc_address)
+  ├── connects to signing service or reads key file
+  └── connects to each chain's RPC endpoints
+      ↓
+/health returns 200
+      ↓
+Relay dispatcher begins polling
+```
+
+The Proof API must be reachable when the relayer starts. If it is not, the relayer will fail its health check. The Proof API in turn depends on the attestor services — ensure attestors are running and their addresses are registered with the Proof API before starting the relayer.
+
+---
+
+## Observability
+
+The relayer emits Prometheus metrics on the configured `metrics.prometheus_address`. Key metrics to alert on:
+
+| Metric | Alert condition |
+|--------|----------------|
+| `relayer_gas_balance_state` | Value ≥ 1 (warning) or ≥ 2 (critical) per chain |
+| `excessive_relay_latency_counter` | Counter increasing — packets taking too long |
+| `relayer_api_request_count` | Unexpected error codes on `Relay` or `Status` RPCs |
+| `transactions_submitted_counter` | High rate of submission failures |
+
+Gas balance alert thresholds are configured per chain in `signer_gas_alert_thresholds.ibcv2`.
+
+---
+
+## Gas Balance Management
+
+The relayer's signing address must maintain a gas balance on each chain. The relayer monitors this and exposes it as a metric. Set alert thresholds in config:
+
+```yaml
+signer_gas_alert_thresholds:
+  ibcv2:
+    warning_threshold: "10000000"    # smallest denomination units
+    critical_threshold: "1000000"
+```
+
+The relayer address must be funded before deployment. For EVM chains this is the address derived from the ECDSA key; for Cosmos chains it is the bech32 address.
+
+---
+
+## Upgrade Path
+
+Because the relayer stores state in PostgreSQL:
+
+1. Run migrations before deploying the new image (`platform-relayer-migrate:new-version up`)
+2. Replace the relayer container/pod — the relayer will resume from existing database state
+3. Migrations are forward-only; to roll back, run `down` to the previous version before restoring the old image
+
+Maintain only one relayer instance at a time during upgrades to avoid concurrent modification of packet state.
