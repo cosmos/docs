@@ -9,7 +9,28 @@ description: "Choose which precompiles are active on your chain and add custom o
 
 Precompiles are enabled via the `active_static_precompiles` parameter in the `vm` module. Only addresses listed here are callable at runtime. For the full list of built-in precompiles and their addresses, see the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview).
 
-Set this in your genesis configuration ([`evmd/genesis.go`](https://github.com/cosmos/evm/blob/main/evmd/genesis.go)):
+1. Wire precompiles into the EVM keeper in `app.go` using `.WithStaticPrecompiles()`. The standard way is to pass `precompiletypes.DefaultStaticPrecompiles(...)`, which includes all built-in precompiles:
+
+```go title="evmd/app.go"
+).WithStaticPrecompiles(
+    precompiletypes.DefaultStaticPrecompiles(
+        *app.StakingKeeper,
+        app.DistrKeeper,
+        app.PreciseBankKeeper,
+        &app.Erc20Keeper,
+        &app.TransferKeeper,
+        app.IBCKeeper.ChannelKeeper,
+        app.IBCKeeper.ClientKeeper,
+        app.GovKeeper,
+        app.SlashingKeeper,
+        appCodec,
+    ),
+)
+```
+
+If you want a custom set, replace `DefaultStaticPrecompiles` with your own builder chain (see [Adding a Custom Precompile](#adding-a-custom-precompile) below).
+
+2. Set the active precompiles in your genesis configuration ([`evmd/genesis.go`](https://github.com/cosmos/evm/blob/main/evmd/genesis.go)):
 
 ```go
 func NewEVMGenesisState() *evmtypes.GenesisState {
@@ -17,12 +38,13 @@ func NewEVMGenesisState() *evmtypes.GenesisState {
 
     // Enable all available precompiles
     evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+    evmGenState.Preinstalls = evmtypes.DefaultPreinstalls
 
     return evmGenState
 }
 ```
 
-To enable only a specific subset, pass the addresses explicitly. Addresses must be in sorted order:
+To enable only a specific subset, pass the addresses explicitly. Addresses must be in sorted order (see [Adding a Custom Precompile](#adding-a-custom-precompile) below):
 
 ```go
 evmGenState.Params.ActiveStaticPrecompiles = []string{
@@ -32,7 +54,7 @@ evmGenState.Params.ActiveStaticPrecompiles = []string{
 }
 ```
 
-The full list of available addresses is defined in [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go).
+The full list of available addresses is defined in [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go). See the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview) for more information.
 
 Already-registered precompiles can also be enabled or disabled after launch via a governance parameter change proposal targeting the `vm` module's `active_static_precompiles` param. Adding a genuinely new custom precompile requires a chain upgrade, since the implementation lives in the Go binary.
 
@@ -157,8 +179,8 @@ const DenomSupplyPrecompileAddress = "0x0000000000000000000000000000000000000809
 
 var AvailableStaticPrecompiles = []string{
     // ... existing addresses ...
-    MathPrecompileAddress,
-    DenomSupplyPrecompileAddress, // appended in sorted order
+    ICS02PrecompileAddress,
+    DenomSupplyPrecompileAddress, // appended in sorted order: 0x...0807 < 0x...0809
 }
 ```
 
@@ -182,7 +204,6 @@ In [`precompiles/types/defaults.go`](https://github.com/cosmos/evm/blob/main/pre
 precompiles := NewStaticPrecompiles().
     // ... existing precompiles ...
     WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...).
-    WithMathPrecompile().
     WithDenomSupplyPrecompile(bankKeeper)
 ```
 

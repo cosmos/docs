@@ -68,6 +68,18 @@ To enable preinstalls on a chain started from a genesis file (including `local_n
 
 The full bytecode for each default preinstall is defined in [`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go).
 
+For local development with `local_node.sh`, add a `jq` command after `evmd init` (alongside the other genesis patches) to inject the preinstalls before the node starts:
+
+```bash title="local_node.sh"
+jq '.app_state["evm"]["preinstalls"]=[
+  {
+    "name": "Create2",
+    "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+    "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+  }
+]' "$GENESIS" > "$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+```
+
 ## Adding Contracts After Launch
 
 ### Governance Proposal
@@ -121,7 +133,7 @@ func CreateUpgradeHandler(
 
 ## Adding Custom Contracts
 
-To deploy a contract beyond the defaults, add it to your preinstalls list:
+To deploy a contract beyond the defaults, add it to `NewEVMGenesisState` in your app code:
 
 ```go title="evmd/genesis.go"
 customPreinstall := evmtypes.Preinstall{
@@ -131,6 +143,8 @@ customPreinstall := evmtypes.Preinstall{
 }
 evmGenState.Preinstalls = append(evmtypes.DefaultPreinstalls, customPreinstall)
 ```
+
+Then populate genesis.json before starting the node, following the same steps in [Populating genesis.json](#populating-genesisjson) above — add a `jq` entry for your custom contract alongside the defaults.
 
 Requirements for a valid preinstall:
 - Valid Ethereum address (0x prefix, 40 hex characters)
@@ -149,13 +163,4 @@ evmd query evm code 0x4e59b44847b379578588920ca78fbf26c0b4956c
 evmd query evm account 0x4e59b44847b379578588920ca78fbf26c0b4956c
 ```
 
-Both commands should return non-empty results. If `code` returns `null`, the preinstall was not included in genesis.json when the chain was initialized.
-
-## Troubleshooting
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `preinstall already has an account in account keeper` | Address already has a contract | Choose a different address |
-| `preinstall has empty code hash` | Invalid or empty bytecode | Verify bytecode hex string is valid and non-empty |
-| `preinstall address is not a valid hex address` | Malformed address | Ensure 0x prefix and 40 hex characters |
-| `invalid authority` | Wrong governance address | Use the correct gov module account address |
+Both commands should return non-empty results. If they don't, the preinstall was not included in genesis.json when the chain was initialized.
