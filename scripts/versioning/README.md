@@ -575,4 +575,5 @@ scripts/versioning/
 - [Main README](../../README.md) - Project overview
 - [CLAUDE.md](../../CLAUDE.md) - AI assistant context
 - [GSHEET-SETUP.md](https://github.com/cosmos/docs/blob/main/scripts/versioning/GSHEET-SETUP.md) - Google Sheets API setup
+- [SECURITY-SYNC.md](./SECURITY-SYNC.md) - Security documentation sync system
 - [Mintlify Documentation](https://mintlify.com/docs) - MDX reference
