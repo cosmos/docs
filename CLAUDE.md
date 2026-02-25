@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the documentation repository for Cosmos EVM, built with Mintlify. The repository contains comprehensive documentation for the Cosmos EVM implementation, including API references, integration guides, smart contract documentation, and precompile specifications.
+This is the unified documentation repository for the Cosmos ecosystem, built with Mintlify. It covers multiple products: **evm, sdk, hub, cometbft, ibc, skip-go**. The repo contains comprehensive documentation including API references, integration guides, smart contract/precompile specifications, and SDK module READMEs.
 
 ## Common Development Commands
 
@@ -111,4 +111,9 @@ When updating documentation:
 - All documentation files use MDX format with Mintlify-specific components
 - Navigation structure must be updated in `docs.json` when adding new pages
 - Interactive RPC documentation is generated from the source `methods.mdx` file
+- Test findings in `tests/README.md` track documentation accuracy against implementation
+- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+- Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes to links may need to be applied across multiple version dirs
+
+**Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 
