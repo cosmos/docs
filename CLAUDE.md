@@ -111,3 +111,4 @@ When updating documentation:
 - All documentation files use MDX format with Mintlify-specific components
 - Navigation structure must be updated in `docs.json` when adding new pages
 - Interactive RPC documentation is generated from the source `methods.mdx` file
+- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 
