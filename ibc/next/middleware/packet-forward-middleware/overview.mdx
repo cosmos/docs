@@ -4,30 +4,30 @@ description: Packet Forward Middleware enables multi-hop IBC token transfers thr
 ---
 
 <Warning>
-Packet forward middleware is only compatible with IBC classic, not IBC v2 {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:27-28 — implements porttypes.Middleware and porttypes.PacketUnmarshalerModule only; no api.IBCModule implementation */}
+Packet forward middleware is only compatible with IBC classic, not IBC v2
 </Warning>
 
 Learn about packet forward middleware, a middleware that can be used in combination with token transfers (ICS-20)
 
 ## What is Packet Forward Middleware?
 
-Packet Forward Middleware enables multi-hop token transfers by forwarding IBC packets through intermediate chains, which may not be directly connected. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/keeper/keeper.go:255 — ForwardTransferPacket is the core function that handles forwarding a packet to the next hop */} It supports:
+Packet Forward Middleware enables multi-hop token transfers by forwarding IBC packets through intermediate chains, which may not be directly connected. It supports:
 
 * **Path-Unwinding Functionality:**
-  Because the fungibility of tokens transferred between chains is determined by [the path the tokens have travelled](/ibc/next/apps/transfer/overview#denomination-trace), i.e. the same token sent from chain A to chain B is not fungible with the same token sent from chain A, to chain C and then to chain B, packet forward middleware also enables routing tokens back through their source, before sending onto the final destination. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:85-101 — getDenomForThisChain removes the denom prefix if it originates from the current chain, or adds a prefix otherwise */}
+  Because the fungibility of tokens transferred between chains is determined by [the path the tokens have travelled](/ibc/next/apps/transfer/overview#denomination-trace), i.e. the same token sent from chain A to chain B is not fungible with the same token sent from chain A, to chain C and then to chain B, packet forward middleware also enables routing tokens back through their source, before sending onto the final destination.
 * **Asynchronous Acknowledgements:**
-  Multi-hop sequences are atomic: acknowledgements are only written to the origin chain after all forwarding steps succeed or fail, so users only need to monitor the source chain for the result. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:230-232 — nil ack prevents WriteAcknowledgement for forwarded packet; keeper/keeper.go:167-168 — WriteAcknowledgementForForwardedPacket propagates both success and error acks back to the original packet */}
+  Multi-hop sequences are atomic: acknowledgements are only written to the origin chain after all forwarding steps succeed or fail, so users only need to monitor the source chain for the result.
 * **Retry and Timeout Handling:**
-  The middleware can be configured to retry forwarding in the case that there was a timeout. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:37 — retriesOnTimeout uint8 field; keeper/keeper.go:332-333 — TimeoutShouldRetry checks remaining retries */}
+  The middleware can be configured to retry forwarding in the case that there was a timeout.
 * **Forwarding across multiple chains with nested memos:**
-  Instructions on which route to take to forward a packet across more than one chain can be set within a nested JSON with the memo field. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/types/forward.go:32 — Next *PacketMetadata enables chaining multiple hops; types/keys.go:23 — ForwardNextKey = "next" */}
+  Instructions on which route to take to forward a packet across more than one chain can be set within a nested JSON with the memo field.
 
 ## How it works?
 
-1. User initiates a `MsgTransfer` with a memo JSON payload containing forwarding instructions. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/types/keys.go:17 — ForwardMetadataKey = "forward" is the expected top-level JSON key in the memo */}
+1. User initiates a `MsgTransfer` with a memo JSON payload containing forwarding instructions.
 
-2. Intermediate chains (with PFM enabled) parse the memo and forward the packet to the destination specified. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:166 — GetPacketMetadataFromPacketdata extracts ForwardMetadata from the packet data's memo field */}
+2. Intermediate chains (with PFM enabled) parse the memo and forward the packet to the destination specified.
 
-3. Acknowledgements are passed back step-by-step to the origin chain after the final hop succeeds or fails, along the same path used for forwarding. {/* cosmos/ibc-go modules/apps/packet-forward-middleware/ibc_middleware.go:293-301 — OnAcknowledgementPacket retrieves the in-flight packet, removes it, and calls WriteAcknowledgementForForwardedPacket */}
+3. Acknowledgements are passed back step-by-step to the origin chain after the final hop succeeds or fails, along the same path used for forwarding.
 
 In practise, it can be challenging to correctly format the memo for the desired route. It is recommended to use the Skip API to correctly format the memo needed in `MsgTransfer` to make this easy.
