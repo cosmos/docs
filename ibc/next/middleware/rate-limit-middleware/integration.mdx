@@ -1,8 +1,148 @@
 ---
 title: Integration
-description: >-
-  This section should be completed once the middleware wiring approach is
-  finalised.
+description: Integrate and configure Rate
+  Limit Middleware.
 ---
 
-This section should be completed once the middleware wiring approach is finalised.
+This document provides instructions on integrating and configuring the Rate Limit Middleware within your existing chain implementation.
+
+## Example integration of the Rate Limit Middleware
+
+```go
+// app.go
+
+// Import the rate limit middleware
+import (
+    ratelimiting "github.com/cosmos/ibc-go/v10/modules/apps/rate-limiting"
+    ratelimitkeeper "github.com/cosmos/ibc-go/v10/modules/apps/rate-limiting/keeper"
+    ratelimittypes "github.com/cosmos/ibc-go/v10/modules/apps/rate-limiting/types"
+)
+
+...
+
+// Register the AppModule for the rate limiting module
+ModuleBasics = module.NewBasicManager(
+    ...
+    ratelimiting.AppModuleBasic{},
+    ...
+)
+
+...
+
+// Add rate limiting Keeper
+type App struct {
+    ...
+    RateLimitKeeper *ratelimitkeeper.Keeper
+    ...
+}
+
+...
+
+// Create store keys
+keys := sdk.NewKVStoreKeys(
+    ...
+    ratelimittypes.StoreKey,
+    ...
+)
+
+...
+
+// Initialize the rate limit middleware Keeper
+app.RateLimitKeeper = ratelimitkeeper.NewKeeper(
+    appCodec,
+    app.AccountKeeper.AddressCodec(),
+    runtime.NewKVStoreService(keys[ratelimittypes.StoreKey]),
+    app.IBCKeeper.ChannelKeeper,
+    app.IBCKeeper.ClientKeeper,
+    app.BankKeeper,
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+
+// See the section below for configuring an application stack with the rate limit middleware
+
+...
+
+// Register rate limiting AppModule
+app.moduleManager = module.NewManager(
+    ...
+    ratelimiting.NewAppModule(app.RateLimitKeeper),
+)
+
+...
+
+// Add rate limiting to begin blocker logic (required for periodic rate limit resets)
+app.moduleManager.SetOrderBeginBlockers(
+    ...
+    ratelimittypes.ModuleName,
+    ...
+)
+
+// Add rate limiting to end blocker logic
+app.moduleManager.SetOrderEndBlockers(
+    ...
+    ratelimittypes.ModuleName,
+    ...
+)
+
+// Add rate limiting to init genesis logic
+app.moduleManager.SetOrderInitGenesis(
+    ...
+    ratelimittypes.ModuleName,
+    ...
+)
+```
+
+## Configuring the transfer application stack with Rate Limit Middleware
+
+Here is an example of how to create an application stack using `transfer` and `rate-limiting`.
+The following `transferStack` is configured in `app/app.go` and added to the IBC `Router`.
+The in-line comments describe the execution flow of packets between the application stack and IBC core.
+
+For more information on configuring an IBC application stack see the [middleware development guide](/ibc/next/ibc/middleware/develop).
+
+```go
+// Create Transfer Stack
+// SendPacket, since it is originating from the application to core IBC:
+// transferKeeper.SendPacket -> ratelimit.SendPacket -> channel.SendPacket
+
+// RecvPacket, message that originates from core IBC and goes down to app, the flow is the other way
+// channel.RecvPacket -> ratelimit.OnRecvPacket -> transfer.OnRecvPacket
+
+// transfer stack contains (from top to bottom):
+// - Rate Limit Middleware
+// - Transfer
+
+// create IBC module from bottom to top of stack
+transferStack := porttypes.NewIBCStackBuilder(app.IBCKeeper.ChannelKeeper)
+transferStack.Base(transfer.NewIBCModule(app.TransferKeeper)).
+    Next(ratelimiting.NewIBCMiddleware(app.RateLimitKeeper))
+
+// Add transfer stack to IBC Router
+ibcRouter.AddRoute(ibctransfertypes.ModuleName, transferStack.Build())
+```
+
+## Using Rate Limit Middleware with Packet Forward Middleware
+
+If both PFM and Rate Limit Middleware are integrated, they can be stacked together. In the reference implementation, Rate Limit Middleware is placed above PFM so that rate limits are enforced on the final inbound transfer before forwarding: {/* cosmos/ibc-go simapp/app.go:416 — "transfer stack contains (from top to bottom): RateLimit, PacketForward, Transfer"; RecvPacket flow at line 414 confirms RateLimit processes first */}
+
+```go
+// transfer stack contains (from top to bottom):
+// - Rate Limit Middleware
+// - Packet Forward Middleware
+// - Transfer
+
+// SendPacket flow: transferKeeper.SendPacket -> PFM.SendPacket -> RateLimit.SendPacket -> channel.SendPacket
+// RecvPacket flow: channel.RecvPacket -> RateLimit.OnRecvPacket -> PFM.OnRecvPacket -> transfer.OnRecvPacket
+
+// create IBC module from bottom to top of stack
+transferStack := porttypes.NewIBCStackBuilder(app.IBCKeeper.ChannelKeeper)
+transferStack.Base(transfer.NewIBCModule(app.TransferKeeper)).
+    Next(packetforward.NewIBCMiddleware(
+        app.PFMKeeper,
+        0, // retries on timeout
+        packetforwardkeeper.DefaultForwardTransferPacketTimeoutTimestamp,
+    )).
+    Next(ratelimiting.NewIBCMiddleware(app.RateLimitKeeper))
+
+ibcRouter.AddRoute(ibctransfertypes.ModuleName, transferStack.Build())
+```
