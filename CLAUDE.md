@@ -113,3 +113,9 @@ When updating documentation:
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+
+### Internal Link Rules
+
+- **Always use absolute paths for internal doc links** (leading `/`). Relative paths like `sdk/v0.53/learn/advanced/upgrade` inside a file at `sdk/v0.53/build/tooling/cosmovisor.mdx` will resolve to a doubled path (`build/tooling/sdk/v0.53/...`). Always write `/sdk/v0.53/learn/advanced/upgrade`.
+- **File casing must exactly match the filesystem**. Mintlify links are case-sensitive. When fixing broken links, check `docs.json` nav entries to confirm exact casing (e.g., `Reactor-Api` not `reactor-api`, `Methods` not `methods`).
+- **Verify anchors against actual headings**. Anchors like `#checktx` are derived from heading text — confirm the heading exists in the target file before linking.
