@@ -3,7 +3,7 @@ title: "Precompile Configuration"
 description: "Choose which precompiles are active on your chain and add custom ones."
 ---
 
-[Precompiles](/evm/next/documentation/smart-contracts/precompiles/overview) are smart contract interfaces at fixed addresses where the implementation runs as native Go code. Cosmos EVM ships with precompiles for staking, governance, IBC, and more. As a chain builder you control which ones are active and can add your own. for more information and to see the full list of available precompiles, see the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview).
+[Precompiles](/evm/next/documentation/smart-contracts/precompiles/overview) are smart contract interfaces at fixed addresses where the implementation runs as native Go code. Cosmos EVM ships with precompiles for staking, governance, IBC, and more. As a chain builder you control which ones are active and can add your own. For more information and to see the full list of available precompiles, see the [precompiles overview](/evm/next/documentation/smart-contracts/precompiles/overview).
 
 ## Enabling Precompiles
 
@@ -64,11 +64,15 @@ The following example adds a stateful `DenomSupply` precompile with a single `su
 
 ### 1. Create the precompile package
 
-Create a directory `precompiles/denomsupply/` with two files.
+Create a directory `precompiles/denomsupply/` with two files:
+
+```bash
+mkdir -p precompiles/denomsupply
+```
 
 `precompiles/denomsupply/abi.json` — the Solidity ABI:
 
-```json
+```json title="precompiles/denomsupply/abi.json"
 [
   {
     "inputs": [{"internalType": "string", "name": "denom", "type": "string"}],
@@ -82,7 +86,7 @@ Create a directory `precompiles/denomsupply/` with two files.
 
 `precompiles/denomsupply/denomsupply.go` — the implementation:
 
-```go
+```go title="precompiles/denomsupply/denomsupply.go"
 package denomsupply
 
 import (
@@ -172,55 +176,70 @@ The struct embeds `cmn.Precompile` rather than handling context directly. `RunNa
 
 ### 2. Register the address
 
-In [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go), add a constant and include it in `AvailableStaticPrecompiles`. Addresses must be appended in sorted order:
+In [`x/vm/types/precompiles.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/precompiles.go), add a constant before the closing `)` of the const block (line 17) and append it to `AvailableStaticPrecompiles` before its closing `}` (line 35, shifted +1 by the constant insert). Addresses must be in sorted order.
 
-```go
-const DenomSupplyPrecompileAddress = "0x0000000000000000000000000000000000000809"
+Add the constant (inserted before the closing `)` at line 17):
 
-var AvailableStaticPrecompiles = []string{
-    // ... existing addresses ...
-    ICS02PrecompileAddress,
-    DenomSupplyPrecompileAddress, // appended in sorted order: 0x...0807 < 0x...0809
-}
+```go title="x/vm/types/precompiles.go"
+	DenomSupplyPrecompileAddress   = "0x0000000000000000000000000000000000000809"
+```
+
+Append it to the `AvailableStaticPrecompiles` slice (inserted before the closing `}` at line 35, shifted +1 by the previous insert):
+
+```go title="x/vm/types/precompiles.go"
+	DenomSupplyPrecompileAddress, // appended in sorted order: 0x...0807 < 0x...0809
 ```
 
 ### 3. Add a builder method
 
-In [`precompiles/types/static_precompiles.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/static_precompiles.go), add a `With` method. Pass any keepers your precompile needs as parameters:
+In [`precompiles/types/static_precompiles.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/static_precompiles.go), add the import for the new package (inserted before `ics02precompile` at line 16, between `govprecompile` and `ics02precompile`):
 
-```go
+```go title="precompiles/types/static_precompiles.go"
+	denomsupplyprecompile "github.com/cosmos/evm/precompiles/denomsupply"
+```
+
+Then add the `With` method at the very end of the file. Pass any keepers your precompile needs as parameters:
+
+```go title="precompiles/types/static_precompiles.go"
+
 func (s StaticPrecompiles) WithDenomSupplyPrecompile(bankKeeper cmn.BankKeeper) StaticPrecompiles {
-    denomSupplyPrecompile := denomsupplyprecompile.NewPrecompile(bankKeeper)
-    s[denomSupplyPrecompile.Address()] = denomSupplyPrecompile
-    return s
+	denomSupplyPrecompile := denomsupplyprecompile.NewPrecompile(bankKeeper)
+	s[denomSupplyPrecompile.Address()] = denomSupplyPrecompile
+	return s
 }
 ```
 
 ### 4. Wire it into the app
 
-In [`precompiles/types/defaults.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/defaults.go), add your method to the builder chain. The `bankKeeper` is already a parameter of `DefaultStaticPrecompiles`:
+In [`precompiles/types/defaults.go`](https://github.com/cosmos/evm/blob/main/precompiles/types/defaults.go), add your method to the builder chain by replacing line 89 (`WithSlashingPrecompile`). The `bankKeeper` is already a parameter of `DefaultStaticPrecompiles`:
 
-```go
-precompiles := NewStaticPrecompiles().
-    // ... existing precompiles ...
-    WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...).
-    WithDenomSupplyPrecompile(bankKeeper)
+```go title="precompiles/types/defaults.go"
+		WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...).
+		WithDenomSupplyPrecompile(bankKeeper)
 ```
 
 ### 5. Activate at genesis
 
-Add the address to `active_static_precompiles` in your genesis setup and in `local_node.sh` if you're using that script for local development:
+Because `evmd/genesis.go` already uses `evmtypes.AvailableStaticPrecompiles`, adding your address to that slice in Step 2 is sufficient — no change to `genesis.go` is required.
 
-```go
-// evmd/genesis.go
-evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+If you use `local_node.sh` for local development, that script hardcodes the precompile list via a `jq` command and does not read from `AvailableStaticPrecompiles` at runtime. Insert the following before line 244 of `local_node.sh` (the blank line after the `active_static_precompiles` jq command at line 243) to append your address:
+
+```bash title="local_node.sh"
+  jq '.app_state["evm"]["params"]["active_static_precompiles"] +=
+    ["0x0000000000000000000000000000000000000809"]' \
+    "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 ```
 
 ### 6. Build and verify
 
 ```bash
 make install
-./local_node.sh -y
+```
+
+Start a local chain in the background:
+
+```bash
+bash local_node.sh -y --no-install
 ```
 
 Once the chain is running, call the precompile and get a decoded result in one step:
@@ -231,3 +250,5 @@ cast call 0x0000000000000000000000000000000000000809 \
   --rpc-url http://localhost:8545
 # 100025807224055573593873019 [1e26]
 ```
+
+When successful, you should see `100025807224055573593873019` in the output.
