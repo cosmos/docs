@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the documentation repository for Cosmos EVM, built with Mintlify. The repository contains comprehensive documentation for the Cosmos EVM implementation, including API references, integration guides, smart contract documentation, and precompile specifications.
+This is the unified documentation repository for the Cosmos ecosystem, built with Mintlify. It covers multiple products: **evm, sdk, hub, cometbft, ibc, skip-go**. The repo contains comprehensive documentation including API references, integration guides, smart contract/precompile specifications, and SDK module READMEs.
 
 ## Common Development Commands
 
@@ -113,3 +113,22 @@ When updating documentation:
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+- Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes may need to be applied across multiple version dirs
+
+## Link Maintenance Gotchas
+
+When fixing broken links from crawler reports:
+
+**403 responses are often false positives** — `forum.cosmos.network`, `npmjs.com`, `medium.com`, and similar sites block crawlers but work fine in browsers. Leave these alone.
+
+**Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
+
+**CometBFT docs restructure**: Paths moved from `v0.38.x/docs/rfc/` → `main/docs/references/rfc/`. GitHub links to `.md` files in CometBFT often require the `.md` extension to resolve (validators, abci++_methods, abci++_app_requirements, ADR-025).
+
+**Known canonical URLs** (verified working):
+- Cosmos Whitepaper: `https://github.com/cosmos/cosmos/blob/master/WHITEPAPER.md` (both `cosmos.network/whitepaper` and `cosmos.network/about/whitepaper` are 404)
+- EIP-7212 was renamed to RIP-7212: `https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md`
+- tcpkali repo transferred: `https://github.com/launchdarkly/tcpkali` (was `satori-com/tcpkali`)
+- `cosmos/evm` jump_table → `cosmos/go-ethereum` jump_table
+
+**Defunct services**: Remove links and rewrite surrounding prose so it doesn't look like dead text. Known defunct: `lunie.io` (→ replace with [Keplr](https://www.keplr.app/)), `kb.certus.one` (DNS failure, remove), `ideas.skip.build`, Dropbox Paper links, private Google Docs links.
