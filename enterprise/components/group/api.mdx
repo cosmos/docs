@@ -1,0 +1,778 @@
+---
+title: "API Reference"
+description: "Complete API reference for Group module gRPC queries and transactions"
+---
+
+# Group Module API Reference
+
+## Overview
+
+The Group module provides a comprehensive API for managing on-chain multisig groups and collective decision-making.
+
+**Package:** `cosmos.group.v1`
+**Go Import:** `github.com/cosmos/cosmos-sdk/enterprise/group/x/group`
+
+---
+
+## Data Types
+
+### GroupInfo
+
+Represents a group on-chain.
+
+```protobuf
+message GroupInfo {
+  uint64 id = 1;
+  string admin = 2;
+  bytes metadata = 3;
+  uint64 version = 4;
+  string total_weight = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+```
+
+**Fields:**
+- `id` (uint64): Unique group identifier, auto-assigned on creation
+- `admin` (string): Cosmos SDK address of the group administrator
+- `metadata` (bytes): Optional group metadata
+- `version` (uint64): Incremented on every group update; used to detect stale proposals
+- `total_weight` (string): Sum of all member weights
+- `created_at` (Timestamp): Block time when the group was created
+
+---
+
+### GroupMember
+
+Represents a member's relationship to a group.
+
+```protobuf
+message GroupMember {
+  uint64 group_id = 1;
+  Member member = 2;
+}
+
+message Member {
+  string address = 1;
+  string weight = 2;
+  bytes metadata = 3;
+  google.protobuf.Timestamp added_at = 4;
+}
+```
+
+**Fields:**
+- `address` (string): Cosmos SDK address of the member
+- `weight` (string): Voting weight. Set to `"0"` to remove a member.
+- `metadata` (bytes): Optional member metadata
+- `added_at` (Timestamp): Block time when the member was added
+
+---
+
+### GroupPolicyInfo
+
+Represents a group policy account.
+
+```protobuf
+message GroupPolicyInfo {
+  string address = 1;
+  uint64 group_id = 2;
+  string admin = 3;
+  bytes metadata = 4;
+  uint64 version = 5;
+  google.protobuf.Any decision_policy = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+```
+
+**Fields:**
+- `address` (string): The group policy's account address (auto-generated)
+- `group_id` (uint64): The group this policy is associated with
+- `admin` (string): Address with authority to update the policy
+- `decision_policy` (Any): The policy's decision logic (threshold or percentage)
+- `version` (uint64): Incremented on every update; used to detect aborted proposals
+
+---
+
+### Proposal
+
+Represents an on-chain proposal submitted to a group policy.
+
+```protobuf
+message Proposal {
+  uint64 id = 1;
+  string group_policy_address = 2;
+  bytes metadata = 3;
+  repeated string proposers = 4;
+  google.protobuf.Timestamp submit_time = 5;
+  uint64 group_version = 6;
+  uint64 group_policy_version = 7;
+  ProposalStatus status = 8;
+  TallyResult final_tally_result = 9;
+  google.protobuf.Timestamp voting_period_end = 10;
+  ProposalExecutorResult executor_result = 11;
+  repeated google.protobuf.Any messages = 12;
+  string title = 13;
+  string summary = 14;
+}
+```
+
+**ProposalStatus values:**
+- `PROPOSAL_STATUS_SUBMITTED` - Open for voting
+- `PROPOSAL_STATUS_ACCEPTED` - Passed; ready for execution
+- `PROPOSAL_STATUS_REJECTED` - Failed tally
+- `PROPOSAL_STATUS_ABORTED` - Group or policy updated during voting
+- `PROPOSAL_STATUS_WITHDRAWN` - Withdrawn by proposer or policy admin
+
+**ProposalExecutorResult values:**
+- `PROPOSAL_EXECUTOR_RESULT_NOT_RUN`
+- `PROPOSAL_EXECUTOR_RESULT_SUCCESS`
+- `PROPOSAL_EXECUTOR_RESULT_FAILURE`
+
+---
+
+### TallyResult
+
+The accumulated vote counts for a proposal.
+
+```protobuf
+message TallyResult {
+  string yes_count = 1;
+  string abstain_count = 2;
+  string no_count = 3;
+  string no_with_veto_count = 4;
+}
+```
+
+---
+
+## Query API
+
+The Query service provides read-only access to Group module state.
+
+### GroupInfo
+
+Get information about a group by ID.
+
+**gRPC:** `cosmos.group.v1.Query/GroupInfo`
+**REST:** `GET /cosmos/group/v1/groups/{group_id}`
+
+**CLI:**
+```bash
+simd q group group-info [group-id]
+```
+
+**Example:**
+```bash
+simd q group group-info 1
+```
+
+---
+
+### GroupPolicyInfo
+
+Get information about a group policy account.
+
+**gRPC:** `cosmos.group.v1.Query/GroupPolicyInfo`
+**REST:** `GET /cosmos/group/v1/group_policies/{address}`
+
+**CLI:**
+```bash
+simd q group group-policy-info [group-policy-account]
+```
+
+---
+
+### GroupMembers
+
+List all members of a group.
+
+**gRPC:** `cosmos.group.v1.Query/GroupMembers`
+**REST:** `GET /cosmos/group/v1/groups/{group_id}/members`
+
+**CLI:**
+```bash
+simd q group group-members [group-id]
+```
+
+---
+
+### GroupsByAdmin
+
+List all groups administered by a given address.
+
+**gRPC:** `cosmos.group.v1.Query/GroupsByAdmin`
+**REST:** `GET /cosmos/group/v1/groups/by_admin/{admin}`
+
+**CLI:**
+```bash
+simd q group groups-by-admin [admin]
+```
+
+---
+
+### GroupPoliciesByGroup
+
+List all group policies associated with a group.
+
+**gRPC:** `cosmos.group.v1.Query/GroupPoliciesByGroup`
+**REST:** `GET /cosmos/group/v1/groups/{group_id}/group_policies`
+
+**CLI:**
+```bash
+simd q group group-policies-by-group [group-id]
+```
+
+---
+
+### GroupPoliciesByAdmin
+
+List all group policies administered by a given address.
+
+**gRPC:** `cosmos.group.v1.Query/GroupPoliciesByAdmin`
+**REST:** `GET /cosmos/group/v1/group_policies/by_admin/{admin}`
+
+**CLI:**
+```bash
+simd q group group-policies-by-admin [admin]
+```
+
+---
+
+### Proposal
+
+Get a proposal by ID.
+
+**gRPC:** `cosmos.group.v1.Query/Proposal`
+**REST:** `GET /cosmos/group/v1/proposals/{proposal_id}`
+
+**CLI:**
+```bash
+simd q group proposal [proposal-id]
+```
+
+---
+
+### ProposalsByGroupPolicy
+
+List all proposals for a given group policy account.
+
+**gRPC:** `cosmos.group.v1.Query/ProposalsByGroupPolicy`
+**REST:** `GET /cosmos/group/v1/proposals/by_group_policy/{address}`
+
+**CLI:**
+```bash
+simd q group proposals-by-group-policy [group-policy-account]
+```
+
+---
+
+### VoteByProposalVoter
+
+Get a specific vote on a proposal.
+
+**gRPC:** `cosmos.group.v1.Query/VoteByProposalVoter`
+**REST:** `GET /cosmos/group/v1/votes/{proposal_id}/{voter}`
+
+**CLI:**
+```bash
+simd q group vote [proposal-id] [voter]
+```
+
+---
+
+### VotesByProposal
+
+List all votes on a proposal.
+
+**gRPC:** `cosmos.group.v1.Query/VotesByProposal`
+**REST:** `GET /cosmos/group/v1/votes/by_proposal/{proposal_id}`
+
+**CLI:**
+```bash
+simd q group votes-by-proposal [proposal-id]
+```
+
+---
+
+### TallyResult
+
+Get the current tally for a proposal.
+
+**gRPC:** `cosmos.group.v1.Query/TallyResult`
+**REST:** `GET /cosmos/group/v1/proposals/{proposal_id}/tally`
+
+**CLI:**
+```bash
+simd q group tally-result [proposal-id]
+```
+
+**Example Response:**
+```json
+{
+  "tally": {
+    "yes_count": "2",
+    "abstain_count": "0",
+    "no_count": "1",
+    "no_with_veto_count": "0"
+  }
+}
+```
+
+---
+
+### Groups
+
+List all groups on chain.
+
+**gRPC:** `cosmos.group.v1.Query/Groups`
+**REST:** `GET /cosmos/group/v1/groups`
+
+**CLI:**
+```bash
+simd q group groups
+```
+
+---
+
+## Transaction Messages (Msg Service)
+
+### CreateGroup
+
+Create a new group with an admin and initial members.
+
+**gRPC:** `cosmos.group.v1.Msg/CreateGroup`
+
+**CLI:**
+```bash
+simd tx group create-group [admin] [metadata] [members-json-file]
+```
+
+**Members JSON format:**
+```json
+{
+  "members": [
+    {
+      "address": "cosmos1...",
+      "weight": "1",
+      "metadata": "member description"
+    }
+  ]
+}
+```
+
+**Authorization:** Any address can create a group.
+
+**Failure conditions:**
+- Metadata length exceeds `MaxMetadataLen`
+- Members have invalid addresses, duplicate entries, or zero weight
+
+---
+
+### UpdateGroupMembers
+
+Add, remove, or reweight members in a group.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupMembers`
+
+**CLI:**
+```bash
+simd tx group update-group-members [admin] [group-id] [members-json-file]
+```
+
+**Note:** Set a member's weight to `"0"` to remove them from the group.
+
+**Authorization:** Must be signed by the group admin.
+
+**Failure conditions:**
+- Signer is not the group admin
+- Any associated group policy's `Validate()` method fails against the updated member set
+
+---
+
+### UpdateGroupAdmin
+
+Transfer group administration to a new address.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupAdmin`
+
+**CLI:**
+```bash
+simd tx group update-group-admin [admin] [group-id] [new-admin]
+```
+
+**Authorization:** Must be signed by the current group admin.
+
+---
+
+### UpdateGroupMetadata
+
+Update a group's metadata.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupMetadata`
+
+**CLI:**
+```bash
+simd tx group update-group-metadata [admin] [group-id] [metadata]
+```
+
+**Authorization:** Must be signed by the group admin.
+
+---
+
+### CreateGroupPolicy
+
+Create a new group policy account with a decision policy.
+
+**gRPC:** `cosmos.group.v1.Msg/CreateGroupPolicy`
+
+**CLI:**
+```bash
+simd tx group create-group-policy [admin] [group-id] [metadata] [decision-policy-json]
+```
+
+**Threshold policy example:**
+```json
+{
+  "@type": "/cosmos.group.v1.ThresholdDecisionPolicy",
+  "threshold": "2",
+  "windows": {
+    "voting_period": "24h",
+    "min_execution_period": "0s"
+  }
+}
+```
+
+**Percentage policy example:**
+```json
+{
+  "@type": "/cosmos.group.v1.PercentageDecisionPolicy",
+  "percentage": "0.5",
+  "windows": {
+    "voting_period": "48h",
+    "min_execution_period": "0s"
+  }
+}
+```
+
+**Authorization:** Must be signed by the group admin.
+
+**Failure conditions:**
+- Signer is not the group admin
+- Metadata length exceeds `MaxMetadataLen`
+- Decision policy's `Validate()` method fails against the group
+
+---
+
+### CreateGroupWithPolicy
+
+Create a group and a group policy in a single transaction.
+
+**gRPC:** `cosmos.group.v1.Msg/CreateGroupWithPolicy`
+
+**CLI:**
+```bash
+simd tx group create-group-with-policy [admin] [group-metadata] [group-policy-metadata] [members-json-file] [decision-policy-json]
+```
+
+Set `--group-policy-as-admin` to make the group policy account the group admin (enabling a self-governed group).
+
+---
+
+### UpdateGroupPolicyAdmin
+
+Transfer group policy administration to a new address.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupPolicyAdmin`
+
+**CLI:**
+```bash
+simd tx group update-group-policy-admin [admin] [group-policy-account] [new-admin]
+```
+
+**Authorization:** Must be signed by the group policy admin.
+
+---
+
+### UpdateGroupPolicyDecisionPolicy
+
+Update the decision policy for a group policy account.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupPolicyDecisionPolicy`
+
+**CLI:**
+```bash
+simd tx group update-group-policy-decision-policy [admin] [group-policy-account] [decision-policy-json]
+```
+
+**Authorization:** Must be signed by the group policy admin.
+
+**Note:** Updating the decision policy aborts any in-flight proposals for that policy.
+
+---
+
+### UpdateGroupPolicyMetadata
+
+Update a group policy's metadata.
+
+**gRPC:** `cosmos.group.v1.Msg/UpdateGroupPolicyMetadata`
+
+**CLI:**
+```bash
+simd tx group update-group-policy-metadata [admin] [group-policy-account] [metadata]
+```
+
+**Authorization:** Must be signed by the group policy admin.
+
+---
+
+### SubmitProposal
+
+Submit a proposal to a group policy account.
+
+**gRPC:** `cosmos.group.v1.Msg/SubmitProposal`
+
+**CLI:**
+```bash
+simd tx group submit-proposal [proposal-json-file] \
+    --from proposer \
+    --keyring-backend test
+```
+
+**Proposal JSON format:**
+```json
+{
+  "group_policy_address": "cosmos1...",
+  "proposers": ["cosmos1..."],
+  "metadata": "proposal description",
+  "title": "My Proposal",
+  "summary": "A brief description of the proposal",
+  "messages": [
+    {
+      "@type": "/cosmos.bank.v1beta1.MsgSend",
+      "from_address": "cosmos1...",
+      "to_address": "cosmos1...",
+      "amount": [{"denom": "uatom", "amount": "1000"}]
+    }
+  ],
+  "exec": 0
+}
+```
+
+Set `"exec": 1` (`EXEC_TRY`) to attempt immediate execution. When using `EXEC_TRY`, proposers are automatically counted as yes votes.
+
+**Authorization:** Must be signed by at least one group member.
+
+**Failure conditions:**
+- Metadata, title, or summary length exceeds `MaxMetadataLen`
+- Proposer is not a group member
+
+---
+
+### WithdrawProposal
+
+Withdraw a pending proposal.
+
+**gRPC:** `cosmos.group.v1.Msg/WithdrawProposal`
+
+**CLI:**
+```bash
+simd tx group withdraw-proposal [proposal-id] [group-policy-admin-or-proposer]
+```
+
+**Authorization:** Must be signed by a proposer or the group policy admin.
+
+**Failure conditions:**
+- Signer is neither a proposer nor the group policy admin
+- Proposal is already closed or aborted
+
+---
+
+### Vote
+
+Cast a vote on an open proposal.
+
+**gRPC:** `cosmos.group.v1.Msg/Vote`
+
+**CLI:**
+```bash
+simd tx group vote [proposal-id] [voter] [vote-option] [metadata]
+```
+
+**Vote options:**
+- `VOTE_OPTION_YES`
+- `VOTE_OPTION_NO`
+- `VOTE_OPTION_ABSTAIN`
+- `VOTE_OPTION_NO_WITH_VETO`
+
+Set `--exec 1` to attempt immediate execution after voting.
+
+**Authorization:** Must be signed by a group member.
+
+**Failure conditions:**
+- Metadata length exceeds `MaxMetadataLen`
+- Proposal is no longer in the voting period
+
+---
+
+### Exec
+
+Execute an accepted proposal.
+
+**gRPC:** `cosmos.group.v1.Msg/Exec`
+
+**CLI:**
+```bash
+simd tx group exec [proposal-id] \
+    --from executor \
+    --keyring-backend test
+```
+
+**Authorization:** Any address can execute an accepted proposal.
+
+**Notes:**
+- Proposal must be in `ACCEPTED` status
+- Execution must occur before `MaxExecutionPeriod` after the voting period ends
+- A failed execution (`PROPOSAL_EXECUTOR_RESULT_FAILURE`) can be retried until expiry
+
+---
+
+### LeaveGroup
+
+Remove yourself from a group.
+
+**gRPC:** `cosmos.group.v1.Msg/LeaveGroup`
+
+**CLI:**
+```bash
+simd tx group leave-group [member-address] [group-id]
+```
+
+**Authorization:** Must be signed by the member leaving.
+
+**Failure conditions:**
+- Signer is not a group member
+- Any associated group policy's `Validate()` method fails against the updated member set
+
+---
+
+## Events
+
+The Group module emits the following events:
+
+| Event Type | Key | Value |
+|------------|-----|-------|
+| `cosmos.group.v1.EventCreateGroup` | `group_id` | `{groupId}` |
+| `cosmos.group.v1.EventUpdateGroup` | `group_id` | `{groupId}` |
+| `cosmos.group.v1.EventCreateGroupPolicy` | `address` | `{groupPolicyAddress}` |
+| `cosmos.group.v1.EventUpdateGroupPolicy` | `address` | `{groupPolicyAddress}` |
+| `cosmos.group.v1.EventCreateProposal` | `proposal_id` | `{proposalId}` |
+| `cosmos.group.v1.EventWithdrawProposal` | `proposal_id` | `{proposalId}` |
+| `cosmos.group.v1.EventVote` | `proposal_id` | `{proposalId}` |
+| `cosmos.group.v1.EventExec` | `proposal_id`, `logs` | `{proposalId}`, `{logs}` |
+| `cosmos.group.v1.EventLeaveGroup` | `proposal_id`, `address` | `{proposalId}`, `{address}` |
+| `cosmos.group.v1.EventProposalPruned` | `proposal_id`, `status`, `tally_result` | pruning details |
+
+---
+
+## REST API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/cosmos/group/v1/groups/{group_id}` | Get group info |
+| GET | `/cosmos/group/v1/groups/by_admin/{admin}` | List groups by admin |
+| GET | `/cosmos/group/v1/groups` | List all groups |
+| GET | `/cosmos/group/v1/groups/{group_id}/members` | List group members |
+| GET | `/cosmos/group/v1/group_policies/{address}` | Get group policy info |
+| GET | `/cosmos/group/v1/groups/{group_id}/group_policies` | List policies for a group |
+| GET | `/cosmos/group/v1/group_policies/by_admin/{admin}` | List policies by admin |
+| GET | `/cosmos/group/v1/proposals/{proposal_id}` | Get proposal |
+| GET | `/cosmos/group/v1/proposals/by_group_policy/{address}` | List proposals for a policy |
+| GET | `/cosmos/group/v1/proposals/{proposal_id}/tally` | Get tally result |
+| GET | `/cosmos/group/v1/votes/{proposal_id}/{voter}` | Get a specific vote |
+| GET | `/cosmos/group/v1/votes/by_proposal/{proposal_id}` | List votes for a proposal |
+
+---
+
+## Common Use Cases
+
+### 1. Create a 2-of-3 Multisig Group
+
+```bash
+# Create the group with 3 members of equal weight
+simd tx group create-group cosmos1admin "" members.json --from admin
+
+# members.json
+{
+  "members": [
+    {"address": "cosmos1alice...", "weight": "1"},
+    {"address": "cosmos1bob...",   "weight": "1"},
+    {"address": "cosmos1carol...", "weight": "1"}
+  ]
+}
+
+# Create a policy requiring 2 of 3 yes votes
+simd tx group create-group-policy cosmos1admin 1 "" policy.json --from admin
+
+# policy.json (threshold = 2)
+{
+  "@type": "/cosmos.group.v1.ThresholdDecisionPolicy",
+  "threshold": "2",
+  "windows": {"voting_period": "72h", "min_execution_period": "0s"}
+}
+```
+
+### 2. Submit and Execute a Proposal
+
+```bash
+# Alice submits a proposal
+simd tx group submit-proposal proposal.json --from alice
+
+# Bob and Carol vote yes
+simd tx group vote 1 cosmos1bob YES "" --from bob
+simd tx group vote 1 cosmos1carol YES "" --from carol
+
+# Anyone executes the accepted proposal
+simd tx group exec 1 --from alice
+```
+
+### 3. Self-Governing Group (Policy as Admin)
+
+```bash
+# Create group with policy as its own admin
+simd tx group create-group-with-policy cosmos1admin "" "" members.json policy.json \
+    --group-policy-as-admin \
+    --from admin
+```
+
+### 4. Multiple Policies for Different Actions
+
+```bash
+# Low-threshold policy for routine actions (1-of-3)
+simd tx group create-group-policy cosmos1admin 1 "routine" low_policy.json --from admin
+
+# High-threshold policy for critical actions (3-of-3)
+simd tx group create-group-policy cosmos1admin 1 "critical" high_policy.json --from admin
+```
+
+---
+
+## Error Handling
+
+### Unauthorized Action
+**Cause:** Signer does not have the required authority (admin, member, proposer)
+**Solution:** Verify the signing address matches the required authority
+
+### Proposal Not in Voting Period
+**Cause:** Attempted to vote on a closed, withdrawn, or aborted proposal
+**Solution:** Query the proposal status before voting
+
+### Decision Policy Validation Failure
+**Cause:** Updated member set no longer satisfies an associated policy (e.g., total weight too low to ever reach threshold)
+**Solution:** Update the decision policy before or after changing members
+
+### Metadata Too Long
+**Cause:** Metadata exceeds the app-configured `MaxMetadataLen`
+**Solution:** Shorten the metadata string
+
+### Execution Expired
+**Cause:** Attempting to execute an accepted proposal after `MaxExecutionPeriod`
+**Solution:** Proposals must be executed within the execution window; resubmit if needed

@@ -1,0 +1,223 @@
+---
+title: "Architecture"
+description: "System architecture, core concepts, and module integration details for the Group module"
+---
+
+# Group Module Architecture
+
+## Overview
+
+The Group module enables collective decision-making through a proposal-and-vote system. Groups are collections of accounts with associated voting weights. Each group can have one or more policy accounts, each with its own decision policy governing how proposals are accepted or rejected.
+
+## Table of Contents
+
+- [Architecture Diagram](#architecture-diagram)
+- [Core Concepts](#core-concepts)
+    - [Group](#group)
+    - [Group Policy](#group-policy)
+    - [Decision Policy](#decision-policy)
+    - [Proposal](#proposal)
+    - [Pruning](#pruning)
+- [Module Interactions](#module-interactions)
+- [Proposal Lifecycle](#proposal-lifecycle)
+- [Technical Implementation](#technical-implementation)
+    - [Storage Design](#storage-design)
+    - [EndBlock Integration](#endblock-integration)
+- [Security Considerations](#security-considerations)
+
+## Architecture Diagram
+
+![Group Module Architecture](./architecture.png)
+
+*The diagram above shows the Group module's actor model, data structures, and proposal lifecycle — from submission through voting to execution.*
+
+## Core Concepts
+
+### Group
+
+A group is an aggregation of accounts with associated voting weights. It is not itself an account and does not hold a balance. A group has an **administrator** who can add, remove, and update members.
+
+Key points:
+- The administrator does not need to be a member of the group
+- A group policy account can itself be the administrator of a group, enabling self-governed groups
+- Members have weights that determine their relative voting power within proposals
+
+### Group Policy
+
+A group policy is an account associated with a group and a decision policy. Group policies are abstracted from groups so that a single group can have **multiple decision policies** for different types of actions.
+
+This separation keeps membership consistent across policies while allowing different authorization thresholds for different operations. The recommended pattern is:
+
+1. Create a **master group policy** for a given group
+2. Create additional group policies with different decision policies for specific action types
+3. Delegate permissions from the master account to sub-accounts using the `x/authz` module
+
+### Decision Policy
+
+A decision policy is the mechanism by which group members vote on proposals and the rules that determine whether a proposal passes based on its tally outcome.
+
+All decision policies have:
+- **Minimum Execution Period**: The minimum time after submission before a proposal can be executed. Can be set to `0` to allow immediate execution.
+- **Maximum Voting Window**: The maximum time after submission during which members can vote.
+
+The chain developer also defines an **app-wide maximum execution period** — the window after a proposal's voting period ends during which execution is permitted.
+
+#### Threshold Decision Policy
+
+A threshold decision policy defines a minimum total weight of yes votes required for a proposal to pass. Abstain and veto votes are treated as no votes.
+
+```json
+{
+  "@type": "/cosmos.group.v1.ThresholdDecisionPolicy",
+  "threshold": "2",
+  "windows": {
+    "voting_period": "24h",
+    "min_execution_period": "0s"
+  }
+}
+```
+
+#### Percentage Decision Policy
+
+A percentage decision policy defines acceptance as a minimum percentage of total group weight voting yes. This policy is better suited for groups with dynamic membership, since the percentage threshold remains meaningful as member weights change.
+
+```json
+{
+  "@type": "/cosmos.group.v1.PercentageDecisionPolicy",
+  "percentage": "0.5",
+  "windows": {
+    "voting_period": "24h",
+    "min_execution_period": "0s"
+  }
+}
+```
+
+#### Custom Decision Policies
+
+Chain developers can implement custom decision policies by implementing the `DecisionPolicy` interface. This enables encoding arbitrary acceptance logic into a group policy.
+
+### Proposal
+
+Any group member can submit a proposal to a group policy account. A proposal consists of:
+- A list of messages to execute if the proposal is accepted
+- Optional metadata, title, and summary
+- An optional `Exec` field to attempt immediate execution on submission
+
+#### Voting
+
+Members vote with one of four options:
+- `VOTE_OPTION_YES`
+- `VOTE_OPTION_NO`
+- `VOTE_OPTION_ABSTAIN`
+- `VOTE_OPTION_NO_WITH_VETO`
+
+The voting window opens immediately on proposal submission and closes at the time defined by the group policy's decision policy.
+
+#### Tallying
+
+Tallying occurs when either:
+1. A `Msg/Exec`, `Msg/SubmitProposal` (with `TRY_EXEC`), or `Msg/Vote` (with `TRY_EXEC`) triggers an execution attempt
+2. The proposal's voting period end is reached during `EndBlock`
+
+If the tally passes the decision policy's rules, the proposal is marked `PROPOSAL_STATUS_ACCEPTED`. Otherwise it is marked `PROPOSAL_STATUS_REJECTED`. No further voting is permitted after tallying.
+
+#### Executing Proposals
+
+Accepted proposals must be executed before `MaxExecutionPeriod` after the voting period ends. Any account (not just group members) can submit a `Msg/Exec` transaction to execute an accepted proposal.
+
+When `Exec` is set to `EXEC_TRY` on a submit or vote message, the chain attempts immediate execution. If the proposal doesn't yet pass, it remains open for further votes.
+
+#### Withdrawn and Aborted Proposals
+
+- **Withdrawn**: Any proposer or the group policy admin can withdraw a proposal before the voting period ends. Withdrawn proposals cannot be executed.
+- **Aborted**: If the group or group policy is updated during the voting period, the proposal is automatically marked as `PROPOSAL_STATUS_ABORTED` since the rules it was created under no longer apply.
+
+### Pruning
+
+Proposals and votes are automatically pruned to prevent unbounded state growth.
+
+**Votes are pruned:**
+- After a successful tally triggered by `Msg/Exec` or a submit/vote with `TRY_EXEC`
+- On `EndBlock` immediately after the proposal's voting period ends (including aborted and withdrawn proposals)
+
+**Proposals are pruned:**
+- On `EndBlock` when a withdrawn or aborted proposal's voting period ends
+- After a successful proposal execution
+- On `EndBlock` after `voting_period_end + max_execution_period` has passed
+
+## Module Interactions
+
+| Module | Purpose | Interface |
+|--------|---------|-----------|
+| **x/auth** | Account management | Creates group policy accounts; provides address codec |
+| **x/bank** | Balance checks | Queried for spendable coins on group policy accounts |
+| **BaseApp** | Message routing | Executes proposal messages via the message router |
+| **EndBlock** | Lifecycle management | Tallies proposals at voting period end; prunes expired proposals |
+
+## Proposal Lifecycle
+
+```
+Submit Proposal
+      │
+      ▼
+ SUBMITTED ──── (group/policy updated) ──── ABORTED
+      │
+      │  (proposer or admin action)
+      ├──────────────────────────────────── WITHDRAWN
+      │
+      ▼
+ Voting Period
+      │
+      ▼
+   Tally
+      │
+      ├── Pass ──► ACCEPTED ──► Execute ──► SUCCESS
+      │                             │
+      │                             └──────► FAILURE (re-executable until MaxExecPeriod)
+      │
+      └── Fail ──► REJECTED
+```
+
+## Technical Implementation
+
+### Storage Design
+
+The Group module uses a custom ORM (Object Relational Mapping) package that provides table storage with primary keys and secondary indexes. Each table stores a specific type of state and is indexed for efficient querying.
+
+| Table | Storage Key | Description |
+|-------|-------------|-------------|
+| `groupTable` | `0x0 \| BigEndian(GroupId)` | Stores `GroupInfo` |
+| `groupMemberTable` | `0x10 \| BigEndian(GroupId) \| []byte(Address)` | Stores `GroupMember` |
+| `groupPolicyTable` | `0x20 \| len(Address) \| []byte(Address)` | Stores `GroupPolicyInfo` |
+| `proposalTable` | `0x30 \| BigEndian(ProposalId)` | Stores `Proposal` |
+| `voteTable` | `0x40 \| BigEndian(ProposalId) \| []byte(VoterAddress)` | Stores `Vote` |
+
+Secondary indexes enable efficient lookups:
+- Groups by admin address
+- Group members by group ID or member address
+- Group policies by group ID or admin address
+- Proposals by group policy address or voting period end
+- Votes by proposal ID or voter address
+
+### EndBlock Integration
+
+At the end of every block, the module's `EndBlocker`:
+
+1. Iterates proposals whose `voting_period_end` has been reached
+2. Performs tallying for each eligible proposal
+3. Updates proposal status to `ACCEPTED` or `REJECTED`
+4. Prunes expired proposals and their associated votes
+
+This ensures that proposals are automatically resolved without requiring any user action after the voting period.
+
+## Security Considerations
+
+1. **Admin Authority**: The group admin has full control over membership. A group policy account can be set as its own admin to enable decentralized governance over group membership.
+
+2. **Policy Isolation**: Each group policy account is an independent account with its own address. Permissions granted to one policy do not apply to others in the same group.
+
+3. **Proposal Validity**: If a group or policy is modified while a proposal is in flight, the proposal is automatically aborted to prevent execution under outdated rules.
+
+4. **Execution Window**: Accepted proposals expire after `MaxExecutionPeriod`. This prevents indefinitely pending executions from accumulating in state.
+
+5. **Metadata Limits**: All metadata fields (group, member, policy, proposal) are bounded by `MaxMetadataLen`, a configurable app-wide parameter.
