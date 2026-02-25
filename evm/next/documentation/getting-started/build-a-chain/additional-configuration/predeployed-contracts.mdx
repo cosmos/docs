@@ -5,7 +5,7 @@ description: "Deploy standard EVM contracts at fixed addresses on your Cosmos EV
 
 Predeployed contracts (also called preinstalls) are EVM contracts that exist in chain state at a specific address from genesis. Because the address is fixed and known in advance, the same contract can exist at the same address across every chain that includes it, making them useful for infrastructure that needs to be reliably reachable everywhere.
 
-## Default Contracts
+## Default contracts
 
 Cosmos EVM includes five default preinstalls ([`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go)):
 
@@ -18,71 +18,127 @@ Cosmos EVM includes five default preinstalls ([`x/vm/types/preinstall.go`](https
 | **EIP-2935** | `0x0000F90827F1C53a10cb7A02335B175320002935` | Historical block hash storage | [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935) |
 
 
-## Enabling at Genesis
+## Enabling at genesis
 
-Preinstalls are deployed when the chain first starts, based on the `preinstalls` array in `genesis.json`. If the array is empty, no contracts are deployed.
+Preinstalls are set in the `app_state.evm.preinstalls` array of `genesis.json`. How you populate that array depends on how you generate genesis for your chain.
 
-### App-level configuration
+- [**Using `local_node.sh`**](/evm/next/documentation/getting-started/quick-start): `evmd init` does not populate preinstalls automatically. you will need to update `local_node.sh` to write the default preinstalls into `genesis.json` before the node starts. Each entry requires the contract name, address, and compiled bytecode:
 
-In your chain's application code, define which preinstalls to include in `NewEVMGenesisState`. The `evmd` reference chain includes all five defaults:
+  ```bash title="local_node.sh"
+  jq '.app_state["evm"]["preinstalls"]=[
+    {
+      "name": "Create2",
+      "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+      "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    },
+    { "name": "Multicall3", "address": "0xcA11bde05977b3631167028862bE2a173976CA11", "code": "0x6080..." },
+    { "name": "Permit2", "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3", "code": "0x6040..." },
+    { "name": "Safe singleton factory", "address": "0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7", "code": "0x7fff..." },
+    { "name": "EIP-2935 - Serve historical block hashes from state", "address": "0x0000F90827F1C53a10cb7A02335B175320002935", "code": "0x3373..." }
+  ]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+  ```
+
+  Bytecodes are defined in [`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go).
+
+- **Using programmatic genesis** (e.g., `evmd testnet`): Preinstalls are set in `NewEVMGenesisState()` in `evmd/genesis.go`. The reference chain already sets `evmGenState.Preinstalls = evmtypes.DefaultPreinstalls` there, so all five defaults are included automatically.
+
+- **Custom genesis generation**: Include the `preinstalls` array directly in your `genesis.json` under `app_state.evm`, with each entry specifying `name`, `address`, and hex-encoded `code`. Example:
+
+  ```json title="genesis.json"
+  {
+    "app_state": {
+      "evm": {
+        "preinstalls": [
+          { "name": "MyContract", "address": "0x1234567890123456789012345678901234567890", "code": "0x6001..." }
+        ]
+      }
+    }
+  }
+  ```
+
+## Add custom contracts
+
+1. To deploy a contract beyond the defaults, open `evmd/genesis.go` and update `NewEVMGenesisState`. The example below uses a minimal 10-byte contract (`0x600160005260206000f3`) that returns `1` on any call — replace the name, address, and code with your own:
 
 ```go title="evmd/genesis.go"
 func NewEVMGenesisState() *evmtypes.GenesisState {
-    evmGenState := evmtypes.DefaultGenesisState()
-    evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
-    evmGenState.Preinstalls = evmtypes.DefaultPreinstalls
-    return evmGenState
+	evmGenState := evmtypes.DefaultGenesisState()
+	evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+
+	customPreinstall := evmtypes.Preinstall{
+		Name:    "MyContract",
+		Address: "0x1234567890123456789012345678901234567890",
+		Code:    "0x600160005260206000f3",
+	}
+	evmGenState.Preinstalls = append(evmtypes.DefaultPreinstalls, customPreinstall)
+
+	return evmGenState
 }
 ```
 
-This function is called by your app's `DefaultGenesis()`, which is used when generating genesis state programmatically (e.g. `evmd testnet`).
-
-### Populating genesis.json
-
-<Warning>
-`evmd init` generates a genesis.json with an empty `preinstalls` array. The app-level preinstall configuration is **not** automatically written to the genesis file by the init command.
-</Warning>
-
-To enable preinstalls on a chain started from a genesis file (including `local_node.sh`), populate the `preinstalls` array in `genesis.json` before starting the node. Each entry requires the contract name, address, and compiled bytecode:
-
-```json title="genesis.json"
-{
-  "app_state": {
-    "evm": {
-      "preinstalls": [
-        {
-          "name": "Create2",
-          "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
-          "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
-        },
-        {
-          "name": "Multicall3",
-          "address": "0xcA11bde05977b3631167028862bE2a173976CA11",
-          "code": "0x..."
-        }
-      ]
-    }
-  }
-}
-```
-
-The full bytecode for each default preinstall is defined in [`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go).
-
-For local development with `local_node.sh`, add a `jq` command after `evmd init` (alongside the other genesis patches) to inject the preinstalls before the node starts:
+2. Add a `jq` patch to `local_node.sh` after the last genesis customization line (`.consensus.params.block.max_gas`), before the `# Change proposal periods` comment. Use `+=` to append without overwriting any previously set preinstalls:
 
 ```bash title="local_node.sh"
-jq '.app_state["evm"]["preinstalls"]=[
+jq '.app_state["evm"]["preinstalls"] += [
   {
-    "name": "Create2",
-    "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
-    "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    "name": "MyContract",
+    "address": "0x1234567890123456789012345678901234567890",
+    "code": "0x600160005260206000f3"
   }
 ]' "$GENESIS" > "$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 ```
 
-## Adding Contracts After Launch
+Requirements for a valid preinstall:
+- Valid Ethereum address (0x prefix, 40 hex characters)
+- Must not conflict with existing contracts or precompile addresses (0x1–0x9FF)
+- Non-empty, valid EVM bytecode (hex encoded)
 
-### Governance Proposal
+3. Rebuild the binary and start the chain:
+
+```bash
+make install && ./local_node.sh -y
+```
+
+The `-y` flag wipes any existing chain data and reinitializes from genesis, which is required for the preinstall to take effect.
+
+
+4. Once the chain is running, open a new terminal and confirm the contract is installed by running the following commands:
+
+```bash
+# Check contract code is present
+evmd query evm code 0x1234567890123456789012345678901234567890
+```
+
+```bash
+# Check account exists
+evmd query evm account 0x1234567890123456789012345678901234567890
+```
+
+Expected output for `code`:
+
+```bash
+code: YAFgAFJgIGAA8w==
+```
+
+The value is the contract bytecode base64-encoded. This decodes to `0x600160005260206000f3`, which is the bytecode set in `genesis.go` and `local_node.sh`. A non-empty value confirms the code was written to state.
+
+Expected output for `account`:
+
+```bash
+balance: "0"
+code_hash: 0xc1d5b4ce3e2a6227293fccce2904121c8647bbe16c1216340b851bf12d12560e
+nonce: "0"
+```
+
+- `code_hash`: a non-empty hash confirms the contract exists at this address
+- `balance: "0"`: preinstalls are deployed with no native token balance, which is expected
+- `nonce: "0"`: preinstalls are not deployed via a transaction, so the nonce starts at 0
+
+## Add contracts after launch
+
+The following methods are examples of ways to deploy predeployed contracts after the chain is running.
+
+### Deploy via governance proposal
 
 Use `MsgRegisterPreinstalls` to deploy contracts on a running chain via governance:
 
@@ -101,7 +157,7 @@ Use `MsgRegisterPreinstalls` to deploy contracts on a running chain via governan
       ]
     }
   ],
-  "deposit": "10000000stake",
+  "deposit": "10000000<native-denom>",
   "title": "Deploy Multicall3",
   "summary": "Deploy Multicall3 to enable batched contract calls"
 }
@@ -109,10 +165,10 @@ Use `MsgRegisterPreinstalls` to deploy contracts on a running chain via governan
 
 ```bash
 evmd tx gov submit-proposal proposal.json --from mykey --chain-id <chain-id> --gas auto
-evmd tx gov vote 1 yes --from mykey
+evmd tx gov vote 1 yes --from mykey --chain-id <chain-id>
 ```
 
-### Chain Upgrade Handler
+### Deploy via chain upgrade handler
 
 Include preinstalls in a coordinated chain upgrade:
 
@@ -130,37 +186,3 @@ func CreateUpgradeHandler(
     }
 }
 ```
-
-## Adding Custom Contracts
-
-To deploy a contract beyond the defaults, add it to `NewEVMGenesisState` in your app code:
-
-```go title="evmd/genesis.go"
-customPreinstall := evmtypes.Preinstall{
-    Name:    "MyContract",
-    Address: "0xYourChosenAddress",
-    Code:    "0xCompiledBytecode",
-}
-evmGenState.Preinstalls = append(evmtypes.DefaultPreinstalls, customPreinstall)
-```
-
-Then populate genesis.json before starting the node, following the same steps in [Populating genesis.json](#populating-genesisjson) above — add a `jq` entry for your custom contract alongside the defaults.
-
-Requirements for a valid preinstall:
-- Valid Ethereum address (0x prefix, 40 hex characters)
-- Must not conflict with existing contracts or precompile addresses (0x1–0x9FF)
-- Non-empty, valid EVM bytecode (hex encoded)
-
-## Verification
-
-After the chain starts with preinstalls in genesis.json, confirm the contracts are installed:
-
-```bash
-# Check contract code is present
-evmd query evm code 0x4e59b44847b379578588920ca78fbf26c0b4956c
-
-# Check account exists
-evmd query evm account 0x4e59b44847b379578588920ca78fbf26c0b4956c
-```
-
-Both commands should return non-empty results. If they don't, the preinstall was not included in genesis.json when the chain was initialized.
