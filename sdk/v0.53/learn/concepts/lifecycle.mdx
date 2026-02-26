@@ -1,0 +1,245 @@
+---
+title: Lifecycle of a Block and Transaction
+---
+
+Before building with the Cosmos SDK, it's important to connect the high-level architecture from [SDK Application Architecture](/sdk/v0.53/learn/intro/sdk-app-architecture) with how blocks and transactions actually execute in code.
+
+A Cosmos SDK application can be conceptually split into layers:
+
+- **CometBFT (consensus engine)** — orders and proposes blocks
+- **ABCI (Application-Blockchain Interface)** — the protocol CometBFT uses to talk to the application
+- **SDK application (BaseApp + modules)** — the deterministic state machine that executes transactions
+- **Protobuf schemas** — define transactions, messages, state, and query types
+
+This page maps the block and transaction lifecycle back to those layers.
+
+## ABCI overview
+
+**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. Modules plug into BaseApp and execute logic during these phases.
+
+```
+CometBFT
+  ↓
+ABCI: InitChain (once at genesis)
+
+For each submitted transaction (async, independent of blocks):
+  ↓
+ABCI: CheckTx → Mempool
+
+For every block:
+  ↓
+ABCI: FinalizeBlock
+  → PreBlock
+  → BeginBlock
+  → Execute transactions
+  → EndBlock
+  ↓
+ABCI: Commit
+```
+
+---
+
+## InitChain (genesis only)
+
+`InitChain` runs once when the chain starts for the first time, loading the **genesis file** — a JSON document that defines the chain's initial state (balances, validators, module parameters, and other bootstrapping data).
+
+During this phase:
+
+- A Cosmos SDK chain's BaseApp initializes stores and in-memory resources
+- Modules load state from the genesis file via `InitGenesis`
+- The initial validator set is established
+
+Modules define genesis logic in:
+
+```
+x/<module>/module.go
+```
+
+Specifically:
+
+```
+func (am AppModule) InitGenesis(...)
+func (am AppModule) ExportGenesis(...)
+```
+
+Genesis runs before the first block begins.
+
+---
+
+## CheckTx and the mempool
+
+Before a transaction can enter a block, it goes through `CheckTx`:
+
+```
+User
+  ↓
+Node
+  ↓
+ABCI: CheckTx
+  ↓
+Mempool
+```
+
+Transactions are sent as raw **protobuf-encoded bytes**.
+
+During `CheckTx`, BaseApp:
+
+- Decodes the transaction
+- Verifies signatures and sequences
+- Validates fees and gas
+- Performs basic message validation
+
+No state changes are committed during `CheckTx`. If validation fails, the transaction is rejected. If it passes, it enters the mempool.
+
+When a validator proposes a block, CometBFT selects transactions from the mempool, orders them, and reaches consensus. Once the block is finalized, CometBFT sends it to the application via `FinalizeBlock`.
+
+---
+
+## FinalizeBlock
+
+CometBFT calls `FinalizeBlock` once per block. This is the only ABCI call that drives block execution.
+
+Inside `FinalizeBlock`, BaseApp runs these phases in order:
+
+### PreBlock and BeginBlock
+
+Before transactions execute, BaseApp calls two module-level hooks:
+
+1. **PreBlock** — optional, runs before BeginBlock (e.g., upgrade plan checks)
+2. **BeginBlock** — start-of-block logic across all modules (inflation, rewards, bookkeeping)
+
+Modules implement these hooks in `x/<module>/module.go`.
+
+### Transaction execution
+
+After BeginBlock, BaseApp iterates over each transaction in the block and runs it through a fixed pipeline:
+
+#### Step 1: AnteHandler
+
+Configured in a Cosmos SDK chain's `app.go` file, the AnteHandler runs first for every transaction:
+
+- Signature verification
+- Sequence increment
+- Fee deduction
+- Gas metering
+
+```
+func AnteHandler(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error)
+```
+
+If the AnteHandler fails, the transaction aborts and its messages do not execute.
+
+#### Step 2: Message routing and execution
+
+Each message in the transaction is routed to its module handler. Messages are defined in:
+
+```
+proto/cosmos/<module>/v1beta1/tx.proto
+```
+
+BaseApp routes them to handlers in:
+
+```
+x/<module>/keeper/msg_server.go
+```
+
+For example:
+
+```
+type MsgServer interface {
+    Send(context.Context, *MsgSend) (*MsgSendResponse, error)
+}
+```
+
+Messages execute sequentially in the order they appear in the transaction.
+
+#### Step 3: Atomicity
+
+Transactions are atomic — all messages succeed or none are committed:
+
+```
+Tx
+  ├─ Msg 1
+  ├─ Msg 2
+  └─ Msg 3
+```
+
+If any message fails:
+
+- All state changes from that transaction are discarded
+- The transaction returns an error
+- The next transaction in the block still executes
+
+BaseApp uses cached stores internally to implement this.
+
+### EndBlock
+
+After all transactions execute, BaseApp calls each module's EndBlock hook for end-of-block logic: validator set updates, governance tallying, and similar work.
+
+---
+
+## Commit
+
+After `FinalizeBlock` returns, CometBFT calls `Commit`.
+
+BaseApp:
+
+- Persists KVStore changes
+- Computes a new **app hash**
+- Returns the app hash to CometBFT
+
+All validators must compute the same app hash. If they do not, consensus halts.
+
+---
+
+## Deterministic execution
+
+Across all validators:
+
+- Blocks contain the same ordered transactions
+- Transactions use canonical protobuf binary encoding
+- State transitions are deterministic
+
+Determinism ensures that every validator computes the same app hash during `Commit`, which guarantees consensus safety.
+
+---
+
+## Complete lifecycle overview
+
+```
+CometBFT
+  ↓ ABCI InitChain
+BaseApp → x/<module>/InitGenesis
+
+For each submitted transaction (async):
+  ↓ ABCI CheckTx
+    → decode, verify, validate
+    → insert into mempool
+
+For every block:
+  ↓ ABCI FinalizeBlock
+    → x/<module>/PreBlock
+    → x/<module>/BeginBlock
+    For each tx (from mempool):
+      → AnteHandler
+      → Message routing
+      → Message execution (atomic)
+    → x/<module>/EndBlock
+  ↓ ABCI Commit
+BaseApp commits KVStores and returns app hash
+```
+
+---
+
+## Summary
+
+CometBFT drives block processing through ABCI. BaseApp implements ABCI and orchestrates execution.
+
+- Transactions are validated in `CheckTx` before entering the mempool
+- Each block is executed inside a single `FinalizeBlock` call
+- Within `FinalizeBlock`: PreBlock → BeginBlock → transactions → EndBlock
+- Each transaction runs through AnteHandler → message routing → message execution
+- Transactions are atomic: all messages commit or none do
+- `Commit` persists state and returns the app hash
+
+Protobuf ensures canonical encoding so all validators interpret transactions identically.
