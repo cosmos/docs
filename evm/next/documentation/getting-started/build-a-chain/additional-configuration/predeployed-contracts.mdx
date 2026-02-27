@@ -1,368 +1,188 @@
 ---
 title: "Predeployed Contracts"
-description: "Deploying and managing predeployed contracts"
+description: "Deploy standard EVM contracts at fixed addresses on your Cosmos EVM chain."
 ---
 
-<Note>
-**New to predeployed contracts?** Start here:
-- [Predeployed Contracts Concept](/evm/next/documentation/concepts/predeployed-contracts) - Understanding predeployed contracts and how they differ from precompiles
-- [Predeployed Contracts Overview](/evm/next/documentation/smart-contracts/predeployed-contracts/overview) - Quick reference of available contracts
-- [Building Your Chain Guide](/evm/next/documentation/getting-started/build-a-chain/overview#configuring-predeployed-contracts) - Quick start configuration examples
+Predeployed contracts (also called preinstalls) are EVM contracts that exist in chain state at a specific address from genesis. Because the address is fixed and known in advance, the same contract can exist at the same address across every chain that includes it, making them useful for infrastructure that needs to be reliably reachable everywhere.
 
-**Individual Contract Documentation**:
-- [Create2 Factory](/evm/next/documentation/smart-contracts/predeployed-contracts/create2) - Deterministic deployment patterns
-- [Multicall3](/evm/next/documentation/smart-contracts/predeployed-contracts/multicall3) - Batch operations examples
-- [Permit2](/evm/next/documentation/smart-contracts/predeployed-contracts/permit2) - Signature-based approvals
-- [Safe Factory](/evm/next/documentation/smart-contracts/predeployed-contracts/safe-factory) - Multisig wallet deployment
-</Note>
+## Default contracts
 
-## Getting Started
+Cosmos EVM includes five default preinstalls ([`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go)):
 
-There are several methods to deploy preinstalled contracts on a Cosmos EVM chain:
+| Contract | Address | Purpose | Docs |
+|----------|---------|---------|------|
+| **Create2** | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | Deterministic contract deployment using CREATE2 | [EIP-1014](https://eips.ethereum.org/EIPS/eip-1014) |
+| **Multicall3** | `0xcA11bde05977b3631167028862bE2a173976CA11` | Batch multiple contract calls in one transaction | [Repo](https://github.com/mds1/multicall) · [Site](https://www.multicall3.com/) |
+| **Permit2** | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Signature-based token approvals for any ERC20 | [Repo](https://github.com/Uniswap/permit2) · [Docs](https://docs.uniswap.org/contracts/permit2/overview) |
+| **Safe Singleton Factory** | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | Deploy Safe multisig wallets at deterministic addresses | [Repo](https://github.com/safe-global/safe-singleton-factory) · [Docs](https://docs.safe.global/) |
+| **EIP-2935** | `0x0000F90827F1C53a10cb7A02335B175320002935` | Historical block hash storage | [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935) |
 
-### 1. Genesis Configuration
 
-The most straightforward method for new chains or testnets. Contracts are deployed when the chain is first initialized.
+## Enabling at genesis
 
-<Tabs>
-<Tab title="Default Configuration">
-If using the reference `evmd` application, your chain automatically includes default preinstalls, however they will not be active by default.
+Preinstalls are set in the `app_state.evm.preinstalls` array of `genesis.json`. How you populate that array depends on how you generate genesis for your chain.
 
-```go expandable
-// Source: evmd/genesis.go:28-34
-func NewEVMGenesisState() *evmtypes.GenesisState {
-    evmGenState := evmtypes.DefaultGenesisState()
-    evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
-    evmGenState.Preinstalls = evmtypes.DefaultPreinstalls  // Defined in x/vm/types/preinstall.go
-    return evmGenState
-}
-```
-</Tab>
+- [**Using `local_node.sh`**](/evm/next/documentation/getting-started/quick-start): `evmd init` does not populate preinstalls automatically. you will need to update `local_node.sh` to write the default preinstalls into `genesis.json` before the node starts. Each entry requires the contract name, address, and compiled bytecode:
 
-<Tab title="Custom Genesis Configuration">
-To customize which contracts are deployed:
+  ```bash title="local_node.sh"
+  jq '.app_state["evm"]["preinstalls"]=[
+    {
+      "name": "Create2",
+      "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+      "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    },
+    { "name": "Multicall3", "address": "0xcA11bde05977b3631167028862bE2a173976CA11", "code": "0x6080..." },
+    { "name": "Permit2", "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3", "code": "0x6040..." },
+    { "name": "Safe singleton factory", "address": "0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7", "code": "0x7fff..." },
+    { "name": "EIP-2935 - Serve historical block hashes from state", "address": "0x0000F90827F1C53a10cb7A02335B175320002935", "code": "0x3373..." }
+  ]' "$GENESIS" >"$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
+  ```
 
-```json expandable
-{
-  "app_state": {
-    "evm": {
-      "preinstalls": [
-        {
-          "name": "Create2",
-          "address": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
-          "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
-        },
-        {
-          "name": "Multicall3",
-          "address": "0xcA11bde05977b3631167028862bE2a173976CA11",
-          "code": "0x6080604052..." // Full bytecode
-        }
-      ]
+  Bytecodes are defined in [`x/vm/types/preinstall.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go).
+
+- **Using programmatic genesis** (e.g., `evmd testnet`): Preinstalls are set in `NewEVMGenesisState()` in `evmd/genesis.go`. The reference chain already sets `evmGenState.Preinstalls = evmtypes.DefaultPreinstalls` there, so all five defaults are included automatically.
+
+- **Custom genesis generation**: Include the `preinstalls` array directly in your `genesis.json` under `app_state.evm`, with each entry specifying `name`, `address`, and hex-encoded `code`. Example:
+
+  ```json title="genesis.json"
+  {
+    "app_state": {
+      "evm": {
+        "preinstalls": [
+          { "name": "MyContract", "address": "0x1234567890123456789012345678901234567890", "code": "0x6001..." }
+        ]
+      }
     }
   }
+  ```
+
+## Add custom contracts
+
+1. To deploy a contract beyond the defaults, open `evmd/genesis.go` and update `NewEVMGenesisState`. The example below uses a minimal 10-byte contract (`0x600160005260206000f3`) that returns `1` on any call — replace the name, address, and code with your own:
+
+```go title="evmd/genesis.go"
+func NewEVMGenesisState() *evmtypes.GenesisState {
+	evmGenState := evmtypes.DefaultGenesisState()
+	evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+
+	customPreinstall := evmtypes.Preinstall{
+		Name:    "MyContract",
+		Address: "0x1234567890123456789012345678901234567890",
+		Code:    "0x600160005260206000f3",
+	}
+	evmGenState.Preinstalls = append(evmtypes.DefaultPreinstalls, customPreinstall)
+
+	return evmGenState
 }
 ```
-</Tab>
-</Tabs>
 
-#### Local Development
+2. Add a `jq` patch to `local_node.sh` after the last genesis customization line (`.consensus.params.block.max_gas`), before the `# Change proposal periods` comment. Use `+=` to append without overwriting any previously set preinstalls:
 
-The `local_node.sh` script automatically configures default preinstalls:
-
-```bash expandable
-./local_node.sh
-# Automatically deploys all default preinstalls
+```bash title="local_node.sh"
+jq '.app_state["evm"]["preinstalls"] += [
+  {
+    "name": "MyContract",
+    "address": "0x1234567890123456789012345678901234567890",
+    "code": "0x600160005260206000f3"
+  }
+]' "$GENESIS" > "$TMP_GENESIS" && mv "$TMP_GENESIS" "$GENESIS"
 ```
 
-### 2. Governance Proposal
+Requirements for a valid preinstall:
+- Valid Ethereum address (0x prefix, 40 hex characters)
+- Must not conflict with existing contracts or precompile addresses (0x1–0x9FF)
+- Non-empty, valid EVM bytecode (hex encoded)
 
-For chains already in production, use the `MsgRegisterPreinstalls` governance proposal:
+3. Rebuild the binary and start the chain:
 
-#### Proposal Structure
+```bash
+make install && ./local_node.sh -y
+```
 
-<Note>
-The `authority` field must be set to the governance module account address, which is typically derived from the gov module name. This is usually something like `cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn` for the standard gov module.
-</Note>
+The `-y` flag wipes any existing chain data and reinitializes from genesis, which is required for the preinstall to take effect.
 
-```json expandable
+
+4. Once the chain is running, open a new terminal and confirm the contract is installed by running the following commands:
+
+```bash
+# Check contract code is present
+evmd query evm code 0x1234567890123456789012345678901234567890
+```
+
+```bash
+# Check account exists
+evmd query evm account 0x1234567890123456789012345678901234567890
+```
+
+Expected output for `code`:
+
+```bash
+code: YAFgAFJgIGAA8w==
+```
+
+The value is the contract bytecode base64-encoded. This decodes to `0x600160005260206000f3`, which is the bytecode set in `genesis.go` and `local_node.sh`. A non-empty value confirms the code was written to state.
+
+Expected output for `account`:
+
+```bash
+balance: "0"
+code_hash: 0xc1d5b4ce3e2a6227293fccce2904121c8647bbe16c1216340b851bf12d12560e
+nonce: "0"
+```
+
+- `code_hash`: a non-empty hash confirms the contract exists at this address
+- `balance: "0"`: preinstalls are deployed with no native token balance, which is expected
+- `nonce: "0"`: preinstalls are not deployed via a transaction, so the nonce starts at 0
+
+## Add contracts after launch
+
+The following methods are examples of ways to deploy predeployed contracts after the chain is running.
+
+### Deploy via governance proposal
+
+Use `MsgRegisterPreinstalls` to deploy contracts on a running chain via governance:
+
+```json title="proposal.json"
 {
   "messages": [
     {
       "@type": "/cosmos.evm.vm.v1.MsgRegisterPreinstalls",
-      "authority": "[gov module account address]",
+      "authority": "<gov module account address>",
       "preinstalls": [
         {
           "name": "Multicall3",
           "address": "0xcA11bde05977b3631167028862bE2a173976CA11",
-          "code": "0x6080604052..."
+          "code": "0x..."
         }
       ]
     }
   ],
-  "metadata": "ipfs://CID",
-  "deposit": "10000000stake",
-  "title": "Deploy Multicall3 Contract",
-  "summary": "Deploy the Multicall3 contract to enable batched calls"
+  "deposit": "10000000<native-denom>",
+  "title": "Deploy Multicall3",
+  "summary": "Deploy Multicall3 to enable batched contract calls"
 }
 ```
 
-#### Submission Process
-
-```bash expandable
-# Submit proposal
-evmd tx gov submit-proposal proposal.json \
-  --from mykey \
-  --chain-id cosmosevm_9001-1 \
-  --gas auto
-
-# Vote on proposal
-evmd tx gov vote 1 yes --from mykey
+```bash
+evmd tx gov submit-proposal proposal.json --from mykey --chain-id <chain-id> --gas auto
+evmd tx gov vote 1 yes --from mykey --chain-id <chain-id>
 ```
 
-### 3. Chain Upgrade Handler
+### Deploy via chain upgrade handler
 
-Include predeployed contracts as part of a coordinated chain upgrade:
+Include preinstalls in a coordinated chain upgrade:
 
-```go expandable
+```go title="app/upgrades/v2/upgrades.go"
 func CreateUpgradeHandler(
     mm *module.Manager,
     configurator module.Configurator,
     evmKeeper *evmkeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
     return func(ctx sdk.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
-        // Add preinstalls during upgrade
         if err := evmKeeper.AddPreinstalls(ctx, evmtypes.DefaultPreinstalls); err != nil {
             return nil, err
         }
-
         return mm.RunMigrations(ctx, configurator, fromVM)
     }
 }
 ```
-
-## Implementation Details
-
-### Validation Process
-
-All preinstall deployments undergo strict validation:
-
-1. **Address Validation**
-   - Must be valid Ethereum address format (40 hex characters)
-   - Cannot conflict with existing contracts
-   - Should not overlap with precompile reserved addresses (typically 0x1-0x9FF)
-
-2. **Code Validation**
-   - Must be valid EVM bytecode (hex encoded)
-   - Cannot have empty code hash
-   - Must pass bytecode verification
-
-3. **Conflict Prevention**
-   - Checks for existing contracts at target address
-   - Validates against account keeper for existing accounts
-   - Ensures no code hash conflicts with different bytecode
-
-### Storage and State
-
-Predeployed contracts are stored in the chain state like regular contracts:
-
-```go expandable
-// Actual deployment process from x/vm/keeper/preinstalls.go
-func (k *Keeper) AddPreinstalls(ctx sdk.Context, preinstalls []types.Preinstall) error {
-    for _, preinstall := range preinstalls {
-        address := common.HexToAddress(preinstall.Address)
-        accAddress := sdk.AccAddress(address.Bytes())
-
-        if len(preinstall.Code) == 0 {
-            return errorsmod.Wrapf(types.ErrInvalidPreinstall,
-                "preinstall %s has no code", preinstall.Address)
-        }
-
-        codeHash := crypto.Keccak256Hash(common.FromHex(preinstall.Code)).Bytes()
-        if types.IsEmptyCodeHash(codeHash) {
-            return errorsmod.Wrapf(types.ErrInvalidPreinstall,
-                "preinstall %s has empty code hash", preinstall.Address)
-        }
-
-        // Check for existing code hash conflicts
-        existingCodeHash := k.GetCodeHash(ctx, address)
-        if !types.IsEmptyCodeHash(existingCodeHash.Bytes()) &&
-           !bytes.Equal(existingCodeHash.Bytes(), codeHash) {
-            return errorsmod.Wrapf(types.ErrInvalidPreinstall,
-                "preinstall %s already has a different code hash", preinstall.Address)
-        }
-
-        // Check that the account is not already set
-        if acc := k.accountKeeper.GetAccount(ctx, accAddress); acc != nil {
-            return errorsmod.Wrapf(types.ErrInvalidPreinstall,
-                "preinstall %s already has an account in account keeper", preinstall.Address)
-        }
-
-        // Create account and store code
-        account := k.accountKeeper.NewAccountWithAddress(ctx, accAddress)
-        k.accountKeeper.SetAccount(ctx, account)
-        k.SetCodeHash(ctx, address.Bytes(), codeHash)
-        k.SetCode(ctx, codeHash, common.FromHex(preinstall.Code))
-    }
-    return nil
-}
-```
-
-## Verification and Testing
-
-### Verify Deployment
-
-After deployment, verify contracts are properly installed:
-
-```bash expandable
-# Query contract code via CLI
-evmd query evm code 0x4e59b44847b379578588920ca78fbf26c0b4956c
-
-# Check account exists
-evmd query evm account 0x4e59b44847b379578588920ca78fbf26c0b4956c
-```
-
-```javascript expandable
-// Verify via Web3
-const code = await provider.getCode("0x4e59b44847b379578588920ca78fbf26c0b4956c");
-console.log("Deployed:", code !== "0x");
-```
-
-### Testing Strategy
-
-1. **Local Testing**: Deploy on local node first
-2. **Testnet Validation**: Test governance proposal process
-3. **Integration Testing**: Verify interactions with other contracts
-4. **Gas Analysis**: Monitor gas consumption patterns
-5. **Security Audit**: Review bytecode before mainnet deployment
-
-## Best Practices
-
-### Security Considerations
-
-- **Bytecode Verification**: Always verify that bytecode matches official releases
-- **Address Selection**: Ensure addresses don't conflict with future plans
-- **Audit Requirements**: Even well-known contracts should be reviewed
-- **Immutability**: Remember that predeployed contracts cannot be upgraded
-
-### Deployment Recommendations
-
-1. **Start with Defaults**: Use `evmtypes.DefaultPreinstalls` unless you have specific requirements
-2. **Test Thoroughly**: Validate on testnet before mainnet deployment
-3. **Document Changes**: Clearly communicate any non-standard deployments to developers
-4. **Monitor Usage**: Track contract interactions to understand adoption
-
-### Common Pitfalls to Avoid
-
-- Don't deploy to addresses that could conflict with precompiles (typically 0x1-0x9FF)
-- Don't assume contracts are deployed - always check first
-- Don't modify standard contract addresses without strong justification
-- Don't deploy untested or unaudited bytecode
-
-## Known Issues
-
-<Warning>
-**Critical - Safe Factory Bytecode Error**
-
-The Safe Singleton Factory bytecode in `DefaultPreinstalls` ([`x/vm/types/preinstall.go:30-32`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go#L30-L32)) is **identical to the Create2 factory bytecode**, which is incorrect and will not function for deploying Safe wallets.
-
-**Verification**:
-```bash expandable
-# Create2 bytecode
-0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3
-
-# Safe Factory bytecode (INCORRECT - same as Create2)
-0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3
-```
-
-**Before deploying to production**:
-1. Get the correct Safe Singleton Factory bytecode from the [official repository](https://github.com/safe-global/safe-singleton-factory)
-2. Update your genesis `preinstalls` configuration with the correct bytecode
-3. Test thoroughly on a testnet
-4. See the [Safe Factory documentation](/evm/next/documentation/smart-contracts/predeployed-contracts/safe-factory) for more details
-
-**Temporary workaround**: If you need Safe functionality immediately, manually update the bytecode in your genesis.json or use a governance proposal to deploy the correct contract.
-</Warning>
-
-## Adding Custom Preinstalls
-
-To add custom contracts beyond the defaults:
-
-```go expandable
-// Define custom preinstall
-customPreinstall := types.Preinstall{
-    Name:    "MyCustomContract",
-    Address: "0xYourChosenAddress",
-    Code:    "0xCompiledBytecode",
-}
-
-// Validate before deployment
-if err := customPreinstall.Validate(); err != nil {
-    return err
-}
-
-// Add via appropriate method (genesis, governance, or upgrade)
-preinstalls := append(evmtypes.DefaultPreinstalls, customPreinstall)
-```
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Cause | Solution |
-|-|-|-|
-| "preinstall already has an account in account keeper" | Address collision | Choose different address |
-| "preinstall has empty code hash" | Invalid or empty bytecode | Verify bytecode hex string is valid |
-| "preinstall address is not a valid hex address" | Malformed address | Ensure 0x prefix and 40 hex chars |
-| "invalid authority" | Wrong governance address | Use correct gov module account address |
-| Contract not found after deployment | Wrong network | Verify chain ID and RPC endpoint |
-
-### Debugging Steps
-
-1. Check chain genesis configuration
-2. Verify proposal passed and executed
-3. Query contract code directly
-4. Test with simple contract interaction
-5. Review chain logs for errors
-
-## Quick Reference
-
-### Default Preinstalls
-
-| Contract | Address | Bytecode Field | Status |
-|-|||--|
-| Create2 | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | `preinstall.Code` | ✓ Verified |
-| Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` | `preinstall.Code` | ✓ Verified |
-| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | `preinstall.Code` | ✓ Verified |
-| Safe Factory | `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7` | `preinstall.Code` | ⚠️ Bytecode Issue |
-| EIP-2935 | `0x0b` | `params.HistoryStorageCode` | ✓ System Contract |
-
-**Source**: [`x/vm/types/preinstall.go:13-39`](https://github.com/cosmos/evm/blob/main/x/vm/types/preinstall.go#L13-L39)
-
-### Genesis Configuration Paths
-
-```json expandable
-{
-  "app_state": {
-    "vm": {
-      "preinstalls": [...],  // Configure predeployed contracts
-      "params": {
-        "active_static_precompiles": [...]  // Configure precompiles (different!)
-      }
-    }
-  }
-}
-```
-
-## Further Resources
-
-### Official Specifications
-- [EIP-1014: CREATE2 Specification](https://eips.ethereum.org/EIPS/eip-1014) - Understanding deterministic deployment
-- [EIP-2935: Historical Block Hashes](https://eips.ethereum.org/EIPS/eip-2935) - Block hash storage specification
-
-### Contract Documentation
-- [Multicall3 Documentation](https://github.com/mds1/multicall) - Official Multicall3 repository
-- [Permit2 Introduction](https://blog.uniswap.org/permit2-and-universal-router) - Uniswap's Permit2 design
-- [Safe Contracts](https://github.com/safe-global/safe-contracts) - Safe multisig implementation
-
-### Cosmos EVM Resources
-- [VM Module Reference](/evm/next/documentation/cosmos-sdk/modules/vm) - Complete VM module configuration
