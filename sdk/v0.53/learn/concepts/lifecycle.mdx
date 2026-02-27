@@ -69,7 +69,7 @@ Transactions are sent as raw **protobuf-encoded bytes**. {/* cosmos/cosmos-sdk b
 
 {/* todo: link to encoding section above */}
 
-During `CheckTx`, BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. {/* cosmos/cosmos-sdk baseapp/abci.go:367 — CheckTx calls RunTx, which orchestrates decode and ante handler execution */}
+During `CheckTx`, BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. {/* cosmos/cosmos-sdk baseapp/abci.go:367 — CheckTx calls RunTx, which orchestrates decode and ante handler execution */} `MsgServer` methods are not executed during `CheckTx`; only the AnteHandler and basic structural checks run. {/* cosmos/cosmos-sdk baseapp/baseapp.go:1022 — runMsgs breaks early when mode != execModeFinalize && mode != execModeSimulate */}
 
 No state changes are committed during `CheckTx`. {/* cosmos/cosmos-sdk baseapp/baseapp.go:990 — msCache.Write() at line 994 only executes when mode == execModeFinalize, not in check mode */} If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
 
@@ -81,7 +81,7 @@ CometBFT calls `FinalizeBlock` once per block. {/* cosmos/cosmos-sdk baseapp/abc
 
 ### PreBlock
 
-PreBlock runs before BeginBlock and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade {/* cosmos/cosmos-sdk x/upgrade/module.go:162 */} or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside BeginBlock. Modules implement this via the `PreBlock` function in `x/<module>/module.go`. {/* cosmos/cosmos-sdk x/upgrade/module.go:162 — PreBlock implementation in upgrade module */}
+PreBlock runs before BeginBlock and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade {/* cosmos/cosmos-sdk x/upgrade/module.go:162 */} or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside BeginBlock. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`. {/* cosmos/cosmos-sdk x/upgrade/module.go:162 — PreBlock implementation in upgrade module */}
 
 ### BeginBlock
 
@@ -99,7 +99,7 @@ If the AnteHandler fails, the transaction aborts and its messages do not execute
 
 #### Step 2: Message routing and execution
 
-Each message in a transaction is routed via BaseApp's `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in `proto/cosmos/<module>/v1beta1/tx.proto`. BaseApp routes these messages to the module's `MsgServer` implementation (commonly located at `x/<module>/keeper/msg_server.go`). {/* cosmos/cosmos-sdk x/bank/keeper/msg_server.go:29 — MsgSend handler as representative example */}
+Each message in a transaction is routed via BaseApp's `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto` (often under `proto/cosmos/<module>/...`). BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation (commonly located at `x/<module>/keeper/msg_server.go`). {/* cosmos/cosmos-sdk x/bank/keeper/msg_server.go:29 — MsgSend handler as representative example */}
 
 The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys.
 
