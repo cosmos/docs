@@ -3,78 +3,342 @@ title: Telemetry
 ---
 
 <Note>
-**Synopsis**
 Gather relevant insights about your application and modules with custom metrics and telemetry.
 </Note>
 
-The Cosmos SDK enables operators and developers to gain insight into the performance and behavior of
-their application through the use of the `telemetry` package. To enable telemetry, set `telemetry.enabled = true` in the app.toml config file.
+## Overview
 
-The Cosmos SDK currently supports enabling in-memory and prometheus as telemetry sinks. In-memory sink is always attached (when the telemetry is enabled) with 10 second interval and 1 minute retention. This means that metrics will be aggregated over 10 seconds, and metrics will be kept alive for 1 minute.
+The `telemetry` package provides observability tooling for Cosmos SDK applications using **OpenTelemetry**. It offers a unified initialization point for traces, metrics, and logs via the OpenTelemetry declarative configuration API.
 
-To query active metrics (see retention note above) you have to enable API server (`api.enabled = true` in the app.toml). Single API endpoint is exposed: `http://localhost:1317/metrics?format={text|prometheus}`, the default being `text`.
+This package:
+- Initializes OpenTelemetry SDK using YAML configuration files
+- Provides backward compatibility with Cosmos SDK's legacy `go-metrics` wrapper API
+- Includes built-in instrumentation for host, runtime, and disk I/O metrics
 
-## Emitting metrics
+## Quick Start
 
-If telemetry is enabled via configuration, a single global metrics collector is registered via the
-[go-metrics](https://github.com/hashicorp/go-metrics) library. This allows emitting and collecting
-metrics through simple [API](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0-rc.2/telemetry/wrapper.go). Example:
+### 1. Start a Local Telemetry Backend
+
+```bash
+docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm
+```
+
+### 2. Create Configuration File
+
+Create an `otel.yaml` file:
+
+```yaml
+file_format: "1.0-rc.3"
+resource:
+  attributes:
+    - name: service.name
+      value: my-cosmos-app
+
+tracer_provider:
+  processors:
+    - batch:
+        exporter:
+          otlp_grpc:
+            endpoint: http://localhost:4317
+
+meter_provider:
+  readers:
+    - pull:
+        exporter:
+          prometheus/development:
+            host: 0.0.0.0
+            port: 9464
+
+logger_provider:
+  processors:
+    - batch:
+        exporter:
+          otlp_grpc:
+            endpoint: http://localhost:4317
+
+cosmos_extra:
+  instruments:
+    host: {}
+    runtime: {}
+    diskio: {}
+  propagators:
+    - tracecontext
+```
+
+### 3. Initialize Telemetry
+
+**Option A: Environment Variable (Recommended)**
+
+Set `OTEL_EXPERIMENTAL_CONFIG_FILE` to your config path. This initializes the SDK before any meters/tracers are created, avoiding atomic load overhead.
+
+```bash
+export OTEL_EXPERIMENTAL_CONFIG_FILE=/path/to/otel.yaml
+```
+
+**Option B: Node Config Directory**
+
+An empty `otel.yaml` will now be generated in `~/.<node_home>/config/`. Place the desired configuration in `otel.yaml`.
+
+**Option C: Programmatic Initialization**
+
+The SDK will first attempt to initialize via env var, then secondly using the config in the node's home directory.
+You may optionally initialize telemetry yourself using the `telemetry.InitializeOpenTelemetry` function:
 
 ```go
-func EndBlocker(ctx sdk.Context, k keeper.Keeper) {
-    defer telemetry.ModuleMeasureSince(types.ModuleName, time.Now(), telemetry.MetricKeyEndBlocker)
+err := telemetry.InitializeOpenTelemetry("/path/to/otel.yaml")
+if err != nil {
+    log.Fatal(err)
+}
+defer telemetry.Shutdown(context.Background())
+```
 
-  // ...
+## Configuration
+
+### OpenTelemetry Configuration
+
+The package uses the [OpenTelemetry declarative configuration spec](https://opentelemetry.io/docs/languages/sdk-configuration/declarative-configuration/). Key sections:
+
+| Section           | Purpose                         |
+|-------------------|---------------------------------|
+| `resource`        | Service identity and attributes |
+| `tracer_provider` | Trace export configuration      |
+| `meter_provider`  | Metrics export configuration    |
+| `logger_provider` | Log export configuration        |
+
+For examples containing available options, see the [OpenTelemetry configuration examples](https://github.com/open-telemetry/opentelemetry-configuration/tree/main/examples).
+
+### Cosmos Extensions (`cosmos_extra`)
+
+The `cosmos_extra` section provides additional features not yet supported by the standard otelconf:
+
+```yaml
+cosmos_extra:
+  # Optional file-based exporters
+  trace_file: "/path/to/traces.json"
+  metrics_file: "/path/to/metrics.json"
+  metrics_file_interval: "10s"
+  logs_file: "/path/to/logs.json"
+
+  # Custom instrumentation additions
+  instruments:
+    host: {}
+    runtime: {}
+    diskio:
+      disable_virtual_device_filter: true # removes the automatic filtering of virtual disks. Operating systems such as linux typically add virtual disks, which can add duplication to disk io data. These disks usually take the form of loopback, RAID, partitions, etc.
+
+  # Trace context propagation
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+    - jaeger
+```
+
+## Custom Instruments
+
+### Host Instrumentation (`host`)
+
+Reports host-level metrics using `go.opentelemetry.io/contrib/instrumentation/host`:
+- CPU usage
+- Memory usage
+- Network I/O
+
+```yaml
+cosmos_extra:
+  instruments:
+    host: {}
+```
+
+### Runtime Instrumentation (`runtime`)
+
+Reports Go runtime metrics using `go.opentelemetry.io/contrib/instrumentation/runtime`:
+- Goroutine count
+- GC statistics
+- Memory allocations
+
+```yaml
+cosmos_extra:
+  instruments:
+    runtime: {}
+```
+
+### Disk I/O Instrumentation (`diskio`)
+
+Reports disk I/O metrics using gopsutil:
+
+| Metric                       | Description                   |
+|------------------------------|-------------------------------|
+| `system.disk.io`             | Bytes read/written            |
+| `system.disk.operations`     | Read/write operation counts   |
+| `system.disk.io_time`        | Time spent on I/O operations  |
+| `system.disk.operation_time` | Time per read/write operation |
+| `system.disk.merged`         | Merged read/write operations  |
+
+```yaml
+cosmos_extra:
+  instruments:
+    diskio: {}
+    # Or with options:
+    diskio:
+      disable_virtual_device_filter: true  # Include loopback, RAID, partitions on Linux
+```
+
+By default, virtual devices (loopback, RAID, partitions) are filtered out on Linux to avoid double-counting I/O.
+
+## Propagators
+
+Configure trace context propagation for distributed tracing:
+
+| Propagator     | Description                 |
+|----------------|-----------------------------|
+| `tracecontext` | W3C Trace Context (default) |
+| `baggage`      | W3C Baggage                 |
+| `b3`           | Zipkin B3 single header     |
+| `b3multi`      | Zipkin B3 multi-header      |
+| `jaeger`       | Jaeger propagation          |
+
+## Developer Usage
+
+### Using Meters and Tracers
+
+After initialization, use standard OpenTelemetry APIs:
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/metric"
+)
+
+var (
+    tracer = otel.Tracer("my-package")
+    meter  = otel.Meter("my-package")
+
+    myCounter metric.Int64Counter
+)
+
+func init() {
+   var err error
+   myCounter, err = meter.Int64Counter("my.counter")
+   if err != nil {
+	   panic(err)
+   }
+}
+
+func MyFunction(ctx context.Context) error {
+    ctx, span := tracer.Start(ctx, "MyFunction")
+    defer span.End()
+
+    myCounter.Add(ctx, 1)
+
+    // ... your code
+    return nil
 }
 ```
 
-Developers may use the `telemetry` package directly, which provides wrappers around metric APIs
-that include adding useful labels, or they must use the `go-metrics` library directly. It is preferable
-to add as much context and adequate dimensionality to metrics as possible, so the `telemetry` package
-is advised. Regardless of the package or method used, the Cosmos SDK supports the following metrics
-types:
+### Shutdown
 
-* gauges
-* summaries
-* counters
+Always call `Shutdown()` when the application exits:
 
-## Labels
+```go
+func (a *App) Close() {
+    telemetry.Shutdown(ctx)
+}
 
-Certain components of modules will have their name automatically added as a label (e.g. `BeginBlock`).
-Operators may also supply the application with a global set of labels that will be applied to all
-metrics emitted using the `telemetry` package (e.g. chain-id). Global labels are supplied as a list
-of \[name, value] tuples.
-
-Example:
-
-```toml
-global-labels = [
-  ["chain_id", "chain-OfXo4V"],
-]
 ```
 
-## Cardinality
+## Legacy API (Deprecated)
 
-Cardinality is key, specifically label and key cardinality. Cardinality is how many unique values of
-something there are. So there is naturally a tradeoff between granularity and how much stress is put
-on the telemetry sink in terms of indexing, scrape, and query performance.
+The package provides backward-compatible wrappers for `github.com/hashicorp/go-metrics`. These are **deprecated** and users should migrate to OpenTelemetry APIs directly.
 
-Developers should take care to support metrics with enough dimensionality and granularity to be
-useful, but not increase the cardinality beyond the sink's limits. A general rule of thumb is to not
-exceed a cardinality of 10.
+### OpenTelemetry Bridge
 
-Consider the following examples with enough granularity and adequate cardinality:
+Cosmos SDK v0.54.0+ provides a bridge to send existing go-metrics to the meter provider defined in your. OpenTelemetry config.
+To bridge your metrics, set the `metrics-sink` in `app.toml` to "otel".
 
-* begin/end blocker time
-* tx gas used
-* block gas used
-* amount of tokens minted
-* amount of accounts created
+```go
 
-The following examples expose too much cardinality and may not even prove to be useful:
+###############################################################################
+###                         Telemetry Configuration                         ###
+###############################################################################
+[telemetry]
 
-* transfers between accounts with amount
-* voting/deposit amount from unique addresses
+# other fields...
+
+metrics-sink = "otel"
+```
+
+### Legacy Configuration
+
+```go
+cfg := telemetry.Config{
+    ServiceName:            "my-service",
+    Enabled:                true,
+    EnableHostname:         true,
+    EnableHostnameLabel:    true,
+    EnableServiceLabel:     true,
+    PrometheusRetentionTime: 60,  // seconds
+    GlobalLabels:           [][]string{{"chain_id", "cosmoshub-1"}},
+    MetricsSink:            "otel",  // "mem", "statsd", "dogstatsd", "otel"
+    StatsdAddr:             "localhost:8125",
+}
+
+m, err := telemetry.New(cfg)
+```
+
+### Legacy Metrics Functions
+
+All deprecated, prefer OpenTelemetry:
+
+```go
+// Counters
+telemetry.IncrCounter(1.0, "tx", "count")
+telemetry.IncrCounterWithLabels([]string{"tx", "count"}, 1.0, labels)
+
+// Gauges
+telemetry.SetGauge(42.0, "mempool", "size")
+telemetry.SetGaugeWithLabels([]string{"mempool", "size"}, 42.0, labels)
+
+// Timing
+start := telemetry.Now()
+// ... operation
+telemetry.MeasureSince(start, "tx", "process_time")
+
+// Module-specific helpers
+telemetry.ModuleMeasureSince("bank", start, "send", "time")
+telemetry.ModuleSetGauge("bank", 100.0, "balance", "total")
+```
+
+## Metrics Sink Types
+
+| Sink        | Description                                         |
+|-------------|-----------------------------------------------------|
+| `mem`       | In-memory sink with SIGUSR1 dump support (default)  |
+| `statsd`    | StatsD protocol                                     |
+| `dogstatsd` | Datadog DogStatsD                                   |
+| `otel`      | OpenTelemetry (bridges to configured MeterProvider) |
+
+## Best Practices
+
+1. **Use environment variable initialization** for production to avoid atomic load overhead
+2. **Always call `Shutdown()`** to ensure metrics/traces are flushed
+3. **Thread `context.Context`** properly for correct span correlation
+
+## Viewing Telemetry Data
+
+With Grafana LGTM running:
+
+1. Open http://localhost:3000
+2. Use the Drilldown views to explore:
+   - **Traces**: Distributed trace visualization
+   - **Metrics**: Query and dashboard metrics
+   - **Logs**: Structured log search
+
+## Related Documentation
+
+- [OpenTelemetry Go SDK](https://opentelemetry.io/docs/languages/go/)
+- [OpenTelemetry Configuration Spec](https://opentelemetry.io/docs/languages/sdk-configuration/declarative-configuration/)
+- [otelconf Go Package](https://pkg.go.dev/go.opentelemetry.io/contrib/otelconf)
+
 
 ## Supported Metrics
 
