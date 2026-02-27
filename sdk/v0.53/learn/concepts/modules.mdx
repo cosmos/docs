@@ -1,0 +1,256 @@
+---
+title: Intro to Modules
+---
+
+In the previous section, you saw how blocks and transactions are processed. But where does the actual application logic live?
+
+In the Cosmos SDK, **modules** define that logic.
+
+Modules are the fundamental building blocks of a Cosmos SDK application. Each module encapsulates a specific piece of functionality, such as accounts, token transfers, validator management, governance, or any custom logic you define.
+
+## Why modules exist
+
+A blockchain application needs to manage many independent concerns (accounts, balances, validator management, etc). Instead of placing all logic in a single monolithic state machine, the Cosmos SDK divides the application into modules. The SDK provides a base layer that for these modules to operate together as a cohesive blockchain.
+
+Each module owns a slice of state, defines its messages and queries, implements its business rules, and hooks into the block lifecycle and genesis as needed. This keeps the application organized, composable, and easier to reason about.
+
+## What a module defines
+
+A module is a self-contained unit of state and logic.
+
+At a high level, a module defines:
+
+state: a kv store namespace that contains the module's state
+messages: the actions the module allows
+message server: the module's handler for messages
+keeper: the module's interface to its state
+
+### 1. State
+
+Each module owns its own part of the blockchain state. For example:
+
+- The `x/auth` module stores account metadata.
+- The `x/bank` module stores account balances.
+
+Modules do not share storage directly. Each module has its own key-value store namespace located in a `multistore`.
+
+
+### 2. Messages
+
+As you learned in the [Transactions, Messages, and Queries](/sdk/v0.53/learn/concepts/transactions) section, each module defines the actions it allows via messages (`sdk.Msg`).
+
+Messages are defined in the module’s `tx.proto` file and implemented by that module’s `MsgServer`. Here is a simplified example of a message definition from the bank module:
+
+```
+message MsgSend {
+  string from_address = 1;
+  string to_address   = 2;
+  repeated cosmos.base.v1beta1.Coin amount = 3;
+}
+```
+
+This message represents a request to transfer tokens from one account to another.  
+When included in a transaction and executed:
+
+1. The sender’s balance is checked.  
+2. The amount is deducted from `from_address`.  
+3. The amount is credited to `to_address`.  
+
+The message defines the intent and required data. The `MsgServer` orchestrates execution, delegating state reads and writes to the module's keeper.
+
+When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it.
+
+### Message execution (`MsgServer`)
+
+Each module implements a **MsgServer**: the handler BaseApp calls when a message is routed to that module. The `MsgServer` validates the message, applies business rules, reads or writes state via the keeper, emits events, and returns a response. It is where a module’s state transitions are defined.
+
+### 3. Queries
+
+Modules expose read-only access to their state through query services, defined in `query.proto`.
+
+Queries do not modify state and do not go through block execution.
+
+### 4. Business logic
+
+The core rules of the application live inside modules.
+
+Business logic is typically implemented in:
+
+- The module’s `MsgServer` as the entry point for message handling — validating inputs, enforcing rules, and coordinating state changes
+- The module’s `Keeper` as the internal API for state — reading and writing to the module’s store and encapsulating the core business logic
+---
+
+### 5. Block hooks
+
+Modules may execute logic at specific points in the block lifecycle by implementing optional hook interfaces:
+
+- `HasBeginBlocker` — runs logic at the start of each block
+- `HasEndBlocker` — runs logic at the end of each block
+- `HasPreBlocker` — runs logic before BeginBlock, used for consensus parameter changes
+
+Modules only implement the hooks they need. Most modules implement none. These hooks are invoked during block execution, as described in the lifecycle section.
+
+---
+
+### 6. Genesis initialization
+
+Modules define how their state is initialized when the chain starts.
+
+Each module implements:
+
+- `DefaultGenesis`  
+- `ValidateGenesis`  
+- `InitGenesis`  
+- `ExportGenesis`  
+
+During `InitChain`, BaseApp calls each module’s `InitGenesis` to populate its state from `genesis.json`.
+
+---
+
+## The role of the keeper
+
+A **keeper** is the module’s interface to its state.
+
+It:
+
+- Reads and writes to the module’s KV store
+- Encapsulates storage access
+- Provides reusable internal methods
+
+The keeper is used by:
+
+- Message handlers (`MsgServer`)  
+- Query handlers  
+- BeginBlock / EndBlock logic  
+- Other modules (via well-defined interfaces)  
+
+You can think of the keeper as the module’s state manager and internal API.
+
+---
+
+## Inter-module access
+
+Modules are isolated by default.
+
+Each module owns its state, and direct access to that state is restricted through the module’s keeper. Other modules cannot arbitrarily mutate another module’s storage.
+
+Instead, modules interact through explicitly defined keeper interfaces.
+
+For example:
+
+- The validator module calls methods on the bank keeper to transfer tokens.
+- The governance module calls parameter update methods on other modules.
+
+Each module defines an `expected_keepers.go` file that declares the interfaces it requires from other modules. This makes cross-module dependencies explicit: a module can only call methods the other module has chosen to expose.
+
+This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
+
+---
+
+## Governance authority and privileged actions
+
+Not all messages are equal. Actions like parameter updates, software upgrades, and certain administrative changes are defined as messages but may only be executed by a caller with the correct authority address, typically the governance module. This lets modules enforce privileged behavior while still using the same message execution pipeline.
+
+---
+
+## Built-in and custom modules
+
+The Cosmos SDK provides many built-in modules, including:
+
+- `x/auth`
+- `x/bank`
+- `x/gov`
+- `x/distribution`
+
+Applications can include any subset of these modules and can define entirely new custom modules.
+
+A Cosmos SDK blockchain is ultimately just a collection of modules assembled into a single application.
+
+---
+
+## Anatomy of a module (high-level)
+
+Modules live under the `x/` directory of an SDK application:
+
+```
+x/
+├── auth/        # Accounts and authentication
+├── bank/        # Token balances and transfers
+├── poa/         # Proof-of-authority validator management
+├── gov/         # Governance system
+└── mymodule/    # Your custom module
+```
+
+Each subdirectory under `x/` is a self-contained module.  
+An application composes multiple modules together to form a complete blockchain.
+
+---
+
+Inside a module, you will typically see a structure like this:
+
+```
+x/mymodule/
+├── keeper/
+│   ├── keeper.go        # Keeper struct and state access methods
+│   ├── msg_server.go    # MsgServer implementation
+│   └── query_server.go  # QueryServer implementation
+├── types/
+│   ├── expected_keepers.go  # Interfaces for other modules’ keepers
+│   ├── keys.go              # Store key definitions
+│   └── *.pb.go              # Generated from proto definitions
+└── module.go            # AppModule implementation and hook registration
+```
+
+Proto files live separately at the repository root, not inside `x/`:
+
+```
+proto/myapp/mymodule/v1/
+├── tx.proto       # Message definitions
+├── query.proto    # Query service definitions
+├── state.proto    # On-chain state types
+└── genesis.proto  # Genesis state definition
+```
+
+- **`keeper/`**
+  Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces.
+
+- **`types/`**
+  Defines the module’s public types: generated protobuf structs, store keys, and the `expected_keepers.go` interfaces that declare what this module needs from other modules.
+
+- **`module.go`**
+  Connects the module to the application and registers genesis handlers, block hooks, and message and query services.
+
+- **`.proto` files**
+  Define messages, queries, state schemas, and genesis state. Go code is generated from these files and used throughout the module.
+
+## Modules in context
+
+Putting everything together:
+
+- **Accounts** authorize transactions.  
+- **Transactions** carry messages.  
+- **Blocks** determine when execution happens.  
+- **Modules** define what execution means.  
+- **MsgServer** executes state transitions.  
+- **Keeper** manages storage.  
+- **State** records the result.  
+
+Conceptually:
+
+```
+Transaction
+   ↓
+Message
+   ↓
+Module
+   ↓
+MsgServer
+   ↓
+Keeper
+   ↓
+State
+```
+
+Modules are where the blockchain’s rules live.
+
+In the next section, you will look more closely at how module state is stored, how genesis initializes it, and how the application commits deterministic state transitions.
