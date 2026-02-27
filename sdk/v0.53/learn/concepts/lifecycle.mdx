@@ -17,7 +17,7 @@ This page maps the block and transaction lifecycle back to those layers.
 
 ## ABCI overview
 
-**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. {/* cosmos/cosmos-sdk baseapp/baseapp.go:63 */} Modules plug into BaseApp and execute logic during these phases.
+**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. Modules plug into BaseApp and execute logic during these phases.
 
 ```go title="ABCI Flow"
 CometBFT
@@ -41,13 +41,13 @@ ABCI: Commit
 
 ## InitChain (genesis only)
 
-`InitChain` runs once when the chain starts for the first time. {/* cosmos/cosmos-sdk baseapp/abci.go:53 */} This involves loading a `genesis.json` file, which defines the chain's initial state (balances, validators, module parameters, and other bootstrapping data). Modules define genesis logic in their `module.go` file. Specifically, they implement the `InitGenesis` {/* cosmos/cosmos-sdk x/bank/module.go:152 */} and `ExportGenesis` {/* cosmos/cosmos-sdk x/bank/module.go:161 */} functions.
+`InitChain` runs once when the chain starts for the first time. This involves loading a `genesis.json` file, which defines the chain's initial state (balances, validators, module parameters, and other bootstrapping data). Modules define genesis logic in their `module.go` file. Specifically, they implement the `InitGenesis` and `ExportGenesis` functions.
 
 During this phase:
 
-- BaseApp initializes stores and in-memory resources {/* cosmos/cosmos-sdk baseapp/abci.go:82 — app.stateManager.SetState initializes in-memory execution contexts for finalize and check modes */}
-- Modules load state from the genesis file via `InitGenesis` {/* cosmos/cosmos-sdk baseapp/abci.go:124 — app.abciHandlers.InitChainer dispatches to each module's InitGenesis */}
-- The initial validator set is established {/* cosmos/cosmos-sdk baseapp/abci.go:149 — ResponseInitChain returns validators to CometBFT; validator state is written by staking InitGenesis via initChainer */}
+- BaseApp initializes stores and in-memory resources
+- Modules load state from the genesis file via `InitGenesis`
+- The initial validator set is established
 
 Genesis runs before the first block begins.
 
@@ -65,49 +65,49 @@ ABCI: CheckTx
 Mempool
 ```
 
-Transactions are sent as raw **protobuf-encoded bytes**. {/* cosmos/cosmos-sdk baseapp/baseapp.go:97 — txDecoder sdk.TxDecoder field; req.Tx is []byte decoded at baseapp/baseapp.go:865 */}
+Transactions are sent as raw protobuf-encoded bytes.
 
 {/* todo: link to encoding section above */}
 
-During `CheckTx`, BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. {/* cosmos/cosmos-sdk baseapp/abci.go:367 — CheckTx calls RunTx, which orchestrates decode and ante handler execution */} `MsgServer` methods are not executed during `CheckTx`; only the AnteHandler and basic structural checks run. {/* cosmos/cosmos-sdk baseapp/baseapp.go:1022 — runMsgs breaks early when mode != execModeFinalize && mode != execModeSimulate */}
+During `CheckTx`, BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. 
 
-No state changes are committed during `CheckTx`. {/* cosmos/cosmos-sdk baseapp/baseapp.go:990 — msCache.Write() at line 994 only executes when mode == execModeFinalize, not in check mode */} If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
+No state changes are committed during `CheckTx`. If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
 
-When a validator proposes a block, CometBFT selects transactions from the mempool, orders them, and reaches consensus on the block. Once the block is finalized, CometBFT sends it to the application via `FinalizeBlock`.
+When a validator proposes a block, CometBFT selects the transactions from the mempool, orders them, and reaches consensus on the block. Once the block is finalized, CometBFT sends it to the application via `FinalizeBlock`.
 
 ## FinalizeBlock
 
-CometBFT calls `FinalizeBlock` once per block. {/* cosmos/cosmos-sdk baseapp/abci.go:973 */} Inside `FinalizeBlock`, BaseApp runs these phases in order: `PreBlock` → `BeginBlock` → transaction execution → `EndBlock`. {/* cosmos/cosmos-sdk baseapp/abci.go:792 — internalFinalizeBlock; preBlock:865, beginBlock:872, tx loop:900, endBlock:929 */}
+CometBFT calls `FinalizeBlock` once per block. Inside `FinalizeBlock`, BaseApp runs these phases in order: `PreBlock` → `BeginBlock` → transaction execution → `EndBlock`.
 
 ### PreBlock
 
-PreBlock runs before BeginBlock and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade {/* cosmos/cosmos-sdk x/upgrade/module.go:162 */} or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside BeginBlock. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`. {/* cosmos/cosmos-sdk x/upgrade/module.go:162 — PreBlock implementation in upgrade module */}
+PreBlock runs before BeginBlock and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside BeginBlock. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`.
 
 ### BeginBlock
 
-BeginBlock runs after PreBlock and handles per-block housekeeping that must happen before any transactions execute, regardless of what transactions are in the block. Common uses include minting inflation rewards, {/* cosmos/cosmos-sdk x/mint/module.go:157 */} distributing staking rewards, {/* cosmos/cosmos-sdk x/distribution/module.go:164 */} and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`. {/* cosmos/cosmos-sdk x/mint/module.go:157 — BeginBlock implementation in mint module */}
+BeginBlock runs after PreBlock and handles per-block housekeeping that must happen before any transactions execute, regardless of the transactions in the block. Common uses include minting inflation rewards, distributing staking rewards, and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`.
 
 ### Transaction execution
 
-After BeginBlock, BaseApp iterates over each transaction in the block and runs it through a fixed pipeline. {/* cosmos/cosmos-sdk baseapp/abci.go:900 — executeTxsWithExecutor call in internalFinalizeBlock processes all transactions after beginBlock */}
+After BeginBlock, BaseApp iterates over each transaction in the block and runs it through a fixed pipeline.
 
 #### Step 1: AnteHandler
 
-Configured in a Cosmos SDK chain's `app.go` file, the AnteHandler runs first for every transaction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:904 */} It verifies the transaction's signature, {/* cosmos/cosmos-sdk x/auth/ante/sigverify.go:400 */} increments the sequence number, {/* cosmos/cosmos-sdk x/auth/ante/sigverify.go:537 */} deducts the fee, {/* cosmos/cosmos-sdk x/auth/ante/fee.go:111 */} and meters the gas. {/* cosmos/cosmos-sdk x/auth/ante/setup.go:40 — SetUpContextDecorator sets the gas meter from the tx's declared gas limit */}
+Configured in a Cosmos SDK chain's `app.go` file, the `AnteHandler` runs first for every transaction. It verifies the transaction's signature, increments the sequence number, deducts the fee, and meters the gas.
 
-If the AnteHandler fails, the transaction aborts and its messages do not execute. {/* cosmos/cosmos-sdk baseapp/baseapp.go:929 — returns error before reaching runMsgs if ante fails */}
+If the AnteHandler fails, the transaction aborts and its messages do not execute.
 
 #### Step 2: Message routing and execution
 
-Each message in a transaction is routed via BaseApp's `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto` (often under `proto/cosmos/<module>/...`). BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation (commonly located at `x/<module>/keeper/msg_server.go`). {/* cosmos/cosmos-sdk x/bank/keeper/msg_server.go:29 — MsgSend handler as representative example */}
+Each message in a transaction is routed via BaseApp's `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation.
 
 The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys.
 
-Messages execute sequentially in the order they appear in the transaction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:1021 — for i, msg := range msgs loop in runMsgs */}
+Messages execute sequentially in the order they appear in the transaction.
 
 #### Step 3: Atomicity
 
-Transactions are atomic: all messages succeed or none are committed. {/* cosmos/cosmos-sdk baseapp/baseapp.go:994 — msCache.Write() only called when err == nil (line 989) and mode == execModeFinalize (line 990) */}
+Transactions are atomic: all messages succeed or none are committed.
 
 ```
 Tx
@@ -116,19 +116,21 @@ Tx
   └─ Msg 3
 ```
 
-If any message fails, all state changes from that transaction are discarded and the transaction returns an error. The next transaction in the block is then executed. BaseApp uses cached stores internally to implement this. {/* cosmos/cosmos-sdk baseapp/baseapp.go:662 — cacheTxContext creates a branched CacheMultiStore per transaction */}
+If any message fails, all state changes from that transaction are discarded and the transaction returns an error. The next transaction in the block is then executed. BaseApp uses cached stores internally to implement this.
+
+{/* todo: add section linking to unordered tx  */}
 
 ### EndBlock
 
-EndBlock runs after all transactions in the block have executed. {/* cosmos/cosmos-sdk baseapp/abci.go:929 */} It is used for logic that depends on the block's cumulative state, like tallying governance votes after all vote transactions have been processed, {/* cosmos/cosmos-sdk x/gov/module.go:197 — EndBlock tallies proposals whose voting period has ended */} or recalculating validator power after all delegation changes in the block. {/* cosmos/cosmos-sdk x/staking/module.go:181 */} Modules implement this via the `EndBlock` function in `x/<module>/module.go`. {/* cosmos/cosmos-sdk x/staking/module.go:181 — EndBlock implementation in staking module */}
+EndBlock runs after all transactions in the block have executed. It is used for logic that depends on the block's cumulative state, like tallying governance votes after all vote transactions have been processed, or recalculating validator power after all delegation changes in the block. Modules implement this via the `EndBlock` function in `x/<module>/module.go`.
 
 ## Commit
 
-After `FinalizeBlock` returns, CometBFT calls `Commit`. {/* cosmos/cosmos-sdk baseapp/abci.go:1044 */} This persists the state changes to the node's local disk. {/* cosmos/cosmos-sdk baseapp/abci.go:1062 — cms.Commit() writes all KV stores to disk */} All validators must compute the same app hash. If they do not, consensus halts.
+After `FinalizeBlock` returns, CometBFT calls `Commit`. This persists the state changes to the node's local disk. 
 
 ## Deterministic execution
 
-Across all validators, the block execution is deterministic. Blocks must contain the same ordered transactions, and transactions must use canonical protobuf binary encoding. State transitions must be deterministic, which ensures that every validator computes the same app hash during `FinalizeBlock`, {/* cosmos/cosmos-sdk baseapp/abci.go:1013 — res.AppHash = app.workingHash() set on ResponseFinalizeBlock, not ResponseCommit */} which guarantees consensus safety. This is critical for the safety and liveness of the consensus protocol.
+Across all validators, the block execution is deterministic. Blocks must contain the same ordered transactions, and transactions must use canonical protobuf binary encoding. State transitions must be deterministic, which ensures that every validator computes the same app hash during `FinalizeBlock`, which guarantees consensus safety. If validators holding more than 1/3 of voting power disagree on the app hash, consensus halts.
 
 ## Complete lifecycle overview
 
@@ -170,4 +172,3 @@ CometBFT drives block processing through ABCI. BaseApp implements ABCI and orche
 - `FinalizeBlock` computes and returns the app hash; `Commit` persists state to disk
 
 Protobuf ensures canonical encoding so all validators interpret transactions identically.
-
