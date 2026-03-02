@@ -67,6 +67,7 @@ bootstrap_peers = [
 ```
 
 To validate successful configuration, check the logs for the following message:
+
 ```text
 Using go-libp2p transport!
 ```
@@ -83,3 +84,24 @@ version = "v0"
 # Run both BLOCKSYNC and CONSENSUS for improved liveness, connectivity, and performance.
 combined_mode = true
 ```
+
+## Combined Mode
+
+`combined_mode` runs blocksync and consensus together, instead of treating them
+as separate phases. This improves catch-up liveness because a slower node can keep ingesting
+verified blocks while consensus is already active.
+
+If enabled, blocksync continuously fetches candidate blocks from peers and
+passes them into consensus through an ingestion path:
+
+1. Blocksync takes two consecutive blocks from its pool (fetched from other peers)
+2. It builds an ingest candidate for the first block, using commit data from
+   the next block.
+3. It verifies the candidate against the latest state (light client verification).
+4. Then it calls consensus, which applies the block as the next height.
+
+Important behavior in practice:
+
+- Blocksync loads the latest state before verification, and both reactors effectively track the same chain progression.
+- If consensus already included a block concurrently, blocksync skips it.
+- ingestion ensures strict invariants, keeping the state machine consistent.
