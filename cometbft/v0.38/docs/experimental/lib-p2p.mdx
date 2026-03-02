@@ -12,32 +12,31 @@ while keeping the reactor-facing CometBFT API unchanged.
 Actors still use the same core p2p concepts (`Switch`, `Peer`, `PeerSet`, `Reactor`, envelopes).
 The transport implementation under those abstractions is `lib-p2p` instead of `comet-p2p`.
 
-Lib-p2p is a great and widely-used piece of software that includes many ready-to-use peer-to-peer networking features,
-and has implementations in many programming languages and network protocols (tpc, quic, websockets, ...).
+`lib-p2p` is a widely used networking stack with production-ready peer-to-peer features,
+and implementations across many languages and transport protocols (TCP, QUIC, WebSockets, and more).
 
-This feature is implemented alongside `combined_mode`, which blends blocksync with consensus reactors,
-improving network liveliness by running blocksync and consensus reactors in the same process, 
-allowing slow nodes to catch-up ingesting blocks from the network while the consensus machine is running.
+This feature is implemented alongside `combined_mode`, which blends blocksync with consensus reactors.
+That improves network liveliness by letting slower nodes continue ingesting blocks while consensus is running.
 
 You can refer to the implementation in the CometBFT codebase here:
 
 - [`lp2p`](https://github.com/cometbft/cometbft/tree/main/lp2p)
 - [`internal/autopool`](https://github.com/cometbft/cometbft/tree/main/internal/autopool)
 
-### Performant Networking
+### Performance and Liveliness
 
 In high-load conditions, legacy `comet-p2p` can become a networking bottleneck for modern blockchain workloads:
 
 - It's more prone to congestion under concurrent message pressure,
-- Stream/message handling is less effective at scaling with bursty traffic,
+- Stream/message handling is less effective at scaling with traffic spikes,
 - This limits end-to-end throughput when the rest of the stack is optimized.
 
-The `lib-p2p` integration addresses this with native stream-oriented transport, concurrent receive pipelines, 
+The `lib-p2p` integration addresses this with native stream-oriented transport, concurrent receive pipelines,
 and autoscaled worker pools per reactor, which helps reduce queue pressure and improve message flow under load.
 Beyond raw throughput, this also improves network liveliness by making peer communication and block propagation
-more resilient under sustained congestion and bursty traffic.
+more resilient under sustained congestion and sudden load spikes.
 
-In our benchmarks, together with additional performance improvements across the stack, we have reached over ~2000 TPS, 
+In our benchmarks, together with additional performance improvements across the stack, we reached over 2000 TPS,
 and `lib-p2p` has been one of the key unblockers enabling that result.
 
 ## Differences in transport and peer identification
@@ -158,7 +157,7 @@ Important behavior in practice:
 
 # Comparison and Limitations
 
-> **Important:** The current release does **NOT** include peer exchange (PEX).  
+> **Important:** The current release does **NOT** include peer exchange (PEX).
 > Nodes must use explicit bootstrap peers/static topology; automatic peer exchange will be added in the next release.
 
 | Area                 | `comet-p2p`                        | `lib-p2p`                             |
