@@ -20,15 +20,15 @@ A module is a self-contained unit of state and logic.
 
 At a high level, a module defines:
 
-- state: a kv store namespace that contains the module's data
-- messages: the actions the module allows
-- queries: read-only access to the module's state
-- message server: validates, applies business logic, and delegates to the keeper
-- keeper: the state access layer — the only sanctioned path to the store
+- [state](#state): a kv store namespace that contains the module's data
+- [messages](#messages): the actions the module allows
+- [queries](#queries): read-only access to the module's state
+- [`MsgServer`](#message-execution-msgserver): validates, applies business logic, and delegates to the keeper
+- [keeper](#keeper): the state access layer — the only sanctioned path to the store
 
 ### State
 
-State is the data persisted on the chain — everything that transactions can read from or write to.
+State is the data persisted on the chain: everything that transactions can read from or write to. When a transaction is executed, modules apply **state transitions** — deterministic updates to this stored data.
 
 Each module owns its own part of the blockchain state. For example:
 
@@ -44,7 +44,6 @@ balances | cosmos1def...uvw | uatom  →   500000
 ```
 
 The key encodes the namespace, address, and denomination. The value is the encoded amount. No other module can read or write these entries directly, only the [module's keeper](#keeper) can.
-
 
 ### Messages
 
@@ -68,7 +67,6 @@ When included in a transaction and executed:
 3. The amount is credited to `to_address`.  
 
 When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it.
-
 
 ### Queries
 
@@ -164,8 +162,6 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 }
 ```
 
----
-
 ## Keeper
 
 A **keeper** is a Go struct that holds references to the module’s KV store (or collections schema) and any external keepers it depends on. It provides typed methods for reading and writing state and defines the module’s storage layout.
@@ -180,7 +176,7 @@ type Keeper struct {
     bankKeeper types.BankKeeper
 
     // authority is the address capable of executing a MsgUpdateParams message.
-    // Typically, this should be the x/gov module account.
+    // Typically, this is the x/gov module account.
     authority string
 }
 
@@ -201,13 +197,12 @@ Instead, modules interact through explicitly defined keeper interfaces.
 
 For example:
 
-- The validator module calls methods on the bank keeper to transfer tokens.
+- The staking module calls methods on the bank keeper to transfer tokens.
 - The governance module calls parameter update methods on other modules.
 
 Each module defines an `expected_keepers.go` file that declares the interfaces it requires from other modules. This makes cross-module dependencies explicit: a module can only call methods the other module has chosen to expose.
 
 This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
-
 
 ### Block hooks
 
@@ -217,7 +212,7 @@ Modules may execute logic at specific points in the block lifecycle by implement
 - `HasEndBlocker` — runs logic at the end of each block
 - `HasPreBlocker` — runs logic before BeginBlock, used for consensus parameter changes
 
-Modules only implement the hooks they need. Most modules implement none. These hooks are invoked during block execution, as described in the lifecycle section.
+Modules only implement the hooks they need. Most modules implement none. These hooks are invoked during block execution. 
 
 ### Genesis initialization
 
@@ -225,12 +220,14 @@ Modules define how their state is initialized when the chain starts.
 
 Each module implements:
 
-- `DefaultGenesis`  
-- `ValidateGenesis`  
-- `InitGenesis`  
-- `ExportGenesis`  
+- `DefaultGenesis` — returns the module's default genesis state
+- `ValidateGenesis` — validates the genesis state before the chain starts
+- `InitGenesis` — writes the genesis state into the module's store at chain start
+- `ExportGenesis` — reads the module's current state and serializes it as genesis data
 
 During `InitChain`, BaseApp calls each module’s `InitGenesis` to populate its state from `genesis.json`.
+
+{/* todo: link to lifecycle page init genesis section */}
 
 ## Built-in and custom modules
 
@@ -260,8 +257,6 @@ x/
 
 Each subdirectory under `x/` is a self-contained module.  
 An application composes multiple modules together to form a complete blockchain.
-
----
 
 Inside a module, you will typically see a structure like this:
 
@@ -302,7 +297,7 @@ proto/myapp/mymodule/v1/
 
 ## Modules in context
 
-Putting everything together:
+Putting everything together you've learned so far:
 
 - **Accounts** authorize transactions.  
 - **Transactions** carry messages.  
@@ -325,7 +320,5 @@ Keeper
    ↓
 State
 ```
-
-Modules are where the blockchain’s rules live.
 
 In the next section, you will look more closely at how module state is stored, how genesis initializes it, and how the application commits deterministic state transitions.
