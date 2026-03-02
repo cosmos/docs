@@ -17,7 +17,7 @@ This page maps the block and transaction lifecycle back to those layers.
 
 ## ABCI overview
 
-**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. Modules plug into BaseApp and execute logic during these phases.
+**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. {/* todo: link to baseapp */} Modules plug into BaseApp and execute logic during these phases.
 
 ```go title="ABCI Flow"
 CometBFT
@@ -30,6 +30,10 @@ ABCI: CheckTx → Mempool
 
 For every block:
   ↓
+ABCI: PrepareProposal  (proposer only: select and filter txs)
+  ↓
+ABCI: ProcessProposal  (all validators: accept or reject the block)
+  ↓
 ABCI: FinalizeBlock
   → PreBlock
   → BeginBlock
@@ -41,15 +45,9 @@ ABCI: Commit
 
 ## InitChain (genesis only)
 
-`InitChain` runs once when the chain starts for the first time. This involves loading a `genesis.json` file, which defines the chain's initial state (balances, validators, module parameters, and other bootstrapping data). Modules define genesis logic in their `module.go` file. Specifically, they implement the `InitGenesis` and `ExportGenesis` functions.
+`InitChain` runs once when the chain starts for the first time. BaseApp loads `genesis.json`, which defines the chain's initial state, and calls each module's `InitGenesis` to populate its store. The initial validator set is established. Genesis runs before the first block begins.
 
-During this phase:
-
-- BaseApp initializes stores and in-memory resources
-- Modules load state from the genesis file via `InitGenesis`
-- The initial validator set is established
-
-Genesis runs before the first block begins.
+{/* todo: link to store#genesis-and-chain-initialization */}
 
 ## CheckTx and the mempool
 
@@ -73,11 +71,23 @@ During `CheckTx`, BaseApp decodes the transaction, verifies signatures and seque
 
 No state changes are committed during `CheckTx`. If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
 
-When a validator proposes a block, CometBFT selects the transactions from the mempool, orders them, and reaches consensus on the block. Once the block is finalized, CometBFT sends it to the application via `FinalizeBlock`.
+Validated transactions wait in the mempool until CometBFT selects a block proposer for the next round.
+
+## PrepareProposal
+
+Called by CometBFT on the block proposer only. BaseApp selects transactions from the mempool respecting the block's `MaxTxBytes` and `MaxGas` limits and returns the final transaction list. No state is written. {/* todo: link to baseapp#prepareproposal */}
+
+## ProcessProposal
+
+Called on every validator when it receives the proposed block. BaseApp verifies each transaction and returns `ACCEPT` or `REJECT`. No state is written. After validators acscept the block and consensus is reached, CometBFT calls `FinalizeBlock`. {/* todo: link to baseapp#processproposal */}
 
 ## FinalizeBlock
 
-CometBFT calls `FinalizeBlock` once per block. Inside `FinalizeBlock`, BaseApp runs these phases in order: `PreBlock` → `BeginBlock` → transaction execution → `EndBlock`.
+CometBFT calls `FinalizeBlock` once per block. Inside `FinalizeBlock`, BaseApp runs these phases in order: 
+
+```
+PreBlock → BeginBlock → transaction execution → EndBlock
+```
 
 ### PreBlock
 
@@ -93,13 +103,13 @@ After BeginBlock, BaseApp iterates over each transaction in the block and runs i
 
 #### Step 1: AnteHandler
 
-Configured in a Cosmos SDK chain's `app.go` file, the `AnteHandler` runs first for every transaction. It verifies the transaction's signature, increments the sequence number, deducts the fee, and meters the gas.
+Configured in a Cosmos SDK chain's `app.go` file, the `AnteHandler` runs first for every transaction. It verifies the transaction's signature, increments the sequence number, deducts the fee, and meters the gas. {/* todo: link to baseapp#antehandler */}
 
 If the AnteHandler fails, the transaction aborts and its messages do not execute.
 
 #### Step 2: Message routing and execution
 
-Each message in a transaction is routed via BaseApp's `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation.
+Each message in a transaction is routed via BaseApp's `MsgServiceRouter` {/* todo: link to baseapp#msgservicerouter */} to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation.
 
 The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys.
 
@@ -145,6 +155,12 @@ For each submitted transaction (async):
     → insert into mempool
 
 For every block:
+  ↓ ABCI PrepareProposal  (proposer only)
+    → select txs from mempool (MaxTxBytes, MaxGas)
+    → return tx list to CometBFT
+  ↓ ABCI ProcessProposal  (all validators)
+    → verify txs, check gas limit
+    → ACCEPT or REJECT
   ↓ ABCI FinalizeBlock
     → PreBlock
     → x/<module>/BeginBlock
@@ -165,6 +181,8 @@ The hooks that run at each phase (the AnteHandler, BeginBlocker, EndBlocker, and
 CometBFT drives block processing through ABCI. BaseApp implements ABCI and orchestrates execution.
 
 - Transactions are validated in `CheckTx` before entering the mempool
+- `PrepareProposal` runs on the proposer to build the final tx set for the block
+- `ProcessProposal` runs on all validators to accept or reject the proposed block
 - Each block is executed inside a single `FinalizeBlock` call
 - Within `FinalizeBlock`: PreBlock → BeginBlock → transactions → EndBlock
 - Each transaction runs through AnteHandler → message routing → message execution
