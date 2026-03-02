@@ -5,17 +5,15 @@ title: Lib-P2P
 
 # Experimental Lib-P2P Support
 
-CometBFT includes an experimental networking backend based on [go-libp2p](https://libp2p.io/).
-At a high level, this introduces a new transport and connection-management layer
-for peer-to-peer communication, while keeping the protocol-facing shape of CometBFT
-familiar to existing reactors. It also significantly improves network layer's performance and concurrency.
+CometBFT includes an experimental networking layer based on [go-libp2p](https://libp2p.io/).
+It adds a new transport and connection-management layer for peer-to-peer communication,
+while keeping the reactor-facing CometBFT API unchanged.
 
-The key abstraction is that CometBFT actors still interact through the
-same core p2p concepts (`Switch`, `Peer`, `PeerSet`, `Reactor`, envelopes, ...), but the
-underlying network implementation is provided by libp2p instead of comet-p2p.
+Actors still use the same core p2p concepts (`Switch`, `Peer`, `PeerSet`, `Reactor`, envelopes).
+The transport implementation under those abstractions is `lib-p2p` instead of `comet-p2p`.
 
-Lib-p2p is a great and widely-used library that includes many ready-to-use peer-to-peer networking features,
-an has implementations in many programming languages and network protocols (tpc, quic, websockets, ...)
+Lib-p2p is a great and widely-used piece of software that includes many ready-to-use peer-to-peer networking features,
+and has implementations in many programming languages and network protocols (tpc, quic, websockets, ...).
 
 This feature is implemented alongside `combined_mode`, which blends blocksync with consensus reactors,
 improving network liveliness by running blocksync and consensus reactors in the same process, 
@@ -26,10 +24,10 @@ You can refer to the implementation in the CometBFT codebase here:
 - [`lp2p`](https://github.com/cometbft/cometbft/tree/main/lp2p)
 - [`internal/autopool`](https://github.com/cometbft/cometbft/tree/main/internal/autopool)
 
-## Differences in Transport and Peer Identification
+## Differences in transport and peer identification
 
-Lib-p2p uses its own [peer ID format](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md) which is 
-different from the one used by comet-p2p. It's incompatible with comet-p2p.
+`lib-p2p` uses its own [peer ID format](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md),
+which is different from `comet-p2p`. The two formats are not compatible.
 
 ```
 # comet-p2p peer ID format
@@ -39,15 +37,14 @@ different from the one used by comet-p2p. It's incompatible with comet-p2p.
 { host = "10.186.73.3:26656", id = "12D3KooWRuTppVZGE7qhanfsHfmzkWUZnnRbTxbgWYvKibij9niy" }
 ```
 
-To ensure the fastest possible network performance, QUIC protocol is used instead of TCP.
-Ensure you have UDP ports open on your firewall.
+`lib-p2p` uses QUIC instead of TCP in this integration, so you need UDP open in your firewall.
 
 ## Configuration
 
-Lib-p2p configuration is done through the `p2p.libp2p` section of the `config.toml` file.
-Note that all other p2p configurations except `external_address` and `laddr` are ignored.
+Configure `lib-p2p` in the `p2p.libp2p` section of `config.toml`.
+All other p2p settings are ignored except `external_address` and `laddr`.
 
-By default, node listens on port 26656 UDP.
+By default, the node listens on UDP port `26656`.
 
 ```toml
 [p2p.libp2p]
@@ -69,7 +66,7 @@ bootstrap_peers = [
 ]
 ```
 
-Note that each host, similarly to comet-p2p, supports the following options:
+Each host, similar to `comet-p2p`, supports the following options:
 - `persistent` - ensures peer is always (re)connected (even after removal)
 - `unconditional` - not affected by the max number of peers limit (see notes on limitations)
 - `private` - the peer will not be gossiped to other peers (see notes on limitations)
@@ -80,7 +77,7 @@ To validate successful configuration, check the logs for the following message:
 Using go-libp2p transport!
 ```
 
-We highly recommend using lib-p2p with combined_mode enabled:
+Using `lib-p2p` with `combined_mode` enabled is recommended:
 
 ```toml
 [blocksync]
@@ -93,11 +90,11 @@ version = "v0"
 combined_mode = true
 ```
 
-## Implementation Details
+## Implementation details
 
-From a CometBFT actor model perspective, the same API is used:
-`Reactor`, `Peer`, `PeerSet`, `Switch`, and envelope flow remain compatible, 
-so existing reactors run without protocol-level rewrites.
+From the CometBFT actor-model perspective, the API stays the same:
+`Reactor`, `Peer`, `PeerSet`, `Switch`, and envelope flow remain compatible,
+so existing reactors can run without protocol-level rewrites.
 
 At the connection layer, lib-p2p replaces CometBFT secret connection with lib-p2p native
 identity and [secure handshake mechanisms](https://github.com/libp2p/specs/blob/master/tls/tls.md). 
@@ -140,7 +137,7 @@ Important behavior in practice:
 
 - Blocksync loads the latest state before verification, and both reactors effectively track the same chain progression.
 - If consensus already included a block concurrently, blocksync skips it.
-- ingestion ensures strict invariants, keeping the state machine consistent.
+- Ingestion enforces strict invariants and keeps the state machine consistent.
 
 
 # Comparison and Limitations
@@ -156,5 +153,4 @@ Important behavior in practice:
 | Peer exchange        | PEX + address book flow            | **No PEX in this release**            |
 
 
-Also, because of the difference in peer identification, it's not possible 
-to run a mixed `comet-p2p` / `lib-p2p` network.
+Note, because peer identification formats differ, you cannot run a mixed `comet-p2p` / `lib-p2p` network.
