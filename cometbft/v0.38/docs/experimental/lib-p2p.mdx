@@ -1,0 +1,85 @@
+---
+order: 1
+title: Lib-P2P
+---
+
+# Experimental Lib-P2P Support
+
+CometBFT includes an experimental networking backend based on [go-libp2p](https://libp2p.io/).
+At a high level, this introduces a new transport and connection-management layer
+for peer-to-peer communication, while keeping the protocol-facing shape of CometBFT
+familiar to existing reactors. It also significantly improves network layer's performance and concurrency.
+
+The key abstraction is that CometBFT actors still interact through the
+same core p2p concepts (`Switch`, `Peer`, `PeerSet`, `Reactor`, envelopes, ...), but the
+underlying network implementation is provided by libp2p instead of comet-p2p.
+
+Lib-p2p is a great and widely-used library that includes many ready-to-use peer-to-peer networking features,
+an has implementations in many programming languages and network protocols (tpc, quic, websockets, ...)
+
+This feature is implemented alongside `combined_mode`, which blends blocksync with consensus reactors,
+improving network liveliness by running blocksync and consensus reactors in the same process, 
+allowing slow nodes to catch-up ingesting blocks from the network while the consensus machine is running.
+
+Please refer to limitations section for more details
+
+## Differences in Transport and Peer Identification
+
+Lib-p2p uses its own [peer ID format](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md) which is 
+different from the one used by comet-p2p. It's incompatible with comet-p2p.
+
+```
+# comet-p2p peer ID format
+539ffc12a0ac78970dab31ae8cdcfdd4285b2162@10.186.73.3:26656
+
+# lib-p2p peer ID format
+{ host = "10.186.73.3:26656", id = "12D3KooWRuTppVZGE7qhanfsHfmzkWUZnnRbTxbgWYvKibij9niy" }
+```
+
+To ensure the fastest possible network performance, QUIC protocol is used instead of TCP.
+Ensure you have UDP ports open on your firewall.
+
+## Configuration
+
+Lib-p2p configuration is done through the `p2p.libp2p` section of the `config.toml` file.
+Note that all other p2p configurations except `external_address` and `laddr` are ignored.
+
+By default, node listens on port 26656 UDP.
+
+```toml
+[p2p.libp2p]
+
+# Enabled set true to use go-libp2p for networking instead of CometBFT's p2p.
+enabled = true
+
+# Disables resource manager.
+# Warning! This might consume all of the system's resources.
+disable_resource_manager = false
+
+# Bootstrap peers to connect to
+# format: { host, id, private (opt), persistent (opt), unconditional (opt) }
+# dns resolution is also supported  (e.g. "example.com:26656")
+bootstrap_peers = [
+  { host = "10.186.73.3:26656", id = "12D3KooWRuTppVZGE7qhanfsHfmzkWUZnnRbTxbgWYvKibij9niy", persistent = true },
+  { host = "10.186.73.5:26656", id = "12D3KooWHjC8SJFVpAvY3qpM5PPeXSpQZvLxcZb7Tjr1kHMLEFtS", persistent = true },
+  { host = "10.186.73.6:26656", id = "12D3KooWJFbLcqdPpNP7E1EXC4tDiPtxEGDM6K7RXpDsdWmVnjSu", persistent = true },
+]
+```
+
+To validate successful configuration, check the logs for the following message:
+```text
+Using go-libp2p transport!
+```
+
+We highly recommend using lib-p2p with combined_mode enabled:
+
+```toml
+[blocksync]
+
+version = "v0"
+
+# Experimental Combined mode (bool):
+#
+# Run both BLOCKSYNC and CONSENSUS for improved liveness, connectivity, and performance.
+combined_mode = true
+```
