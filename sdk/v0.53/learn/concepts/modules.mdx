@@ -96,54 +96,24 @@ Each module implements a **MsgServer**, which is invoked by `BaseApp`’s messag
 
 The `MsgServer` is responsible for:
 
-- Validating the message fields {/* cosmos/example x/counter/keeper/msg_server.go:25 — checks request.GetAdd() >= math.MaxUint64 */}
-- Enforcing message-specific business rules {/* cosmos/example x/counter/keeper/msg_server.go:34 — checks params.MaxAddValue > 0 && request.GetAdd() > params.MaxAddValue */}
-- Checking authorization when required {/* cosmos/example x/counter/keeper/msg_server.go:76 — checks m.authority != msg.Authority in UpdateParams */}
-- Calling keeper methods to perform state transitions {/* cosmos/example x/counter/keeper/msg_server.go:57 — m.counter.Set writes the new count to state */}
-- Emitting events {/* cosmos/example x/counter/keeper/msg_server.go:62 — EmitEvent emits "count_increased" with updated count */}
-- Returning a response {/* cosmos/example x/counter/keeper/msg_server.go:71 — returns MsgAddResponse{UpdatedCount: newCount} */}
+- Checking authorization when required {/* cosmos/example x/counter/keeper/msg_server.go:30 — checks m.authority != msg.Authority in UpdateParams */}
+- Delegating to keeper methods that validate inputs, enforce business rules, and perform state transitions {/* cosmos/example x/counter/keeper/msg_server.go:20 — Add delegates to m.AddCount, which validates, charges fees, updates state, and emits events */}
+- Returning a response {/* cosmos/example x/counter/keeper/msg_server.go:24 — returns MsgAddResponse{UpdatedCount: newCount} */}
 
-The following is an abridged example from the counter module’s `Add` handler (bank fee charge and metrics omitted for clarity): {/* cosmos/example x/counter/keeper/msg_server.go:24 */}
+The following is the counter module’s `Add` handler: {/* cosmos/example x/counter/keeper/msg_server.go:19 */}
 
 ```go
 func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*types.MsgAddResponse, error) {
-    if request.GetAdd() >= math.MaxUint64 {
-        return nil, ErrNumTooLarge
-    }
-
-    params, err := m.GetParams(ctx)
+    newCount, err := m.AddCount(ctx, request.GetSender(), request.GetAdd())
     if err != nil {
         return nil, err
     }
-
-    if params.MaxAddValue > 0 && request.GetAdd() > params.MaxAddValue {
-        return nil, ErrExceedsMaxAdd
-    }
-
-    sdkCtx := sdk.UnwrapSDKContext(ctx)
-    count, err := m.counter.Get(ctx)
-    if err != nil && !errors.Is(err, collections.ErrNotFound) {
-        return nil, err
-    }
-
-    newCount := count + request.GetAdd()
-
-    if err = m.counter.Set(ctx, newCount); err != nil {
-        return nil, err
-    }
-
-    sdkCtx.EventManager().EmitEvent(
-        sdk.NewEvent(
-            "count_increased",
-            sdk.NewAttribute("count", fmt.Sprintf("%v", newCount)),
-        ),
-    )
 
     return &types.MsgAddResponse{UpdatedCount: newCount}, nil
 }
 ```
 
-`Add` is permissionless — any account can call it. {/* cosmos/example x/counter/keeper/msg_server.go:24 — no authority check in the Add handler body */} In more complex modules, the state transition logic (`counter.Get` / `counter.Set`) is typically extracted into a named keeper method so it can be reused from other entry points (e.g., `BeginBlock`, governance proposals, or other modules). {/* cosmos/example x/counter/keeper/keeper.go:59 — GetParams demonstrates the named keeper method pattern */}
+`Add` is permissionless — any account can call it — and the handler itself is intentionally thin. {/* cosmos/example x/counter/keeper/msg_server.go:19 — no authority check; delegates entirely to keeper.AddCount */} All validation (overflow check, `MaxAddValue` limit), fee charging, state mutation, event emission, and telemetry live in the keeper’s `AddCount` method. {/* cosmos/example x/counter/keeper/keeper.go:83 — AddCount validates amount, checks MaxAddValue, charges AddCost, updates counter, emits event, records metric */} This keeps `msg_server.go` focused on message routing and authorization, while the keeper’s named methods can be reused from other entry points such as `BeginBlock` or governance proposals.
 
 For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding: {/* cosmos/example x/counter/keeper/msg_server.go:76 — m.authority != msg.Authority check returns ErrInvalidSigner if mismatched */}
 
@@ -158,7 +128,7 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
         )
     }
 
-    if err := m.setParams(ctx, msg.Params); err != nil {
+    if err := m.SetParams(ctx, msg.Params); err != nil {
         return nil, err
     }
 
@@ -189,7 +159,7 @@ func (k *Keeper) GetParams(ctx context.Context) (types.Params, error) {
 }
 ```
 
-The `MsgServer` and `QueryServer` both embed the keeper and call its methods. {/* cosmos/example x/counter/keeper/msg_server.go:17 — msgServer struct embeds *Keeper */} Authorization is enforced at the `MsgServer` boundary; keeper methods trust that the caller has already validated the request.
+The `MsgServer` and `QueryServer` both embed the keeper and call its methods. {/* cosmos/example x/counter/keeper/msg_server.go:17 — msgServer struct embeds *Keeper */} Authorization is enforced at the `MsgServer` boundary, while domain validation (input checks, business rules, fee charging, state transitions, and event emission) lives in the keeper's named methods such as `AddCount`. This lets keeper methods be safely reused from other entry points like `BeginBlock` or governance proposals.
 
 Some messages, like `MsgUpdateParams`, are privileged and may only be executed by a specific address. The `authority` field in the keeper stores that address (typically the governance module account). {/* cosmos/example x/counter/keeper/keeper.go:43 — authority defaults to authtypes.NewModuleAddress(govtypes.ModuleName).String() */}
 
