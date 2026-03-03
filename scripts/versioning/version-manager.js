@@ -2,7 +2,19 @@
 
 /**
  * Documentation Version Manager
- * Main orchestration script for documentation version freezing
+ *
+ * Freezes documentation versions using a next → latest → archive model:
+ *
+ *   1. If latest/ exists: archive it as <version>/ (rewrite links, inject noindex/canonical)
+ *   2. Promote next/ → latest/ (rewrite links next → latest)
+ *   3. Update docs.json navigation and versions.json registry
+ *
+ * At release time the operator provides the new display version label (e.g. "v0.54").
+ * The outgoing latest/ is archived using the label stored in versions.json latestDisplayVersion.
+ *
+ * Usage:
+ *   npm run freeze              # interactive
+ *   NON_INTERACTIVE=1 SUBDIR=sdk NEW_DISPLAY_VERSION=v0.54 npm run freeze
  */
 
 import fs from 'fs';
@@ -13,121 +25,82 @@ import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Color codes for output
-const colors = {
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  reset: '\x1b[0m'
-};
+const BASE_URL = 'https://docs.cosmos.network';
 
-function printInfo(msg) {
-  console.log(`${colors.blue}${colors.reset} ${msg}`);
-}
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
 
-function printSuccess(msg) {
-  console.log(`${colors.green}✓${colors.reset} ${msg}`);
-}
+const colors = { red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', blue: '\x1b[34m', reset: '\x1b[0m' };
 
-function printWarning(msg) {
-  console.log(`${colors.yellow}${colors.reset} ${msg}`);
-}
-
-function printError(msg) {
-  console.log(`${colors.red}✗${colors.reset} ${msg}`);
-}
+function printInfo(msg)    { console.log(`${colors.blue}${colors.reset} ${msg}`); }
+function printSuccess(msg) { console.log(`${colors.green}✓${colors.reset} ${msg}`); }
+function printWarning(msg) { console.log(`${colors.yellow}${colors.reset} ${msg}`); }
+function printError(msg)   { console.log(`${colors.red}✗${colors.reset} ${msg}`); }
 
 async function prompt(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => rl.question(question, answer => { rl.close(); resolve(answer); }));
 }
 
+// ---------------------------------------------------------------------------
+// Product / version discovery
+// ---------------------------------------------------------------------------
+
 function listDocsSubdirs() {
   const repoRoot = path.join(__dirname, '..', '..');
   if (!fs.existsSync(repoRoot)) return [];
-  // List subdirectories at repo root that are products (evm, sdk, ibc, hub, etc.)
-  // Filter out non-product directories
-  const allDirs = fs.readdirSync(repoRoot, { withFileTypes: true })
-    .filter(d => d.isDirectory())
+  const ignore = new Set(['.', '..', 'node_modules', 'scripts', 'snippets', 'assets']);
+  return fs.readdirSync(repoRoot, { withFileTypes: true })
+    .filter(d => d.isDirectory() && !d.name.startsWith('.') && !ignore.has(d.name))
     .map(d => d.name)
-    .filter(name => !name.startsWith('.') && name !== 'node_modules' && name !== 'scripts' && name !== 'snippets' && name !== 'assets');
-
-  // Only return directories that have version subdirectories (next, v0.x.x, etc.)
-  return allDirs.filter(dirName => {
-    const dirPath = path.join(repoRoot, dirName);
-    const contents = fs.readdirSync(dirPath, { withFileTypes: true });
-    return contents.some(d => d.isDirectory() && (d.name === 'next' || /^v\d+/.test(d.name)));
-  });
+    .filter(name => {
+      const contents = fs.readdirSync(path.join(repoRoot, name), { withFileTypes: true });
+      return contents.some(d => d.isDirectory() && (d.name === 'next' || d.name === 'latest' || /^v\d+/.test(d.name)));
+    });
 }
 
-// --- Versions registry helpers (per-product) ---
+// ---------------------------------------------------------------------------
+// Versions registry (versions.json)
+// ---------------------------------------------------------------------------
+
 function loadVersionsRegistry() {
   const versionsPath = path.join(__dirname, '..', '..', 'versions.json');
   let data = {};
   if (fs.existsSync(versionsPath)) {
-    try {
-      data = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
-    } catch (e) {
-      data = {};
-    }
+    try { data = JSON.parse(fs.readFileSync(versionsPath, 'utf8')); } catch { data = {}; }
   }
+  if (!data.products || typeof data.products !== 'object') data = { products: {} };
 
-  // Ensure products object exists
-  if (!data.products || typeof data.products !== 'object') {
-    data = { products: {} };
-  }
-
-  // Auto-discover products from repo root and merge with existing config
+  // Auto-discover products and versions from filesystem
   const subdirs = listDocsSubdirs();
   for (const subdir of subdirs) {
     const base = path.join(__dirname, '..', '..', subdir);
     const entries = fs.readdirSync(base, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
+      .filter(d => d.isDirectory()).map(d => d.name);
 
-    // Discover versions from filesystem
-    const discoveredVersions = [];
-    if (entries.includes('next')) discoveredVersions.push('next');
+    const discovered = [];
+    if (entries.includes('next'))   discovered.push('next');
+    if (entries.includes('latest')) discovered.push('latest');
     for (const name of entries) {
-      if (/^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(name)) {
-        discoveredVersions.push(name);
-      }
+      if (/^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(name)) discovered.push(name);
     }
 
-    // Merge with existing product config or create new
     if (!data.products[subdir]) {
-      // New product - create default config
       data.products[subdir] = {
-        versions: discoveredVersions,
-        defaultVersion: entries.includes('next') ? 'next' : discoveredVersions[0] || 'next',
+        versions: discovered,
+        defaultVersion: entries.includes('latest') ? 'latest' : (entries.includes('next') ? 'next' : discovered[0] || 'next'),
         repository: `cosmos/${subdir}`,
         changelogPath: 'CHANGELOG.md'
       };
     } else {
-      // Existing product - merge discovered versions with configured ones
-      const existingVersions = data.products[subdir].versions || [];
-      const mergedVersions = Array.from(new Set([...discoveredVersions, ...existingVersions]));
-
-      // Ensure 'next' is always first if it exists
-      const hasNext = mergedVersions.includes('next');
-      const otherVersions = mergedVersions.filter(v => v !== 'next').sort(compareVersionsDesc);
-      data.products[subdir].versions = hasNext ? ['next', ...otherVersions] : otherVersions;
-
-      // Ensure defaultVersion is set
-      if (!data.products[subdir].defaultVersion) {
-        data.products[subdir].defaultVersion = hasNext ? 'next' : otherVersions[0] || 'next';
-      }
-
-      // Ensure repository is set
-      if (!data.products[subdir].repository) {
-        data.products[subdir].repository = `cosmos/${subdir}`;
-      }
-
-      // Ensure changelogPath is set
-      if (!data.products[subdir].changelogPath) {
-        data.products[subdir].changelogPath = 'CHANGELOG.md';
-      }
+      const existing = data.products[subdir].versions || [];
+      const merged = Array.from(new Set([...discovered, ...existing]));
+      const stable = merged.filter(v => /^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(v)).sort(compareVersionsDesc);
+      const special = ['next', 'latest'].filter(s => merged.includes(s));
+      data.products[subdir].versions = [...special, ...stable];
+      if (!data.products[subdir].repository)    data.products[subdir].repository    = `cosmos/${subdir}`;
+      if (!data.products[subdir].changelogPath) data.products[subdir].changelogPath = 'CHANGELOG.md';
     }
   }
 
@@ -138,20 +111,15 @@ function saveVersionsRegistry(registry, versionsPath) {
   fs.writeFileSync(versionsPath, JSON.stringify(registry, null, 2) + '\n');
 }
 
-// Accepts vX.Y, vX.Y.Z, or vX.Y.x
 function validateVersionFormat(version) {
   return /^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(version);
 }
 
 function parseVersionTuple(v) {
-  // Returns [major, minor, patchNum, isX]
   const m = v.match(/^v(\d+)\.(\d+)(?:\.(\d+|x))?$/);
   if (!m) return null;
-  const major = parseInt(m[1], 10);
-  const minor = parseInt(m[2], 10);
   const patch = m[3] === undefined ? 0 : (m[3] === 'x' ? Number.POSITIVE_INFINITY : parseInt(m[3], 10));
-  const isX = m[3] === 'x';
-  return [major, minor, patch, isX];
+  return [parseInt(m[1], 10), parseInt(m[2], 10), patch, m[3] === 'x'];
 }
 
 function compareVersionsDesc(a, b) {
@@ -160,91 +128,180 @@ function compareVersionsDesc(a, b) {
   if (bt[0] !== at[0]) return bt[0] - at[0];
   if (bt[1] !== at[1]) return bt[1] - at[1];
   if (bt[2] !== at[2]) return bt[2] - at[2];
-  // Prefer specific patch over x for the same major/minor
-  if (bt[3] !== at[3]) return (at[3] ? 1 : -1);
-  return 0;
+  return at[3] ? 1 : -1;
 }
 
-function getCurrentVersion(subdir) {
-  try {
-    const envCurrent = process.env.CURRENT_VERSION || process.env.FREEZE_VERSION;
-    if (envCurrent) return envCurrent;
-    // No implicit selection to avoid overwriting an existing frozen version.
-    // Prompt the operator to specify the version to freeze.
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
+// ---------------------------------------------------------------------------
+// Release notes helpers
+// ---------------------------------------------------------------------------
 
 function includesVersionInReleaseNotes(content, version) {
   if (!content || !version) return false;
-  const minorOnly = /^v\d+\.\d+$/.test(version);
   const tuple = parseVersionTuple(version);
-  if (!tuple) {
-    return content.includes(`"${version}"`);
-  }
+  if (!tuple) return content.includes(`"${version}"`);
   const [major, minor, patch, isX] = tuple;
-  let re;
-  if (isX) {
-    // Match any patch or x for same major.minor
-    re = new RegExp(`<Update[^>]*version="v?${major}\\.${minor}\\.(?:\\d+|x)"`);
-  } else if (minorOnly) {
-    // Provided only major.minor → accept optional patch
-    re = new RegExp(`<Update[^>]*version="v?${major}\\.${minor}(?:\\.\\d+)?"`);
-  } else {
-    // Exact version
-    re = new RegExp(`<Update[^>]*version="v?${major}\\.${minor}\\.${patch}"`);
-  }
+  const re = isX
+    ? new RegExp(`<Update[^>]*version="v?${major}\\.${minor}\\.(?:\\d+|x)"`)
+    : /^v\d+\.\d+$/.test(version)
+      ? new RegExp(`<Update[^>]*version="v?${major}\\.${minor}(?:\\.\\d+)?"`)
+      : new RegExp(`<Update[^>]*version="v?${major}\\.${minor}\\.${patch}"`);
   return re.test(content);
 }
 
-async function checkReleaseNotes(currentVersion, subdir) {
-  const releaseNotesPath = path.join(__dirname, '..', '..', subdir, 'next', 'changelog', 'release-notes.mdx');
-  if (!fs.existsSync(releaseNotesPath)) return false;
-  const content = fs.readFileSync(releaseNotesPath, 'utf8');
-  return includesVersionInReleaseNotes(content, currentVersion);
+async function checkReleaseNotes(version, subdir) {
+  // Check in both next/ and latest/ (whichever exists)
+  for (const dir of ['latest', 'next']) {
+    const p = path.join(__dirname, '..', '..', subdir, dir, 'changelog', 'release-notes.mdx');
+    if (fs.existsSync(p)) {
+      return includesVersionInReleaseNotes(fs.readFileSync(p, 'utf8'), version);
+    }
+  }
+  return false;
 }
 
-function updateVersionsRegistry({ subdir, freezeVersion, newVersion }) {
-  const { data, path: versionsPath } = loadVersionsRegistry();
-  if (!data.products) data.products = {};
-  if (!data.products[subdir]) data.products[subdir] = { versions: [], defaultVersion: 'next' };
+// ---------------------------------------------------------------------------
+// Link rewriting (URL-aware — preserves external https:// links)
+// ---------------------------------------------------------------------------
 
-  const product = data.products[subdir];
-  // Ensure 'next' appears if folder exists
-  const nextPath = path.join(__dirname, '..', '..', subdir, 'next');
-  if (fs.existsSync(nextPath) && !product.versions.includes('next')) {
-    product.versions.push('next');
-  }
-  if (freezeVersion && !product.versions.includes(freezeVersion)) {
-    product.versions.push(freezeVersion);
-  }
-  // Maintain stable ordering: newest first for versions (excluding 'next')
-  const stable = product.versions.filter(v => v !== 'next' && /^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(v)).sort(compareVersionsDesc);
-  const rest = product.versions.filter(v => v === 'next' || !/^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(v));
-  product.versions = [...rest, ...stable];
+/**
+ * Rewrites internal doc links in all MDX files under dirPath.
+ * Uses perl alternation: matches a full external URL first (preserves it),
+ * or the internal path pattern (replaces it).
+ * GitHub links with version strings in their paths are never modified.
+ */
+function rewriteInternalLinks(dirPath, fromSlug, toSlug) {
+  // Main link rewrite: /fromSlug/ → /toSlug/
+  const perlCmd = `find "${dirPath}" -name "*.mdx" -type f -exec perl -i'' -pe 's{(https?://\\S+)|/${fromSlug}/}{defined($1)?$1:"/${toSlug}/"}ge' {} \\;`;
+  execSync(perlCmd);
 
-  // Track the upcoming development version label
-  if (newVersion && validateVersionFormat(newVersion)) {
-    product.nextDev = newVersion;
-  }
-
-  saveVersionsRegistry(data, versionsPath);
-  printSuccess(`Versions registry updated for ${subdir}`);
+  // Fix bare /documentation/ hrefs missing the product prefix (lookbehind keeps href= context)
+  const fixRelativeCmd = `find "${dirPath}" -name "*.mdx" -type f -exec perl -i'' -pe 's{(https?://\\S+)|(?<=href=")/documentation/}{defined($1)?$1:"/${toSlug}/documentation/"}ge' {} \\;`;
+  execSync(fixRelativeCmd);
 }
 
-function updateNavigation(version, subdir) {
+// ---------------------------------------------------------------------------
+// Archive: latest/ → <version>/
+// ---------------------------------------------------------------------------
+
+function archiveLatest(archiveVersion, subdir) {
+  const latestPath = path.join(__dirname, '..', '..', subdir, 'latest');
+  const targetPath = path.join(__dirname, '..', '..', subdir, archiveVersion);
+
+  printInfo(`Archiving ${subdir}/latest/ → ${subdir}/${archiveVersion}/...`);
+  execSync(`rm -rf "${targetPath}" && mkdir -p "${targetPath}"`);
+  execSync(`cp -R "${latestPath}/." "${targetPath}/"`);
+
+  rewriteInternalLinks(targetPath, `${subdir}/latest`, `${subdir}/${archiveVersion}`);
+  printSuccess(`Archived latest/ → ${archiveVersion}/`);
+
+  return { targetPath, latestPath };
+}
+
+// ---------------------------------------------------------------------------
+// Promote: next/ → latest/
+// ---------------------------------------------------------------------------
+
+function promoteNextToLatest(subdir) {
+  const nextPath   = path.join(__dirname, '..', '..', subdir, 'next');
+  const latestPath = path.join(__dirname, '..', '..', subdir, 'latest');
+
+  if (!fs.existsSync(nextPath)) {
+    throw new Error(`next/ directory not found: ${nextPath}`);
+  }
+
+  printInfo(`Promoting ${subdir}/next/ → ${subdir}/latest/...`);
+  execSync(`rm -rf "${latestPath}" && mkdir -p "${latestPath}"`);
+  execSync(`cp -R "${nextPath}/." "${latestPath}/"`);
+
+  rewriteInternalLinks(latestPath, `${subdir}/next`, `${subdir}/latest`);
+  printSuccess('Promoted next/ → latest/');
+}
+
+// ---------------------------------------------------------------------------
+// Inject noindex + canonical into archived version MDX files
+// ---------------------------------------------------------------------------
+
+/**
+ * Walks every .mdx file in archivedPath and injects front matter:
+ *   noindex: true
+ *   canonical: <BASE_URL>/<subdir>/latest/<page>   (if matching page exists in latest/)
+ *             <BASE_URL>/<subdir>/latest/           (fallback if page was deleted/renamed)
+ *
+ * Skips files that already have noindex: true.
+ * Never overwrites existing canonical values.
+ */
+function injectNoindexCanonical(archivedPath, latestPath, subdir) {
+  const output = execSync(`find "${archivedPath}" -name "*.mdx" -type f`, { encoding: 'utf8' });
+  const mdxFiles = output.trim().split('\n').filter(Boolean);
+
+  let tagged = 0, withSpecificCanonical = 0;
+
+  for (const filePath of mdxFiles) {
+    let content = fs.readFileSync(filePath, 'utf8');
+
+    // Already tagged — skip
+    if (content.includes('noindex: true')) continue;
+
+    // Determine canonical URL
+    const relPath = path.relative(archivedPath, filePath);
+    const latestEquivalent = path.join(latestPath, relPath);
+    const hasMatch = fs.existsSync(latestEquivalent);
+    const canonicalUrl = hasMatch
+      ? `${BASE_URL}/${subdir}/latest/${relPath.replace(/\.mdx$/, '')}`
+      : `${BASE_URL}/${subdir}/latest/`;
+    if (hasMatch) withSpecificCanonical++;
+
+    const injection = `noindex: true\ncanonical: '${canonicalUrl}'`;
+
+    // Inject into existing front matter or prepend a new block
+    if (content.startsWith('---\n')) {
+      content = content.replace(/^---\n/, `---\n${injection}\n`);
+    } else {
+      content = `---\n${injection}\n---\n\n${content}`;
+    }
+
+    fs.writeFileSync(filePath, content);
+    tagged++;
+  }
+
+  printSuccess(`Tagged ${tagged} files with noindex (${withSpecificCanonical} specific canonical, ${tagged - withSpecificCanonical} fallback to latest/ root)`);
+}
+
+// ---------------------------------------------------------------------------
+// Navigation (docs.json)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deep-clones obj, replacing string values that start with fromPrefix.
+ */
+function cloneWithPathRewrite(obj, fromPrefix, toPrefix) {
+  if (typeof obj === 'string') return obj.startsWith(fromPrefix) ? toPrefix + obj.slice(fromPrefix.length) : obj;
+  if (Array.isArray(obj)) return obj.map(x => cloneWithPathRewrite(x, fromPrefix, toPrefix));
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const k of Object.keys(obj)) out[k] = cloneWithPathRewrite(obj[k], fromPrefix, toPrefix);
+    return out;
+  }
+  return obj;
+}
+
+/**
+ * Updates docs.json navigation for a freeze:
+ *
+ * - Clones the 'latest' nav entry → new archive entry with paths latest/ → archiveVersion/
+ * - Updates the 'latest' entry's display version label and "Latest" tag
+ * - Keeps 'next' hidden and untouched
+ *
+ * If no 'latest' entry exists yet (first freeze), falls back to cloning from 'next'.
+ */
+function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   const docsJsonPath = path.join(__dirname, '..', '..', 'docs.json');
   const docsJson = JSON.parse(fs.readFileSync(docsJsonPath, 'utf8'));
 
-  // Resolve dropdown label from subdir
-  const dropdownLabel = (subdir || '').toUpperCase(); // evm -> EVM, sdk -> SDK, ibc -> IBC
-
+  const dropdownLabel = subdir.toUpperCase();
   if (!docsJson.navigation) docsJson.navigation = {};
   if (!Array.isArray(docsJson.navigation.dropdowns)) docsJson.navigation.dropdowns = [];
 
-  // Find or create dropdown for this subdir
   let dropdown = docsJson.navigation.dropdowns.find(d => d.dropdown === dropdownLabel);
   if (!dropdown) {
     dropdown = { dropdown: dropdownLabel, versions: [] };
@@ -252,289 +309,241 @@ function updateNavigation(version, subdir) {
   }
   if (!Array.isArray(dropdown.versions)) dropdown.versions = [];
 
-  // Create versioned navigation by updating paths
-  function updatePaths(obj, fromPrefix, toPrefix) {
-    if (typeof obj === 'string') {
-      return obj.startsWith(fromPrefix) ? obj.replace(fromPrefix, toPrefix) : obj;
-    }
-    if (Array.isArray(obj)) {
-      return obj.map(item => updatePaths(item, fromPrefix, toPrefix));
-    }
-    if (typeof obj === 'object' && obj !== null) {
-      const updated = {};
-      for (const key in obj) {
-        updated[key] = updatePaths(obj[key], fromPrefix, toPrefix);
-      }
-      return updated;
-    }
-    return obj;
+  // Find the 'latest' nav entry by checking tab paths for /subdir/latest/
+  const latestEntry = dropdown.versions.find(v =>
+    (v.tabs || []).some(t => JSON.stringify(t).includes(`${subdir}/latest/`))
+  );
+
+  // Fall back to 'next' entry if no 'latest' yet
+  const templateEntry = latestEntry || dropdown.versions.find(v => v.version === 'next');
+  if (!templateEntry) {
+    throw new Error(`No 'latest' or 'next' nav entry found for ${dropdownLabel}. Add one before freezing.`);
   }
 
-  // Try to find 'next' version first, if not use the latest version as template
-  let nextVersion = dropdown.versions.find(v => v.version === 'next');
-  let templateVersion = nextVersion;
+  const fromPrefix = latestEntry ? `${subdir}/latest/` : `${subdir}/next/`;
 
-  if (!nextVersion) {
-    // If 'next' doesn't exist, try to use the latest existing version as template
-    if (dropdown.versions.length > 0) {
-      // Use the first version (should be the most recent) as template
-      templateVersion = dropdown.versions[0];
-      printWarning(`No 'next' version found. Using '${templateVersion.version}' as template for creating frozen version '${version}'.`);
+  // Clone template → archive entry
+  const archiveEntry = cloneWithPathRewrite(templateEntry, fromPrefix, `${subdir}/${archiveVersion}/`);
+  archiveEntry.version = archiveVersion;
+  delete archiveEntry.tag;
+  delete archiveEntry.hidden;
 
-      // Create a 'next' version from the template
-      nextVersion = updatePaths(templateVersion, `${subdir}/${templateVersion.version}/`, `${subdir}/next/`);
-      if (nextVersion && typeof nextVersion === 'object') {
-        nextVersion.version = 'next';
-      }
-    } else {
-      throw new Error(`No versions found in navigation for dropdown ${dropdownLabel}.
-
-Please add at least one version entry to docs.json before freezing:
-{
-  "dropdown": "${dropdownLabel}",
-  "versions": [
-    {
-      "version": "next",
-      "tabs": [ /* your navigation structure */ ]
-    }
-  ]
-}`);
-    }
+  // Update the 'latest' entry display version and badge
+  if (latestEntry) {
+    latestEntry.version = newDisplayVersion;
+    latestEntry.tag = 'Latest';
+    delete latestEntry.hidden;
+  } else {
+    // First freeze: clone next → latest entry, add it
+    const newLatestEntry = cloneWithPathRewrite(templateEntry, `${subdir}/next/`, `${subdir}/latest/`);
+    newLatestEntry.version = newDisplayVersion;
+    newLatestEntry.tag = 'Latest';
+    delete newLatestEntry.hidden;
+    dropdown.versions.unshift(newLatestEntry);
   }
 
-  // Create the frozen version navigation from the template
-  const sourcePrefix = templateVersion.version === 'next'
-    ? `${subdir}/next/`
-    : `${subdir}/${templateVersion.version}/`;
-  const targetPrefix = `${subdir}/${version}/`;
+  // Remove existing entry for this archive version if present
+  dropdown.versions = dropdown.versions.filter(v => v.version !== archiveVersion);
 
-  const versionedNavigation = updatePaths(templateVersion, sourcePrefix, targetPrefix);
-  if (versionedNavigation && typeof versionedNavigation === 'object') {
-    versionedNavigation.version = version;
-  }
+  // Rebuild order: [latest, ...stable versions newest-first, next (hidden)]
+  const nextEntry  = dropdown.versions.find(v => v.version === 'next');
+  const latestNav  = dropdown.versions.find(v => v.tag === 'Latest');
+  const stableEntries = dropdown.versions.filter(v => v.version !== 'next' && v.tag !== 'Latest');
 
-  // Now reorganize versions list:
-  // 1. Remove the version being added if it already exists
-  dropdown.versions = dropdown.versions.filter(v => v.version !== version);
+  // Insert archive entry in the right place
+  stableEntries.push(archiveEntry);
+  stableEntries.sort((a, b) => compareVersionsDesc(a.version, b.version));
 
-  // 2. Separate 'next' from other versions
-  const nextEntry = dropdown.versions.find(v => v.version === 'next');
-  const otherVersions = dropdown.versions.filter(v => v.version !== 'next');
-
-  // 3. Add the new frozen version at the top of other versions
-  otherVersions.unshift(versionedNavigation);
-
-  // 4. Rebuild versions list with frozen versions first, then 'next' at the bottom
-  dropdown.versions = [...otherVersions];
-
-  // 5. Always ensure 'next' exists at the bottom
-  if (!dropdown.versions.find(v => v.version === 'next')) {
-    dropdown.versions.push(nextVersion);
-  }
+  dropdown.versions = [
+    ...(latestNav  ? [latestNav]  : []),
+    ...stableEntries,
+    ...(nextEntry  ? [nextEntry]  : []),
+  ];
 
   fs.writeFileSync(docsJsonPath, JSON.stringify(docsJson, null, 2) + '\n');
-  printSuccess(`Navigation updated for version ${version}`);
-  if (!nextEntry) {
-    printSuccess(`Added 'next' version to navigation (will remain at bottom for continued development)`);
-  }
+  printSuccess(`Navigation updated: ${archiveVersion} archived, latest labeled as ${newDisplayVersion}`);
 }
 
-function copyAndUpdateDocs(currentVersion, subdir) {
-  printInfo('Creating version directory...');
+// ---------------------------------------------------------------------------
+// Versions registry update
+// ---------------------------------------------------------------------------
 
-  // The 'next' directory is the working directory containing latest documentation.
-  // It gets COPIED to create a frozen version snapshot, but the original 'next' remains unchanged
-  // for continued development. This allows us to:
-  // 1. Preserve historical documentation at <subdir>/<version>/
-  // 2. Continue updating docs in <subdir>/next/ for future releases
-  const sourcePath = path.join(__dirname, '..', '..', subdir, 'next');
-  const targetPath = path.join(__dirname, '..', '..', subdir, currentVersion);
+function updateVersionsRegistry({ subdir, archiveVersion, newDisplayVersion }) {
+  const { data, path: versionsPath } = loadVersionsRegistry();
+  if (!data.products[subdir]) data.products[subdir] = { versions: [], defaultVersion: 'latest' };
 
-  // Verify source exists
-  if (!fs.existsSync(sourcePath)) {
-    throw new Error(`Source directory does not exist: ${sourcePath}\n\nThe 'next' directory must exist before freezing a version.`);
+  const product = data.products[subdir];
+
+  // Add archive version if not present
+  if (archiveVersion && !product.versions.includes(archiveVersion)) {
+    product.versions.push(archiveVersion);
   }
 
-  // Reset target to avoid nested 'next/' and copy contents
-  execSync(`rm -rf "${targetPath}" && mkdir -p "${targetPath}"`);
-  execSync(`cp -R "${sourcePath}/." "${targetPath}/"`);
+  // Ensure latest and next are tracked
+  const repoRoot = path.join(__dirname, '..', '..');
+  if (fs.existsSync(path.join(repoRoot, subdir, 'latest')) && !product.versions.includes('latest')) {
+    product.versions.unshift('latest');
+  }
+  if (fs.existsSync(path.join(repoRoot, subdir, 'next')) && !product.versions.includes('next')) {
+    product.versions.push('next');
+  }
 
-  // Update internal links in frozen version only (source 'next' remains unchanged)
-  printInfo('Updating internal links in frozen version...');
-  // Convert /{subdir}/next/ links to /{subdir}/{version}/
-  const findCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' "s|/${subdir}/next/|/${subdir}/${currentVersion}/|g" {} \\;`;
-  execSync(findCmd);
+  // Sort: special first, then stable newest-first
+  const stable  = product.versions.filter(v => /^v\d+\.\d+/.test(v)).sort(compareVersionsDesc);
+  const special = ['latest', 'next'].filter(s => product.versions.includes(s));
+  product.versions = [...special, ...stable];
 
-  // Convert incomplete paths that are missing the subdir prefix
-  // /documentation/ → /{subdir}/{version}/documentation/
-  const fixRelativeCmd = `find "${targetPath}" -name "*.mdx" -type f -exec sed -i '' 's|href="/documentation/|href="/${subdir}/${currentVersion}/documentation/|g' {} \\;`;
-  execSync(fixRelativeCmd);
+  product.defaultVersion = 'latest';
+  if (newDisplayVersion) product.latestDisplayVersion = newDisplayVersion;
 
-  printSuccess(`Documentation copied from 'next' to '${currentVersion}' and links updated`);
-  printInfo(`The 'next' directory remains unchanged for continued development`);
+  saveVersionsRegistry(data, versionsPath);
+  printSuccess(`versions.json updated for ${subdir} (latestDisplayVersion: ${newDisplayVersion})`);
 }
 
-function createVersionMetadata(currentVersion, newVersion, subdir) {
-  const metadataPath = path.join(__dirname, '..', '..', subdir, currentVersion, '.version-metadata.json');
-  const frozenPath = path.join(__dirname, '..', '..', subdir, currentVersion, '.version-frozen');
+// ---------------------------------------------------------------------------
+// Version metadata
+// ---------------------------------------------------------------------------
 
+function createVersionMetadata(archiveVersion, subdir, newDisplayVersion) {
+  const metadataPath = path.join(__dirname, '..', '..', subdir, archiveVersion, '.version-metadata.json');
+  const frozenPath   = path.join(__dirname, '..', '..', subdir, archiveVersion, '.version-frozen');
   const metadata = {
-    version: currentVersion,
+    version: archiveVersion,
     frozenDate: new Date().toISOString().split('T')[0],
     frozenTimestamp: new Date().toISOString(),
-    nextVersion: newVersion,
-    eipSheetTab: currentVersion
+    nextDisplayVersion: newDisplayVersion
   };
-
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-  fs.writeFileSync(frozenPath, `${currentVersion} - Frozen on ${metadata.frozenDate}`);
-
+  fs.writeFileSync(frozenPath, `${archiveVersion} - Frozen on ${metadata.frozenDate}`);
   printSuccess('Version metadata created');
 }
 
-async function main() {
-  // Interactive mode by default for manual execution
-  const interactive = !['1','true','yes'].includes(String(process.env.NON_INTERACTIVE || '').toLowerCase());
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
-  // Determine docs subdir to version first
+async function main() {
+  const interactive = !['1', 'true', 'yes'].includes(String(process.env.NON_INTERACTIVE || '').toLowerCase());
+
+  // 1. Subdir
   const choices = listDocsSubdirs();
   let subdir;
   if (interactive) {
-    const pretty = choices.length ? ` [${choices.join(', ')}]` : '';
-    subdir = (await prompt(`Enter the docs subdirectory to version${pretty}: `)).trim();
+    subdir = (await prompt(`Enter the docs subdirectory to freeze [${choices.join(', ')}]: `)).trim();
   } else {
     subdir = process.env.DOCS_SUBDIR || process.env.SUBDIR;
   }
-  if (!subdir) {
-    printError('No docs subdirectory provided');
-    process.exit(1);
-  }
-  if (!choices.includes(subdir)) {
-    printWarning(`Subdirectory "${subdir}" not found at repo root. Proceeding anyway.`);
-  }
+  if (!subdir) { printError('No subdirectory provided'); process.exit(1); }
 
-  // Load and display versions registry context for the selected product
+  const repoRoot    = path.join(__dirname, '..', '..');
+  const latestPath  = path.join(repoRoot, subdir, 'latest');
+  const nextPath    = path.join(repoRoot, subdir, 'next');
+  const hasLatest   = fs.existsSync(latestPath);
+  const hasNext     = fs.existsSync(nextPath);
+
+  // Load registry to get latestDisplayVersion
   const { data: registry } = loadVersionsRegistry();
   const product = registry.products && registry.products[subdir];
-  if (product) {
-    console.log('\n Product versions (from versions.json):');
-    console.log(`   - versions: ${JSON.stringify(product.versions || [])}`);
-    if (product.defaultVersion) console.log(`   - defaultVersion: ${product.defaultVersion}`);
-    if (product.nextDev) console.log(`   - nextDev: ${product.nextDev}`);
-  } else {
-    printWarning('No product entry found in versions.json for this subdir. A new entry will be created.');
-  }
-
-  // Determine the version we are freezing
-  let currentVersion;
-  if (interactive) {
-    currentVersion = (await prompt('Enter the version to freeze (e.g., v0.4.x): ')).trim();
-  } else {
-    currentVersion = getCurrentVersion(subdir);
-    if (!currentVersion) {
-      printError('Freeze version not provided in non-interactive mode');
-      process.exit(1);
-    }
-  }
-  if (!validateVersionFormat(currentVersion)) {
-    printError(`Invalid freeze version format: ${currentVersion}`);
-    process.exit(1);
-  }
-
-  // Get new development version from environment or prompt (default to product.nextDev when available)
-  let newVersion;
-  if (interactive) {
-    const defaultDev = product && product.nextDev ? ` [default: ${product.nextDev}]` : '';
-    const input = (await prompt(`\nEnter the new development version (e.g., v0.5.0 or v0.5.x)${defaultDev}: `)).trim();
-    newVersion = input || (product && product.nextDev) || '';
-  } else {
-    newVersion = process.env.NEW_VERSION;
-  }
-  if (!validateVersionFormat(newVersion)) {
-    printError(`Invalid new development version format: ${newVersion}`);
-    process.exit(1);
-  }
-
-  // Confirm release notes fetch intent (still auto if missing, default yes)
-  let shouldFetchReleaseNotes = true;
-  if (interactive) {
-    const ans = (await prompt('If release notes are missing, fetch from the product repo? [Y/n]: ')).trim().toLowerCase();
-    if (ans === 'n' || ans === 'no') shouldFetchReleaseNotes = false;
-  }
+  const storedDisplayVersion = product && product.latestDisplayVersion;
 
   console.log('\n' + '='.repeat(50));
   console.log('   Documentation Version Manager');
   console.log('='.repeat(50));
-  console.log(`\n Subdir:   ${colors.blue}${subdir}${colors.reset}`);
-  console.log(` Freezing: ${colors.yellow}${currentVersion}${colors.reset}`);
-  console.log(` Next dev: ${colors.green}${newVersion}${colors.reset}\n`);
+  console.log(`\n Subdir:  ${colors.blue}${subdir}${colors.reset}`);
+  console.log(` latest/: ${hasLatest ? colors.green + 'exists' : colors.yellow + 'not yet created'}${colors.reset}`);
+  console.log(` next/:   ${hasNext   ? colors.green + 'exists' : colors.red    + 'MISSING'}${colors.reset}`);
+  if (storedDisplayVersion) console.log(` Current display version: ${storedDisplayVersion}`);
+
+  if (!hasNext) { printError(`${subdir}/next/ does not exist. Create it before freezing.`); process.exit(1); }
+
+  // 2. Archive version (what to call the outgoing latest/)
+  let archiveVersion;
+  if (hasLatest) {
+    if (interactive) {
+      const suggested = storedDisplayVersion ? ` [default: ${storedDisplayVersion}]` : '';
+      const input = (await prompt(`Archive version label (what to call the outgoing latest/)${suggested}: `)).trim();
+      archiveVersion = input || storedDisplayVersion || '';
+    } else {
+      archiveVersion = process.env.ARCHIVE_VERSION || storedDisplayVersion;
+    }
+    if (!archiveVersion || !validateVersionFormat(archiveVersion)) {
+      printError(`Invalid archive version: ${archiveVersion}`); process.exit(1);
+    }
+  } else {
+    printInfo('No latest/ found — this is a first-time setup. Skipping archive step.');
+  }
+
+  // 3. New display version for latest/ (e.g. "v0.54")
+  let newDisplayVersion;
+  if (interactive) {
+    newDisplayVersion = (await prompt('New display version for latest/ (e.g. v0.54): ')).trim();
+  } else {
+    newDisplayVersion = process.env.NEW_DISPLAY_VERSION;
+  }
+  if (!newDisplayVersion || !validateVersionFormat(newDisplayVersion)) {
+    printError(`Invalid display version: ${newDisplayVersion}`); process.exit(1);
+  }
+
+  // 4. Release notes check
+  let shouldFetchReleaseNotes = true;
+  if (interactive) {
+    const ans = (await prompt('Fetch release notes from upstream if missing? [Y/n]: ')).trim().toLowerCase();
+    if (ans === 'n' || ans === 'no') shouldFetchReleaseNotes = false;
+  }
+
+  console.log(`\n Freezing: ${colors.yellow}${archiveVersion || '(first run)'}${colors.reset} → archive`);
+  console.log(` Latest label: ${colors.green}${newDisplayVersion}${colors.reset}\n`);
 
   try {
-    // 1. Check release notes and auto-fetch if missing
-    if (!(await checkReleaseNotes(currentVersion, subdir))) {
+    // Step 1: Check / fetch release notes
+    if (archiveVersion && !(await checkReleaseNotes(archiveVersion, subdir))) {
       if (shouldFetchReleaseNotes) {
-        printInfo(`Release notes missing for ${currentVersion} in ${subdir}. Fetching from GitHub...`);
+        printInfo(`Release notes missing for ${archiveVersion}. Fetching from GitHub...`);
         try {
-          execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target next --freeze`, { stdio: 'inherit' });
-        } catch (e) {
-          printWarning('Failed to fetch release notes automatically (network/permissions). Proceeding.');
-        }
-        if (!(await checkReleaseNotes(currentVersion, subdir))) {
-          printWarning(`${currentVersion} still not found in release notes after fetch.`);
-        } else {
-          printSuccess('Release notes updated.');
-        }
-      } else {
-        printWarning('Skipping automatic release notes fetch by user choice.');
+          execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target ${hasLatest ? 'latest' : 'next'} --freeze`, { stdio: 'inherit' });
+        } catch { printWarning('Failed to fetch release notes automatically. Proceeding.'); }
       }
     }
 
-    // 2. Copy and update documentation
-    copyAndUpdateDocs(currentVersion, subdir);
+    // Step 2: Archive latest/ → <archiveVersion>/
+    let archivedPath;
+    if (hasLatest && archiveVersion) {
+      const result = archiveLatest(archiveVersion, subdir);
+      archivedPath = result.targetPath;
 
-    // 2.5. Generate version-specific changelog for frozen version
-    printInfo(`Generating version-specific changelog for ${currentVersion}...`);
-    try {
-      execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target ${currentVersion} --freeze`, { stdio: 'inherit' });
-      printSuccess('Version-specific changelog generated');
-    } catch (e) {
-      printWarning('Failed to generate version-specific changelog. Proceeding.');
+      // Inject noindex + canonical into the archive
+      printInfo('Injecting noindex and canonical into archived version...');
+      injectNoindexCanonical(archivedPath, latestPath, subdir);
+
+      // Generate version-specific changelog for the archive
+      printInfo(`Generating changelog for ${archiveVersion}...`);
+      try {
+        execSync(`node "${path.join(__dirname, 'manage-changelogs.js')}" --product ${subdir} --target ${archiveVersion} --freeze`, { stdio: 'inherit' });
+        printSuccess('Changelog generated');
+      } catch { printWarning('Failed to generate changelog. Proceeding.'); }
     }
 
-    // 3. Handle Google Sheets and EIP reference (EVM only)
-    if (subdir === 'evm') {
-      let shouldRunSheets = !['1','true','yes'].includes(String(process.env.SKIP_SHEETS || '').toLowerCase());
-      if (interactive) {
-        const ans = (await prompt('Create Google Sheets snapshot and versioned EIP reference for EVM? [Y/n]: ')).trim().toLowerCase();
-        if (ans === 'n' || ans === 'no') shouldRunSheets = false;
-      }
-      if (shouldRunSheets) {
-        printInfo('Processing Google Sheets and EIP reference (EVM only)...');
-        execSync(`node "${path.join(__dirname, 'sheets-manager.js')}" "${currentVersion}" evm`, { stdio: 'inherit' });
-      } else {
-        printInfo('Skipping Google Sheets/EIP reference');
-      }
+    // Step 3: Promote next/ → latest/
+    promoteNextToLatest(subdir);
+
+    // Step 4: Update navigation and registry
+    if (archiveVersion) {
+      updateNavigation(subdir, archiveVersion, newDisplayVersion);
+      updateVersionsRegistry({ subdir, archiveVersion, newDisplayVersion });
+      createVersionMetadata(archiveVersion, subdir, newDisplayVersion);
     } else {
-      printInfo('Skipping Google Sheets/EIP reference');
+      // First-time: just update versions.json to record the new latest
+      updateVersionsRegistry({ subdir, archiveVersion: null, newDisplayVersion });
+      printWarning('docs.json not updated (no archive version). Add the latest/ nav entry manually or re-run after latest/ is established.');
     }
-
-    // 4. Update navigation and versions
-    updateNavigation(currentVersion, subdir);
-    updateVersionsRegistry({ subdir, freezeVersion: currentVersion, newVersion });
-
-    // 5. Create metadata
-    createVersionMetadata(currentVersion, newVersion, subdir);
 
     console.log('\n' + '='.repeat(50));
-    console.log(' Version freeze completed successfully!');
+    console.log(' Version freeze completed!');
     console.log('='.repeat(50));
-    console.log(`\n Status:`);
-    console.log(`   ✓ Version ${currentVersion} frozen at ${subdir}/${currentVersion}/`);
-    console.log(`   ✓ Development continues with ${newVersion} in ${subdir}/next/`);
+    if (archiveVersion) console.log(`   ✓ ${archiveVersion} archived at ${subdir}/${archiveVersion}/ (noindex injected)`);
+    console.log(`   ✓ next/ promoted → latest/ (now labeled ${newDisplayVersion})`);
     console.log(`   ✓ Navigation and registry updated`);
-    if (subdir === 'evm' && !['1','true','yes'].includes(String(process.env.SKIP_SHEETS || '').toLowerCase())) {
-      console.log(`   ✓ Google Sheets tab created: ${currentVersion}`);
-    }
+    console.log(`\n   next/ is unchanged and continues as the dev workspace.\n`);
 
   } catch (error) {
     printError(`Version freeze failed: ${error.message}`);
