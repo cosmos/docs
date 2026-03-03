@@ -55,19 +55,17 @@ cd tests && npm test
 ## Architecture & Structure
 
 ### Documentation Organization
-The documentation follows a hierarchical structure configured in `docs.json`:
+The documentation follows a hierarchical structure configured in `docs.json`. The repo is a multi-product docs site; each product has its own top-level directory with versioned subdirectories.
 
-- **docs/documentation/** - Main documentation content
-  - `concepts/` - Core concepts (accounts, gas, transactions, IBC)
-  - `cosmos-sdk/` - SDK modules and protocol details
-  - `smart-contracts/` - Precompiles and predeployed contracts
-  - `integration/` - Integration guides and migration docs
-  - `getting-started/` - Quick start guides and tooling
+#### Top-level product directories
 
-- **docs/api-reference/** - API documentation
-  - `ethereum-json-rpc/` - RPC methods, OpenAPI spec, and explorer
-
-- **docs/changelog/** - Release notes auto-synced from cosmos/evm
+- **`ibc/`** — IBC (Inter-Blockchain Communication) docs. Versions: `next/` (active), `v10.1.x`, `v8.5.x`, `v7.8.x`, `v6.3.x`, `v5.4.x`, `v4.6.x`, `v0.2.0`
+- **`evm/`** — Cosmos EVM docs. Versions: `next/`, `v0.5.0`, `v0.4.x`
+- **`sdk/`** — Cosmos SDK docs. Versions: `next/`, `v0.53`, `v0.50`, `v0.47`
+- **`hub/`** — Cosmos Hub docs. Versions: `v25/`
+- **`cometbft/`** — CometBFT docs. Versions: `v0.38/`, `v0.37/`
+- **`skip-go/`** — Skip Go docs (unversioned, flat structure)
+- **`enterprise/`** — Enterprise docs
 
 ### Key Technical Components
 
@@ -106,10 +104,81 @@ When updating documentation:
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 
+## Internal Link Format
+
+All internal links in MDX files must use absolute root-relative paths **without** the `.mdx` extension:
+
+```text
+✅ /sdk/next/changelog/release-notes
+❌ ./release-notes.mdx
+❌ ../changelog/release-notes.mdx
+```
+
+Mintlify resolves links by URL path, not filesystem path. Relative or extension-suffixed links will break in production.
+
+## File Operations Checklist
+
+When **adding**, **deleting**, **moving**, or **renaming** any `.mdx` file:
+
+1. **Update `docs.json`** — Add, remove, or update the page entry in the navigation structure. Every page must be registered to appear in the sidebar.
+2. **Add redirects** — For deleted, renamed, or moved pages, add a redirect in `docs.json` so existing links and search results don't 404.
+3. **Fix backlinks** — Search for all internal links pointing to the old path and update them to the new path.
+
+```bash
+# Find broken internal links
+npx mint broken-links
+```
+
+### Redirects in `docs.json`
+
+Redirects are defined as a top-level `"redirects"` array in `docs.json`. Each entry has a `source` and `destination`, both as root-relative paths without `.mdx` extensions:
+
+```json
+"redirects": [
+  {
+    "source": "/ibc/next/old-page-name",
+    "destination": "/ibc/next/new-page-name"
+  }
+]
+```
+
+Wildcards are supported:
+
+```json
+{ "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
+```
+
+**Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
+
+### Versioning in `docs.json` and `versions.json`
+
+**`docs.json`** controls the version *dropdown UI* shown in the sidebar. Each product is a `dropdown` entry inside `navigation`, with a `versions` array. Each version entry contains its own `tabs`, `groups`, and `pages`:
+
+```json
+{
+  "dropdown": "IBC",
+  "versions": [
+    {
+      "version": "next",
+      "tabs": [ ... ]
+    },
+    {
+      "version": "v10.1.x",
+      "tabs": [ ... ]
+    }
+  ]
+}
+```
+
+**`versions.json`** is a *custom script config* (not a Mintlify-native file). It is used by the scripts in `scripts/versioning/` to manage changelog syncing, version freezing, and related automation. It defines each product's available versions, default version, upstream GitHub repository, and changelog path. It does not affect the live docs UI directly — changes here only affect what the scripts do.
+
+## Session State
+
+`WORKING.md` in the repo root tracks active work, recent changes, and known issues for the current session. It is gitignored and mintignored. Check it at the start of any session to understand what was last being worked on.
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components
-- Navigation structure must be updated in `docs.json` when adding new pages
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
