@@ -8,39 +8,56 @@ Before building with the Cosmos SDK, it's important to connect the high-level ar
 
 A Cosmos SDK application can be conceptually split into layers:
 
-- **[CometBFT](/cometbft) (consensus engine)** — orders and proposes blocks
-- **[ABCI](/sdk/v0.53/learn/intro/sdk-app-architecture#abci-application-blockchain-interface) (Application-Blockchain Interface)** — the protocol CometBFT uses to talk to the application
-- **SDK application (BaseApp + modules)** — the deterministic state machine that executes transactions
-- **Protobuf schemas** — define transactions, messages, state, and query types
+- [CometBFT](/cometbft) (consensus engine) — orders and proposes blocks
+- [ABCI](/sdk/v0.53/learn/intro/sdk-app-architecture#abci-application-blockchain-interface) (Application-Blockchain Interface) — the protocol CometBFT uses to talk to the Cosmos SDK application
+- SDK application (BaseApp + modules) — the deterministic state machine that executes transactions
+- Protobuf schemas — define transactions, messages, state, and query types
+
+{/* todo: link to sdk and encoding pages */}
 
 This page maps the block and transaction lifecycle back to those layers.
 
 ## ABCI overview
 
-**BaseApp** is a struct in the Cosmos SDK that implements the ABCI interface. {/* todo: link to baseapp */} Modules plug into BaseApp and execute logic during these phases.
+CometBFT and the SDK application are two separate processes with distinct responsibilities. 
+- [CometBFT](/cometbft/v0.38/docs/introduction/intro) handles consensus: ordering transactions, managing validators, and driving block production. 
+- The [SDK application](/sdk/v0.53/learn/intro/sdk-app-architecture#cosmos-sdk-application) handles state: executing transactions and updating the chain's data. 
 
-```go title="ABCI Flow"
-CometBFT
-  ↓
-ABCI: InitChain (once at genesis)
+The **ABCI** (Application Blockchain Interface) is the protocol that connects them: CometBFT calls ABCI methods on the application to drive each phase of the block lifecycle, and the application responds.
 
-For each submitted transaction (async, independent of blocks):
-  ↓
-ABCI: CheckTx → Mempool
+The **BaseApp** {/* todo: link to baseapp */} struct is the SDK's implementation of the ABCI interface. It receives these calls from CometBFT and orchestrates execution across modules. Modules plug into BaseApp and execute their logic during the appropriate phases.
 
-For every block:
-  ↓
-ABCI: PrepareProposal  (proposer only: select and filter txs)
-  ↓
-ABCI: ProcessProposal  (all validators: accept or reject the block)
-  ↓
-ABCI: FinalizeBlock
-  → PreBlock
-  → BeginBlock
-  → Execute transactions
-  → EndBlock
-  ↓
-ABCI: Commit
+```python
++---------------------+          |         +-------------------------+
+|      CometBFT       |          |         |      SDK Application    |
+|     (Consensus)     |         ABCI       |    (BaseApp + modules)  |
++---------------------+          |         +-------------------------+
+                                 |
+InitChain (once)                 |
+  Chain start -------------------|------> InitGenesis per module
+                                 |
+CheckTx (per submitted tx)       |
+  Mempool validation ------------|------> decode · verify · validate
+                                 |<------ accept → Mempool
+                                 |
+PrepareProposal (proposer only)  |
+  Build block proposal ----------|------> select txs (MaxTxBytes, MaxGas)
+                                 |
+ProcessProposal (all validators) |
+  Evaluate proposal -------------|------> verify txs → ACCEPT / REJECT
+                                 |
+FinalizeBlock (per block)        |
+  Execute block -----------------|------> PreBlock hooks
+                                 |        BeginBlock hooks
+                                 |        For each tx:
+                                 |          AnteHandler
+                                 |          → message routing
+                                 |          → MsgServer (module logic)
+                                 |        EndBlock hooks
+                                 |        Return AppHash
+Commit                           |
+  Persist state -----------------|------> persist state to disk
+                                 |<------ return AppHash
 ```
 
 ## InitChain (genesis only)
@@ -67,19 +84,20 @@ Transactions are sent as raw protobuf-encoded bytes.
 
 {/* todo: link to encoding section above */}
 
-During `CheckTx`, BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. 
+During `CheckTx`, the SDK application's BaseApp decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. 
 
-No state changes are committed during `CheckTx`. If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
+{/* todo: link to signatures, sequence fees, and gas sections above */}
+If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
 
 Validated transactions wait in the mempool until CometBFT selects a block proposer for the next round.
 
 ## PrepareProposal
 
-Called by CometBFT on the block proposer only. BaseApp selects transactions from the mempool respecting the block's `MaxTxBytes` and `MaxGas` limits and returns the final transaction list. No state is written. {/* todo: link to baseapp#prepareproposal */}
+Each round, [CometBFT](/cometbft/v0.38/docs/introduction/intro#intro-to-abci) selects one validator to propose a block. `PrepareProposal` is called on that validator only. BaseApp selects transactions from the mempool respecting the block's `MaxTxBytes` and `MaxGas` limits and returns the final transaction list. {/* todo: link to baseapp#prepareproposal */}
 
 ## ProcessProposal
 
-Called on every validator when it receives the proposed block. BaseApp verifies each transaction and returns `ACCEPT` or `REJECT`. No state is written. After validators acscept the block and consensus is reached, CometBFT calls `FinalizeBlock`. {/* todo: link to baseapp#processproposal */}
+Once the other validators receive the proposed block, CometBFT calls `ProcessProposal`. BaseApp verifies each transaction and returns `ACCEPT` or `REJECT`. No state is written. Once more than two-thirds of voting power accepts the block and consensus is reached, CometBFT calls `FinalizeBlock`. {/* todo: link to baseapp#processproposal */}
 
 ## FinalizeBlock
 
@@ -91,11 +109,11 @@ PreBlock → BeginBlock → transaction execution → EndBlock
 
 ### PreBlock
 
-PreBlock runs before BeginBlock and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside BeginBlock. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`.
+PreBlock runs before `BeginBlock` and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside `BeginBlock`. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`.
 
 ### BeginBlock
 
-BeginBlock runs after PreBlock and handles per-block housekeeping that must happen before any transactions execute, regardless of the transactions in the block. Common uses include minting inflation rewards, distributing staking rewards, and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`.
+`BeginBlock` runs after PreBlock and handles per-block housekeeping that must happen before any transactions execute, regardless of the transactions in the block. Common uses include minting inflation rewards, distributing staking rewards, and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`.
 
 ### Transaction execution
 
@@ -111,7 +129,7 @@ If the AnteHandler fails, the transaction aborts and its messages do not execute
 
 Each message in a transaction is routed via BaseApp's `MsgServiceRouter` {/* todo: link to baseapp#msgservicerouter */} to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. BaseApp routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation.
 
-The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys.
+The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys. {/* todo: link to msgserver and keeper sections */}
 
 Messages execute sequentially in the order they appear in the transaction.
 
@@ -144,7 +162,7 @@ Across all validators, the block execution is deterministic. Blocks must contain
 
 ## Complete lifecycle overview
 
-```
+```go
 CometBFT
   ↓ ABCI InitChain
 BaseApp → x/<module>/InitGenesis
