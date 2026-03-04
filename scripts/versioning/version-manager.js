@@ -354,10 +354,11 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   stableEntries.push(archiveEntry);
   stableEntries.sort((a, b) => compareVersionsDesc(a.version, b.version));
 
+  // Order: next → latest → stable archived (newest first)
   dropdown.versions = [
+    ...(nextEntry  ? [nextEntry]  : []),
     ...(latestNav  ? [latestNav]  : []),
     ...stableEntries,
-    ...(nextEntry  ? [nextEntry]  : []),
   ];
 
   fs.writeFileSync(docsJsonPath, JSON.stringify(docsJson, null, 2) + '\n');
