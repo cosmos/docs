@@ -426,10 +426,11 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   stableEntries.push(archiveEntry);
   stableEntries.sort((a, b) => compareVersionsDesc(a.version, b.version));
 
-  // Order: next → latest → stable archived (newest first)
+  // Order: latest → next → stable archived (newest first)
+  // latest is first so it is the default version shown on the site
   dropdown.versions = [
-    ...(nextEntry  ? [nextEntry]  : []),
     ...(latestNav  ? [latestNav]  : []),
+    ...(nextEntry  ? [nextEntry]  : []),
     ...stableEntries,
   ];
 
