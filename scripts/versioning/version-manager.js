@@ -345,8 +345,9 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   // Remove existing entry for this archive version if present
   dropdown.versions = dropdown.versions.filter(v => v.version !== archiveVersion);
 
-  // Rebuild order: [latest, ...stable versions newest-first, next (hidden)]
+  // Rebuild order: next (hidden) → latest → stable archived (newest first)
   const nextEntry  = dropdown.versions.find(v => v.version === 'next');
+  if (nextEntry) nextEntry.hidden = true;
   const latestNav  = dropdown.versions.find(v => v.tag === 'Latest');
   const stableEntries = dropdown.versions.filter(v => v.version !== 'next' && v.tag !== 'Latest');
 
