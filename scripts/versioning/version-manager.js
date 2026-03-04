@@ -214,7 +214,78 @@ function promoteNextToLatest(subdir) {
   execSync(`cp -R "${nextPath}/." "${latestPath}/"`);
 
   rewriteInternalLinks(latestPath, `${subdir}/next`, `${subdir}/latest`);
+  stripNoindexFromDir(latestPath);
   printSuccess('Promoted next/ → latest/');
+}
+
+// ---------------------------------------------------------------------------
+// Strip noindex + canonical from promoted latest/ MDX files
+// ---------------------------------------------------------------------------
+
+function stripNoindexFromDir(dirPath) {
+  const output = execSync(`find "${dirPath}" -name "*.mdx" -type f`, { encoding: 'utf8' });
+  const mdxFiles = output.trim().split('\n').filter(Boolean);
+
+  let stripped = 0;
+  for (const filePath of mdxFiles) {
+    let content = fs.readFileSync(filePath, 'utf8');
+    const original = content;
+    // Remove noindex and canonical lines from inside front matter
+    content = content.replace(/^noindex: true\n/m, '');
+    content = content.replace(/^canonical: '.*'\n/m, '');
+    if (content !== original) { fs.writeFileSync(filePath, content); stripped++; }
+  }
+
+  printSuccess(`Stripped noindex/canonical from ${stripped} files in latest/`);
+}
+
+// ---------------------------------------------------------------------------
+// Inject noindex + canonical into next/ MDX files
+// ---------------------------------------------------------------------------
+
+/**
+ * Walks every .mdx file in next/ and injects front matter:
+ *   noindex: true
+ *   canonical: <BASE_URL>/<subdir>/latest/<page>   (if matching page exists in latest/)
+ *             <BASE_URL>/<subdir>/latest/           (fallback)
+ *
+ * Skips files that already have noindex: true.
+ */
+function injectNoindexNext(subdir) {
+  const nextPath   = path.join(__dirname, '..', '..', subdir, 'next');
+  const latestPath = path.join(__dirname, '..', '..', subdir, 'latest');
+  const hasLatest  = fs.existsSync(latestPath);
+
+  const output = execSync(`find "${nextPath}" -name "*.mdx" -type f`, { encoding: 'utf8' });
+  const mdxFiles = output.trim().split('\n').filter(Boolean);
+
+  let tagged = 0, withSpecificCanonical = 0;
+
+  for (const filePath of mdxFiles) {
+    let content = fs.readFileSync(filePath, 'utf8');
+    if (content.includes('noindex: true')) continue;
+
+    const relPath = path.relative(nextPath, filePath);
+    const latestEquivalent = hasLatest ? path.join(latestPath, relPath) : null;
+    const hasMatch = latestEquivalent && fs.existsSync(latestEquivalent);
+    const canonicalUrl = hasMatch
+      ? `${BASE_URL}/${subdir}/latest/${relPath.replace(/\.mdx$/, '')}`
+      : `${BASE_URL}/${subdir}/latest/`;
+    if (hasMatch) withSpecificCanonical++;
+
+    const injection = `noindex: true\ncanonical: '${canonicalUrl}'`;
+
+    if (content.startsWith('---\n')) {
+      content = content.replace(/^---\n/, `---\n${injection}\n`);
+    } else {
+      content = `---\n${injection}\n---\n\n${content}`;
+    }
+
+    fs.writeFileSync(filePath, content);
+    tagged++;
+  }
+
+  printSuccess(`Tagged ${tagged} next/ files with noindex (${withSpecificCanonical} specific canonical, ${tagged - withSpecificCanonical} fallback)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -345,9 +416,9 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   // Remove existing entry for this archive version if present
   dropdown.versions = dropdown.versions.filter(v => v.version !== archiveVersion);
 
-  // Rebuild order: next (hidden) → latest → stable archived (newest first)
+  // Rebuild order: next (Unreleased) → latest → stable archived (newest first)
   const nextEntry  = dropdown.versions.find(v => v.version === 'next');
-  if (nextEntry) nextEntry.hidden = true;
+  if (nextEntry) { nextEntry.tag = 'Unreleased'; delete nextEntry.hidden; }
   const latestNav  = dropdown.versions.find(v => v.tag === 'Latest');
   const stableEntries = dropdown.versions.filter(v => v.version !== 'next' && v.tag !== 'Latest');
 
@@ -525,8 +596,12 @@ async function main() {
       } catch { printWarning('Failed to generate changelog. Proceeding.'); }
     }
 
-    // Step 3: Promote next/ → latest/
+    // Step 3: Promote next/ → latest/ (strips noindex from promoted files)
     promoteNextToLatest(subdir);
+
+    // Step 3b: Inject noindex + canonical into next/ for future crawl protection
+    printInfo('Injecting noindex into next/ pages...');
+    injectNoindexNext(subdir);
 
     // Step 4: Update navigation and registry
     if (archiveVersion) {
