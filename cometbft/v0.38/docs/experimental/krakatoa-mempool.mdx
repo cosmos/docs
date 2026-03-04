@@ -1,0 +1,255 @@
+---
+order: 2
+title: "Krakatoa: Application-Side Mempool"
+description: "Allowing application-side mempool management"
+icon: "flame"
+---
+
+> Experimental: The Krakatoa mempool is an upcoming feature and is subject to change.
+
+# Krakatoa: Application-Side Mempool
+
+The Krakatoa mempool is a new CometBFT mempool type (`app`) that delegates
+transaction storage, validation, and rechecking entirely to the application.
+CometBFT acts as a thin proxy — receiving transactions from RPC and P2P,
+forwarding them to the application via ABCI, and broadcasting application-reaped
+transactions to peers.
+
+This design replaces the traditional `flood` mempool model where CometBFT
+stores transactions in-process and drives rechecking via repeated `CheckTx`
+calls.
+
+## Motivation
+
+The traditional mempool architecture has several limitations:
+
+**ABCI lock contention**: In the `flood` mempool, `CheckTx` calls hold the ABCI
+connection lock. This lock is shared with consensus-critical operations like
+`PrepareProposal` and `FinalizeBlock`. Since `CheckTx` volume is directly
+proportional to network load and fully driven by external actors submitting
+transactions, this means an externally influenced workload can hold up block
+building and finalization. During rechecking after a committed block, the
+problem compounds — all incoming transactions and consensus operations must
+wait for the full recheck pass to complete.
+
+**Limited application control**: The application has no control over when
+rechecking occurs, how transactions are prioritized during recheck, or how the
+mempool interacts with block building. CometBFT drives the entire lifecycle.
+
+**Redundant state management**: CometBFT maintains its own transaction storage
+(the concurrent linked list) even though the application often needs its own
+mempool for ordering and prioritization. This leads to duplicated state and
+synchronization overhead.
+
+The `app` mempool eliminates these issues by making the application the single
+source of truth for mempool state. CometBFT no longer holds the ABCI lock for
+mempool operations — `InsertTx` and `ReapTxs` are called concurrently and the
+application is responsible for its own synchronization.
+
+## New ABCI Methods
+
+Two new methods are added to the ABCI `Application` interface as part of the
+mempool connection:
+
+### InsertTx
+
+```protobuf
+service ABCIApplication {
+  rpc InsertTx(RequestInsertTx) returns (ResponseInsertTx);
+}
+
+message RequestInsertTx {
+  bytes tx = 1;
+}
+
+message ResponseInsertTx {
+  uint32 code = 1;
+}
+```
+
+`InsertTx` is called when CometBFT receives a transaction, either from an RPC
+client (`BroadcastTxSync`, `BroadcastTxAsync`) or from a peer via P2P gossip.
+The application is expected to validate and store the transaction in its own
+mempool.
+
+**Response codes**:
+
+| Code | Meaning | CometBFT Behavior |
+|------|---------|-------------------|
+| `0` (OK) | Transaction accepted | Transaction is marked as seen and will not be re-inserted |
+| `1` - `31,999` | Transaction rejected | Transaction is marked as seen and will not be retried |
+| `>= 32,000` (Retry) | Temporary rejection | Transaction is removed from the seen cache so it can be retried later |
+
+The retry mechanism is useful when the application's mempool is temporarily at
+capacity. By returning a retry code, the application signals that the
+transaction is not inherently invalid — it simply cannot be accepted right now.
+When the transaction is received again (from a peer or resubmitted via RPC), it
+will be forwarded to the application again.
+
+**Concurrency guarantee**: `InsertTx` calls are thread-safe from CometBFT's
+perspective. Multiple goroutines may call `InsertTx` concurrently (e.g.,
+transactions arriving from different peers simultaneously). The application is
+responsible for its own internal synchronization.
+
+**No ABCI lock**: Unlike `CheckTx` in the `flood` mempool, `InsertTx` does not
+hold the ABCI connection lock. This means `InsertTx` calls do not block
+consensus operations, and consensus operations do not block `InsertTx`.
+
+### ReapTxs
+
+```protobuf
+service ABCIApplication {
+  rpc ReapTxs(RequestReapTxs) returns (ResponseReapTxs);
+}
+
+message RequestReapTxs {
+  uint64 max_bytes = 1;
+  uint64 max_gas   = 2;
+}
+
+message ResponseReapTxs {
+  repeated bytes txs = 1;
+}
+```
+
+`ReapTxs` is called periodically by the `AppReactor` to retrieve new, validated
+transactions from the application for peer-to-peer broadcast. The application
+should return transactions that are ready for gossip — typically transactions
+that have been validated and are eligible for block inclusion.
+
+When `max_bytes` and `max_gas` are both zero, the application should return all
+available transactions without limits.
+
+**Important**: `ReapTxs` is used for broadcasting, not for block building.
+Block building is handled through `PrepareProposal`, where the application
+constructs the block directly from its own mempool state.
+
+## AppMempool
+
+The `AppMempool` is the CometBFT-side implementation that fulfills the
+`Mempool` interface while delegating all real work to the application.
+
+### What AppMempool does
+
+- Proxies incoming transactions to the application via `InsertTx`
+- Maintains a seen cache (LRU, 100k entries) to avoid re-inserting duplicate
+  transactions
+- Validates transaction size against `max_tx_bytes` before forwarding
+- Handles retry semantics by removing retryable transactions from the seen cache
+
+### What AppMempool does NOT do
+
+- Store transactions — the application owns all mempool state
+- Call `CheckTx` — validation is the application's responsibility within `InsertTx`
+- Call `Update` after blocks — rechecking is the application's responsibility
+- Provide transactions for `ReapMaxBytesMaxGas` — always returns nil, since the
+  application builds blocks via `PrepareProposal`
+
+## AppReactor
+
+The `AppReactor` replaces the traditional mempool reactor (`Reactor`) for P2P
+transaction gossip.
+
+### Broadcasting
+
+The reactor runs a background loop that:
+
+1. Calls `ReapTxs` on the application every 500ms
+2. Chunks the returned transactions into batches (up to `MaxBatchBytes`)
+3. Broadcasts each batch to all connected peers
+
+### Receiving
+
+When a peer sends transactions, the reactor:
+
+1. Deserializes the transaction batch from the P2P envelope
+2. Calls `InsertTx` on the `AppMempool` for each transaction
+3. Logs and discards transactions that fail insertion (already seen, too large,
+   or rejected by the application)
+
+## Transaction Lifecycle
+
+With the `app` mempool, the transaction lifecycle changes significantly:
+
+### Previous Lifecycle (flood mempool)
+
+1. Transaction arrives via RPC or P2P
+2. CometBFT validates size and checks the seen cache
+3. CometBFT calls `CheckTx` on the application (holds ABCI lock)
+4. If valid, CometBFT stores the transaction in its linked list
+5. CometBFT broadcasts the transaction to all peers
+6. At block proposal time, CometBFT calls `ReapMaxBytesMaxGas` and passes
+   transactions to `PrepareProposal`
+7. After block commit, CometBFT rechecks all remaining transactions via
+   `CheckTx` (holds ABCI lock for the entire recheck)
+
+### Updated Lifecycle (app mempool)
+
+1. Transaction arrives via RPC or P2P
+2. CometBFT validates size and checks the seen cache
+3. CometBFT calls `InsertTx` on the application (no ABCI lock)
+4. The application validates and stores the transaction in its own mempool
+5. The `AppReactor` periodically calls `ReapTxs` and broadcasts returned
+   transactions to peers
+6. At block proposal time, `PrepareProposal` receives no transactions from
+   CometBFT — the application builds the block from its own mempool
+7. After block commit, the application runs its own recheck logic on its own
+   schedule
+
+## Block Building
+
+Since the `AppMempool` returns nil from `ReapMaxBytesMaxGas`, the block
+executor passes no mempool transactions to `PrepareProposal`. The application's
+`PrepareProposalHandler` is expected to select transactions directly from its
+own mempool.
+
+This gives the application full control over transaction ordering,
+prioritization, and inclusion.
+
+## Application Guarantees and Responsibilities
+
+When implementing `InsertTx` and `ReapTxs`, applications should be aware of the
+following:
+
+### CometBFT guarantees to the application
+
+- `InsertTx` will not be called with empty transactions
+- `InsertTx` will not be called with transactions exceeding `max_tx_bytes`
+- Transactions returning a retry code will be removed from the seen cache and
+  may be re-submitted
+- `ReapTxs` will be called periodically (every 500ms) regardless of whether new
+  transactions have arrived
+- `InsertTx` and `ReapTxs` will not hold the ABCI connection lock
+
+### Application responsibilities
+
+- **Concurrency**: The application must handle concurrent `InsertTx` calls safely
+- **Rechecking**: The application must implement its own transaction revalidation
+  after blocks are committed
+- **Block building**: The application must select transactions for blocks in its
+  `PrepareProposalHandler` — CometBFT will not provide mempool transactions
+- **Storage**: The application must manage its own transaction storage and eviction
+
+## Configuration
+
+To enable the `app` mempool, set the mempool type in the CometBFT configuration:
+
+```toml
+[mempool]
+type = "app"
+```
+
+The following configuration options apply to the `app` mempool:
+
+- `max_tx_bytes`: Maximum size of a single transaction (checked before `InsertTx`)
+- `max_batch_bytes`: Maximum size of a broadcast batch
+- `broadcast`: Enable or disable P2P transaction broadcasting
+
+Options specific to the `flood` mempool (`size`, `max_txs_bytes`, `cache_size`,
+`recheck`, etc.) have no effect when using the `app` mempool.
+
+## Related Documentation
+
+- [Cosmos EVM Krakatoa Mempool](/evm/next/documentation/concepts/experimental/krakatoa-mempool) - Cosmos EVM's implementation of the Krakatoa specification
+- [Mempool](/cometbft/v0.38/docs/core/mempool) - Overview of CometBFT mempool types
+- [ABCI Methods](/cometbft/v0.38/spec/abci/Methods) - ABCI method specification
