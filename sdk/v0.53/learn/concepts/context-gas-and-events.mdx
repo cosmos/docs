@@ -30,8 +30,11 @@ Context exposes read-only access to the current block's metadata:
 - `ctx.BlockHeight()` returns the current block number. {/* cosmos/cosmos-sdk types/context.go:74 — func (c Context) BlockHeight() int64 { return c.header.Height } */}
 - `ctx.BlockTime()` returns the block's timestamp. {/* cosmos/cosmos-sdk types/context.go:75 — func (c Context) BlockTime() time.Time { return c.header.Time } */}
 - `ctx.ChainID()` returns the chain identifier string. {/* cosmos/cosmos-sdk types/context.go:76 — func (c Context) ChainID() string { return c.chainID } */}
+- `ctx.Logger()` returns a structured logger scoped to the current execution context. Modules use this for operational logging (e.g., logging an upgrade activation or an unexpected state) without affecting consensus. {/* cosmos/cosmos-sdk types/context.go:95 — func (c Context) Logger() log.Logger { return c.logger } */}
 
 These values are populated by BaseApp from the block header provided by CometBFT before any block logic runs. Modules read them to implement time-dependent logic (for example, checking whether a vesting period has elapsed) or to tag events with the block height.
+
+`ctx.IsCheckTx()` returns true when the context is being used for mempool validation rather than block execution. {/* cosmos/cosmos-sdk types/context.go:99 — func (c Context) IsCheckTx() bool { return c.checkTx } */} Modules that have logic specific to mempool pre-screening — such as skipping expensive computation during `CheckTx` — can branch on this flag.
 
 ### Context and state access
 
@@ -124,13 +127,19 @@ ctx.EventManager().EmitTypedEvent(&types.EventCounterIncremented{
 
 Using `EmitTypedEvent` is the modern approach. It provides type safety and makes the event schema explicit through proto definitions, allowing clients to deserialize events back into typed structs.
 
+### Block events and transaction events
+
+Events emitted during `BeginBlock` or `EndBlock` hooks are **block events** — they describe things that happened at the block level (inflation minted, validator updates applied). Events emitted inside a message handler are **transaction events** — they describe what a specific transaction did.
+
+Both types are included in the `FinalizeBlock` response that CometBFT returns to the network, but they are reported separately so clients can distinguish block-level activity from per-transaction activity.
+
 ### Who consumes events
 
 Events are consumed outside the node:
 
 - **Block explorers** index events to show users what happened in a transaction (which tokens moved, which validator was slashed, which proposal passed).
 - **Relayers** (IBC) subscribe to specific event types to detect packet sends and acknowledgments.
-- **Indexers and off-chain services** build queryable databases of chain activity from event streams.
+- **Indexers and off-chain services** build queryable databases of chain activity from event streams. Events can also be queried via the node's REST API and WebSocket endpoint.
 - **Wallets and UIs** display event data to users as transaction receipts.
 
 Events are included in the block result that CometBFT returns after each block. They are not replayed or reprocessed; once a block is finalized, its events are fixed.
