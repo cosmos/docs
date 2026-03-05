@@ -8,7 +8,7 @@ In the previous section, you learned how data is serialized and why every valida
 
 Every message handler, keeper method, and block hook in the Cosmos SDK receives an `sdk.Context`. It is the execution environment for a single unit of work — a transaction, a query, or a block hook — and carries everything that code needs to read state, emit events, and consume gas.
 
-The `Context` struct is defined in `types/context.go`: {/* cosmos/cosmos-sdk types/context.go:39 — type Context struct { ... } */}
+The `Context` struct is defined in `types/context.go`: {/* cosmos/cosmos-sdk types/context.go:41 — type Context struct { ... } */}
 
 ```go
 type Context struct {
@@ -27,9 +27,9 @@ Context is a value type, not a pointer. It is passed by value and mutated throug
 
 Context exposes read-only access to the current block's metadata:
 
-- `ctx.BlockHeight()` returns the current block number. {/* cosmos/cosmos-sdk types/context.go:74 — func (c Context) BlockHeight() int64 { return c.header.Height } */}
-- `ctx.BlockTime()` returns the block's timestamp. {/* cosmos/cosmos-sdk types/context.go:75 — func (c Context) BlockTime() time.Time { return c.header.Time } */}
-- `ctx.ChainID()` returns the chain identifier string. {/* cosmos/cosmos-sdk types/context.go:76 — func (c Context) ChainID() string { return c.chainID } */}
+- `ctx.BlockHeight()` returns the current block number. {/* cosmos/cosmos-sdk types/context.go:91 — func (c Context) BlockHeight() int64 { return c.header.Height } */}
+- `ctx.BlockTime()` returns the block's timestamp. {/* cosmos/cosmos-sdk types/context.go:92 — func (c Context) BlockTime() time.Time { return c.header.Time } */}
+- `ctx.ChainID()` returns the chain identifier string. {/* cosmos/cosmos-sdk types/context.go:93 — func (c Context) ChainID() string { return c.chainID } */}
 - `ctx.Logger()` returns a structured logger scoped to the current execution context. Modules use this for operational logging (e.g., logging an upgrade activation or an unexpected state) without affecting consensus. {/* cosmos/cosmos-sdk types/context.go:95 — func (c Context) Logger() log.Logger { return c.logger } */}
 
 These values are populated by BaseApp from the block header provided by CometBFT before any block logic runs. Modules read them to implement time-dependent logic (for example, checking whether a vesting period has elapsed) or to tag events with the block height.
@@ -58,9 +58,9 @@ The gas system exists to prevent abuse. Without a gas limit, a single transactio
 
 ### Gas limit and the transaction gas meter
 
-Every transaction specifies a gas limit in its `auth_info.fee.gas_limit` field. {/* cosmos/cosmos-sdk proto/cosmos/tx/v1beta1/tx.proto:235 — uint64 gas_limit = 2; — the gas_limit field in the Fee message of AuthInfo */} When BaseApp begins executing a transaction, it creates a `GasMeter` initialized with that limit and attaches it to the context. {/* cosmos/cosmos-sdk types/context.go:221 — func (c Context) WithGasMeter(meter storetypes.GasMeter) Context — used by BaseApp to attach the transaction gas meter to context */}
+Every transaction specifies a gas limit in its `auth_info.fee.gas_limit` field. {/* cosmos/cosmos-sdk proto/cosmos/tx/v1beta1/tx.proto:235 — uint64 gas_limit = 2; — the gas_limit field in the Fee message of AuthInfo */} When BaseApp begins executing a transaction, it creates a `GasMeter` initialized with that limit and attaches it to the context. {/* cosmos/cosmos-sdk types/context.go:244 — func (c Context) WithGasMeter(meter storetypes.GasMeter) Context — used by BaseApp to attach the transaction gas meter to context */}
 
-The `GasMeter` interface provides two key methods: {/* cosmos/cosmos-sdk store/types/gas.go:40 — type GasMeter interface { GasConsumed() Gas; ConsumeGas(amount Gas, descriptor string); ... } */}
+The `GasMeter` interface provides two key methods: {/* cosmos/cosmos-sdk store/types/gas.go:41 — type GasMeter interface { GasConsumed() Gas; ConsumeGas(amount Gas, descriptor string); ... } */}
 
 ```go
 type GasMeter interface {
@@ -70,24 +70,24 @@ type GasMeter interface {
 }
 ```
 
-`GasConsumed` returns the total gas used so far in the current execution unit. {/* cosmos/cosmos-sdk store/types/gas.go:41 — GasConsumed() Gas — returns total gas consumed so far */} `ConsumeGas` adds to the running total and panics with `ErrorOutOfGas` if consumption exceeds the limit. {/* cosmos/cosmos-sdk store/types/gas.go:45 — ConsumeGas(amount Gas, descriptor string) — adds amount to consumed; panics with ErrorOutOfGas if limit exceeded */} {/* cosmos/cosmos-sdk store/types/gas.go:29 — type ErrorOutOfGas struct { Descriptor string } — the error type panicked when gas is exhausted */}
+`GasConsumed` returns the total gas used so far in the current execution unit. {/* cosmos/cosmos-sdk store/types/gas.go:42 — GasConsumed() Gas — returns total gas consumed so far */} `ConsumeGas` adds to the running total and panics with `ErrorOutOfGas` if consumption exceeds the limit. {/* cosmos/cosmos-sdk store/types/gas.go:46 — ConsumeGas(amount Gas, descriptor string) — adds amount to consumed; panics with ErrorOutOfGas if limit exceeded */} {/* cosmos/cosmos-sdk store/types/gas.go:30 — type ErrorOutOfGas struct { Descriptor string } — the error type panicked when gas is exhausted */}
 
 ### How gas is consumed
 
 Gas is consumed automatically at the store layer. Every read and write through the `GasKVStore` wrapper charges gas before delegating to the underlying store:
 
-- A `Get` (store read) charges a flat read cost plus a per-byte cost for the key and value. {/* cosmos/cosmos-sdk store/gaskv/store.go:35 — gs.gasMeter.ConsumeGas(gs.gasConfig.ReadCostFlat, ...) on every Get call */}
-- A `Set` (store write) charges a flat write cost plus a per-byte cost for the key and value. {/* cosmos/cosmos-sdk store/gaskv/store.go:49 — gs.gasMeter.ConsumeGas(gs.gasConfig.WriteCostFlat, ...) on every Set call */}
+- A `Get` (store read) charges a flat read cost plus a per-byte cost for the key and value. {/* cosmos/cosmos-sdk store/gaskv/store.go:66 — gs.gasMeter.ConsumeGas(gs.gasConfig.ReadCostFlat, ...) on every Get call */}
+- A `Set` (store write) charges a flat write cost plus a per-byte cost for the key and value. {/* cosmos/cosmos-sdk store/gaskv/store.go:80 — gs.gasMeter.ConsumeGas(gs.gasConfig.WriteCostFlat, ...) on every Set call */}
 
 Modules do not need to manually track gas for ordinary state access — the store layer handles it automatically. Modules call `ctx.GasMeter().ConsumeGas(...)` directly only for computation costs that are not captured by store operations (for example, a module that performs a cryptographic operation outside the store).
 
 ### When gas runs out
 
-If gas is exhausted during execution, `ConsumeGas` panics with `ErrorOutOfGas`. {/* cosmos/cosmos-sdk store/types/gas.go:106 — basicGasMeter.ConsumeGas panics with ErrorOutOfGas{descriptor} when g.consumed > g.limit */} BaseApp recovers from this panic, discards all state changes from the transaction, and returns an error to the user. Fees may still be charged for the gas consumed up to the point of failure, but none of the transaction's state changes are committed.
+If gas is exhausted during execution, `ConsumeGas` panics with `ErrorOutOfGas`. {/* cosmos/cosmos-sdk store/types/gas.go:116 — basicGasMeter.ConsumeGas panics with ErrorOutOfGas{descriptor} when g.consumed > g.limit */} BaseApp recovers from this panic, discards all state changes from the transaction, and returns an error to the user. Fees may still be charged for the gas consumed up to the point of failure, but none of the transaction's state changes are committed.
 
 ### Block gas limit
 
-In addition to the per-transaction gas meter, there is a block-level gas meter that tracks total gas consumed by all transactions in a block. {/* cosmos/cosmos-sdk types/context.go:39 — blockGasMeter storetypes.GasMeter field in Context struct tracks block-level gas */} The block gas limit prevents a single block from consuming unbounded computation. If a transaction would cause the block's gas total to exceed the limit, it is excluded from the block.
+In addition to the per-transaction gas meter, there is a block-level gas meter that tracks total gas consumed by all transactions in a block. {/* cosmos/cosmos-sdk types/context.go:54 — blockGasMeter storetypes.GasMeter field in Context struct tracks block-level gas */} The block gas limit prevents a single block from consuming unbounded computation. If a transaction would cause the block's gas total to exceed the limit, it is excluded from the block.
 
 ## Events
 
@@ -99,9 +99,9 @@ Events are not part of consensus state. They are not stored in the KVStore, do n
 
 ### EventManager
 
-Modules emit events through the `EventManager`, which is attached to the context: {/* cosmos/cosmos-sdk types/context.go:87 — func (c Context) EventManager() EventManagerI { return c.eventManager } */}
+Modules emit events through the `EventManager`, which is attached to the context: {/* cosmos/cosmos-sdk types/context.go:104 — func (c Context) EventManager() *EventManager { return c.eventManager } */}
 
-The `EventManager` is created fresh for each transaction and collects all events emitted during that execution. {/* cosmos/cosmos-sdk types/events.go:34 — type EventManager struct { events Events } — holds the slice of events accumulated during execution */} {/* cosmos/cosmos-sdk types/events.go:38 — func NewEventManager() *EventManager — creates an EventManager with an empty events slice */}
+The `EventManager` is created fresh for each transaction and collects all events emitted during that execution. {/* cosmos/cosmos-sdk types/events.go:24 — type EventManager struct { events Events } — holds the slice of events accumulated during execution */} {/* cosmos/cosmos-sdk types/events.go:28 — func NewEventManager() *EventManager — creates an EventManager with an empty events slice */}
 
 ### Emitting events
 
@@ -115,9 +115,9 @@ ctx.EventManager().EmitEvent(sdk.NewEvent(
 ))
 ```
 
-`EmitEvent` appends a raw key-value event to the manager's accumulated list. {/* cosmos/cosmos-sdk types/events.go:46 — func (em *EventManager) EmitEvent(event Event) — appends the event to em.events */}
+`EmitEvent` appends a raw key-value event to the manager's accumulated list. {/* cosmos/cosmos-sdk types/events.go:35 — func (em *EventManager) EmitEvent(event Event) — appends the event to em.events */}
 
-For events backed by protobuf message types, `EmitTypedEvent` serializes the message's fields into event attributes automatically: {/* cosmos/cosmos-sdk types/events.go:62 — func (em *EventManager) EmitTypedEvent(tev proto.Message) error — serializes proto message into an Event with attributes derived from its fields */}
+For events backed by protobuf message types, `EmitTypedEvent` serializes the message's fields into event attributes automatically: {/* cosmos/cosmos-sdk types/events.go:57 — func (em *EventManager) EmitTypedEvent(tev proto.Message) error — serializes proto message into an Event with attributes derived from its fields */}
 
 ```go
 ctx.EventManager().EmitTypedEvent(&types.EventCounterIncremented{
