@@ -8,7 +8,7 @@ In the previous sections, you learned how modules define business logic and stat
 
 **BaseApp** is the Go struct at the core of every Cosmos SDK application. It implements the ABCI (Application Blockchain Interface) — the protocol that CometBFT uses to communicate with the application — and translates those calls into module-level operations: running block hooks, routing messages to handlers, managing state, and computing the app hash.
 
-Every Cosmos SDK chain embeds BaseApp. Your `app.go` creates a BaseApp instance, configures it with modules, keepers, and middleware, and the resulting struct is what CometBFT communicates with directly. {/* cosmos/cosmos-sdk baseapp/baseapp.go:63 — type BaseApp struct { ... } — the complete BaseApp struct */}
+Every Cosmos SDK chain embeds BaseApp. Your `app.go` creates a BaseApp instance, configures it with modules, keepers, and middleware, and the resulting struct is what CometBFT communicates with directly. {/* cosmos/cosmos-sdk baseapp/baseapp.go:86 — type BaseApp struct — the complete BaseApp struct definition */}
 
 ## Architectural position
 
@@ -26,26 +26,58 @@ Modules (x/auth, x/bank, x/staking, ...)
 State (KVStores)
 ```
 
-CometBFT drives the block lifecycle by calling ABCI methods on BaseApp. BaseApp handles each call, delegating to the ModuleManager and routing messages to the appropriate module handlers. Modules contain the business logic. KVStores hold the resulting state.
+CometBFT drives the block lifecycle by calling ABCI methods on BaseApp. BaseApp handles each call, delegating to registered lifecycle hooks and routing messages to the appropriate module handlers. Modules contain the business logic. KVStores hold the resulting state.
 
 ## Key fields
 
-The `BaseApp` struct holds references to everything needed to run a chain:
+The [`BaseApp` struct](https://github.com/cosmos/cosmos-sdk/blob/main/baseapp/baseapp.go) is defined in `baseapp/baseapp.go`. It holds references to everything needed to run a chain: {/* cosmos/cosmos-sdk baseapp/baseapp.go:85 — // BaseApp reflects the ABCI application implementation. */}
 
 ```go
+// BaseApp reflects the ABCI application implementation.
 type BaseApp struct {
-    cms              storetypes.CommitMultiStore  // main (uncached) state store
-    storeLoader      StoreLoader                  // loads stores at startup
-    msgServiceRouter *MsgServiceRouter            // routes messages to handlers
-    anteHandler      sdk.AnteHandler              // pre-execution middleware
+    logger           log.Logger
+    name             string                      // application name from abci.BlockInfo
+    db               dbm.DB                      // common DB backend
+    cms              storetypes.CommitMultiStore // Main (uncached) state
+    storeLoader      StoreLoader                 // function to handle store loading
+    grpcQueryRouter  *GRPCQueryRouter            // router for redirecting gRPC query calls
+    msgServiceRouter *MsgServiceRouter           // router for redirecting Msg service messages
+    txDecoder        sdk.TxDecoder               // unmarshal []byte into sdk.Tx
+    mempool          mempool.Mempool
+    anteHandler      sdk.AnteHandler             // ante handler for fee and auth
+    postHandler      sdk.PostHandler             // post handler, optional
+    chainID          string
     // ... additional fields
 }
 ```
 
-- **`cms` (CommitMultiStore)**: the root state store. All module substores are mounted here, and all state reads and writes during block execution pass through it. {/* cosmos/cosmos-sdk baseapp/baseapp.go:69 — cms storetypes.CommitMultiStore // Main (uncached) state */}
-- **`storeLoader`**: a function that opens and mounts the individual module stores at application startup. {/* cosmos/cosmos-sdk baseapp/baseapp.go:71 — storeLoader StoreLoader — function that loads stores from disk */}
-- **`msgServiceRouter`**: routes each message in a transaction to the correct module's `MsgServer` handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:73 — msgServiceRouter *MsgServiceRouter — routes message type URLs to registered handlers */}
-- **`anteHandler`**: runs before message execution to handle cross-cutting concerns: signature verification, sequence validation, and fee deduction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:79 — anteHandler sdk.AnteHandler — pre-execution middleware set via SetAnteHandler */}
+- **`cms` (CommitMultiStore)**: the root state store. All module substores are mounted here, and all state reads and writes during block execution pass through it. {/* cosmos/cosmos-sdk baseapp/baseapp.go:92 — cms storetypes.CommitMultiStore // Main (uncached) state */}
+- **`storeLoader`**: a function that opens and mounts the individual module stores at application startup. {/* cosmos/cosmos-sdk baseapp/baseapp.go:94 — storeLoader StoreLoader // function to handle store loading, may be overridden with SetStoreLoader() */}
+- **`grpcQueryRouter`**: routes incoming gRPC queries to the correct module's query handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:95 — grpcQueryRouter *GRPCQueryRouter // router for redirecting gRPC query calls */}
+- **`msgServiceRouter`**: routes each message in a transaction to the correct module's `MsgServer` handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:96 — msgServiceRouter *MsgServiceRouter // router for redirecting Msg service messages */}
+- **`anteHandler`**: runs before message execution to handle cross-cutting concerns: signature verification, sequence validation, and fee deduction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:102 — anteHandler sdk.AnteHandler // ante handler for fee and auth */}
+- **`postHandler`**: optional middleware that runs after message execution — used for tasks such as tipping or post-execution state adjustments. {/* cosmos/cosmos-sdk baseapp/baseapp.go:103 — postHandler sdk.PostHandler // post handler, optional */}
+
+## Module Manager
+
+BaseApp's block lifecycle hooks — `PreBlock`, `BeginBlock`, and `EndBlock` — are registered as function callbacks via `SetPreBlocker`, `SetBeginBlocker`, and `SetEndBlocker`. Every standard SDK application implements those callbacks by delegating to a `ModuleManager`. {/* cosmos/cosmos-sdk baseapp/options.go:195 — func (app *BaseApp) SetPreBlocker sets abciHandlers.PreBlocker */} {/* cosmos/cosmos-sdk baseapp/options.go:203 — func (app *BaseApp) SetBeginBlocker sets abciHandlers.BeginBlocker */}
+
+The `ModuleManager` is defined in `types/module/module.go` and holds the full set of registered modules along with their execution ordering: {/* cosmos/cosmos-sdk types/module/module.go:287 — type Manager struct { Modules map[string]any; OrderInitGenesis []string; OrderBeginBlockers []string; OrderEndBlockers []string; ... } */}
+
+```go
+type Manager struct {
+    Modules            map[string]any  // all registered modules, keyed by module name
+    OrderPreBlockers   []string        // module execution order for PreBlock
+    OrderBeginBlockers []string        // module execution order for BeginBlock
+    OrderEndBlockers   []string        // module execution order for EndBlock
+    OrderInitGenesis   []string        // module execution order for chain initialization
+    // ...
+}
+```
+
+When BaseApp calls the `BeginBlocker` hook, the application delegates to `mm.BeginBlock(ctx)`, which iterates `OrderBeginBlockers` and calls each module's `BeginBlock` in sequence. {/* cosmos/cosmos-sdk simapp/app.go:687 — func (app *SimApp) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) calls app.ModuleManager.BeginBlock(ctx) */} The same pattern applies to `PreBlock` and `EndBlock`.
+
+**Module ordering matters.** For example, `x/staking` must run `EndBlock` before `x/distribution` so that delegation changes are finalized before staking rewards are calculated. This ordering is configured explicitly in `app.go` using `mm.SetOrderEndBlockers(...)`. How the `ModuleManager` is assembled and configured is covered in the next section on `app.go`.
 
 ## Coordinating transaction execution
 
@@ -83,19 +115,19 @@ type MsgServiceRouter struct {
     // ...
 }
 ```
-{/* cosmos/cosmos-sdk baseapp/msg_service_router.go:28 — type MsgServiceRouter struct { routes map[string]MsgServiceHandler; ... } */}
+{/* cosmos/cosmos-sdk baseapp/msg_service_router.go:29 — type MsgServiceRouter struct { routes map[string]MsgServiceHandler; ... } */}
 
 The routing process has three steps:
 
-1. **Registration**: During app startup, each module calls `RegisterService`, which registers its message handlers keyed by message type URL (e.g., `/cosmos.bank.v1beta1.MsgSend`). {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:70 — RegisterService iterates service methods and registers handlers in the routes map keyed by message type URL */}
-2. **Lookup**: At execution time, `Handler` looks up the registered handler for the incoming message's type URL. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:53 — func (msr *MsgServiceRouter) Handler(msg sdk.Msg) MsgServiceHandler — returns handler by type URL from routes map */}
+1. **Registration**: During app startup, each module calls `RegisterService`, which registers its message handlers keyed by message type URL (e.g., `/cosmos.bank.v1beta1.MsgSend`). {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:71 — func (msr *MsgServiceRouter) RegisterService iterates service methods and registers handlers in the routes map keyed by message type URL */}
+2. **Lookup**: At execution time, `Handler` looks up the registered handler for the incoming message's type URL. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:54 — func (msr *MsgServiceRouter) Handler(msg sdk.Msg) MsgServiceHandler — returns handler by type URL from routes map */}
 3. **Execution**: The retrieved handler invokes the module's `MsgServer` implementation, which validates inputs, applies business rules, and updates state through the keeper.
 
 This routing is entirely type-URL-based. Modules do not need to know about each other at the routing level — BaseApp is the neutral coordinator.
 
 ## Store management
 
-BaseApp owns the `CommitMultiStore` that holds all module state. At app startup, each module registers its store key, and BaseApp mounts the corresponding store: {/* cosmos/cosmos-sdk baseapp/baseapp.go:328 — MountKVStores mounts IAVL or DB-backed stores for each registered KV store key */}
+BaseApp owns the `CommitMultiStore` that holds all module state. At app startup, each module registers its store key, and BaseApp mounts the corresponding store: {/* cosmos/cosmos-sdk baseapp/baseapp.go:323 — func (app *BaseApp) MountKVStores mounts IAVL or DB-backed stores for each registered KV store key */}
 
 ```go
 app.MountKVStores(keys)
@@ -112,7 +144,7 @@ The `AnteHandler` is middleware that runs before any message in a transaction ex
 - Deducting transaction fees from the signer's account
 - Setting up the gas meter for the transaction
 
-The AnteHandler is configured at app startup: {/* cosmos/cosmos-sdk baseapp/options.go:229 — func (app *BaseApp) SetAnteHandler(ah sdk.AnteHandler) — sets the AnteHandler; panics if called after app is sealed */}
+The AnteHandler is configured at app startup: {/* cosmos/cosmos-sdk baseapp/options.go:235 — func (app *BaseApp) SetAnteHandler(ah sdk.AnteHandler) — sets the AnteHandler; panics if called after app is sealed */}
 
 ```go
 app.SetAnteHandler(ante.NewAnteHandler(ante.HandlerOptions{
