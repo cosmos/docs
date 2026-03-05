@@ -1,0 +1,150 @@
+---
+title: BaseApp Overview
+---
+
+In the previous sections, you learned how modules define business logic and state, and how an SDK application is structured as a codebase. This page explains how transactions actually execute: BaseApp is the engine that connects CometBFT's consensus calls to module execution.
+
+## What BaseApp is
+
+**BaseApp** is the Go struct at the core of every Cosmos SDK application. It implements the ABCI (Application Blockchain Interface) — the protocol that CometBFT uses to communicate with the application — and translates those calls into module-level operations: running block hooks, routing messages to handlers, managing state, and computing the app hash.
+
+Every Cosmos SDK chain embeds BaseApp. Your `app.go` creates a BaseApp instance, configures it with modules, keepers, and middleware, and the resulting struct is what CometBFT communicates with directly. {/* cosmos/cosmos-sdk baseapp/baseapp.go:63 — type BaseApp struct { ... } — the complete BaseApp struct */}
+
+## Architectural position
+
+BaseApp sits between CometBFT and the modules:
+
+```
+CometBFT (consensus engine)
+    ↓  ABCI (InitChain, CheckTx, FinalizeBlock, Commit, ...)
+BaseApp
+    ↓  orchestrates block execution
+ModuleManager
+    ↓  dispatches to individual modules
+Modules (x/auth, x/bank, x/staking, ...)
+    ↓  read/write
+State (KVStores)
+```
+
+CometBFT drives the block lifecycle by calling ABCI methods on BaseApp. BaseApp handles each call, delegating to the ModuleManager and routing messages to the appropriate module handlers. Modules contain the business logic. KVStores hold the resulting state.
+
+## Key fields
+
+The `BaseApp` struct holds references to everything needed to run a chain:
+
+```go
+type BaseApp struct {
+    cms              storetypes.CommitMultiStore  // main (uncached) state store
+    storeLoader      StoreLoader                  // loads stores at startup
+    msgServiceRouter *MsgServiceRouter            // routes messages to handlers
+    anteHandler      sdk.AnteHandler              // pre-execution middleware
+    // ... additional fields
+}
+```
+
+- **`cms` (CommitMultiStore)**: the root state store. All module substores are mounted here, and all state reads and writes during block execution pass through it. {/* cosmos/cosmos-sdk baseapp/baseapp.go:69 — cms storetypes.CommitMultiStore // Main (uncached) state */}
+- **`storeLoader`**: a function that opens and mounts the individual module stores at application startup. {/* cosmos/cosmos-sdk baseapp/baseapp.go:71 — storeLoader StoreLoader — function that loads stores from disk */}
+- **`msgServiceRouter`**: routes each message in a transaction to the correct module's `MsgServer` handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:73 — msgServiceRouter *MsgServiceRouter — routes message type URLs to registered handlers */}
+- **`anteHandler`**: runs before message execution to handle cross-cutting concerns: signature verification, sequence validation, and fee deduction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:79 — anteHandler sdk.AnteHandler — pre-execution middleware set via SetAnteHandler */}
+
+## Coordinating transaction execution
+
+When CometBFT calls `FinalizeBlock`, BaseApp runs the full block execution pipeline: {/* cosmos/cosmos-sdk baseapp/abci.go:868 — func (app *BaseApp) FinalizeBlock(req *abci.RequestFinalizeBlock) — FinalizeBlock entry point */}
+
+```
+FinalizeBlock
+  ├─ PreBlock    → module pre-block hooks
+  ├─ BeginBlock  → module begin-block hooks
+  ├─ For each transaction:
+  │    ├─ AnteHandler   (signature verification, fee deduction, gas setup)
+  │    ├─ Message routing and execution
+  │    └─ Commit or revert (atomic per-transaction)
+  └─ EndBlock    → module end-block hooks
+       → returns AppHash
+```
+
+**PreBlock** runs first, before any block logic. It handles changes that must take effect before the block begins, such as activating a chain upgrade or modifying consensus parameters. {/* cosmos/cosmos-sdk baseapp/abci.go:757 — PreBlock called at the start of internalFinalizeBlock, before BeginBlock */}
+
+**BeginBlock** runs after PreBlock and handles per-block housekeeping: minting inflation rewards, distributing staking rewards, resetting per-block counters. {/* cosmos/cosmos-sdk baseapp/abci.go:762 — BeginBlock called after PreBlock, before transaction iteration */}
+
+**Transactions** execute one at a time in the order they appear in the block. For each transaction, the AnteHandler runs first, then each message is routed and executed.
+
+**EndBlock** runs after all transactions. It handles logic that depends on the block's cumulative state — for example, tallying governance votes after all vote messages have been processed, or updating validator power after all delegation changes. {/* cosmos/cosmos-sdk baseapp/abci.go:802 — EndBlock called after all transactions have executed */}
+
+After `FinalizeBlock` completes, BaseApp computes and returns the app hash, which is the Merkle root of all committed state. {/* cosmos/cosmos-sdk baseapp/abci.go:903 — res.AppHash = app.workingHash() — app hash computed and returned in the FinalizeBlock response */} When CometBFT subsequently calls `Commit`, BaseApp persists the state changes to disk. {/* cosmos/cosmos-sdk baseapp/abci.go:935 — func (app *BaseApp) Commit() — persists finalized state to disk */}
+
+## Message routing
+
+When a transaction contains messages, BaseApp routes each one to the appropriate module handler using the `MsgServiceRouter`.
+
+```go
+type MsgServiceRouter struct {
+    routes map[string]MsgServiceHandler
+    // ...
+}
+```
+{/* cosmos/cosmos-sdk baseapp/msg_service_router.go:28 — type MsgServiceRouter struct { routes map[string]MsgServiceHandler; ... } */}
+
+The routing process has three steps:
+
+1. **Registration**: During app startup, each module calls `RegisterService`, which registers its message handlers keyed by message type URL (e.g., `/cosmos.bank.v1beta1.MsgSend`). {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:70 — RegisterService iterates service methods and registers handlers in the routes map keyed by message type URL */}
+2. **Lookup**: At execution time, `Handler` looks up the registered handler for the incoming message's type URL. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:53 — func (msr *MsgServiceRouter) Handler(msg sdk.Msg) MsgServiceHandler — returns handler by type URL from routes map */}
+3. **Execution**: The retrieved handler invokes the module's `MsgServer` implementation, which validates inputs, applies business rules, and updates state through the keeper.
+
+This routing is entirely type-URL-based. Modules do not need to know about each other at the routing level — BaseApp is the neutral coordinator.
+
+## Store management
+
+BaseApp owns the `CommitMultiStore` that holds all module state. At app startup, each module registers its store key, and BaseApp mounts the corresponding store: {/* cosmos/cosmos-sdk baseapp/baseapp.go:328 — MountKVStores mounts IAVL or DB-backed stores for each registered KV store key */}
+
+```go
+app.MountKVStores(keys)
+```
+
+Before executing each transaction, BaseApp creates a cached, copy-on-write view of the multistore. All writes during that transaction occur in the cache. If the transaction succeeds, the cache is flushed to the underlying store. If the transaction fails at any point, the cache is discarded and no state changes are applied. This is how transaction atomicity is implemented: all messages in a transaction either all commit or none do.
+
+## AnteHandler integration
+
+The `AnteHandler` is middleware that runs before any message in a transaction executes. It is responsible for:
+
+- Verifying cryptographic signatures
+- Validating and incrementing the account sequence number
+- Deducting transaction fees from the signer's account
+- Setting up the gas meter for the transaction
+
+The AnteHandler is configured at app startup: {/* cosmos/cosmos-sdk baseapp/options.go:229 — func (app *BaseApp) SetAnteHandler(ah sdk.AnteHandler) — sets the AnteHandler; panics if called after app is sealed */}
+
+```go
+app.SetAnteHandler(ante.NewAnteHandler(ante.HandlerOptions{
+    AccountKeeper:   app.AccountKeeper,
+    BankKeeper:      app.BankKeeper,
+    SignModeHandler: app.txConfig.SignModeHandler(),
+    // ...
+}))
+```
+
+If the AnteHandler fails for any reason, the transaction is rejected and its messages never execute. Gas fees for the consumed gas may still be charged, but no state changes from the transaction body are committed.
+
+## CheckTx and mempool validation
+
+Before a transaction reaches block execution, it goes through `CheckTx`. BaseApp runs a lightweight version of the AnteHandler during `CheckTx` to validate signatures, check sequence numbers, and verify fees. Transactions that fail `CheckTx` are rejected and do not enter the mempool.
+
+`CheckTx` does not execute messages and does not write state. It exists solely to protect the mempool from invalid or malformed transactions before they consume block space.
+
+## Why BaseApp exists
+
+BaseApp provides shared execution infrastructure so that every Cosmos SDK application gets the same ABCI lifecycle, transaction processing pipeline, and store management automatically. Without it, every chain would need to independently implement signature verification, gas metering, message routing, block hook orchestration, and state commitment.
+
+By embedding BaseApp and configuring it with modules, a chain inherits the full execution engine and only needs to define its application-specific business logic in its modules.
+
+## Summary
+
+BaseApp is the execution engine of a Cosmos SDK chain:
+
+```
+CometBFT → ABCI → BaseApp → Modules → State
+```
+
+It implements ABCI, coordinates the block lifecycle (PreBlock → BeginBlock → transactions → EndBlock → Commit), routes messages to module handlers via the `MsgServiceRouter`, manages the multistore, and runs the AnteHandler before each transaction.
+
+The next section explains `app.go`: how BaseApp is instantiated, configured, and wired with modules to produce a complete, running chain.
