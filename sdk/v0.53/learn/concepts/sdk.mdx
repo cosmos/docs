@@ -55,44 +55,16 @@ Each module under `x/` follows a consistent internal layout:
 
 ```
 x/mymodule/
-├── keeper/
-│   ├── keeper.go        # Keeper struct: state access methods
-│   ├── msg_server.go    # MsgServer: handles transaction messages
-│   └── query_server.go  # QueryServer: handles queries
-├── types/
-│   ├── expected_keepers.go  # Interfaces for other modules' keepers
-│   ├── keys.go              # Store key and prefix definitions
-│   └── *.pb.go              # Generated from proto definitions
-└── module.go            # AppModule: wires the module into the application
+├── keeper/          # Keeper (state access), MsgServer, QueryServer
+├── types/           # Generated proto types, store keys, expected_keepers.go
+└── module.go        # AppModule: wires the module into the application
 ```
 
-The key files and what they contain:
-
-**`keeper/keeper.go`** — The `Keeper` struct holds references to the module's collections or store key, its codec, and any external keeper interfaces it depends on. It provides typed methods for reading and writing state. No code outside the keeper package should access the module's store directly.
-
-**`keeper/msg_server.go`** — The `MsgServer` implements the module's transaction handlers. It validates message inputs, checks authorization where required, and delegates state changes to the keeper.
-
-**`keeper/query_server.go`** — The `QueryServer` implements the module's gRPC query handlers. It reads state through the keeper and returns data without modifying state.
-
-**`types/expected_keepers.go`** — Declares the interfaces this module requires from other modules. For example, a module that charges fees declares a `BankKeeper` interface with only the methods it needs. This makes cross-module dependencies explicit and auditable. {/* cosmos/cosmos-sdk x/staking/types/expected_keepers.go:39 — DelegateCoinsFromAccountToModule in staking's expected BankKeeper interface — staking declares only the bank methods it needs */}
-
-**`module.go`** — Implements the `AppModule` interface, which connects the module to the application: registering its gRPC message and query services, defining genesis handlers, and opting into block lifecycle hooks (BeginBlock, EndBlock, PreBlock) as needed.
+Proto definitions live separately in `proto/`, not inside `x/`. See [Intro to Modules](/sdk/v0.53/learn/concepts/modules#anatomy-of-a-module-high-level) for a complete walkthrough of each file and the role it plays.
 
 ## How modules are assembled into an application
 
-Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager maintains the set of all registered modules and coordinates their lifecycle behavior across the application. {/* cosmos/cosmos-sdk types/module/module.go:277 — type Manager struct { Modules map[string]interface{}; OrderBeginBlockers []string; OrderEndBlockers []string; OrderInitGenesis []string; ... } */}
-
-At startup, the ModuleManager:
-
-- Calls `RegisterServices` on each module to wire up all gRPC message and query handlers. {/* cosmos/cosmos-sdk types/module/module.go:455 — RegisterServices iterates modules and calls RegisterServices(cfg) on each module implementing HasServices */}
-- Drives `InitGenesis` in a configured order when the chain starts, populating each module's store from `genesis.json`. {/* cosmos/cosmos-sdk types/module/module.go:479 — InitGenesis iterates OrderInitGenesis, calling each module's InitGenesis with its genesis data */}
-
-At each block, the ModuleManager:
-
-- Calls `BeginBlock` on registered modules before transactions execute. {/* cosmos/cosmos-sdk types/module/module.go:771 — BeginBlock creates a child context and calls BeginBlock for each module in OrderBeginBlockers */}
-- Calls `EndBlock` on registered modules after all transactions have executed, aggregating validator updates and events. {/* cosmos/cosmos-sdk types/module/module.go:789 — EndBlock aggregates validator updates and events from modules in OrderEndBlockers */}
-
-**Module ordering matters.** For example, the `x/staking` module must run `EndBlock` before `x/distribution` so that delegation changes are reflected before staking rewards are calculated. The ordering is configured explicitly in `app.go`, giving chain developers full control over execution sequence.
+Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager holds the full set of registered modules and coordinates their lifecycle hooks — `InitGenesis`, `BeginBlock`, `EndBlock`, and service registration — across the application. Module ordering is configured explicitly in `app.go` and matters: for example, `x/staking` must finalize delegation changes in `EndBlock` before `x/distribution` calculates rewards. See [Intro to Modules](/sdk/v0.53/learn/concepts/modules) for a detailed walkthrough of how the ModuleManager works.
 
 ## Where BaseApp fits
 
@@ -124,7 +96,51 @@ BaseApp implements the ABCI interface that CometBFT calls to drive block executi
 6. Register all gRPC services (message and query handlers) through the ModuleManager.
 7. Set the `AnteHandler` and other middleware.
 
-Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. There is no framework magic — the assembly is explicit and auditable.
+Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. There is no framework magic, and the assembly is explicit and auditable.
+
+## Other files in a chain
+
+A complete SDK chain repository contains more than just `x/`, `app/`, `cmd/`, and `proto/`. Here is what else you will typically find.
+
+### Additional files in `app/`
+
+Real-world applications split the `app/` directory across multiple files to keep `app.go` focused on wiring:
+
+```
+app/
+├── app.go          # Main wiring: BaseApp, keepers, module registration
+├── export.go       # Exports current state as a genesis file (hard forks, snapshots)
+├── upgrades.go     # Upgrade handlers for consensus-breaking software changes
+└── genesis.go      # Helpers for genesis state initialization (optional)
+```
+
+- **`export.go`** — Implements `ExportAppStateAndValidators`, which serializes all module state into a `genesis.json`. This is used when migrating to a new chain version (hard fork) or creating a testnet from a live chain snapshot.
+- **`upgrades.go`** — Registers named upgrade handlers consumed by the `x/upgrade` module. Each handler runs exactly once, at the block where the governance-approved upgrade height is reached, and performs any necessary state migrations.
+
+### At the repository root
+
+```
+myapp/
+├── go.mod          # Go module definition: SDK version and all dependencies
+├── go.sum          # Cryptographic checksums for all dependencies
+├── Makefile        # Build, test, and codegen tasks
+└── scripts/        # Automation scripts (proto generation, linting)
+```
+
+- **`go.mod` / `go.sum`** — Standard Go module files. `go.mod` declares the Cosmos SDK version and all other imported packages. `go.sum` provides verifiable checksums for the full dependency tree.
+- **`Makefile`** — The standard entry point for development tasks: `make build` compiles the binary, `make test` runs unit tests, `make proto-gen` regenerates Go code from `.proto` files. Most SDK chains include targets for linting, simulation tests, and Docker builds.
+- **`scripts/`** — Shell scripts and configuration for tooling that the Makefile invokes — typically `buf` configuration for protobuf compilation, scripts for checking dependency consistency, and helpers for running local testnets.
+
+### The node binary (`cmd/`)
+
+```
+cmd/
+└── myappdaemon/
+    ├── main.go         # Binary entrypoint
+    └── root.go         # Root Cobra command: subcommands (start, tx, query, keys, ...)
+```
+
+The `cmd/` directory produces the node daemon binary (e.g., `simd`, `gaiad`, `wasmd`). It uses [Cobra](https://github.com/spf13/cobra) to expose subcommands for starting the node, submitting transactions, querying state, managing keys, and running genesis initialization. The `start` command spins up CometBFT and the SDK application together in a single process.
 
 ## Summary
 
