@@ -1,0 +1,258 @@
+---
+title: Encoding
+---
+
+In the previous section, you learned that state is stored as raw byte arrays in a key-value store and that modules encode structured data into those bytes before writing. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
+
+## What is Protocol Buffers
+
+[Protocol Buffers](https://protobuf.dev/) (protobuf) is a language-neutral, binary serialization format developed by Google. You define your data structures in `.proto` files using a schema language, then generate code in your target language from that schema. The generated code handles serialization (converting structured data into bytes) and deserialization (converting bytes back into structured data).
+
+A simple protobuf message looks like this:
+
+```proto
+message MsgSend {
+  string from_address = 1;
+  string to_address   = 2;
+  repeated Coin amount = 3;
+}
+```
+
+Each field has a name, a type, and a field number. The field numbers are what protobuf actually uses during encoding — field names are only present in the schema, not in the serialized bytes. This is why protobuf is compact and why you can rename fields without breaking wire compatibility.
+
+## Why the Cosmos SDK uses protobuf
+
+The Cosmos SDK uses protobuf for a fundamental reason: consensus requires determinism.
+
+Every validator in the network independently executes each block. After executing a block, each validator computes the AppHash, a cryptographic hash of the application state. For validators to agree on the AppHash, they must all produce exactly the same bytes for every piece of state they write.
+
+Protobuf satisfies this requirement. Given the same input, protobuf always produces the same bytes. There is no randomness in field ordering, no optional whitespace, and no locale-specific formatting. Every validator encoding the same data with protobuf produces an identical byte sequence.
+
+Beyond determinism, protobuf provides:
+
+- **Compact encoding**: binary wire format is smaller than JSON or XML, which matters for transaction throughput and block size.
+- **Schema evolution**: fields can be added or deprecated without breaking existing clients, which is critical for chain upgrades.
+- **Code generation**: `.proto` files generate Go structs, gRPC service stubs, and REST gateway handlers automatically.
+- **Cross-language support**: clients in any language can interact with the chain by generating code from the same `.proto` files.
+
+## Binary and JSON encoding
+
+The Cosmos SDK uses protobuf in two encoding modes:
+
+**Binary encoding** is the default for everything that participates in consensus: transactions written to blocks, state stored in KV stores, and genesis data. Binary encoding is compact and deterministic. When a transaction is broadcast to the network, it travels as protobuf binary. When a module writes state, it serializes values to protobuf binary before calling `Set` on the store.
+
+**JSON encoding** is used for human-readable output: the CLI, gRPC-gateway REST endpoints, and off-chain tooling. The Cosmos SDK uses protobuf's JSON encoding (`ProtoMarshalJSON`) rather than standard Go JSON, which preserves field names from the `.proto` schema and handles special types like `Any` correctly. {/* cosmos/cosmos-sdk codec/json.go:12 — var defaultJM = &jsonpb.Marshaler{OrigName: true, EmitDefaults: true, AnyResolver: nil} — OrigName:true preserves proto field names from the schema */} {/* cosmos/cosmos-sdk codec/proto_codec.go:149 — return ProtoMarshalJSON(o, pc.interfaceRegistry) — MarshalJSON delegates to ProtoMarshalJSON with the interface registry */}
+
+The most important rule: **binary encoding is consensus-critical**. Two validators must produce identical binary bytes for identical data. JSON is only used where humans or external clients need to read the data; it never influences the AppHash.
+
+```text
+Consensus-critical path         Human-readable path
+─────────────────────────       ─────────────────────────
+Transaction bytes (binary)      CLI output (JSON)
+State KV values (binary)        REST API responses (JSON)
+Genesis KV state (binary)       Block explorers (JSON)
+```
+
+## How protobuf is used in modules
+
+Every piece of data that crosses a module boundary, gets stored, or travels over the wire is defined in a `.proto` file and serialized with protobuf.
+
+**Messages and transactions**: Each module defines its transaction messages in a `tx.proto` file. The `MsgSend` definition above is an example. When a user submits a transaction, the SDK serializes the transaction body (including its messages) to binary using protobuf before broadcasting it. {/* cosmos/cosmos-sdk x/auth/tx/encoder.go:27 — return proto.Marshal(raw) — DefaultTxEncoder serializes the transaction to protobuf binary bytes for broadcast */}
+
+**Queries**: Modules define their query services in `query.proto`. Request and response types are protobuf messages. The SDK uses gRPC for queries, and gRPC uses protobuf as its serialization format by definition.
+
+**State types**: Data stored in the KV store is protobuf-encoded. A module that stores a custom struct first marshals it to bytes using the codec, then writes those bytes to the store. When reading, it unmarshals the bytes back into the struct.
+
+**Genesis**: Genesis state is defined in `genesis.proto`. `InitGenesis` and `ExportGenesis` use protobuf to deserialize genesis state from `genesis.json` and serialize it back. {/* cosmos/cosmos-sdk x/auth/module.go:158 — cdc.MustUnmarshalJSON(data, &genesisState) — InitGenesis uses the JSON codec to unmarshal JSON genesis data into a protobuf-typed GenesisState struct */} {/* cosmos/cosmos-sdk x/auth/module.go:166 — return cdc.MustMarshalJSON(gs) — ExportGenesis serializes the genesis state back to JSON using the codec */}
+
+A concrete example shows how a module reads and writes typed state as bytes: {/* cosmos/cosmos-sdk codec/proto_codec.go:49 — func (pc *ProtoCodec) Marshal(o gogoproto.Message) ([]byte, error) — the Marshal method called as k.cdc.Marshal() in keeper code */} {/* cosmos/cosmos-sdk codec/proto_codec.go:78 — func (pc *ProtoCodec) Unmarshal(bz []byte, ptr gogoproto.Message) error — the Unmarshal method called as k.cdc.Unmarshal() in keeper code */}
+
+```go
+// write: marshal the coin amount to bytes, then set in store
+bz, err := k.cdc.Marshal(&amount)
+store.Set(key, bz)
+
+// read: get bytes from store, unmarshal back to coin
+var amount sdk.Coin
+bz := store.Get(key)
+k.cdc.Unmarshal(bz, &amount)
+```
+
+The codec (`k.cdc`) is the protobuf codec described in the next section.
+
+## The codec and interface registry
+
+The Cosmos SDK wraps protobuf in a **codec** that modules use for marshaling and unmarshaling. The primary implementation is [`ProtoCodec`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/proto_codec.go), which calls protobuf's `Marshal` and `Unmarshal` under the hood. {/* cosmos/cosmos-sdk codec/proto_codec.go:56 — return gogoproto.Marshal(o) — Marshal calls gogoproto.Marshal to produce binary bytes */} {/* cosmos/cosmos-sdk codec/proto_codec.go:79 — err := gogoproto.Unmarshal(bz, ptr) — Unmarshal calls gogoproto.Unmarshal to decode binary bytes */}
+
+```go
+type ProtoCodec struct {
+    interfaceRegistry types.InterfaceRegistry
+}
+
+func (pc *ProtoCodec) Marshal(o ProtoMarshaler) ([]byte, error)
+func (pc *ProtoCodec) Unmarshal(bz []byte, ptr ProtoMarshaler) error
+```
+
+Keepers hold a reference to the codec and use it to encode and decode state:
+
+```go
+type Keeper struct {
+    cdc   codec.BinaryCodec
+    store storetypes.StoreKey
+}
+```
+
+The codec is initialized once at app startup and passed to each keeper during initialization.
+
+### Interface types and `Any`
+
+Protobuf is strongly typed. You cannot store a field as "some implementation of an interface" directly in a protobuf message. The Cosmos SDK solves this using protobuf's [`google.protobuf.Any`](https://protobuf.dev/programming-guides/proto3/#any), which wraps an arbitrary message type alongside a URL that identifies what type it contains.
+
+`Any` is used anywhere the SDK needs to serialize a value whose concrete type is not known at compile time. The most common example is public keys. An account might use a secp256k1 key, an ed25519 key, or a multisig key. The `BaseAccount` stores the public key as `Any`: {/* cosmos/cosmos-sdk x/auth/types/auth.pb.go:34 — PubKey *any.Any — the generated Go struct stores pub_key as *any.Any, not a concrete type */}
+
+```proto
+message BaseAccount {
+  string     address        = 1;
+  google.protobuf.Any pub_key = 2;
+  uint64     account_number = 3;
+  uint64     sequence       = 4;
+}
+```
+
+The `Any` field holds the serialized public key bytes plus a type URL like `/cosmos.crypto.secp256k1.PubKey`. When the SDK reads the account, it uses the type URL to look up the concrete Go type, then unmarshals the bytes into that type.
+
+This lookup is handled by the **interface registry**.
+
+### Interface registry
+
+The [`InterfaceRegistry`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/types/interface_registry.go) is a runtime map from type URLs to Go types. {/* cosmos/cosmos-sdk codec/types/interface_registry.go:115 — type interfaceRegistry struct { ... typeURLMap map[string]reflect.Type ... } — the registry struct definition with its typeURLMap field */} When the SDK encounters an `Any` value, it queries the registry with the type URL to find the concrete Go type, then uses protobuf to unmarshal the bytes. {/* cosmos/cosmos-sdk codec/types/interface_registry.go:395 — typ, found := registry.typeURLMap[typeURL] — Resolve looks up the concrete Go type by type URL */}
+
+```text
+Any { type_url, value_bytes }
+           ↓
+   InterfaceRegistry.Resolve(type_url)
+           ↓
+   concrete Go type
+           ↓
+   proto.Unmarshal(value_bytes, concreteType)
+```
+
+{/* cosmos/cosmos-sdk codec/types/interface_registry.go:394 — func (registry *interfaceRegistry) Resolve(typeURL string) (proto.Message, error) — the public Resolve method that the diagram above represents */}
+
+Without the interface registry, the SDK cannot decode `Any` values. This is why types must be explicitly registered before they can be deserialized.
+
+## Registering interface implementations
+
+Because the interface registry is a runtime lookup table, every concrete type that implements an SDK interface must be registered before the application starts. This is done with `RegisterInterfaces`:
+
+```go
+// in codec registration, typically in module.go or types/codec.go
+func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    registry.RegisterImplementations(
+        (*cryptotypes.PubKey)(nil),
+        &secp256k1.PubKey{},
+        &ed25519.PubKey{},
+    )
+}
+```
+
+This tells the registry: "a `PubKey` interface can be a `secp256k1.PubKey` or an `ed25519.PubKey`." {/* cosmos/cosmos-sdk crypto/codec/proto.go:13 — crypto module's RegisterInterfaces registers ed25519.PubKey, secp256k1.PubKey, and multisig.LegacyAminoPubKey under the cosmos.crypto.PubKey interface */} If a type is used in an `Any` field anywhere in the application and is not registered, the codec will fail to unmarshal it and return an error. {/* cosmos/cosmos-sdk codec/types/interface_registry.go:397 — return nil, fmt.Errorf("unable to resolve type URL %s", typeURL) — Resolve returns an error when the type URL has not been registered */}
+
+Each module calls `RegisterInterfaces` during app initialization, and `app.go` calls these registration functions through the module manager when building the app. {/* cosmos/cosmos-sdk types/module/module.go:120 — func (bm BasicManager) RegisterInterfaces(registry types.InterfaceRegistry) — iterates all modules calling m.RegisterInterfaces(registry) for each */} Custom types that implement SDK interfaces must follow the same pattern.
+
+## Proto-to-code generation workflow
+
+Writing `.proto` files produces `.pb.go` files through a code generation step. The generated Go code contains struct definitions, marshal/unmarshal methods, and gRPC service stubs. You never edit these generated files directly.
+
+The workflow is:
+
+**1. Write the `.proto` file**
+
+Proto files for a module live in the `proto/` directory at the repository root:
+
+```
+proto/myapp/mymodule/v1/
+├── tx.proto       # message types (MsgAdd, MsgAddResponse, ...)
+├── query.proto    # query service (QueryCount, ...)
+├── state.proto    # on-chain state types
+└── genesis.proto  # genesis state
+```
+
+A message definition:
+
+```proto
+syntax = "proto3";
+package myapp.mymodule.v1;
+
+message MsgAdd {
+  string sender = 1;
+  uint64 add    = 2;
+}
+
+message MsgAddResponse {
+  uint64 updated_count = 1;
+}
+
+service Msg {
+  rpc Add(MsgAdd) returns (MsgAddResponse);
+}
+```
+
+**2. Run code generation**
+
+```bash
+make proto-gen
+```
+
+This runs `buf` (or `protoc` with plugins) against the `.proto` files and produces Go code under the module's `types/` directory:
+
+```
+x/mymodule/types/
+├── tx.pb.go        # generated: MsgAdd, MsgAddResponse, Marshal/Unmarshal methods
+├── query.pb.go     # generated: query request/response types
+├── query.pb.gw.go  # generated: gRPC-gateway REST handlers
+└── state.pb.go     # generated: on-chain state types
+```
+
+**3. Use the generated types**
+
+The generated structs implement `proto.Message` and can be passed directly to the codec for marshaling, registered with the interface registry, and used in keeper methods and message handlers:
+
+```go
+// handler receives the generated type
+func (m msgServer) Add(ctx context.Context, req *types.MsgAdd) (*types.MsgAddResponse, error) {
+    count, err := m.AddCount(ctx, req.Sender, req.Add)
+    if err != nil {
+        return nil, err
+    }
+    return &types.MsgAddResponse{UpdatedCount: count}, nil
+}
+```
+
+The generated gRPC service stub is registered with BaseApp's message router, connecting the handler to the transaction execution pipeline automatically.
+
+## Encoding in context
+
+Every layer of the Cosmos SDK depends on encoding:
+
+```
+Transaction (binary protobuf)
+    ↓ broadcast over p2p
+CometBFT
+    ↓ passes raw bytes to application
+BaseApp
+    ↓ decodes transaction, extracts messages
+Module MsgServer
+    ↓ processes message, calls keeper
+Keeper
+    ↓ marshals state value to bytes
+KVStore (raw bytes)
+    ↓ committed to disk
+AppHash (Merkle root over all KV bytes)
+```
+
+Because every step uses protobuf, every step is deterministic. Two validators executing the same transactions always produce the same bytes at every layer, and therefore always arrive at the same AppHash.
+
+For more details on the encoding subsystem and advanced codec usage, see the [Encoding reference](/sdk/v0.53/learn/advanced/encoding).
+
+The next section explains the runtime execution environment that modules operate within: `sdk.Context`, gas metering, and events.
