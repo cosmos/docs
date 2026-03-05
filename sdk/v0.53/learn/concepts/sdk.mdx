@@ -1,0 +1,135 @@
+---
+title: Intro to SDK Structure
+---
+
+Before writing a module or chain, it helps to understand how the Cosmos SDK organizes code and how the pieces connect. This page maps the directory structure of an SDK application, explains what lives inside a module, and shows how modules are assembled into a running application.
+
+## What is an SDK application
+
+A Cosmos SDK application is a Go binary that implements a deterministic state machine. It runs alongside CometBFT inside a single daemon process. CometBFT drives consensus; the SDK application executes transactions and maintains state.
+
+Every SDK application is composed of three main elements:
+
+- **BaseApp**: the execution engine that implements ABCI and orchestrates transaction processing
+- **Modules**: self-contained units of business logic, state, messages, and queries
+- **`app.go`**: the wiring layer that instantiates BaseApp, registers modules, and configures the application at startup
+
+These three elements are covered in depth in the next two sections. This page focuses on how they are organized in the codebase.
+
+## Repository structure
+
+An SDK application repository follows a conventional layout:
+
+```
+myapp/
+├── app/
+│   └── app.go           # Application wiring: creates BaseApp, registers modules
+├── cmd/
+│   └── main.go          # Node binary entrypoint
+├── x/
+│   ├── mymodule/        # Custom module
+│   └── ...
+└── proto/
+    └── myapp/
+        └── mymodule/
+            └── v1/
+                ├── tx.proto
+                ├── query.proto
+                ├── state.proto
+                └── genesis.proto
+```
+
+Each directory has a distinct responsibility:
+
+- **`x/`** contains the modules. Each subdirectory is a separate, self-contained module. Built-in Cosmos SDK modules (`x/auth`, `x/bank`, `x/staking`, etc.) follow the same layout and are imported as Go packages. Your custom modules live alongside them.
+
+- **`app/`** contains `app.go`, which assembles the application: creating BaseApp, mounting stores, initializing keepers, and registering all modules with the ModuleManager.
+
+- **`cmd/`** contains the entrypoint for the node binary. It parses command-line flags, reads configuration files, and starts the daemon process that runs both the CometBFT node and the SDK application.
+
+- **`proto/`** contains the Protobuf definitions for all custom types: messages, queries, state schemas, and genesis. Go code is generated from these files and consumed throughout the module. Proto files live at the repository root, not inside `x/`, so they can be shared across languages and tooling.
+
+## What lives inside a module
+
+Each module under `x/` follows a consistent internal layout:
+
+```
+x/mymodule/
+├── keeper/
+│   ├── keeper.go        # Keeper struct: state access methods
+│   ├── msg_server.go    # MsgServer: handles transaction messages
+│   └── query_server.go  # QueryServer: handles queries
+├── types/
+│   ├── expected_keepers.go  # Interfaces for other modules' keepers
+│   ├── keys.go              # Store key and prefix definitions
+│   └── *.pb.go              # Generated from proto definitions
+└── module.go            # AppModule: wires the module into the application
+```
+
+The key files and what they contain:
+
+**`keeper/keeper.go`** — The `Keeper` struct holds references to the module's collections or store key, its codec, and any external keeper interfaces it depends on. It provides typed methods for reading and writing state. No code outside the keeper package should access the module's store directly.
+
+**`keeper/msg_server.go`** — The `MsgServer` implements the module's transaction handlers. It validates message inputs, checks authorization where required, and delegates state changes to the keeper.
+
+**`keeper/query_server.go`** — The `QueryServer` implements the module's gRPC query handlers. It reads state through the keeper and returns data without modifying state.
+
+**`types/expected_keepers.go`** — Declares the interfaces this module requires from other modules. For example, a module that charges fees declares a `BankKeeper` interface with only the methods it needs. This makes cross-module dependencies explicit and auditable. {/* cosmos/cosmos-sdk x/staking/types/expected_keepers.go:39 — DelegateCoinsFromAccountToModule in staking's expected BankKeeper interface — staking declares only the bank methods it needs */}
+
+**`module.go`** — Implements the `AppModule` interface, which connects the module to the application: registering its gRPC message and query services, defining genesis handlers, and opting into block lifecycle hooks (BeginBlock, EndBlock, PreBlock) as needed.
+
+## How modules are assembled into an application
+
+Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager maintains the set of all registered modules and coordinates their lifecycle behavior across the application. {/* cosmos/cosmos-sdk types/module/module.go:277 — type Manager struct { Modules map[string]interface{}; OrderBeginBlockers []string; OrderEndBlockers []string; OrderInitGenesis []string; ... } */}
+
+At startup, the ModuleManager:
+
+- Calls `RegisterServices` on each module to wire up all gRPC message and query handlers. {/* cosmos/cosmos-sdk types/module/module.go:455 — RegisterServices iterates modules and calls RegisterServices(cfg) on each module implementing HasServices */}
+- Drives `InitGenesis` in a configured order when the chain starts, populating each module's store from `genesis.json`. {/* cosmos/cosmos-sdk types/module/module.go:479 — InitGenesis iterates OrderInitGenesis, calling each module's InitGenesis with its genesis data */}
+
+At each block, the ModuleManager:
+
+- Calls `BeginBlock` on registered modules before transactions execute. {/* cosmos/cosmos-sdk types/module/module.go:771 — BeginBlock creates a child context and calls BeginBlock for each module in OrderBeginBlockers */}
+- Calls `EndBlock` on registered modules after all transactions have executed, aggregating validator updates and events. {/* cosmos/cosmos-sdk types/module/module.go:789 — EndBlock aggregates validator updates and events from modules in OrderEndBlockers */}
+
+**Module ordering matters.** For example, the `x/staking` module must run `EndBlock` before `x/distribution` so that delegation changes are reflected before staking rewards are calculated. The ordering is configured explicitly in `app.go`, giving chain developers full control over execution sequence.
+
+## Where BaseApp fits
+
+BaseApp sits between CometBFT and the modules:
+
+```
+CometBFT (consensus)
+    ↓ ABCI calls
+BaseApp
+    ↓ orchestrates blocks, routes messages
+ModuleManager
+    ↓ dispatches to individual modules
+Modules (x/auth, x/bank, x/mymodule, ...)
+    ↓ read/write
+State (KVStores)
+```
+
+BaseApp implements the ABCI interface that CometBFT calls to drive block execution. When CometBFT calls `FinalizeBlock`, BaseApp runs the block through all its phases — PreBlock, BeginBlock, transactions, EndBlock — and returns the resulting app hash. BaseApp is covered in detail in [BaseApp Overview](/sdk/v0.53/learn/concepts/baseapp).
+
+## The role of `app.go`
+
+`app.go` is the single file that defines a specific chain. It is where the application is assembled from its parts:
+
+1. Create a `BaseApp` instance with the application name, logger, database, and codec.
+2. Create a `StoreKey` for each module and mount it to the multistore.
+3. Instantiate each `Keeper`, passing in the codec, store key, and references to other keepers the module depends on.
+4. Create the `ModuleManager` with all module instances.
+5. Configure execution ordering: which modules run first during genesis, BeginBlock, and EndBlock.
+6. Register all gRPC services (message and query handlers) through the ModuleManager.
+7. Set the `AnteHandler` and other middleware.
+
+Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. There is no framework magic — the assembly is explicit and auditable.
+
+## Summary
+
+An SDK application is a deterministic state machine composed of modules assembled in `app.go`. The codebase follows a conventional layout: modules in `x/`, application wiring in `app/`, the binary entrypoint in `cmd/`, and Protobuf definitions in `proto/`.
+
+The ModuleManager assembles modules and coordinates their lifecycle hooks across the application. BaseApp provides the ABCI implementation that connects the state machine to CometBFT's consensus engine.
+
+The next section explains what BaseApp is and how it coordinates transaction execution in detail.
