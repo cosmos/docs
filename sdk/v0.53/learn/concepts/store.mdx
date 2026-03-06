@@ -82,6 +82,28 @@ Only modified nodes are rewritten, and unchanged nodes are shared across version
 
 Because of this, state transitions must be deterministic, encoding must be deterministic, and transaction ordering must be consistent.
 
+### Database backend
+
+The IAVL tree does not store data in memory. It writes versioned nodes to a **database backend** — a key-value store on disk. {/* cosmos/cosmos-sdk store/iavl/store.go:64 — NewMutableTree receives a db dbm.DB parameter that is the backing database */}
+
+The Cosmos SDK uses [CometBFT's `db` package](https://github.com/cometbft/cometbft-db) to abstract over the database implementation. The default backend is **PebbleDB**, a high-performance LSM-tree store. Other supported backends include **RocksDB** and **memDB** (in-memory, for testing). {/* cosmos/cosmos-sdk server/start.go — openDB selects the backend based on app.toml's db_backend config value */}
+
+The full storage stack from top to bottom is:
+
+```
+Module keeper
+    ↓
+KVStore (namespaced, wrapped with gas/trace)
+    ↓
+CommitMultiStore (multistore, computes app hash)
+    ↓
+IAVL tree (versioned Merkle tree)
+    ↓
+Database backend (PebbleDB on disk)
+```
+
+The database backend is selected at node startup and configured in `app.toml`. Application code never interacts with it directly; the store layer owns that boundary.
+
 ## Store types in the SDK
 
 Beyond the base KVStore, the SDK provides several specialized store wrappers.
