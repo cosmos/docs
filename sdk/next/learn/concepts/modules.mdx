@@ -45,7 +45,7 @@ balances | cosmos1def...uvw | uatom  →   500000
 
 The key encodes the namespace, address, and denomination. The value is the encoded amount. No other module can read or write these entries directly, only the [module's keeper](#keeper) can.
 
-Most state is updated by user-submitted transactions. Some state, called **params**, holds module configuration values. Params are stored in the module's KV store like any other state, but are updated through a privileged message (`MsgUpdateParams`) that only the designated `authority` address can execute.
+{/* todo: link to store page */}
 
 ### Messages
 
@@ -69,6 +69,7 @@ When included in a transaction and executed:
 3. The amount is credited to `to_address`.
 
 When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it.
+{/* todo: link to baseapp page */}
 
 ### Queries
 
@@ -88,7 +89,7 @@ While messages define intent, the `MsgServer` and `Keeper` work together to exec
 Business logic is conceptually split across two layers:
 
 - The **`MsgServer`** handles the transaction-facing logic: it validates inputs, applies message-level business rules, and where required checks authorization. Once satisfied, it delegates state transitions to the keeper.
-- The **`Keeper`** is the module's state access layer: it defines the storage schema and provides the sanctioned APIs for reading and writing state. Rather than thinking of the keeper as "just storage," it is more accurate to view it as the module's domain API — it owns how state changes.
+- The **`Keeper`** owns the module's state: it defines the storage schema and provides the only authorized path for reading and writing it. Message handlers, block hooks, and governance proposals all go through keeper methods to make state changes — nothing accesses the store directly.
 
 ---
 
@@ -145,41 +146,33 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 
 A module's **keeper** is its state access layer. It owns the module's KV store and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
 
-The `MsgServer` and `QueryServer` both embed the keeper. The `MsgServer` handles authorization; the keeper handles everything else: input validation, business rules, fee charging, state transitions, and event emission. Because all business logic runs through keeper methods, the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
+The `MsgServer` and `QueryServer` both embed the keeper. Business logic belongs in keeper methods rather than the `MsgServer`, so the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
 
-The `x/counter` keeper holds two state items and two external dependencies: {/* todo: link to counter tutorial */}
+The `x/counter` keeper holds a single state item: {/* todo: link to counter tutorial */}
 
 ```go
 type Keeper struct {
-    Schema     collections.Schema
-    counter    collections.Item[uint64]      // the counter value
-    params     collections.Item[types.Params] // max add value, fee per increment
-    bankKeeper types.BankKeeper              // used to charge fees on increment
-
-    // authority is the address capable of executing a MsgUpdateParams message.
-    // Typically, this should be the x/gov module account.
-    authority string
+    Schema  collections.Schema
+    counter collections.Item[uint64]
 }
 
-// GetCount returns the current counter value.
-func (k *Keeper) GetCount(ctx context.Context) (uint64, error) {
-    count, err := k.counter.Get(ctx)
-    if err != nil && !errors.Is(err, collections.ErrNotFound) {
+func (k *Keeper) AddCount(ctx context.Context, amount uint64) (uint64, error) {
+    count, err := k.GetCount(ctx)
+    if err != nil {
         return 0, err
     }
-    return count, nil
+    newCount := count + amount
+    return newCount, k.counter.Set(ctx, newCount)
 }
 ```
 
-`counter` and `params` use `collections.Item`, a typed single-value entry backed by the module's KV store. `GetCount` treats `ErrNotFound` as zero, so the counter starts at 0 without an explicit genesis initialization.
-
-The `authority` field holds the address allowed to call privileged messages like `MsgUpdateParams`, typically the governance module account. The `MsgServer` checks this before executing those messages.
+`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store. `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly.
 
 ### Inter-module access
 
 Modules are isolated by default. Each module owns its state, and direct access to that state is restricted through the module's keeper. Other modules cannot arbitrarily mutate another module's storage.
 
-Instead, modules interact through explicitly defined keeper interfaces. `x/counter` uses this pattern to call into `x/bank`. {/* todo: link to counter tutorial */}
+Instead, modules interact through explicitly defined keeper interfaces. {/* todo: link to counter tutorial */}
 
 For example:
 
