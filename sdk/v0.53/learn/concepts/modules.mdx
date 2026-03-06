@@ -32,10 +32,10 @@ State is the data persisted on the chain: everything that transactions can read 
 
 Each module owns its own part of the blockchain state. For example:
 
-- The `x/auth` module stores account metadata. {/* cosmos/cosmos-sdk x/auth/keeper/keeper.go:111 — Accounts IndexedMap persists account metadata keyed by address */}
-- The `x/bank` module stores account balances. {/* cosmos/cosmos-sdk x/bank/keeper/view.go:68 — Balances IndexedMap stores account balances keyed by (address, denom) */}
+- The `x/auth` module stores account metadata.
+- The `x/bank` module stores account balances.
 
-Modules do not share storage directly. Each module has its own key-value store namespace located in a `multistore`. {/* cosmos/cosmos-sdk store/types/store.go:417 — KVStoreKey struct gives each module a named, isolated sub-store in the multistore */} For example, the bank module's store might contain entries like:
+Modules do not share storage directly. Each module has its own key-value store namespace located in a `multistore`. For example, the bank module's store might contain entries like:
 
 ```
 // x/bank store (conceptual)
@@ -43,13 +43,15 @@ balances | cosmos1abc...xyz | uatom  →  1000000
 balances | cosmos1def...uvw | uatom  →   500000
 ```
 
-The key encodes the namespace, address, and denomination. The value is the encoded amount. No other module can read or write these entries directly, only the [module's keeper](#keeper) can. {/* cosmos/example x/counter/keeper/keeper.go:17 — counter and params are unexported fields; external packages cannot access them directly */}
+The key encodes the namespace, address, and denomination. The value is the encoded amount. No other module can read or write these entries directly, only the [module's keeper](#keeper) can.
+
+Most state is updated by user-submitted transactions. Some state, called **params**, holds module configuration values. Params are stored in the module's KV store like any other state, but are updated through a privileged message (`MsgUpdateParams`) that only the designated `authority` address can execute.
 
 ### Messages
 
-As you learned in the [Transactions, Messages, and Queries](/sdk/v0.53/learn/concepts/transactions) section, each module defines the actions it allows via messages (`sdk.Msg`).
+As you learned in the [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions) section, each module defines the actions it allows via messages (`sdk.Msg`).
 
-Messages are defined in the module’s `tx.proto` file and implemented by that module’s `MsgServer`. {/* cosmos/example proto/example/counter/v1/tx.proto:11 — service Msg in tx.proto defines the module’s messages */} Here is a simplified example of a message definition from the bank module:
+Messages are defined in the module's `tx.proto` file and implemented by that module's `MsgServer`. Here is a simplified example of a message definition from the bank module:
 
 ```
 message MsgSend {
@@ -59,25 +61,25 @@ message MsgSend {
 }
 ```
 
-This message represents a request to transfer tokens from one account to another. {/* cosmos/cosmos-sdk proto/cosmos/bank/v1beta1/tx.proto:39 — message MsgSend with from_address, to_address, amount */}
+This message represents a request to transfer tokens from one account to another.
 When included in a transaction and executed:
 
-1. The sender’s balance is checked. {/* cosmos/cosmos-sdk x/bank/keeper/send.go:308 — GetBalance reads sender balance inside subUnlockedCoins before deduction */}
-2. The amount is deducted from `from_address`. {/* cosmos/cosmos-sdk x/bank/keeper/send.go:240 — subUnlockedCoins called on fromAddr in SendCoins */}
-3. The amount is credited to `to_address`. {/* cosmos/cosmos-sdk x/bank/keeper/send.go:245 — addCoins called on toAddr in SendCoins */}
+1. The sender's balance is checked.
+2. The amount is deducted from `from_address`.
+3. The amount is credited to `to_address`.
 
-When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:54 — Handler returns the registered MsgServiceHandler by message type URL */}
+When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it.
 
 ### Queries
 
-Modules expose read-only access to their state through query services, defined in `query.proto`. {/* cosmos/example proto/example/counter/v1/query.proto:9 — service Query defines read-only RPCs */} Queries do not modify state and do not go through block execution. For example:
+Modules expose read-only access to their state through query services, defined in `query.proto`. Queries do not modify state and do not go through block execution. For example:
 
 ```
 // query.proto
 rpc Balance(QueryBalanceRequest) returns (QueryBalanceResponse);
 ```
 
-In this case, the caller provides an address and denomination; the query reads the balance from the x/bank keeper and returns it without modifying state. {/* cosmos/cosmos-sdk proto/cosmos/bank/v1beta1/query.proto:18 — Balance rpc takes QueryBalanceRequest (address + denom) and returns QueryBalanceResponse */}
+In this case, the caller provides an address and denomination; the query reads the balance from the x/bank keeper and returns it without modifying state.
 
 ### Business logic
 
@@ -86,21 +88,24 @@ While messages define intent, the `MsgServer` and `Keeper` work together to exec
 Business logic is conceptually split across two layers:
 
 - The **`MsgServer`** handles the transaction-facing logic: it validates inputs, applies message-level business rules, and where required checks authorization. Once satisfied, it delegates state transitions to the keeper.
-- The **`Keeper`** is the module’s state access layer: it defines the storage schema and provides the sanctioned APIs for reading and writing state. Rather than thinking of the keeper as "just storage," it is more accurate to view it as the module’s domain API — it owns how state changes.
+- The **`Keeper`** is the module's state access layer: it defines the storage schema and provides the sanctioned APIs for reading and writing state. Rather than thinking of the keeper as "just storage," it is more accurate to view it as the module's domain API — it owns how state changes.
 
 ---
 
 ### Message execution (`MsgServer`)
 
-Each module implements a **MsgServer**, which is invoked by `BaseApp`’s message router when a message is routed to that module. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:54 — Handler looks up registered MsgServiceHandler by type URL and invokes it */}
+Each module implements a `MsgServer`, which is invoked by `BaseApp`'s message router when a message is routed to that module.
 
 The `MsgServer` is responsible for:
 
-- Checking authorization when required {/* cosmos/example x/counter/keeper/msg_server.go:30 — checks m.authority != msg.Authority in UpdateParams */}
-- Delegating to keeper methods that validate inputs, enforce business rules, and perform state transitions {/* cosmos/example x/counter/keeper/msg_server.go:20 — Add delegates to m.AddCount, which validates, charges fees, updates state, and emits events */}
-- Returning a response {/* cosmos/example x/counter/keeper/msg_server.go:24 — returns MsgAddResponse{UpdatedCount: newCount} */}
+- Checking authorization when required
+- Delegating to keeper methods that validate inputs, enforce business rules, and perform state transitions
+- Returning a response
 
-The following is the counter module’s `Add` handler: {/* cosmos/example x/counter/keeper/msg_server.go:19 */}
+{/* todo: link to Build a Module tutorial */}
+The following examples are from the `x/counter` tutorial, which walks you through building a module that lets accounts increment a shared counter.
+
+The following is the counter module's `Add` handler which is the `MsgServer` method that processes a request to increment the counter:
 
 ```go
 func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*types.MsgAddResponse, error) {
@@ -113,9 +118,9 @@ func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*type
 }
 ```
 
-`Add` is permissionless — any account can call it — and the handler itself is intentionally thin. {/* cosmos/example x/counter/keeper/msg_server.go:19 — no authority check; delegates entirely to keeper.AddCount */} All validation (overflow check, `MaxAddValue` limit), fee charging, state mutation, event emission, and telemetry live in the keeper’s `AddCount` method. {/* cosmos/example x/counter/keeper/keeper.go:83 — AddCount validates amount, checks MaxAddValue, charges AddCost, updates counter, emits event, records metric */} This keeps `msg_server.go` focused on message routing and authorization, while the keeper’s named methods can be reused from other entry points such as `BeginBlock` or governance proposals.
+In this example, `Add` is permissionless; any account can call it. All validation (overflow check, `MaxAddValue` limit), fee charging, state mutation, event emission, and telemetry live in the keeper's `AddCount` method. This keeps `msg_server.go` focused on message routing and authorization, while the keeper's named methods can be reused from other entry points such as `BeginBlock` or governance proposals.
 
-For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding: {/* cosmos/example x/counter/keeper/msg_server.go:76 — m.authority != msg.Authority check returns ErrInvalidSigner if mismatched */}
+For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding (`x/counter`): {/* todo: link to counter tutorial */}
 
 ```go
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
@@ -138,43 +143,50 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 
 ## Keeper
 
-A **keeper** is a Go struct that holds references to the module’s KV store (or collections schema) and any external keepers it depends on. {/* cosmos/example x/counter/keeper/keeper.go:15 — Keeper struct holds Schema, counter, params, bankKeeper, and authority */} It provides typed methods for reading and writing state and defines the module’s storage layout.
+A module's **keeper** is its state access layer. It owns the module's KV store and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
 
-It is the only sanctioned way to access a module’s state; no other code should access the store directly. {/* cosmos/example x/counter/keeper/keeper.go:17 — counter and params are unexported; only Keeper methods can access them from outside the package */} For example, the counter keeper:
+The `MsgServer` and `QueryServer` both embed the keeper. The `MsgServer` handles authorization; the keeper handles everything else: input validation, business rules, fee charging, state transitions, and event emission. Because all business logic runs through keeper methods, the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
+
+The `x/counter` keeper holds two state items and two external dependencies: {/* todo: link to counter tutorial */}
 
 ```go
 type Keeper struct {
     Schema     collections.Schema
-    counter    collections.Item[uint64]
-    params     collections.Item[types.Params]
-    bankKeeper types.BankKeeper
+    counter    collections.Item[uint64]      // the counter value
+    params     collections.Item[types.Params] // max add value, fee per increment
+    bankKeeper types.BankKeeper              // used to charge fees on increment
 
     // authority is the address capable of executing a MsgUpdateParams message.
     // Typically, this should be the x/gov module account.
     authority string
 }
 
-func (k *Keeper) GetParams(ctx context.Context) (types.Params, error) {
-    return k.params.Get(ctx)
+// GetCount returns the current counter value.
+func (k *Keeper) GetCount(ctx context.Context) (uint64, error) {
+    count, err := k.counter.Get(ctx)
+    if err != nil && !errors.Is(err, collections.ErrNotFound) {
+        return 0, err
+    }
+    return count, nil
 }
 ```
 
-The `MsgServer` and `QueryServer` both embed the keeper and call its methods. {/* cosmos/example x/counter/keeper/msg_server.go:17 — msgServer struct embeds *Keeper */} Authorization is enforced at the `MsgServer` boundary, while domain validation (input checks, business rules, fee charging, state transitions, and event emission) lives in the keeper's named methods such as `AddCount`. This lets keeper methods be safely reused from other entry points like `BeginBlock` or governance proposals.
+`counter` and `params` use `collections.Item`, a typed single-value entry backed by the module's KV store. `GetCount` treats `ErrNotFound` as zero, so the counter starts at 0 without an explicit genesis initialization.
 
-Some messages, like `MsgUpdateParams`, are privileged and may only be executed by a specific address. The `authority` field in the keeper stores that address (typically the governance module account). {/* cosmos/example x/counter/keeper/keeper.go:43 — authority defaults to authtypes.NewModuleAddress(govtypes.ModuleName).String() */}
+The `authority` field holds the address allowed to call privileged messages like `MsgUpdateParams`, typically the governance module account. The `MsgServer` checks this before executing those messages.
 
 ### Inter-module access
 
-Modules are isolated by default. Each module owns its state, and direct access to that state is restricted through the module’s keeper. Other modules cannot arbitrarily mutate another module’s storage.
+Modules are isolated by default. Each module owns its state, and direct access to that state is restricted through the module's keeper. Other modules cannot arbitrarily mutate another module's storage.
 
-Instead, modules interact through explicitly defined keeper interfaces. {/* cosmos/example x/counter/types/expected_keepers.go:10 — BankKeeper interface declares only the methods counter requires from bank */}
+Instead, modules interact through explicitly defined keeper interfaces. `x/counter` uses this pattern to call into `x/bank`. {/* todo: link to counter tutorial */}
 
 For example:
 
-- The staking module calls methods on the bank keeper to transfer tokens. {/* cosmos/cosmos-sdk x/staking/types/expected_keepers.go:39 — DelegateCoinsFromAccountToModule in staking's expected BankKeeper interface */}
-- The governance module calls parameter update methods on other modules. {/* cosmos/cosmos-sdk x/gov/abci.go:189 — proposal executor calls keeper.Router().Handler(msg) to route each passed proposal message to the target module */}
+- The staking module calls methods on the bank keeper to transfer tokens.
+- The governance module calls parameter update methods on other modules.
 
-Each module defines an `expected_keepers.go` file that declares the interfaces it requires from other modules. {/* cosmos/example x/counter/types/expected_keepers.go:11 — SendCoinsFromAccountToModule is the only method counter exposes from bank */} This makes cross-module dependencies explicit: a module can only call methods the other module has chosen to expose.
+Each module defines an `expected_keepers.go` file that declares the interfaces it requires from other modules. This makes cross-module dependencies explicit: a module can only call methods the other module has chosen to expose.
 
 This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
 
@@ -182,11 +194,11 @@ This design keeps dependencies auditable and prevents accidental or unsafe cross
 
 Modules may execute logic at specific points in the block lifecycle by implementing optional hook interfaces:
 
-- `HasBeginBlocker` — runs logic at the start of each block {/* cosmos/cosmos-sdk core/appmodule/module.go:73 — HasBeginBlocker interface; BeginBlock runs before transactions are processed in a block */}
-- `HasEndBlocker` — runs logic at the end of each block {/* cosmos/cosmos-sdk core/appmodule/module.go:83 — HasEndBlocker interface; EndBlock runs after transactions are processed in a block */}
-- `HasPreBlocker` — runs logic before BeginBlock, used for consensus parameter changes {/* cosmos/cosmos-sdk core/appmodule/module.go:65 — HasPreBlocker returns ResponsePreBlock; IsConsensusParamsChanged() at line 60 signals consensus parameter updates to the caller */}
+- `HasBeginBlocker` — runs logic at the start of each block
+- `HasEndBlocker` — runs logic at the end of each block
+- `HasPreBlocker` — runs logic before BeginBlock, used for consensus parameter changes
 
-Hooks are optional, and modules should only implement the hooks they need. {/* cosmos/example x/counter/module.go:77 — BeginBlock comment: "This method is included for example purposes. Not every module needs these methods." */} These hooks are invoked during block execution by a `ModuleManager` in the `BaseApp`, which calls each registered module's hooks in a configured order. {/* todo: link to baseapp#module-manager */}
+Hooks are optional, and modules should only implement the hooks they need. These hooks are invoked during block execution by a `ModuleManager` in the `BaseApp`, which calls each registered module's hooks in a configured order. {/* todo: link to baseapp#module-manager */}
 
 {/* todo: link to baseapp#module-manager — ModuleManager coordinates hook invocation order across all modules */}
 
@@ -196,12 +208,12 @@ Modules define how their state is initialized when the chain starts.
 
 Each module implements:
 
-- `DefaultGenesis` — returns the module's default genesis state {/* cosmos/cosmos-sdk types/module/module.go:77 — DefaultGenesis method in HasGenesisBasics interface */}
-- `ValidateGenesis` — validates the genesis state before the chain starts {/* cosmos/cosmos-sdk types/module/module.go:78 — ValidateGenesis method in HasGenesisBasics interface */}
-- `InitGenesis` — writes the genesis state into the module's store at chain start {/* cosmos/cosmos-sdk types/module/module.go:193 — InitGenesis method in HasGenesis interface */}
-- `ExportGenesis` — reads the module's current state and serializes it as genesis data {/* cosmos/cosmos-sdk types/module/module.go:194 — ExportGenesis method in HasGenesis interface */}
+- `DefaultGenesis` — returns the module's default genesis state
+- `ValidateGenesis` — validates the genesis state before the chain starts
+- `InitGenesis` — writes the genesis state into the module's store at chain start
+- `ExportGenesis` — reads the module's current state and serializes it as genesis data
 
-During `InitChain`, BaseApp calls each module’s `InitGenesis` to populate its state from `genesis.json`. {/* cosmos/cosmos-sdk baseapp/abci.go:53 — InitChain entry point */} {/* cosmos/cosmos-sdk types/module/module.go:489 — module manager iterates OrderInitGenesis calling each module’s InitGenesis with genesis data */}
+During `InitChain`, BaseApp calls each module's `InitGenesis` to populate its state from `genesis.json`.
 
 {/* todo: link to lifecycle page init genesis section */}
 
@@ -225,7 +237,7 @@ x/
 └── mymodule/    # Your custom module
 ```
 
-Each subdirectory under `x/` is a self-contained module.  
+Each subdirectory under `x/` is a self-contained module.
 An application composes multiple modules together to form a complete blockchain.
 
 Inside a module, you will typically see a structure like this:
@@ -237,7 +249,7 @@ x/mymodule/
 │   ├── msg_server.go    # MsgServer implementation
 │   └── query_server.go  # QueryServer implementation
 ├── types/
-│   ├── expected_keepers.go  # Interfaces for other modules’ keepers
+│   ├── expected_keepers.go  # Interfaces for other modules' keepers
 │   ├── keys.go              # Store key definitions
 │   └── *.pb.go              # Generated from proto definitions
 └── module.go            # AppModule implementation and hook registration
@@ -254,27 +266,27 @@ proto/myapp/mymodule/v1/
 ```
 
 - **`keeper/`**
-  Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces. {/* cosmos/example x/counter/keeper/keeper.go:15 — Keeper struct; cosmos/example x/counter/keeper/msg_server.go:16 — msgServer; cosmos/example x/counter/keeper/query_server.go:15 — NewQueryServer */}
+  Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces.
 
 - **`types/`**
-  Defines the module’s public types: generated protobuf structs, {/* cosmos/example x/counter/types/tx.pb.go:33 — MsgAddRequest generated from tx.proto */} store keys, {/* cosmos/example x/counter/types/keys.go:4 — ModuleName and StoreKey constants */} and the `expected_keepers.go` interfaces that declare what this module needs from other modules. {/* cosmos/example x/counter/types/expected_keepers.go:10 — BankKeeper interface */}
+  Defines the module's public types: generated protobuf structs, store keys, and the `expected_keepers.go` interfaces that declare what this module needs from other modules.
 
 - **`module.go`**
-  Connects the module to the application and registers genesis handlers, block hooks, and message and query services. {/* cosmos/example x/counter/module.go:95 — RegisterServices registers MsgServer and QueryServer with the module configurator */}
+  Connects the module to the application and registers genesis handlers, block hooks, and message and query services.
 
 - **`.proto` files**
-  Define messages, queries, state schemas, and genesis state. {/* cosmos/example proto/example/counter/v1/tx.proto:11 — tx.proto defines service Msg; query.proto defines service Query */} Go code is generated from these files and used throughout the module.
+  Define messages, queries, state schemas, and genesis state. Go code is generated from these files and used throughout the module.
 
 ## Modules in context
 
 Putting everything together you've learned so far:
 
-- **Accounts** authorize transactions.  
-- **Transactions** carry messages and execution constraints.  
-- **Blocks** order transactions and define commit boundaries.  
-- **Modules** define the business rules of execution.  
-- **MsgServer** validates messages and orchestrates state transitions.  
-- **Keeper** performs controlled reads and writes to module state.  
+- **Accounts** authorize transactions.
+- **Transactions** carry messages and execution constraints.
+- **Blocks** order transactions and define commit boundaries.
+- **Modules** define the business rules of execution.
+- **MsgServer** validates messages and orchestrates state transitions.
+- **Keeper** performs controlled reads and writes to module state.
 - **State** persists the deterministic result of execution.
 
 ```
