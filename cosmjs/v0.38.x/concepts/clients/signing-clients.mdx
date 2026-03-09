@@ -1,0 +1,152 @@
+---
+title: Signing Clients
+description: Building, signing, and broadcasting transactions with SigningStargateClient and SigningCosmWasmClient
+---
+
+Signing clients extend their read-only counterparts with the ability to build,
+sign, and broadcast transactions. They require a **signer** (wallet) and are
+created via static factory methods.
+
+## Signers
+
+A signer is any object that holds keys and can produce signatures. CosmJS
+supports two signing modes:
+
+| Interface | Signing Mode | Wallet Implementation |
+|-----------|-------------|----------------------|
+| `OfflineDirectSigner` | Protobuf (Direct) — recommended | `DirectSecp256k1HdWallet`, `DirectSecp256k1Wallet` |
+| `OfflineAminoSigner` | Amino JSON — required for Ledger | `Secp256k1HdWallet`, Ledger signers |
+
+Both implement `getAccounts()` to list available accounts. The signing client
+auto-detects which mode to use based on whether the signer has a `signDirect`
+method.
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "cosmos",
+});
+```
+
+## SigningStargateClient
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.cosmos.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+```
+
+### Factory Methods
+
+| Method | Description |
+|--------|-------------|
+| `connectWithSigner(endpoint, signer, options?)` | Connect to RPC and create signing client |
+| `createWithSigner(cometClient, signer, options?)` | Create from existing CometBFT client |
+| `offline(signer, options?)` | Offline client (sign without RPC) |
+
+### Transaction Methods
+
+| Method | Description |
+|--------|-------------|
+| `signAndBroadcast(address, messages, fee, memo?)` | Sign, broadcast, and wait for inclusion |
+| `signAndBroadcastSync(address, messages, fee, memo?)` | Sign and broadcast, return tx hash immediately |
+| `sign(address, messages, fee, memo, signerData?)` | Sign without broadcasting (returns `TxRaw`) |
+| `simulate(address, messages, memo?)` | Estimate gas for a transaction |
+
+### Convenience Methods
+
+| Method | Message Type |
+|--------|-------------|
+| `sendTokens(sender, recipient, amount, fee, memo?)` | `MsgSend` |
+| `delegateTokens(delegator, validator, amount, fee, memo?)` | `MsgDelegate` |
+| `undelegateTokens(delegator, validator, amount, fee, memo?)` | `MsgUndelegate` |
+| `withdrawRewards(delegator, validator, fee, memo?)` | `MsgWithdrawDelegatorReward` |
+
+### Fees
+
+The `fee` parameter accepts three forms:
+
+```typescript
+// Explicit fee
+const fee: StdFee = { amount: [{ denom: "uatom", amount: "5000" }], gas: "200000" };
+await client.signAndBroadcast(address, messages, fee);
+
+// Auto-calculate from simulation (requires gasPrice in options)
+await client.signAndBroadcast(address, messages, "auto");
+
+// Auto with gas multiplier (1.4 = 40% buffer over simulated gas)
+await client.signAndBroadcast(address, messages, 1.4);
+```
+
+### Options
+
+```typescript
+interface SigningStargateClientOptions extends StargateClientOptions {
+  readonly registry?: Registry;
+  readonly aminoTypes?: AminoTypes;
+  readonly broadcastTimeoutMs?: number;
+  readonly broadcastPollIntervalMs?: number;
+  readonly gasPrice?: GasPrice | DynamicGasPriceConfig;
+}
+```
+
+- **registry** — protobuf type registry for encoding messages (defaults cover
+  all standard Cosmos SDK message types)
+- **aminoTypes** — converters between protobuf and Amino for Amino signers
+- **gasPrice** — required when using `"auto"` fees; supports static pricing or
+  dynamic fee market pricing via `DynamicGasPriceConfig`
+
+## SigningCosmWasmClient
+
+Extends `CosmWasmClient` with signing and smart contract transaction methods.
+
+```typescript
+import { SigningCosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await SigningCosmWasmClient.connectWithSigner(
+  "https://rpc.osmosis.zone",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uosmo") },
+);
+```
+
+### CosmWasm-Specific Transaction Methods
+
+| Method | Description |
+|--------|-------------|
+| `upload(sender, wasmCode, fee, memo?)` | Upload wasm bytecode |
+| `instantiate(sender, codeId, msg, label, fee, options?)` | Instantiate a contract |
+| `instantiate2(sender, codeId, salt, msg, label, fee, options?)` | Instantiate with predictable address |
+| `execute(sender, contract, msg, fee, memo?, funds?)` | Execute a contract message |
+| `executeMultiple(sender, instructions, fee, memo?)` | Execute multiple contract messages in one tx |
+| `migrate(sender, contract, codeId, msg, fee, memo?)` | Migrate a contract to new code |
+| `updateAdmin(sender, contract, newAdmin, fee, memo?)` | Change contract admin |
+| `clearAdmin(sender, contract, fee, memo?)` | Remove contract admin |
+
+`SigningCosmWasmClient` also includes all the convenience methods from
+`SigningStargateClient` (`sendTokens`, `delegateTokens`, etc.) as well as
+`signAndBroadcast`, `sign`, and `simulate`.
+
+```typescript
+const uploadResult = await client.upload(address, wasmBytecode, "auto");
+
+const { contractAddress } = await client.instantiate(
+  address,
+  uploadResult.codeId,
+  { count: 0 },
+  "my-counter",
+  "auto",
+);
+
+const execResult = await client.execute(
+  address,
+  contractAddress,
+  { increment: {} },
+  "auto",
+);
+```

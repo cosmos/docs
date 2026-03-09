@@ -1,0 +1,96 @@
+---
+title: Local Wallets
+description: Create and manage HD wallets from mnemonic phrases with CosmJS
+---
+
+The most common signer for scripts, backends, and testing is an HD wallet
+created from a BIP-39 mnemonic phrase.
+
+## Direct Signing (recommended)
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+  "your twelve or twenty-four word mnemonic phrase ...",
+  { prefix: "cosmos" },
+);
+
+const [{ address }] = await wallet.getAccounts();
+```
+
+## Amino Signing
+
+```typescript
+import { Secp256k1HdWallet } from "@cosmjs/amino";
+
+const wallet = await Secp256k1HdWallet.fromMnemonic(
+  "your twelve or twenty-four word mnemonic phrase ...",
+  { prefix: "cosmos" },
+);
+```
+
+Both implement `OfflineSigner` and can be passed directly to
+`SigningStargateClient`:
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.cosmos.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const result = await client.sendTokens(
+  address,
+  "cosmos1recipient...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+);
+```
+
+## Generating a New Wallet
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.generate(24, {
+  prefix: "cosmos",
+});
+
+const mnemonic = wallet.mnemonic;
+```
+
+<Warning>Back up the mnemonic securely — it's the only way to recover the wallet.</Warning>
+
+## Multiple Accounts and Custom HD Paths
+
+A single mnemonic can derive many accounts:
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { makeCosmoshubPath } from "@cosmjs/amino";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+  prefix: "cosmos",
+  hdPaths: [makeCosmoshubPath(0), makeCosmoshubPath(1), makeCosmoshubPath(2)],
+});
+
+const accounts = await wallet.getAccounts();
+// Three different addresses, all derived from the same mnemonic
+```
+
+## Encrypted Serialization
+
+Wallets can be serialized to an encrypted JSON string for storage:
+
+```typescript
+const encrypted = await wallet.serialize("strong-password");
+// Store `encrypted` in a database or file
+
+const restored = await DirectSecp256k1HdWallet.deserialize(
+  encrypted,
+  "strong-password",
+);
+```

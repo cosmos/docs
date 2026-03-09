@@ -1,0 +1,54 @@
+---
+title: Stargate vs CosmWasm
+description: Comparing the two CosmJS client families and when to use each
+---
+
+The two client families are **parallel implementations**, not a parent-child
+relationship. They share the same patterns and reuse types from `@cosmjs/stargate`,
+but `CosmWasmClient` does not extend `StargateClient`.
+
+| | Stargate | CosmWasm |
+|---|----------|----------|
+| **Read-only client** | `StargateClient` | `CosmWasmClient` |
+| **Signing client** | `SigningStargateClient` | `SigningCosmWasmClient` |
+| **Package** | `@cosmjs/stargate` | `@cosmjs/cosmwasm` |
+| **Query extensions** | Auth, Bank, Staking, Tx | Auth, Bank, Wasm, Tx |
+| **Staking queries** | Yes (`getBalanceStaked`, `getDelegation`) | No |
+| **Smart contract queries** | No | Yes (`queryContractSmart`, `getContract`, etc.) |
+| **Smart contract transactions** | No | Yes (`upload`, `instantiate`, `execute`, `migrate`) |
+| **Default registry** | Standard Cosmos SDK types | Cosmos SDK + CosmWasm types |
+| **Default amino types** | Standard converters | Standard + CosmWasm converters |
+
+## Which Should I Use?
+
+- **Standard Cosmos SDK chain** (Cosmos Hub, etc.) — use `@cosmjs/stargate`
+- **CosmWasm-enabled chain** (Osmosis, Neutron, etc.) — use `@cosmjs/cosmwasm`
+
+`SigningCosmWasmClient` is a superset in terms of transaction types: it can
+send tokens, delegate, and do everything `SigningStargateClient` can, plus
+interact with smart contracts. If your chain supports CosmWasm and you need
+contract interaction, use the CosmWasm client for everything.
+
+## Custom Messages
+
+Both signing clients support custom message types through the `Registry`:
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes, SigningStargateClient } from "@cosmjs/stargate";
+
+const registry = new Registry(defaultRegistryTypes);
+registry.register("/my.custom.v1.MsgDoSomething", MsgDoSomething);
+
+const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
+  registry,
+  gasPrice: GasPrice.fromString("0.025uatom"),
+});
+
+await client.signAndBroadcast(address, [
+  {
+    typeUrl: "/my.custom.v1.MsgDoSomething",
+    value: MsgDoSomething.fromPartial({ sender: address, data: "hello" }),
+  },
+], "auto");
+```

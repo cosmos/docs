@@ -1,0 +1,81 @@
+---
+title: Protobuf (Direct) Encoding
+description: How Direct signing serializes transactions as Protocol Buffers binary
+---
+
+Direct signing serializes everything as Protocol Buffers binary. This is the
+default and most compact format.
+
+## SignDoc
+
+The bytes that get signed are the Protobuf encoding of a `SignDoc`:
+
+```typescript
+interface SignDoc {
+  bodyBytes: Uint8Array;     // encoded TxBody
+  authInfoBytes: Uint8Array; // encoded AuthInfo
+  chainId: string;
+  accountNumber: number;
+}
+```
+
+CosmJS provides helpers to construct these:
+
+```typescript
+import { makeAuthInfoBytes, makeSignDoc, makeSignBytes } from "@cosmjs/proto-signing";
+
+const bodyBytes = registry.encodeTxBody({ messages, memo });
+
+const authInfoBytes = makeAuthInfoBytes(
+  [{ pubkey: encodedPubkey, sequence }],
+  feeAmount,
+  gasLimit,
+  feeGranter,
+  feePayer,
+);
+
+const signDoc = makeSignDoc(bodyBytes, authInfoBytes, chainId, accountNumber);
+const bytesToSign = makeSignBytes(signDoc);
+```
+
+`makeSignBytes` produces the canonical byte representation by encoding the
+`SignDoc` with `SignDoc.encode().finish()`. This is what gets hashed (SHA-256)
+and signed.
+
+## AuthInfo
+
+`AuthInfo` contains signer metadata and fee information:
+
+```typescript
+const authInfoBytes = makeAuthInfoBytes(
+  signers,   // [{ pubkey, sequence }]
+  feeAmount, // Coin[]
+  gasLimit,  // number
+  feeGranter,
+  feePayer,
+  signMode,  // defaults to SIGN_MODE_DIRECT
+);
+```
+
+Each signer entry includes:
+- **pubkey** — the signer's public key, encoded as `Any`
+- **sequence** — the account's current transaction counter
+- **signMode** — `SIGN_MODE_DIRECT` for Protobuf signing
+
+## TxRaw
+
+After signing, the final transaction is a `TxRaw`:
+
+```typescript
+import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+
+const txRaw = TxRaw.fromPartial({
+  bodyBytes,
+  authInfoBytes,
+  signatures: [signature],
+});
+
+const txBytes = TxRaw.encode(txRaw).finish();
+```
+
+These `txBytes` are what gets broadcast to the chain.

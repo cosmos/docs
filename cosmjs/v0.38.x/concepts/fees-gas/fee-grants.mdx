@@ -1,0 +1,54 @@
+---
+title: Fee Grants
+description: Using the fee grant module to let one account pay fees for another
+---
+
+Cosmos SDK's fee grant module allows one account (the **granter**) to pay
+transaction fees on behalf of another account (the **grantee**). This is useful
+for onboarding users who don't yet hold tokens.
+
+## Sending a Transaction with a Fee Grant
+
+Set the `granter` field on the `StdFee` object:
+
+```typescript
+import { coins } from "@cosmjs/proto-signing";
+
+const fee = {
+  amount: coins(5000, "uatom"),
+  gas: "200000",
+  granter: "cosmos1granter...",
+};
+
+const result = await client.signAndBroadcast(granteeAddress, messages, fee);
+```
+
+The granter must have previously granted a fee allowance to the grantee on-chain
+(using `MsgGrantAllowance`).
+
+## Querying Fee Allowances
+
+Use the feegrant query extension to check existing grants:
+
+```typescript
+import {
+  QueryClient,
+  setupFeegrantExtension,
+} from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.cosmos.network");
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupFeegrantExtension,
+);
+
+const allowance = await queryClient.feegrant.allowance(
+  "cosmos1granter...",
+  "cosmos1grantee...",
+);
+
+const allAllowances = await queryClient.feegrant.allowances(
+  "cosmos1grantee...",
+);
+```
