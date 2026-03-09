@@ -6,24 +6,26 @@ Before writing a module or chain, it helps to understand how the Cosmos SDK orga
 
 ## What is an SDK application
 
-A Cosmos SDK application is a Go binary that implements a deterministic state machine. It runs alongside CometBFT inside a single daemon process. CometBFT drives consensus; the SDK application executes transactions and maintains state.
+A Cosmos SDK application is a Go binary that implements a deterministic state machine. It runs alongside CometBFT inside then node daemon process. CometBFT drives consensus and the SDK application executes transactions and maintains state.
 
 Every SDK application is composed of three main elements:
 
-- **BaseApp**: the execution engine that implements ABCI and orchestrates transaction processing
+- **`BaseApp`**: the execution engine that implements ABCI and orchestrates transaction processing
 - **Modules**: self-contained units of business logic, state, messages, and queries
-- **`app.go`**: the wiring layer that instantiates BaseApp, registers modules, and configures the application at startup
+- **`app.go`**: the wiring layer that instantiates `BaseApp`, registers modules, and configures the application at startup
 
-These three elements are covered in depth in the next two sections. This page focuses on how they are organized in the codebase.
+{/* todo: link above */}
+
+`BaseApp` and `app.go` are covered in depth in the next two sections. This page focuses on how they are organized in the codebase.
 
 ## Repository structure
 
-An SDK application repository follows a conventional layout:
+SDK applications repositories generally use the following layout:
 
 ```
 myapp/
 ├── app/
-│   └── app.go           # Application wiring: creates BaseApp, registers modules
+│   └── app.go           # Application wiring: configures BaseApp, registers modules
 ├── cmd/
 │   └── main.go          # Node binary entrypoint
 ├── x/
@@ -41,13 +43,13 @@ myapp/
 
 Each directory has a distinct responsibility:
 
-- **`x/`** contains the modules. Each subdirectory is a separate, self-contained module. Built-in Cosmos SDK modules (`x/auth`, `x/bank`, `x/staking`, etc.) follow the same layout and are imported as Go packages. Your custom modules live alongside them.
+- `x/` contains the modules. Each subdirectory is a separate, self-contained module. Built-in Cosmos SDK modules (`x/auth`, `x/bank`, `x/staking`, etc.) follow the same layout and are imported as Go packages. Your custom modules live alongside them.
 
-- **`app/`** contains `app.go`, which assembles the application: creating BaseApp, mounting stores, initializing keepers, and registering all modules with the ModuleManager.
+- `app/` contains `app.go`, which assembles the application: creating `BaseApp`, mounting stores, initializing keepers, and registering all modules with the ModuleManager.
 
-- **`cmd/`** contains the entrypoint for the node binary. It parses command-line flags, reads configuration files, and starts the daemon process that runs both the CometBFT node and the SDK application.
+- `cmd/` contains the entrypoint for the node binary. It parses command-line flags, reads configuration files, and starts the daemon process that runs both the CometBFT node and the SDK application.
 
-- **`proto/`** contains the Protobuf definitions for all custom types: messages, queries, state schemas, and genesis. Go code is generated from these files and consumed throughout the module. Proto files live at the repository root, not inside `x/`, so they can be shared across languages and tooling.
+- `proto/` contains the Protobuf definitions for all custom types: messages, queries, state schemas, and genesis. Go code is generated from these files and consumed throughout the module. Proto files live at the repository root, not inside `x/`, so they can be shared across languages and tooling.
 
 ## What lives inside a module
 
@@ -60,15 +62,16 @@ x/mymodule/
 └── module.go        # AppModule: wires the module into the application
 ```
 
-Proto definitions live separately in `proto/`, not inside `x/`. See [Intro to Modules](/sdk/v0.53/learn/concepts/modules#anatomy-of-a-module-high-level) for a complete walkthrough of each file and the role it plays.
+Proto definitions live separately in `proto/`, not inside `x/`. See [Intro to Modules](/sdk/next/learn/concepts/modules#anatomy-of-a-module-high-level) for a complete walkthrough of each file and the role it plays.
 
 ## How modules are assembled into an application
 
-Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager holds the full set of registered modules and coordinates their lifecycle hooks — `InitGenesis`, `BeginBlock`, `EndBlock`, and service registration — across the application. Module ordering is configured explicitly in `app.go` and matters: for example, `x/staking` must finalize delegation changes in `EndBlock` before `x/distribution` calculates rewards. {/* cosmos/cosmos-sdk simapp/app.go:522 — app.ModuleManager.SetOrderEndBlockers(...) — explicit end-block ordering configured in simapp, illustrating that module execution order is a deliberate application-level decision */} See [Intro to Modules](/sdk/v0.53/learn/concepts/modules) for a detailed walkthrough of how the ModuleManager works.
+Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager holds the full set of registered modules and coordinates their lifecycle hooks (`InitGenesis`, `BeginBlock`, `EndBlock`, and service registration) across the application. Module ordering is configured explicitly in `app.go` and matters: for example, `x/staking` must finalize delegation changes in `EndBlock` before `x/distribution` calculates rewards. 
 
-## Where BaseApp fits
+{/* todo: link to module manager in baseapp */}
+## Where `BaseApp` fits
 
-BaseApp sits between CometBFT and the modules:
+`BaseApp` sits between CometBFT and the modules:
 
 ```
 CometBFT (consensus)
@@ -82,11 +85,11 @@ Modules (x/auth, x/bank, x/mymodule, ...)
 State (KVStores)
 ```
 
-BaseApp implements the ABCI interface that CometBFT calls to drive block execution. When CometBFT calls `FinalizeBlock`, BaseApp runs the block through all its phases — PreBlock, BeginBlock, transactions, EndBlock — and returns the resulting app hash. BaseApp is covered in detail in [BaseApp Overview](/sdk/v0.53/learn/concepts/baseapp).
+`BaseApp` implements the ABCI interface that CometBFT calls to drive block execution. When CometBFT calls `FinalizeBlock`, `BaseApp` runs the block through all its phases — PreBlock, BeginBlock, transactions, EndBlock — and returns the resulting app hash. `BaseApp` is covered in detail in [BaseApp Overview](/sdk/v0.53/learn/concepts/baseapp).
 
 ## The role of `app.go`
 
-`app.go` is the single file that defines a specific chain. It is where the application is assembled from its parts:
+`app.go` is the single file that defines a specific chain. It is where the application is assembled from its parts. Here is a breakdown of the steps it takes:
 
 1. Create a `BaseApp` instance with the application name, logger, database, and codec.
 2. Create a `StoreKey` for each module and mount it to the multistore.
@@ -96,15 +99,15 @@ BaseApp implements the ABCI interface that CometBFT calls to drive block executi
 6. Register all gRPC services (message and query handlers) through the ModuleManager.
 7. Set the `AnteHandler` and other middleware.
 
-Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. There is no framework magic — the assembly is explicit and auditable.
+Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. 
 
 ## Other files in a chain
 
-A complete SDK chain repository contains more than just `x/`, `app/`, `cmd/`, and `proto/`. Here is what else you will typically find.
+A complete SDK chain repository contains more than just `x/`, `app/`, `cmd/`, and `proto/`. Below are some other files you will typically find in a Cosmos SDK chain repository:
 
 ### Additional files in `app/`
 
-Real-world applications split the `app/` directory across multiple files to keep `app.go` focused on wiring:
+Real-world applications typically split the `app/` directory across multiple files to keep `app.go` focused on wiring:
 
 ```
 app/
@@ -114,8 +117,8 @@ app/
 └── genesis.go      # Helpers for genesis state initialization (optional)
 ```
 
-- **`export.go`** — Implements `ExportAppStateAndValidators`, which serializes all module state into a `genesis.json`. {/* cosmos/cosmos-sdk simapp/export.go:21 — func (app *SimApp) ExportAppStateAndValidators(forZeroHeight bool, jailAllowedAddrs, modulesToExport []string) — serializes all module state into the exported genesis format */} This is used when migrating to a new chain version (hard fork) or creating a testnet from a live chain snapshot.
-- **`upgrades.go`** — Registers named upgrade handlers consumed by the `x/upgrade` module. Each handler runs exactly once, at the block where the governance-approved upgrade height is reached, and performs any necessary state migrations. {/* cosmos/cosmos-sdk x/upgrade/keeper/keeper.go:518 — k.setDone(ctx, plan.Name) — marks the upgrade plan as complete after handler execution, preventing re-execution */}
+- `export.go`: Implements `ExportAppStateAndValidators`, which serializes all module state into a `genesis.json`. This is used when migrating to a new chain version (hard fork) or creating a testnet from a live chain snapshot.
+- `upgrades.go`: Registers named upgrade handlers consumed by the `x/upgrade` module. Each handler runs exactly once, at the block where the governance-approved upgrade height is reached, and performs any necessary state migrations.
 
 ### At the repository root
 
@@ -127,9 +130,9 @@ myapp/
 └── scripts/        # Automation scripts (proto generation, linting)
 ```
 
-- **`go.mod` / `go.sum`** — Standard Go module files. `go.mod` declares the Cosmos SDK version and all other imported packages. `go.sum` provides verifiable checksums for the full dependency tree.
-- **`Makefile`** — The standard entry point for development tasks: `make build` compiles the binary, `make test` runs unit tests, `make proto-gen` regenerates Go code from `.proto` files. Most SDK chains include targets for linting, simulation tests, and Docker builds.
-- **`scripts/`** — Shell scripts and configuration for tooling that the Makefile invokes — typically `buf` configuration for protobuf compilation, scripts for checking dependency consistency, and helpers for running local testnets.
+- `go.mod` / `go.sum`: Standard Go module files. `go.mod` declares the Cosmos SDK version and all other imported packages. `go.sum` provides verifiable checksums for the full dependency tree.
+- `Makefile`: The standard entry point for development tasks: `make build` compiles the binary, `make test` runs unit tests, `make proto-gen` regenerates Go code from `.proto` files. Most SDK chains include targets for linting, simulation tests, and Docker builds.
+- `scripts/`: Shell scripts and configuration for tooling that the Makefile invokes — typically `buf` configuration for protobuf compilation, scripts for checking dependency consistency, and helpers for running local testnets.
 
 ### The node binary (`cmd/`)
 
@@ -146,6 +149,6 @@ The `cmd/` directory produces the node daemon binary (e.g., `simd`, `gaiad`, `wa
 
 An SDK application is a deterministic state machine composed of modules assembled in `app.go`. The codebase follows a conventional layout: modules in `x/`, application wiring in `app/`, the binary entrypoint in `cmd/`, and Protobuf definitions in `proto/`.
 
-The ModuleManager assembles modules and coordinates their lifecycle hooks across the application. BaseApp provides the ABCI implementation that connects the state machine to CometBFT's consensus engine.
+The ModuleManager assembles modules and coordinates their lifecycle hooks across the application. `BaseApp` provides the ABCI implementation that connects the state machine to CometBFT's consensus engine.
 
-The next section explains what BaseApp is and how it coordinates transaction execution in detail.
+The next section explains what `BaseApp` is and how it coordinates transaction execution in detail.
