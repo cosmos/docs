@@ -113,3 +113,68 @@ When updating documentation:
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
+
+## Citation Tagging System
+
+Factual claims in concepts docs are backed by invisible JSX comments pointing to source code. Purpose: prevent hallucination by forcing claims to map to real code lines that reviewers can verify.
+
+### Tag format
+
+```mdx
+The sequence number increments after each transaction. {/* cosmos/cosmos-sdk x/auth/ante/sigverify.go fn:AnteHandle+15 */}
+```
+
+**Primary anchor**: `fn:FunctionName+offset` — function name is stable; offset is 0-indexed from the `func` keyword line (each line of a multi-line signature counts, including the `{`).
+
+**Fallback** (raw line numbers only): package-level `const`, `var`, and `type` declarations that have no enclosing function.
+
+```mdx
+{/* cosmos/cosmos-sdk x/auth/types/auth.pb.go:42 — BaseAccount stores PubKey only */}
+```
+
+**Never** use `fn:` anchors for struct type declarations — they have no enclosing function, so use raw line numbers.
+
+### What to tag
+
+Tag every sentence making a factual claim (struct fields, function behavior, storage locations, constants, error conditions). Do **not** tag definitions of general concepts, narrative connective sentences, or external standard references (BIPs, RFCs).
+
+### Inline notes
+
+Add a note after `—` when the connection between the claim and the cited line isn't obvious:
+
+```mdx
+{/* cosmos/cosmos-sdk x/auth/types/auth.pb.go:42 — BaseAccount stores PubKey only, no PrivKey field */}
+```
+
+### Finding citations
+
+```bash
+grep -rn "IncrementSequence\|SetSequence" cosmos-sdk/x/auth --include="*.go"
+sed -n '535,540p' cosmos-sdk/x/auth/ante/sigverify.go
+```
+
+Always read the actual line before tagging — never guess from grep output alone.
+
+### Reviewer workflow
+
+1. Fetch `https://raw.githubusercontent.com/<repo>/refs/heads/main/<path>`
+2. Resolve the anchor: for `fn:Name+offset`, find the `func Name` line and count `offset` lines down; for raw line numbers, go directly to that line
+3. Read ±3 lines of context; confirm the line directly supports the doc sentence
+4. If no: reject with the correct citation or mark as uncitable
+
+### Removing citations
+
+Use a pattern anchored on the `org/repo` slug so TODOs and editorial comments are preserved:
+
+```bash
+sed -E 's/ \{\/\* [a-z][a-zA-Z0-9._-]*\/[a-zA-Z0-9._-]+ [^*]*\*\///g; s/\{\/\* [a-z][a-zA-Z0-9._-]*\/[a-zA-Z0-9._-]+ [^*]*\*\} //g' file.mdx > clean.mdx
+```
+
+Only comments starting with an `org/repo` slug (e.g. `cosmos/cosmos-sdk`) are matched. `{/* TODO: ... */}` style comments are left untouched.
+
+### Gotchas
+
+- `init()` in Go **is** a function — use `fn:init+offset`, not raw line fallback
+- `fn:` anchors are for functions only; struct `type` declarations have no enclosing function, so use raw line numbers
+
+The citation guidelines page lives at `citation.mdx` in the docs site and is linked from the Home dropdown in `docs.json`.

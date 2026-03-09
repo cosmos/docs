@@ -1,0 +1,191 @@
+# Citation Tagging System
+
+A method for making documentation claims auditable against source code. Every factual claim in a concepts page is tagged with an invisible comment pointing to the exact location of code that backs it up. A reviewer agent (or human) can verify each tag independently, and CI can detect when tagged code changes and flag the affected docs.
+
+## Purpose
+
+The goal is to prevent LLM hallucination in documentation. By forcing every factual claim to map to real source code, we can:
+
+1. Verify claims against the actual implementation
+2. Detect when code changes break documentation assumptions
+3. Remove or update any section that is false or no longer grounded in reality
+
+## Format
+
+Tags are JSX block comments placed inline, immediately after the sentence they support:
+
+```mdx
+The sequence number starts at zero for a newly created account {/* cosmos/cosmos-sdk x/auth/types/account.go fn:NewBaseAccount+3 */} and increments by one after each successful transaction. {/* cosmos/cosmos-sdk x/auth/ante/sigverify.go fn:IncrementSequenceDecorator+12 */}
+```
+
+Tags are invisible to readers (MDX treats `{/* */}` as comments). They don't affect rendering.
+
+### Tag anatomy
+
+```
+{/* <repo> <path/to/file.go> fn:<FunctionName>+<offset> */}
+```
+
+- **repo**: `org/repo` slug (e.g. `cosmos/cosmos-sdk`)
+- **path**: path from repo root to file
+- **fn:FunctionName**: the name of the enclosing function (the stable anchor)
+- **+offset**: line offset from the `func` keyword line of that function (0-indexed)
+
+The function name is the stable part — it survives import additions, reformatting, and most refactors. The offset handles precision within the function.
+
+### Fallback: raw line numbers
+
+Only use a raw line number when there is **no enclosing function** — for example, package-level constants, `var` blocks, and `type` declarations:
+
+```
+{/* <repo> <path/to/file.go>:<lineNumber> */}
+```
+
+Example:
+
+```mdx
+The full BIP-44 derivation path for Cosmos is `m/44'/118'/0'/0/0`. {/* cosmos/cosmos-sdk types/address.go:22 */}
+```
+
+Use this fallback sparingly. Raw line numbers go stale whenever an import is added, a function is reordered, or `gofmt` touches the file. When in doubt, prefer `fn:` anchors.
+
+### Inline notes
+
+When the connection between a claim and its citation isn't obvious, add a short note after a `—`:
+
+```mdx
+The private key is never stored on-chain. {/* cosmos/cosmos-sdk x/auth/types/auth.pb.go:42 — BaseAccount stores PubKey only, no PrivKey field */}
+```
+
+Note: `BaseAccount` is a `type` struct declaration (no enclosing function), so this uses the raw line number fallback rather than a `fn:` anchor.
+
+## What gets tagged
+
+Tag **every sentence that makes a factual claim** about behavior, structure, or data:
+
+- Struct fields and their types
+- Function behavior ("increments by one", "returns an error", "is rejected")
+- Where data is stored (which module, which keeper)
+- Algorithm choices (secp256k1, Bech32, BIP-39)
+- Constants and default values
+- Error conditions and validation rules
+
+Do **not** tag:
+
+- Definitions of general concepts ("asymmetric cryptography is...") that don't map to a single code location
+- Narrative sentences that connect claims ("this means that...")
+- External standard references (BIPs, RFCs) — link to the spec directly instead
+- Claims that are structurally obvious from already-cited code
+
+## Finding citations
+
+For each claim, search the relevant source repo with ripgrep:
+
+```bash
+# Find a struct definition
+grep -rn "type BaseAccount struct" cosmos-sdk --include="*.go"
+
+# Find a function that implements a behavior
+grep -rn "IncrementSequence\|SetSequence" cosmos-sdk/x/auth --include="*.go"
+
+# Find a constant
+grep -rn "FullFundraiserPath\|= 118" cosmos-sdk/types/address.go
+
+# Find where something is stored
+grep -rn "setBalance\|SetAccount\|SetDelegation" cosmos-sdk/x/ --include="*.go"
+```
+
+Start with the most specific module (`x/auth`, `x/bank`, `crypto/`) before searching broadly.
+
+## Resolving the fn: anchor
+
+Once you find the function, count the offset:
+
+```bash
+# Get the function start line
+grep -n "^func IncrementSequenceDecorator" cosmos-sdk/x/auth/ante/sigverify.go
+
+# Read the relevant section
+sed -n '530,545p' cosmos-sdk/x/auth/ante/sigverify.go
+```
+
+Offset 0 is the first line of the function signature — the line where `func` appears. Offset 1 is the next line, and so on. Count only actual source lines — don't skip blank lines when counting, as they shift the offset.
+
+**Multi-line signatures**: When a function signature spans multiple lines (e.g., long parameter lists or multiple return values), offset counting starts from the `func` keyword line and each continuation line counts as a successive offset. The opening `{` of the body is just another line in the count. Always verify by reading the resolved line — don't assume the body starts at a fixed offset.
+
+## Verifying citations
+
+**Always read the actual code before tagging.** Do not guess based on grep output alone.
+
+For `fn:` anchors:
+
+1. Find the function definition line
+2. Count down by the offset
+3. Confirm that line (or its immediate comment) directly supports the claim
+
+For raw line number fallbacks:
+
+```bash
+sed -n '20,25p' cosmos-sdk/types/address.go
+```
+
+A citation is correct if:
+
+- The line (or its immediate comment) directly supports the claim
+- A reviewer reading only that line (plus ±3 lines of context) could confirm the doc sentence is accurate
+
+A citation is wrong if:
+
+- The line is a blank line, closing brace, or import
+- The line is only tangentially related (e.g., citing `keyType = "secp256k1"` for the claim "asymmetric cryptography")
+- The cited line is in a generated file that doesn't show intent (prefer the source `.proto` or the implementation, not `.pb.go`, unless the struct definition itself is the claim)
+
+### Common mistakes
+
+| Claim | Wrong citation | Right citation |
+|---|---|---|
+| "asymmetric cryptography" | `secp256k1.go:10` — `keyType = "secp256k1"` (doesn't say asymmetric) | `secp256k1.go fn:GenPrivKey+0` — `// GenPrivKey generates a new ECDSA private key` |
+| `m/44'/118'/0'/0/0` path | `hdpath.go fn:NewFundraiserParams+2` (no 118 here) | `types/address.go:22` — `FullFundraiserPath = "m/44'/118'/0'/0/0"` (package-level const → use raw line) |
+| "decreases sender, increases recipient" | `send.go fn:sendCoins+8` (blank line) | `send.go fn:sendCoins+4` — `subUnlockedCoins(ctx, fromAddr, amt)` |
+| "signature is verified" | comment line about fetching sigs | `sigverify.go fn:AnteHandle+15` — line with `authsigning.VerifySignature(...)` call |
+
+## Removing citations
+
+To strip citation tags from a file (e.g. before publishing or when switching formats), match only the citation-specific `org/repo` prefix pattern — this avoids accidentally removing other JSX comments like TODOs or editorial notes:
+
+```bash
+# Remove only citation tags (comments starting with org/repo path)
+sed -E 's/ \{\/\* [a-z][a-zA-Z0-9._-]*\/[a-zA-Z0-9._-]+ [^*]+\*\/\}//g;
+        s/\{\/\* [a-z][a-zA-Z0-9._-]*\/[a-zA-Z0-9._-]+ [^*]+\*\/\} //g' file.mdx > clean.mdx
+```
+
+The pattern `[a-z]*/[a-zA-Z0-9._-]+` matches the leading `org/repo` slug that all citation tags begin with. Comments like `{/* TODO: update this */}` or `{/* Note: see above */}` do not match this pattern and are left untouched.
+
+## Reviewer workflow
+
+A reviewer agent reads each tag and checks the cited code:
+
+1. Fetch `https://raw.githubusercontent.com/<repo>/refs/heads/main/<path>` (or clone locally)
+2. For `fn:` anchors: locate the function, count down by the offset, read that line ±3 lines of context
+3. For raw line anchors: read the cited line ±3 lines of context
+4. Check: does this line support the doc sentence?
+5. If yes: pass. If no: reject with the correct anchor or mark as uncitable.
+
+## CI integration
+
+When a PR changes a source file, scan all docs for tags referencing that file:
+
+```bash
+grep -rn "cosmos-sdk x/auth/ante/sigverify.go" docs/
+```
+
+Any matching doc files should be flagged for re-review. If the cited function was deleted, renamed, or the offset now points to different code, the tag is stale and must be updated before merge.
+
+## Uncitable claims
+
+If a claim is true but has no direct single-line citation, options are:
+
+1. **Split the sentence** into a citable part and a narrative part; tag only the citable part
+2. **Cite the enclosing function** with offset 0 and a note explaining the connection
+3. **Link to the spec** (for algorithm choices, BIPs, etc.) instead of using a tag
+4. **Remove the claim** if it can't be verified — uncited claims in concepts docs are a documentation smell
