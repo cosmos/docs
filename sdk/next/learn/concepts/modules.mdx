@@ -51,25 +51,30 @@ The key encodes the namespace, address, and denomination. The value is the encod
 
 As you learned in the [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions) section, each module defines the actions it allows via messages (`sdk.Msg`).
 
-Messages are defined in the module's `tx.proto` file and implemented by that module's `MsgServer`. Here is a simplified example of a message definition from the bank module:
+Messages are defined in the module's `tx.proto` file under a `service Msg` block, and implemented by that module's `MsgServer`. Here is a simplified example from the bank module:
 
-```
+```protobuf
+// Message type definition
 message MsgSend {
   string from_address = 1;
   string to_address   = 2;
   repeated cosmos.base.v1beta1.Coin amount = 3;
 }
+
+// Msg service — groups all messages for this module
+service Msg {
+  rpc Send(MsgSend) returns (MsgSendResponse);
+}
 ```
 
-This message represents a request to transfer tokens from one account to another.
-When included in a transaction and executed:
+The `service Msg` block is referred to as the `Msg service` in the Cosmos SDK. The protobuf compiler generates a `MsgServer` interface from it, which the module implements in Go. `BaseApp` routes each incoming message to the correct implementation by its fully-qualified method name (e.g., `/cosmos.bank.v1beta1.MsgSend`).
+{/* todo: link to baseapp page */}
+
+`MsgSend`  above is an example of a message type definition. It represents a request to transfer tokens from one account to another. When included in a transaction and executed:
 
 1. The sender's balance is checked.
 2. The amount is deducted from `from_address`.
 3. The amount is credited to `to_address`.
-
-When a transaction is executed, the SDK's `BaseApp` struct routes each message to the module that defines it.
-{/* todo: link to baseapp page */}
 
 ### Queries
 
@@ -88,10 +93,9 @@ While messages define intent, the `MsgServer` and `Keeper` work together to exec
 
 Business logic is conceptually split across two layers:
 
-- The **`MsgServer`** handles the transaction-facing logic: it validates inputs, applies message-level business rules, and where required checks authorization. Once satisfied, it delegates state transitions to the keeper.
-- The **`Keeper`** owns the module's state: it defines the storage schema and provides the only authorized path for reading and writing it. Message handlers, block hooks, and governance proposals all go through keeper methods to make state changes — nothing accesses the store directly.
+- The [`MsgServer`](#message-execution-msgserver) handles the transaction-facing logic: it validates inputs, applies message-level business rules, and where required checks authorization. Once satisfied, it delegates state transitions to the keeper.
+- The [`Keeper`](#keeper) owns the module's state: it defines the storage schema and provides the only authorized path for reading and writing it. Message handlers, block hooks, and governance proposals all go through keeper methods to make state changes. All state changes must go through the keeper, nothing accesses the store directly.
 
----
 
 ### Message execution (`MsgServer`)
 
@@ -146,9 +150,9 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 
 A module's **keeper** is its state access layer. It owns the module's KV store and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
 
-The `MsgServer` and `QueryServer` both embed the keeper. Business logic belongs in keeper methods rather than the `MsgServer`, so the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
+The `MsgServer` and `QueryServer` both embed the keeper. It is best practice for business logic to be implemented in keeper methods rather than the `MsgServer`, so the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
 
-The `x/counter` keeper holds a single state item: {/* todo: link to counter tutorial */}
+The following is an example of the `x/counter` keeper from the counter module tutorial, which holds a single state item: {/* todo: link to counter tutorial */}
 
 ```go
 type Keeper struct {
@@ -166,13 +170,13 @@ func (k *Keeper) AddCount(ctx context.Context, amount uint64) (uint64, error) {
 }
 ```
 
-`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store. `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly.
+`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store. `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly. For details on how the keeper opens its store from the context it receives, see [Execution Context](/sdk/next/learn/concepts/context-gas-events).
 
 ### Inter-module access
 
 Modules are isolated by default. Each module owns its state, and direct access to that state is restricted through the module's keeper. Other modules cannot arbitrarily mutate another module's storage.
 
-Instead, modules interact through explicitly defined keeper interfaces. {/* todo: link to counter tutorial */}
+Instead, modules interact through explicitly defined keeper interfaces. 
 
 For example:
 
@@ -183,9 +187,11 @@ Each module defines an `expected_keepers.go` file that declares the interfaces i
 
 This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
 
+{/* todo: link to counter tutorial section on expected keepers */}
+
 ### Block hooks
 
-Modules may execute logic at specific points in the block lifecycle by implementing optional hook interfaces:
+Modules may execute logic at specific points in the block lifecycle by implementing optional hook interfaces in the `AppModule` struct in `module.go`:
 
 - `HasBeginBlocker` — runs logic at the start of each block
 - `HasEndBlocker` — runs logic at the end of each block
@@ -193,7 +199,32 @@ Modules may execute logic at specific points in the block lifecycle by implement
 
 Hooks are optional, and modules should only implement the hooks they need. These hooks are invoked during block execution by a `ModuleManager` in the `BaseApp`, which calls each registered module's hooks in a configured order. {/* todo: link to baseapp#module-manager */}
 
+A module implements a hook by defining the corresponding method on its `AppModule` struct in `module.go`:
+
+```go
+func (a AppModule) PreBlock(ctx context.Context) error {
+    // runs before BeginBlock; used for consensus parameter changes
+    return nil
+}
+
+func (a AppModule) BeginBlock(ctx context.Context) error {
+    // runs at the start of each block
+    return nil
+}
+
+func (a AppModule) EndBlock(ctx context.Context) error {
+    // runs at the end of each block
+    return nil
+}
+```
+
+Implementing these methods satisfies the corresponding interface (`HasPreBlocker`, `HasBeginBlocker`, `HasEndBlocker`). The module also needs to be registered with the `ModuleManager` in `app.go` for the hooks to be called. That wiring is covered in the `app.go` section.
+
 {/* todo: link to baseapp#module-manager — ModuleManager coordinates hook invocation order across all modules */}
+
+{/* todo: link to app.go section */}
+
+{/* todo: link to tutorial block hooks section */}
 
 ### Genesis initialization
 
@@ -201,14 +232,15 @@ Modules define how their state is initialized when the chain starts.
 
 Each module implements:
 
-- `DefaultGenesis` — returns the module's default genesis state
-- `ValidateGenesis` — validates the genesis state before the chain starts
-- `InitGenesis` — writes the genesis state into the module's store at chain start
-- `ExportGenesis` — reads the module's current state and serializes it as genesis data
+- `DefaultGenesis`: returns the module's default genesis state
+- `ValidateGenesis`: validates the genesis state before the chain starts
+- `InitGenesis`: writes the genesis state into the module's store at chain start
+- `ExportGenesis`: reads the module's current state and serializes it as genesis data
 
 During `InitChain`, BaseApp calls each module's `InitGenesis` to populate its state from `genesis.json`.
 
 {/* todo: link to lifecycle page init genesis section */}
+{/* todo: link to tutorial genesis section */}
 
 ## Built-in and custom modules
 
@@ -258,17 +290,10 @@ proto/myapp/mymodule/v1/
 └── genesis.proto  # Genesis state definition
 ```
 
-- **`keeper/`**
-  Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces.
-
-- **`types/`**
-  Defines the module's public types: generated protobuf structs, store keys, and the `expected_keepers.go` interfaces that declare what this module needs from other modules.
-
-- **`module.go`**
-  Connects the module to the application and registers genesis handlers, block hooks, and message and query services.
-
-- **`.proto` files**
-  Define messages, queries, state schemas, and genesis state. Go code is generated from these files and used throughout the module.
+- `keeper/`: Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces.
+- `types/`: Defines the module's public types: generated protobuf structs, store keys, and the `expected_keepers.go` interfaces that declare what this module needs from other modules.
+- `module.go`: Connects the module to the application and registers genesis handlers, block hooks, and message and query services.
+- `.proto` files: Define messages, queries, state schemas, and genesis state. Go code is generated from these files and used throughout the module.
 
 ## Modules in context
 
