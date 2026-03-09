@@ -51,18 +51,18 @@ type BaseApp struct {
 
 For a complete list of fields, see the [`BaseApp` struct definition](https://github.com/cosmos/cosmos-sdk/blob/main/baseapp/baseapp.go).
 
-- `cms` (CommitMultiStore): the root state store. All module substores are mounted here, and all state reads and writes during block execution pass through it. {/* cosmos/cosmos-sdk baseapp/baseapp.go:92 — cms storetypes.CommitMultiStore // Main (uncached) state */}
-- `storeLoader`: a function that opens and mounts the individual module stores at application startup. {/* cosmos/cosmos-sdk baseapp/baseapp.go:94 — storeLoader StoreLoader // function to handle store loading, may be overridden with SetStoreLoader() */}
-- `grpcQueryRouter`: routes incoming gRPC queries to the correct module's query handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:95 — grpcQueryRouter *GRPCQueryRouter // router for redirecting gRPC query calls */}
-- `msgServiceRouter`: routes each message in a transaction to the correct module's `MsgServer` handler. {/* cosmos/cosmos-sdk baseapp/baseapp.go:96 — msgServiceRouter *MsgServiceRouter // router for redirecting Msg service messages */}
-- `txDecoder`: decodes raw transaction bytes from CometBFT into an `sdk.Tx`. {/* cosmos/cosmos-sdk baseapp/baseapp.go:98 — txDecoder sdk.TxDecoder // unmarshal []byte into sdk.Tx */}
-- `anteHandler`: runs before message execution to handle cross-cutting concerns: signature verification, sequence validation, and fee deduction. {/* cosmos/cosmos-sdk baseapp/baseapp.go:102 — anteHandler sdk.AnteHandler // ante handler for fee and auth */}
-- `postHandler`: optional middleware that runs after message execution — used for tasks such as tipping or post-execution state adjustments. {/* cosmos/cosmos-sdk baseapp/baseapp.go:103 — postHandler sdk.PostHandler // post handler, optional */}
+- `cms` (CommitMultiStore): the root state store. All module substores are mounted here, and all state reads and writes during block execution pass through it.
+- `storeLoader`: a function that opens and mounts the individual module stores at application startup.
+- `grpcQueryRouter`: routes incoming gRPC queries to the correct module's query handler.
+- `msgServiceRouter`: routes each message in a transaction to the correct module's `MsgServer` handler.
+- `txDecoder`: decodes raw transaction bytes from CometBFT into an `sdk.Tx`.
+- `anteHandler`: runs before message execution to handle cross-cutting concerns: signature verification, sequence validation, and fee deduction.
+- `postHandler`: optional middleware that runs after message execution — used for tasks such as tipping or post-execution state adjustments.
 - `sealed`: set to `true` after `LoadLatestVersion` is called. Setter methods panic if called after sealing.
 
 ## Initialization and sealing
 
-`BaseApp` enforces a configuration lifecycle: setter methods must be called before `LoadLatestVersion` is invoked. When `LoadLatestVersion` runs, it validates required components, initializes the check state, and sets `sealed` to `true`. {/* cosmos/cosmos-sdk baseapp/baseapp.go — func (app *BaseApp) Init() validates cms and stateStore, initializes checkState, then seals */} Any setter called after sealing panics. On first launch, CometBFT calls `InitChain`. It stores `ConsensusParams` from the genesis file — block gas limit, max block size, evidence rules — in the `ParamStore`, where they can later be adjusted via on-chain governance. {/* cosmos/cosmos-sdk baseapp/abci.go:89 — InitChain calls StoreConsensusParams if req.ConsensusParams != nil */} It initializes all volatile states by branching the root store, sets the block gas meter to infinite so genesis transactions are not gas-constrained, and calls the application's `initChainer`, which runs each module's `InitGenesis` to populate initial state. {/* cosmos/cosmos-sdk baseapp/abci.go:82,122,124 — stateManager.SetState for finalize+check, WithBlockGasMeter(InfiniteGasMeter), abciHandlers.InitChainer */} How this shapes the structure of `app.go` is covered in the next section.
+`BaseApp` enforces a configuration lifecycle: setter methods must be called before `LoadLatestVersion` is invoked. When `LoadLatestVersion` runs, it validates required components, initializes the check state, and sets `sealed` to `true`. Any setter called after sealing panics. On first launch, CometBFT calls `InitChain`. It stores `ConsensusParams` from the genesis file — block gas limit, max block size, evidence rules — in the `ParamStore`, where they can later be adjusted via on-chain governance. It initializes all volatile states by branching the root store, sets the block gas meter to infinite so genesis transactions are not gas-constrained, and calls the application's `initChainer`, which runs each module's `InitGenesis` to populate initial state. How this shapes the structure of `app.go` is covered in the next section.
 
 {/* TODO: move the full initialization and sealing explanation (two-phase config model, code example, ordering rules, why everything must be in NewApp) to the app.go page, where it's actionable. Keep only the concept here. */}
 
@@ -78,7 +78,7 @@ TxDecoder
 sdk.Tx
 ```
 
-This step happens before the transaction enters the execution pipeline. Without it, `BaseApp` cannot inspect messages, run the ante handler, or route execution to the correct module. 
+This step happens before the transaction enters the execution pipeline. Without it, `BaseApp` cannot inspect messages, run the ante handler, or route execution to the correct module.
 
 ## Execution modes
 
@@ -86,8 +86,8 @@ This step happens before the transaction enters the execution pipeline. Without 
 
 - `CheckTx` (`ExecModeCheck`): validates a transaction before it enters the mempool, without committing state.
 - `FinalizeBlock` (`ExecModeFinalize`): executes transactions in a proposed block against a branched state that is committed at the end.
-- `PrepareProposal` (`ExecModePrepareProposal`): runs when the node is the block proposer, assembling a candidate block. Executes against a branched state that is never committed. {/* cosmos/cosmos-sdk baseapp/abci.go — PrepareProposal sets prepareProposalState from app.cms and runs runTx in execModePrepareProposal */}
-- `ProcessProposal` (`ExecModeProcessProposal`): runs on every validator to validate an incoming proposal. Also executes against a branched state that is never committed. {/* cosmos/cosmos-sdk baseapp/abci.go — ProcessProposal sets processProposalState from app.cms and runs runTx in execModeProcessProposal */}
+- `PrepareProposal` (`ExecModePrepareProposal`): runs when the node is the block proposer, assembling a candidate block. Executes against a branched state that is never committed.
+- `ProcessProposal` (`ExecModeProcessProposal`): runs on every validator to validate an incoming proposal. Also executes against a branched state that is never committed.
 - `Simulate` (`ExecModeSimulate`): runs a transaction for gas estimation without committing state.
 
 This separation ensures that validation, proposal handling, and simulation cannot accidentally mutate committed application state.
@@ -112,7 +112,7 @@ The `AnteHandler` is middleware that runs before any message in a transaction ex
 
 {/* TODO: move the AnteHandler configuration example (SetAnteHandler, HandlerOptions, ordering rules) to the app.go page, where it's actionable. Keep only the concept here. then link out to the app.go page. */}
 
-If the AnteHandler fails, the transaction is rejected and its messages never execute. If the AnteHandler succeeds but a message later fails, the AnteHandler's state writes — fee deduction and sequence increment — are already flushed to `finalizeBlockState` and will be committed with the block. {/* cosmos/cosmos-sdk baseapp/baseapp.go:932 — msCache.Write() is called immediately after AnteHandler success, before RunMsgs begins */} Fees are charged even for transactions whose messages fail.
+If the AnteHandler fails, the transaction is rejected and its messages never execute. If the AnteHandler succeeds but a message later fails, the AnteHandler's state writes — fee deduction and sequence increment — are already flushed to `finalizeBlockState` and will be committed with the block. Fees are charged even for transactions whose messages fail.
 
 ## Message routing
 
@@ -124,12 +124,11 @@ type MsgServiceRouter struct {
     // ...
 }
 ```
-{/* cosmos/cosmos-sdk baseapp/msg_service_router.go:29 — type MsgServiceRouter struct { routes map[string]MsgServiceHandler; ... } */}
 
 The routing process has three steps:
 
-1. Registration: During app startup, each module calls `RegisterService`, which registers its message handlers keyed by message type URL (e.g., `/cosmos.bank.v1beta1.MsgSend`). {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:71 — func (msr *MsgServiceRouter) RegisterService iterates service methods and registers handlers in the routes map keyed by message type URL */}
-2. Lookup: At execution time, `Handler` looks up the registered handler for the incoming message's type URL. {/* cosmos/cosmos-sdk baseapp/msg_service_router.go:54 — func (msr *MsgServiceRouter) Handler(msg sdk.Msg) MsgServiceHandler — returns handler by type URL from routes map */}
+1. Registration: During app startup, each module calls `RegisterService`, which registers its message handlers keyed by message type URL (e.g., `/cosmos.bank.v1beta1.MsgSend`).
+2. Lookup: At execution time, `Handler` looks up the registered handler for the incoming message's type URL.
 3. Execution: The retrieved handler invokes the module's `MsgServer` implementation, which validates inputs, applies business rules, and updates state through the keeper.
 
 This routing is entirely type-URL-based. Modules do not need to know about each other at the routing level; `BaseApp` is the neutral coordinator.
@@ -140,13 +139,13 @@ For read-only access to application state, `BaseApp` uses the **`GRPCQueryRouter
 
 ## Store management
 
-`BaseApp` owns the `CommitMultiStore` that holds all module state. At app startup, each module registers its store key, and `BaseApp` mounts the corresponding store: {/* cosmos/cosmos-sdk baseapp/baseapp.go:323 — func (app *BaseApp) MountKVStores mounts IAVL or DB-backed stores for each registered KV store key */}
+`BaseApp` owns the `CommitMultiStore` that holds all module state. At app startup, each module registers its store key, and `BaseApp` mounts the corresponding store:
 
 ```go
 app.MountKVStores(keys)
 ```
 
-Before executing each transaction, `BaseApp` creates a cached, copy-on-write view of the multistore. All writes during that transaction occur in the cache. If the transaction succeeds, the cache is flushed to the underlying store. If the transaction fails at any point, the cache is discarded and no state changes are applied. 
+Before executing each transaction, `BaseApp` creates a cached, copy-on-write view of the multistore. All writes during that transaction occur in the cache. If the transaction succeeds, the cache is flushed to the underlying store. If the transaction fails at any point, the cache is discarded and no state changes are applied.
 
 ## CheckTx and mempool validation
 
@@ -156,7 +155,7 @@ Before a transaction reaches block execution, it goes through `CheckTx`. `BaseAp
 
 ## Coordinating block execution
 
-When CometBFT calls `FinalizeBlock`, `BaseApp` runs the full block execution pipeline in order: {/* cosmos/cosmos-sdk baseapp/abci.go:868 — func (app *BaseApp) FinalizeBlock(req *abci.RequestFinalizeBlock) — FinalizeBlock entry point */}
+When CometBFT calls `FinalizeBlock`, `BaseApp` runs the full block execution pipeline in order:
 
 ```
 FinalizeBlock
@@ -170,15 +169,15 @@ FinalizeBlock
        → returns AppHash
 ```
 
-**PreBlock** runs before any block logic. It handles changes that must take effect before the block begins, such as activating a chain upgrade or modifying consensus parameters. {/* cosmos/cosmos-sdk baseapp/abci.go:757 — PreBlock called at the start of internalFinalizeBlock, before BeginBlock */}
+**PreBlock** runs before any block logic. It handles changes that must take effect before the block begins, such as activating a chain upgrade or modifying consensus parameters.
 
-**BeginBlock** runs after PreBlock and handles per-block housekeeping: minting inflation rewards, distributing staking rewards, resetting per-block counters. {/* cosmos/cosmos-sdk baseapp/abci.go:762 — BeginBlock called after PreBlock, before transaction iteration */}
+**BeginBlock** runs after PreBlock and handles per-block housekeeping: minting inflation rewards, distributing staking rewards, resetting per-block counters.
 
 **Transactions** execute sequentially in block order. Each is atomic: if any message fails, the entire transaction reverts.
 
-**EndBlock** runs after all transactions. It handles logic that depends on the block's cumulative state — for example, tallying governance votes after all vote messages have been processed, or updating validator power after all delegation changes. {/* cosmos/cosmos-sdk baseapp/abci.go:802 — EndBlock called after all transactions have executed */}
+**EndBlock** runs after all transactions. It handles logic that depends on the block's cumulative state — for example, tallying governance votes after all vote messages have been processed, or updating validator power after all delegation changes.
 
-After `FinalizeBlock` completes, `BaseApp` computes and returns the app hash — the Merkle root of all committed state. {/* cosmos/cosmos-sdk baseapp/abci.go:999,1013 — res.AppHash = app.workingHash() — app hash computed via cms.WorkingHash() and returned in the FinalizeBlock response */} When CometBFT subsequently calls `Commit`, `BaseApp` writes `finalizeBlockState` to the root store, resets `checkState` to the newly committed state, and clears `finalizeBlockState` to `nil` in preparation for the next block. {/* cosmos/cosmos-sdk baseapp/abci.go:1062,1085,1087 — app.cms.Commit(), stateManager.SetState(execModeCheck, ...), stateManager.ClearState(execModeFinalize) */}
+After `FinalizeBlock` completes, `BaseApp` computes and returns the app hash — the Merkle root of all committed state. When CometBFT subsequently calls `Commit`, `BaseApp` writes `finalizeBlockState` to the root store, resets `checkState` to the newly committed state, and clears `finalizeBlockState` to `nil` in preparation for the next block.
 
 {/* todo: add link to lifecycle page and module page */}
 
@@ -200,7 +199,7 @@ All four are configurable in `app.go` via `SetPrepareProposal`, `SetProcessPropo
 
 {/* TODO: move configuration examples and override patterns for PrepareProposal, ProcessProposal, ExtendVote, and VerifyVoteExtension to the app.go page, where it's actionable. Add link to that page. */}
 
-## Putting it all together 
+## Putting it all together
 
 `BaseApp` is the execution engine of a Cosmos SDK chain:
 
