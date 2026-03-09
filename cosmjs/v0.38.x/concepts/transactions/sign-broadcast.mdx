@@ -1,0 +1,107 @@
+---
+title: Signing & Broadcasting
+description: How to sign and broadcast transactions with CosmJS
+---
+
+A Cosmos transaction goes through several steps before it reaches the chain:
+
+1. **Build messages** — describe what the transaction should do
+2. **Determine fees** — calculate how much gas to pay
+3. **Sign** — produce a cryptographic signature over the transaction bytes
+4. **Broadcast** — send the signed transaction to a node
+5. **Confirm** — wait for the transaction to be included in a block
+
+CosmJS handles all of this through `SigningStargateClient`. You provide the
+messages and fee; the client handles serialization, signing, and broadcasting.
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "cosmos",
+});
+const [{ address }] = await wallet.getAccounts();
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.cosmos.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+```
+
+## signAndBroadcast
+
+The most common method. Signs the transaction, broadcasts it, and waits for
+inclusion in a block:
+
+```typescript
+const result = await client.signAndBroadcast(
+  signerAddress,
+  messages,
+  fee,
+  "optional memo",
+);
+
+// result.transactionHash — the tx hash
+// result.code — 0 means success, non-zero means failure
+// result.gasUsed — actual gas consumed
+// result.gasWanted — gas limit from the fee
+// result.events — transaction events
+```
+
+## signAndBroadcastSync
+
+Signs and broadcasts but returns immediately with just the transaction hash,
+without waiting for block inclusion. Useful when you don't need to wait:
+
+```typescript
+const txHash = await client.signAndBroadcastSync(
+  signerAddress,
+  messages,
+  fee,
+  "optional memo",
+);
+```
+
+## sign
+
+Signs without broadcasting. Returns the raw signed transaction bytes (`TxRaw`)
+that you can broadcast later or inspect:
+
+```typescript
+import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+
+const txRaw = await client.sign(
+  signerAddress,
+  messages,
+  fee,
+  "optional memo",
+);
+
+const txBytes = TxRaw.encode(txRaw).finish();
+const result = await client.broadcastTx(txBytes);
+```
+
+## Convenience Methods
+
+`SigningStargateClient` provides high-level methods for the most common
+transactions. These construct the message internally and call
+`signAndBroadcast`:
+
+| Method | Description |
+|--------|-------------|
+| `sendTokens(sender, recipient, amount, fee, memo?)` | Transfer tokens |
+| `delegateTokens(delegator, validator, amount, fee, memo?)` | Delegate to a validator |
+| `undelegateTokens(delegator, validator, amount, fee, memo?)` | Undelegate from a validator |
+| `withdrawRewards(delegator, validator, fee, memo?)` | Withdraw staking rewards |
+
+```typescript
+const result = await client.sendTokens(
+  senderAddress,
+  recipientAddress,
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+  "optional memo",
+);
+```
