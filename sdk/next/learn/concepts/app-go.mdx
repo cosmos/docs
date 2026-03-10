@@ -2,7 +2,9 @@
 title: app.go Overview
 ---
 
-`app.go` is where a Cosmos SDK chain is assembled. Every chain has one. It creates a `BaseApp` instance, initializes keepers for each module, registers modules with the module manager, mounts KV stores, configures execution ordering, and wires in lifecycle hooks before handing the completed application to the server.
+`app.go` is where all the parts of an application are wired together into a working chain. It creates a `BaseApp` instance (the ABCI layer that talks to CometBFT), allocates a dedicated KV store for each module, and initializes each module's keeper with its store and dependencies. It then registers every module with the module manager, configures execution ordering, mounts stores, and sets the lifecycle hooks and AnteHandler. Finally, it seals the application with `LoadLatestVersion`.
+
+The result is a single constructor function called `NewExampleApp` that returns a fully wired, ready-to-run chain.
 
 The examples on this page come from the counter module tutorial app, located in `app.go` at the root of the example chain repository.
 
@@ -24,7 +26,11 @@ The examples on this page come from the counter module tutorial app, located in 
 9. Load latest version
 ```
 
-This sequence is strict. Keepers require store keys, so keys come first. The module manager requires keepers, so keepers come before modules. Lifecycle hooks require a module manager, so the module manager is created before hooks are set. `LoadLatestVersion` seals `BaseApp`, so it runs last.
+This sequence is strict:
+ - Keepers require store keys, so keys come first.
+ - The module manager requires keepers, so keepers come before modules.
+ - Lifecycle hooks require a module manager, so the module manager is created before hooks are set.
+ - `LoadLatestVersion` seals `BaseApp`, so it runs last.
 
 ## The app struct
 
@@ -115,13 +121,21 @@ keys := storetypes.NewKVStoreKeys(
 )
 ```
 
-`NewKVStoreKeys` allocates a `*storetypes.KVStoreKey` for each name. Keys are passed to keeper constructors and later mounted on the `CommitMultiStore` via `MountKVStores`. No two modules share a key; the key is what enforces store isolation between modules.
+Each module defines its store key name as a string constant in `types/keys.go` (for example, `countertypes.StoreKey = "counter"`). `NewKVStoreKeys` takes those names and allocates a `*storetypes.KVStoreKey` for each one. Keys are passed to keeper constructors and later mounted on the `CommitMultiStore` via `MountKVStores`. No two modules share a key; the key is what enforces store isolation between modules.
 
 ## Initializing keepers
 
-Each keeper is initialized with its store key, codec, and any dependencies on other keepers:
+Each keeper is initialized with its store key, codec, and any dependencies on other keepers. `ConsensusParamsKeeper` is initialized first because it must call `bApp.SetParamStore` before any other keeper is created:
 
 ```go
+app.ConsensusParamsKeeper = consensusparamkeeper.NewKeeper(
+	appCodec,
+	runtime.NewKVStoreService(keys[consensusparamtypes.StoreKey]),
+	authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+	runtime.EventService{},
+)
+bApp.SetParamStore(app.ConsensusParamsKeeper.ParamsStore)
+
 app.AccountKeeper = authkeeper.NewAccountKeeper(
 	appCodec,
 	runtime.NewKVStoreService(keys[authtypes.StoreKey]),
@@ -245,7 +259,10 @@ genesisModuleOrder := []string{
 	genutiltypes.ModuleName,
 }
 app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
+app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
 ```
+
+`SetOrderExportGenesis` controls the order modules serialize their state when the chain is exported to a genesis file (for hard forks or snapshot-based testnets). It can differ from `SetOrderInitGenesis` but in most chains the same order works for both.
 
 The comments in the example app explain the reasoning: `genutil` must run after `staking` so that staking pools are initialized before genesis transactions are processed, and after `auth` so that it can access auth parameters.
 
@@ -277,21 +294,14 @@ The AutoCLI query service registration lets the CLI introspect module options wi
 
 ## Block proposal and vote extension handlers
 
-ABCI 2.0 introduced a proposal phase that runs during consensus rounds, before `FinalizeBlock` executes. `BaseApp` exposes four handlers for this phase. The example app uses the defaults, but each can be overridden in `app.go`:
-
-- `SetPrepareProposal`: called on the current block proposer to assemble a block from the mempool. The default selects transactions up to the block gas limit. Chains override this to implement custom transaction ordering, filtering, or injection of protocol-level data.
-- `SetProcessProposal`: called on every validator to validate an incoming proposal. The default accepts any structurally valid proposal. Chains that use a custom `PrepareProposal` to inject data typically also override this to verify that data is present and valid.
-- `SetExtendVoteHandler`: allows validators to attach arbitrary data to their precommit votes. One common use case is oracle price feeds, where validators inject off-chain data into consensus so it becomes available on-chain at block start.
-- `SetVerifyVoteExtensionHandler`: allows each validator to verify the vote extensions submitted by other validators during the same round.
-
-A chain that needs a custom proposal handler wires it in `app.go` after the module manager is configured:
+`BaseApp` exposes four handlers for the ABCI 2.0 proposal phase: `SetPrepareProposal`, `SetProcessProposal`, `SetExtendVoteHandler`, and `SetVerifyVoteExtensionHandler`. All have sensible defaults. Chains that need custom behavior wire their handlers in `app.go` after the module manager is configured:
 
 ```go
 app.SetPrepareProposal(myPrepareProposalHandler)
 app.SetProcessProposal(myProcessProposalHandler)
 ```
 
-Chains that do not need custom behavior can leave the defaults in place and omit these calls entirely.
+{/* TODO: link to BaseApp page for full explanation of these handlers */}
 
 ## Mounting stores and setting hooks
 
@@ -349,6 +359,8 @@ func (app *ExampleApp) setAnteHandler(txConfig client.TxConfig) {
 ```
 
 The AnteHandler runs before any message in a transaction executes. It verifies signatures, validates and increments the account sequence number, deducts fees, and meters gas. If it fails, the transaction is rejected before any module logic runs.
+
+A PostHandler can also be registered with `app.SetPostHandler`. It runs after all messages in a transaction execute successfully, in the same state branch, and is reverted if it fails. The SDK's default PostHandler chain is minimal; chains use it for features like transaction tips.
 
 {/* TODO: link to BaseApp#AnteHandler */}
 
