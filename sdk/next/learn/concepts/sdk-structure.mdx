@@ -145,6 +145,29 @@ cmd/
 
 The `cmd/` directory produces the node daemon binary (e.g., `simd`, `gaiad`, `wasmd`). It uses [Cobra](https://github.com/spf13/cobra) to expose subcommands for starting the node, submitting transactions, querying state, managing keys, and running genesis initialization. The `start` command spins up CometBFT and the SDK application together in a single process.
 
+### Node home directory
+
+The repository contains the source code for the chain. When you actually run a node, the binary generates a separate home directory on disk that holds runtime configuration and chain data. Running `myappdaemon init` creates this directory:
+
+```
+~/.myapp/                  # Node home directory (configurable with --home)
+├── config/
+│   ├── app.toml           # SDK server configuration
+│   ├── config.toml        # CometBFT configuration
+│   ├── client.toml        # CLI client defaults
+│   └── genesis.json       # Initial chain state
+└── data/                  # Database files (block store, state store, snapshots)
+```
+
+The location defaults to `~/.myapp` but can be overridden with the `--home` flag or the `MYAPP_HOME` environment variable.
+
+Each configuration file controls a distinct layer of the node:
+
+- `app.toml`: SDK-level server settings. Controls whether the gRPC server and REST API are enabled, their bind addresses, state sync configuration, pruning strategy, and mempool parameters.
+- `config.toml`: CometBFT-level settings. Controls P2P networking (seeds, peers, listen address), consensus timeouts, the CometBFT RPC server address, and block size limits.
+- `client.toml`: Default values for CLI client commands. Stores the chain ID, keyring backend, and the node RPC address so you don't have to pass `--chain-id` and `--node` on every command.
+- `genesis.json`: The initial state of the chain at block 0. It is distributed out-of-band when joining a network, or generated locally for a new chain. Once the chain starts, this file is no longer read.
+
 ## Summary
 
 An SDK application is a deterministic state machine composed of modules assembled in `app.go`. The codebase follows a conventional layout: modules in `x/`, application wiring in `app/`, the binary entrypoint in `cmd/`, and Protobuf definitions in `proto/`.
