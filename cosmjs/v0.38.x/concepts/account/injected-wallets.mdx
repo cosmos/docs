@@ -1,0 +1,106 @@
+---
+title: Injected Wallets
+description: Integrate browser wallet extensions like Keplr, Leap, and Cosmostation with CosmJS
+---
+
+In browser environments, users typically sign transactions through a wallet
+extension like [Keplr](https://www.keplr.app/),
+[Leap](https://www.leapwallet.io/), or [Cosmostation](https://cosmostation.io/).
+These extensions inject a global object (e.g. `window.keplr`) that can produce
+an `OfflineSigner` for any supported chain.
+
+## Basic Integration
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const chainId = "cosmoshub-4";
+
+// 1. Ask the extension to enable access for this chain
+await window.keplr.enable(chainId);
+
+// 2. Get an OfflineSigner from the extension
+const signer = window.keplr.getOfflineSigner(chainId);
+
+// 3. Use it exactly like a local wallet
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.cosmos.network",
+  signer,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const [{ address }] = await signer.getAccounts();
+const result = await client.sendTokens(
+  address,
+  "cosmos1recipient...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+);
+```
+
+The key insight: once you have an `OfflineSigner`, the rest of the code is
+identical whether the keys come from a mnemonic, Keplr, Leap, or a Ledger
+device. This is the power of the `OfflineSigner` abstraction.
+
+## Choosing the Signing Mode
+
+Keplr and similar wallets offer multiple signer variants:
+
+```typescript
+// Amino only — broadest compatibility, required for Ledger via Keplr
+const aminoSigner = window.keplr.getOfflineSignerOnlyAmino(chainId);
+
+// Auto (sync) — prefers Direct signing, falls back to Amino
+const autoSigner = window.keplr.getOfflineSigner(chainId);
+
+// Auto (async) — same auto-detection as getOfflineSigner, returns Promise<OfflineSigner>
+const asyncSigner = await window.keplr.getOfflineSignerAuto(chainId);
+```
+
+For most applications, `getOfflineSigner` is the right choice. It
+synchronously returns a signer that prefers Direct signing and falls back to
+Amino based on what the wallet supports. Use `getOfflineSignerAuto` when you
+need the async variant (e.g. for wallets that require async initialization).
+
+## Detecting the Extension
+
+Wallet extensions need a moment to inject their global object. A common pattern:
+
+```typescript
+function getKeplr(): Keplr | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.keplr;
+}
+
+window.addEventListener("load", () => {
+  const keplr = getKeplr();
+  if (!keplr) {
+    alert("Please install the Keplr extension");
+  }
+});
+```
+
+## Suggesting a Chain
+
+If the user's wallet doesn't know about your chain yet, you can suggest it:
+
+```typescript
+await window.keplr.experimentalSuggestChain({
+  chainId: "my-testnet-1",
+  chainName: "My Testnet",
+  rpc: "https://rpc.my-testnet.example",
+  rest: "https://lcd.my-testnet.example",
+  bip44: { coinType: 118 },
+  bech32Config: {
+    bech32PrefixAccAddr: "cosmos",
+    bech32PrefixAccPub: "cosmospub",
+    bech32PrefixValAddr: "cosmosvaloper",
+    bech32PrefixValPub: "cosmosvaloperpub",
+    bech32PrefixConsAddr: "cosmosvalcons",
+    bech32PrefixConsPub: "cosmosvalconspub",
+  },
+  currencies: [{ coinDenom: "ATOM", coinMinimalDenom: "uatom", coinDecimals: 6 }],
+  feeCurrencies: [{ coinDenom: "ATOM", coinMinimalDenom: "uatom", coinDecimals: 6 }],
+  stakeCurrency: { coinDenom: "ATOM", coinMinimalDenom: "uatom", coinDecimals: 6 },
+});
+```

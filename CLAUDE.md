@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the unified documentation repository for the Cosmos ecosystem, built with Mintlify. It covers multiple products: **evm, sdk, hub, cometbft, ibc, skip-go**. The repo contains comprehensive documentation including API references, integration guides, smart contract/precompile specifications, and SDK module READMEs.
+This is the unified documentation repository for the Cosmos ecosystem, built with Mintlify. It covers multiple products: **evm, sdk, hub, cometbft, ibc, skip-go, cosmjs**. The repo contains comprehensive documentation including API references, integration guides, smart contract/precompile specifications, and SDK module READMEs.
 
 ## Common Development Commands
 
@@ -116,4 +116,6 @@ When updating documentation:
 - Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes to links may need to be applied across multiple version dirs
 
 **Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
-- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 
+- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links.
+
+**CosmJS signer API gotcha**: `getOfflineSignerAuto()` is the **async** variant of `getOfflineSigner()` — it auto-detects the signing mode (prefers Direct, falls back to Amino). It is NOT a "Direct only" signer. Do not label it or its return value as `directSigner`; use `asyncSigner` or `offlineSigner`. CosmJS versioned docs live under `cosmjs/v0.38.x/` (and similar version dirs).

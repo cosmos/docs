@@ -1,0 +1,50 @@
+---
+title: Timeouts & Error Handling
+description: Configuring timeouts, handling errors, and understanding retry behavior
+---
+
+## HTTP Timeouts
+
+| Client | Parameter | Default | Mechanism |
+|--------|-----------|---------|-----------|
+| `HttpClient` | `timeout` (constructor) | None | `AbortSignal.timeout()` on `fetch` |
+| `HttpBatchClient` | `httpTimeout` (options) | None | `AbortSignal.timeout()` on `fetch` |
+
+When a timeout fires, the `fetch` call is aborted and throws an `AbortError`.
+
+## WebSocket Connection Timeout
+
+`SocketWrapper` has a 10-second connection timeout by default. If the WebSocket
+handshake doesn't complete within this window, the socket is closed and the
+connection promise rejects with a timeout error.
+
+## Broadcast Timeouts
+
+Separately from transport timeouts, `SigningStargateClient` and
+`SigningCosmWasmClient` have broadcast-level timeouts that control how long the
+client polls for transaction inclusion:
+
+```typescript
+interface SigningStargateClientOptions {
+  readonly broadcastTimeoutMs?: number;      // default: 60_000 (60s)
+  readonly broadcastPollIntervalMs?: number; // default: 3_000 (3s)
+}
+```
+
+These are not transport timeouts — they control how long `signAndBroadcast()`
+waits for the transaction to appear in a block after it has been submitted.
+
+## Error Handling
+
+| Scenario | Error |
+|----------|-------|
+| HTTP status >= 400 | `Error` with status code and response body |
+| JSON-RPC error response | `Error` with serialized JSON-RPC error object |
+| Request timeout (HTTP) | `AbortError` from `fetch` |
+| Connection timeout (WS) | `Error("Connection attempt timed out after X ms")` |
+| WebSocket unclean close | Error propagated through the event stream |
+
+## No Built-In Retry
+
+Neither `HttpClient` nor `HttpBatchClient` retry failed requests. If you need
+retry logic, implement it in your application or wrap the RPC client.

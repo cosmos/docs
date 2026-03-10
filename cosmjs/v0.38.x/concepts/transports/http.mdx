@@ -1,0 +1,132 @@
+---
+title: HTTP Transport
+description: Using HttpClient and HttpBatchClient for RPC communication
+---
+
+## HttpClient
+
+`HttpClient` is the default transport for `http://` and `https://` endpoints. It
+sends one JSON-RPC POST request per `execute()` call using the platform's
+`fetch` API.
+
+### Basic Usage
+
+```typescript
+import { HttpClient } from "@cosmjs/tendermint-rpc";
+
+const client = new HttpClient("https://rpc.cosmos.network");
+```
+
+### Custom Headers
+
+Pass an `HttpEndpoint` object to attach headers (e.g. API keys) to every
+request:
+
+```typescript
+import { HttpClient, HttpEndpoint } from "@cosmjs/tendermint-rpc";
+
+const endpoint: HttpEndpoint = {
+  url: "https://rpc.cosmos.network",
+  headers: {
+    Authorization: "Bearer <token>",
+  },
+};
+const client = new HttpClient(endpoint);
+```
+
+### Timeout
+
+An optional second argument sets the request timeout in milliseconds. When set,
+the underlying `fetch` call uses `AbortSignal.timeout()` to abort if the server
+doesn't respond in time:
+
+```typescript
+const client = new HttpClient("https://rpc.cosmos.network", 10_000);
+```
+
+If omitted, requests have no timeout (they rely on the runtime's default
+behavior).
+
+### How It Works Internally
+
+1. `execute()` serializes the `JsonRpcRequest` to JSON.
+2. A `POST` request is sent via `fetch` with `Content-Type: application/json`
+   and any custom headers.
+3. HTTP status >= 400 throws an error with the status code and response body.
+4. The JSON body is parsed with `parseJsonRpcResponse()` from `@cosmjs/json-rpc`.
+5. JSON-RPC error responses throw with the error object.
+6. `disconnect()` is a no-op — there is no persistent connection to close.
+
+### Limitations
+
+- **No subscriptions.** `HttpClient` implements `RpcClient` only, not
+  `RpcStreamingClient`. You cannot subscribe to events (new blocks,
+  transactions) over HTTP.
+- **No retry logic.** Failed requests throw immediately. Implement retries in
+  your application if needed.
+
+## HttpBatchClient
+
+`HttpBatchClient` groups multiple `execute()` calls into a single
+[JSON-RPC batch request](https://www.jsonrpc.org/specification#batch). This
+reduces HTTP overhead when you need to make many queries in a short time.
+
+### Basic Usage
+
+```typescript
+import { HttpBatchClient } from "@cosmjs/tendermint-rpc";
+
+const client = new HttpBatchClient("https://rpc.cosmos.network");
+```
+
+### Options
+
+```typescript
+interface HttpBatchClientOptions {
+  dispatchInterval: number; // ms between automatic dispatches (default: 20)
+  batchSizeLimit: number;   // max requests per batch (default: 20)
+  httpTimeout?: number;     // request timeout in ms (default: none)
+}
+```
+
+```typescript
+const client = new HttpBatchClient("https://rpc.cosmos.network", {
+  batchSizeLimit: 10,
+  dispatchInterval: 50,
+  httpTimeout: 30_000,
+});
+```
+
+### How Batching Works
+
+When you call `execute()`, the request is queued internally. The queue is
+flushed (sent as a single HTTP POST) when either condition is met:
+
+1. The queue reaches `batchSizeLimit` — dispatched immediately.
+2. The `dispatchInterval` timer fires — dispatched on the next tick.
+
+Each request in the batch gets its own Promise. The batch response is an array
+of JSON-RPC responses; each is matched to its original request by `id` and the
+corresponding Promise is resolved or rejected.
+
+### When to Use It
+
+Batching is useful when your application makes many independent queries in rapid
+succession — for example, fetching balances for a list of addresses or querying
+multiple contract states. Instead of N separate HTTP round-trips, you get one.
+
+```typescript
+import { Comet38Client, HttpBatchClient } from "@cosmjs/tendermint-rpc";
+
+const batchClient = new HttpBatchClient("https://rpc.cosmos.network", {
+  batchSizeLimit: 10,
+  dispatchInterval: 50,
+});
+
+const cometClient = await Comet38Client.create(batchClient);
+```
+
+> **Note:** `connectComet()` and the high-level `StargateClient.connect()` don't
+> use batching by default. To enable it, create the batch client manually and
+> pass it to the CometBFT client's `create()` method, then pass that to
+> `StargateClient.create()`.
