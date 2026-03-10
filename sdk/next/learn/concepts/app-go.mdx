@@ -1,0 +1,405 @@
+---
+title: app.go Overview
+---
+
+`app.go` is where a Cosmos SDK chain is assembled. Every chain has one. It creates a `BaseApp` instance, initializes keepers for each module, registers modules with the module manager, mounts KV stores, configures execution ordering, and wires in lifecycle hooks before handing the completed application to the server.
+
+The examples on this page come from the counter module tutorial app, located in `app.go` at the root of the example chain repository.
+
+{/* TODO: link to counter module tutorial */}
+
+## What app.go does
+
+`app.go` performs a one-time, ordered initialization of the entire chain:
+
+```
+1. Create BaseApp and codecs
+2. Allocate store keys
+3. Initialize keepers
+4. Create the ModuleManager
+5. Configure execution ordering
+6. Register module services
+7. Mount KV stores
+8. Set lifecycle hooks (InitChainer, PreBlocker, BeginBlocker, EndBlocker, AnteHandler)
+9. Load latest version
+```
+
+This sequence is strict. Keepers require store keys, so keys come first. The module manager requires keepers, so keepers come before modules. Lifecycle hooks require a module manager, so the module manager is created before hooks are set. `LoadLatestVersion` seals `BaseApp`, so it runs last.
+
+## The app struct
+
+The application struct embeds `BaseApp` and holds all keepers and the module manager:
+
+```go
+type ExampleApp struct {
+	*baseapp.BaseApp
+	legacyAmino       *codec.LegacyAmino
+	appCodec          codec.Codec
+	txConfig          client.TxConfig
+	interfaceRegistry codectypes.InterfaceRegistry
+
+	keys map[string]*storetypes.KVStoreKey
+
+	// Keepers
+	AccountKeeper         authkeeper.AccountKeeper
+	BankKeeper            bankkeeper.Keeper
+	DistrKeeper           distrkeeper.Keeper
+	GovKeeper             govkeeper.Keeper
+	StakingKeeper         *stakingkeeper.Keeper
+	SlashingKeeper        slashingkeeper.Keeper
+	ConsensusParamsKeeper consensusparamkeeper.Keeper
+	CounterKeeper         *counterkeeper.Keeper
+
+	// the module manager
+	ModuleManager      *module.Manager
+	BasicModuleManager module.BasicManager
+
+	// simulation manager
+	sm *module.SimulationManager
+
+	// module configurator
+	configurator module.Configurator
+}
+```
+
+Embedding `*baseapp.BaseApp` gives `ExampleApp` the full `BaseApp` interface: ABCI methods, the message and query routers, store management, and lifecycle hooks. The keeper fields are exported so test code and CLI helpers can reference them. The `keys` map holds the KV store keys allocated during initialization.
+
+## Creating BaseApp
+
+`NewExampleApp` begins by setting up codecs and creating the `BaseApp` instance:
+
+```go
+interfaceRegistry, _ := codectypes.NewInterfaceRegistryWithOptions(codectypes.InterfaceRegistryOptions{
+	ProtoFiles: proto.HybridResolver,
+	SigningOptions: signing.Options{
+		AddressCodec: address.Bech32Codec{
+			Bech32Prefix: sdk.GetConfig().GetBech32AccountAddrPrefix(),
+		},
+		ValidatorAddressCodec: address.Bech32Codec{
+			Bech32Prefix: sdk.GetConfig().GetBech32ValidatorAddrPrefix(),
+		},
+	},
+})
+appCodec := codec.NewProtoCodec(interfaceRegistry)
+legacyAmino := codec.NewLegacyAmino()
+txConfig := authtx.NewTxConfig(appCodec, authtx.DefaultSignModes)
+
+std.RegisterLegacyAminoCodec(legacyAmino)
+std.RegisterInterfaces(interfaceRegistry)
+
+bApp := baseapp.NewBaseApp(appName, logger, db, txConfig.TxDecoder(), baseAppOptions...)
+bApp.SetCommitMultiStoreTracer(traceStore)
+bApp.SetVersion(version.Version)
+bApp.SetInterfaceRegistry(interfaceRegistry)
+bApp.SetTxEncoder(txConfig.TxEncoder())
+```
+
+`baseapp.NewBaseApp` creates the `BaseApp` with a name, logger, database, and `TxDecoder`. The `TxDecoder` is how `BaseApp` turns raw transaction bytes from CometBFT into an `sdk.Tx` it can inspect and route. Additional functional options (`baseAppOptions`) let callers configure pruning, minimum gas prices, chain ID, and optimistic execution without modifying `NewExampleApp` directly.
+
+{/* TODO: link to BaseApp page */}
+
+## Allocating store keys
+
+Each module that persists state needs a dedicated KV store key. All keys are allocated together before any keeper is created:
+
+```go
+keys := storetypes.NewKVStoreKeys(
+	authtypes.StoreKey,
+	banktypes.StoreKey,
+	stakingtypes.StoreKey,
+	distrtypes.StoreKey,
+	slashingtypes.StoreKey,
+	govtypes.StoreKey,
+	consensusparamtypes.StoreKey,
+	countertypes.StoreKey,
+)
+```
+
+`NewKVStoreKeys` allocates a `*storetypes.KVStoreKey` for each name. Keys are passed to keeper constructors and later mounted on the `CommitMultiStore` via `MountKVStores`. No two modules share a key; the key is what enforces store isolation between modules.
+
+## Initializing keepers
+
+Each keeper is initialized with its store key, codec, and any dependencies on other keepers:
+
+```go
+app.AccountKeeper = authkeeper.NewAccountKeeper(
+	appCodec,
+	runtime.NewKVStoreService(keys[authtypes.StoreKey]),
+	authtypes.ProtoBaseAccount,
+	maccPerms,
+	authcodec.NewBech32Codec(sdk.Bech32MainPrefix),
+	sdk.Bech32MainPrefix,
+	authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+
+app.BankKeeper = bankkeeper.NewBaseKeeper(
+	appCodec,
+	runtime.NewKVStoreService(keys[banktypes.StoreKey]),
+	app.AccountKeeper,
+	BlockedAddresses(),
+	authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+	logger,
+)
+```
+
+`runtime.NewKVStoreService(key)` wraps the raw store key in a service interface that keepers use to open their store from a context. This keeps keepers from holding direct references to the underlying store; they retrieve it at runtime from the context passed into each method.
+
+The keeper initialization order matters: `BankKeeper` receives `app.AccountKeeper` as an argument, so `AccountKeeper` must be initialized first. The same dependency ordering applies throughout. Where modules are interdependent (such as staking and distribution), hooks connect them after both keepers exist:
+
+```go
+app.StakingKeeper.SetHooks(
+	stakingtypes.NewMultiStakingHooks(
+		app.DistrKeeper.Hooks(),
+		app.SlashingKeeper.Hooks(),
+	),
+)
+```
+
+The authority address passed to most keepers (`authtypes.NewModuleAddress(govtypes.ModuleName).String()`) is the address that is allowed to call privileged messages such as `MsgUpdateParams`. Governance controls parameter changes by sending messages from the governance module account.
+
+## Registering modules
+
+After all keepers are initialized, the module manager is created with every module the application uses:
+
+```go
+app.ModuleManager = module.NewManager(
+	genutil.NewAppModule(
+		app.AccountKeeper, app.StakingKeeper, app,
+		txConfig,
+	),
+	auth.NewAppModule(appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, nil),
+	bank.NewAppModule(appCodec, app.BankKeeper, app.AccountKeeper, nil),
+	gov.NewAppModule(appCodec, &app.GovKeeper, app.AccountKeeper, app.BankKeeper, nil),
+	consensus.NewAppModule(appCodec, app.ConsensusParamsKeeper),
+	slashing.NewAppModule(appCodec, app.SlashingKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil, app.interfaceRegistry),
+	distr.NewAppModule(appCodec, app.DistrKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil),
+	staking.NewAppModule(appCodec, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, nil),
+	vesting.NewAppModule(app.AccountKeeper, app.BankKeeper),
+	counter.NewAppModule(appCodec, app.CounterKeeper),
+)
+```
+
+`module.NewManager` takes a list of `AppModule` implementations. Each `AppModule` wraps a keeper and satisfies the interfaces the module manager uses: genesis, block hooks, message and query service registration, and simulation support. Adding a new module to the application means adding a `NewAppModule(...)` call here.
+
+The `BasicModuleManager` handles codec registration and default genesis generation, and is derived from the module manager:
+
+```go
+app.BasicModuleManager = module.NewBasicManagerFromManager(
+	app.ModuleManager,
+	map[string]module.AppModuleBasic{
+		genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
+		govtypes.ModuleName: gov.NewAppModuleBasic(
+			[]govclient.ProposalHandler{},
+		),
+	},
+)
+app.BasicModuleManager.RegisterLegacyAminoCodec(legacyAmino)
+app.BasicModuleManager.RegisterInterfaces(interfaceRegistry)
+```
+
+## Module manager
+
+The `ModuleManager` is the application's registry of modules. It holds references to all `AppModule` instances and coordinates their participation in the block lifecycle. When `BaseApp` fires a lifecycle hook (PreBlock, BeginBlock, EndBlock, InitGenesis), it delegates to the module manager, which calls each module's corresponding method in the configured order.
+
+The module manager is also responsible for service registration: it iterates all modules and calls each module's `RegisterServices` to register `MsgServer` and `QueryServer` implementations with `BaseApp`'s routers.
+
+{/* TODO: link to BaseApp#Module Manager */}
+
+## Execution ordering
+
+The order in which modules run their block hooks and genesis initialization matters. Some modules depend on others having already updated state. Ordering is configured explicitly after the module manager is created:
+
+```go
+app.ModuleManager.SetOrderPreBlockers(
+	authtypes.ModuleName,
+)
+app.ModuleManager.SetOrderBeginBlockers(
+	distrtypes.ModuleName,
+	slashingtypes.ModuleName,
+	stakingtypes.ModuleName,
+	countertypes.ModuleName,
+	genutiltypes.ModuleName,
+)
+app.ModuleManager.SetOrderEndBlockers(
+	banktypes.ModuleName,
+	govtypes.ModuleName,
+	stakingtypes.ModuleName,
+	countertypes.ModuleName,
+	genutiltypes.ModuleName,
+)
+```
+
+Genesis initialization order is separate and equally important:
+
+```go
+genesisModuleOrder := []string{
+	authtypes.ModuleName,
+	banktypes.ModuleName,
+	distrtypes.ModuleName,
+	stakingtypes.ModuleName,
+	slashingtypes.ModuleName,
+	govtypes.ModuleName,
+	consensusparamtypes.ModuleName,
+	vestingtypes.ModuleName,
+	countertypes.ModuleName,
+	genutiltypes.ModuleName,
+}
+app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
+```
+
+The comments in the example app explain the reasoning: `genutil` must run after `staking` so that staking pools are initialized before genesis transactions are processed, and after `auth` so that it can access auth parameters.
+
+Each hook type has its own ordering constraint:
+
+- **PreBlock**: runs before BeginBlock. Used for upgrades and consensus parameter changes that must take effect before the block begins.
+- **BeginBlock**: runs at the start of each block. Used for per-block housekeeping such as minting inflation rewards and distributing staking rewards.
+- **EndBlock**: runs after all transactions in the block. Used for logic that depends on cumulative block state, such as tallying governance votes or recalculating validator power.
+- **InitGenesis**: runs once at chain start, populating each module's store from `genesis.json`.
+
+## Routing setup
+
+After execution ordering is configured, module services are registered with `BaseApp`'s routers:
+
+```go
+app.configurator = module.NewConfigurator(app.appCodec, app.MsgServiceRouter(), app.GRPCQueryRouter())
+err := app.ModuleManager.RegisterServices(app.configurator)
+if err != nil {
+	panic(err)
+}
+autocliv1.RegisterQueryServer(app.GRPCQueryRouter(), runtimeservices.NewAutoCLIQueryService(app.ModuleManager.Modules))
+```
+
+`RegisterServices` iterates all modules and calls each module's `RegisterServices(cfg)` method. Each module uses the configurator to register its `MsgServer` with the message router and its `QueryServer` with the gRPC query router. After this step, `BaseApp` can route any registered message type to the correct module handler, and any registered query to the correct query handler.
+
+The AutoCLI query service registration lets the CLI introspect module options without requiring per-module CLI command boilerplate.
+
+{/* TODO: link to CLI/gRPC/REST page */}
+
+## Block proposal and vote extension handlers
+
+ABCI 2.0 introduced a proposal phase that runs during consensus rounds, before `FinalizeBlock` executes. `BaseApp` exposes four handlers for this phase. The example app uses the defaults, but each can be overridden in `app.go`:
+
+- `SetPrepareProposal`: called on the current block proposer to assemble a block from the mempool. The default selects transactions up to the block gas limit. Chains override this to implement custom transaction ordering, filtering, or injection of protocol-level data.
+- `SetProcessProposal`: called on every validator to validate an incoming proposal. The default accepts any structurally valid proposal. Chains that use a custom `PrepareProposal` to inject data typically also override this to verify that data is present and valid.
+- `SetExtendVoteHandler`: allows validators to attach arbitrary data to their precommit votes. One common use case is oracle price feeds, where validators inject off-chain data into consensus so it becomes available on-chain at block start.
+- `SetVerifyVoteExtensionHandler`: allows each validator to verify the vote extensions submitted by other validators during the same round.
+
+A chain that needs a custom proposal handler wires it in `app.go` after the module manager is configured:
+
+```go
+app.SetPrepareProposal(myPrepareProposalHandler)
+app.SetProcessProposal(myProcessProposalHandler)
+```
+
+Chains that do not need custom behavior can leave the defaults in place and omit these calls entirely.
+
+## Mounting stores and setting hooks
+
+With routing configured, stores are mounted and the application's lifecycle hooks are set:
+
+```go
+// initialize stores
+app.MountKVStores(keys)
+
+// initialize BaseApp
+app.SetInitChainer(app.InitChainer)
+app.SetPreBlocker(app.PreBlocker())
+app.SetBeginBlocker(app.BeginBlocker)
+app.SetEndBlocker(app.EndBlocker)
+app.setAnteHandler(txConfig)
+```
+
+`MountKVStores` registers each key with `BaseApp`'s `CommitMultiStore`. The hooks delegate to the module manager:
+
+```go
+func (app *ExampleApp) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
+	return app.ModuleManager.BeginBlock(ctx)
+}
+
+func (app *ExampleApp) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
+	return app.ModuleManager.EndBlock(ctx)
+}
+
+func (app *ExampleApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+	var genesisState GenesisState
+	if err := json.Unmarshal(req.AppStateBytes, &genesisState); err != nil {
+		panic(err)
+	}
+	return app.ModuleManager.InitGenesis(ctx, app.appCodec, genesisState)
+}
+```
+
+The AnteHandler is configured separately because it takes a `TxConfig` dependency:
+
+```go
+func (app *ExampleApp) setAnteHandler(txConfig client.TxConfig) {
+	anteHandler, err := ante.NewAnteHandler(
+		ante.HandlerOptions{
+			AccountKeeper:   app.AccountKeeper,
+			BankKeeper:      app.BankKeeper,
+			SignModeHandler: txConfig.SignModeHandler(),
+			SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
+	app.SetAnteHandler(anteHandler)
+}
+```
+
+The AnteHandler runs before any message in a transaction executes. It verifies signatures, validates and increments the account sequence number, deducts fees, and meters gas. If it fails, the transaction is rejected before any module logic runs.
+
+{/* TODO: link to BaseApp#AnteHandler */}
+
+## Sealing with LoadLatestVersion
+
+The final step in `NewExampleApp` is loading the latest committed state:
+
+```go
+if loadLatest {
+	if err := app.LoadLatestVersion(); err != nil {
+		panic(fmt.Errorf("error loading last version: %w", err))
+	}
+}
+```
+
+`LoadLatestVersion` validates that all required components are configured, mounts the stores, initializes the check state, and sets `BaseApp.sealed` to `true`. Any setter called after this point panics. This enforces that all wiring happens before the application starts serving requests.
+
+On first launch, CometBFT calls `InitChain` which triggers `InitChainer`, which calls `ModuleManager.InitGenesis` to populate each module's state from `genesis.json`.
+
+## How everything fits together
+
+A Cosmos SDK chain is assembled in `NewExampleApp` and each step builds on the previous:
+
+```
+NewBaseApp
+  ↓
+NewKVStoreKeys     → one key per module
+  ↓
+NewKeeper(key, ...)  → one keeper per module, dependencies wired explicitly
+  ↓
+NewManager(modules)  → module manager holds all AppModule instances
+  ↓
+SetOrder*(...)       → configure hook and genesis execution ordering
+  ↓
+RegisterServices(configurator)  → wire MsgServer and QueryServer into BaseApp routers
+  ↓
+MountKVStores(keys)  → attach module stores to CommitMultiStore
+  ↓
+SetInitChainer / SetPreBlocker / SetBeginBlocker / SetEndBlocker / SetAnteHandler
+  ↓
+LoadLatestVersion    → seal BaseApp, ready to serve
+```
+
+At runtime, CometBFT drives the application through ABCI. Each ABCI call dispatches through `BaseApp`:
+
+- `InitChain` calls `InitChainer`, which runs `ModuleManager.InitGenesis`.
+- `FinalizeBlock` calls `PreBlocker`, `BeginBlocker`, each transaction's AnteHandler and message handlers, then `EndBlocker`.
+- `CheckTx` validates a transaction through the AnteHandler without writing state.
+- `Commit` persists the finalized block state.
+
+The modules never call each other directly. They interact through keeper interfaces that are wired at initialization time, and they participate in the block lifecycle through hooks that the module manager coordinates in a fixed, declared order.
+
+{/* TODO: link to BaseApp page */}
+{/* TODO: link to Modules page */}

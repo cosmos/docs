@@ -106,6 +106,22 @@ When updating documentation:
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 
+## SDK Concept Pages (`sdk/next/learn/concepts/`)
+
+This section is in-progress and pages here are **not yet registered in `docs.json`** -- do not add them to navigation until the section is ready to ship.
+
+Style conventions (enforced by reviewer, match existing pages):
+- No em dashes
+- No bold + inline code combined (`**\`simsx\`**` is a violation -- use plain `` `simsx` `` or bold `**simsx**`, not both)
+- All code blocks must have a language tag (` ```go `, not bare ` ``` `)
+- Bold is only used for defined terms listed as bullets (e.g. `**PreBlock**`, `**BeginBlock**`) -- check existing pages before adding bold anywhere
+
+Reference repos available on disk for SDK doc work:
+- Cosmos SDK source: `/Users/evan/Documents/GitHub/cosmos-sdk`
+- Example chain (counter module tutorial): `/Users/evan/Documents/GitHub/example`
+
+`sdk/next/learn/concepts/baseapp.mdx` has TODOs inline -- check them when writing related pages (e.g. the TODO at line 200 asks to move `PrepareProposal`/`ProcessProposal`/`ExtendVote`/`VerifyVoteExtension` override examples to the `app-go.mdx` page).
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components
