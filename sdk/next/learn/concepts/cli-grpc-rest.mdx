@@ -1,8 +1,8 @@
 ---
-title: CLI, gRPC, and REST
+title: CLI, gRPC, and REST API
 ---
 
-A Cosmos SDK chain exposes three external interfaces for interacting with it: a command-line interface, a gRPC API, and a REST API. Each is a different surface over the same underlying chain logic. Users and developers can choose whichever interface suits their use case without affecting how the chain processes or validates transactions.
+A Cosmos SDK chain exposes three external interfaces for interacting with it: a command-line interface (CLI), a gRPC API, and a REST API. Each is a different surface over the same underlying chain logic. Users and developers can choose whichever interface suits their use case without affecting how the chain processes or validates transactions.
 
 ## How users interact with a chain
 
@@ -11,11 +11,22 @@ Every operation a user performs falls into one of two categories:
 - **Transactions**: state-changing operations broadcast to the network and included in blocks (send tokens, delegate stake, vote on a proposal)
 - **Queries**: read-only requests that return data from the current chain state without going through consensus
 
-Both categories are accessible through the CLI, gRPC, and REST. The interfaces differ in ergonomics and target audience, not in what they can do.
+Both categories are accessible through the CLI, gRPC, and REST interfaces. The interfaces differ in how requests are constructed and transmitted, not in what they can do.
 
 None of these interfaces affect consensus. Transactions are validated and ordered by the consensus engine (CometBFT); the interfaces are simply delivery mechanisms that carry signed transactions to the network and return results.
 
 {/* TODO: link to Transactions page */}
+
+## Interface comparison
+
+All endpoints default to `localhost` and must be configured to be accessible over the public internet.
+
+| Interface | Default port | Best for | Notes |
+|---|---|---|---|
+| **CLI** | — | Development, testing, and node operations | Not suitable for programmatic use or automation |
+| **gRPC** | 9090 | Wallets, backend services, and SDK clients | Not supported in browsers (requires HTTP/2) |
+| **REST** | 1317 | Web applications, scripts, and environments without gRPC support | Use when gRPC is unavailable; REST is disabled by default |
+| **CometBFT RPC** | 26657 | Consensus and blockchain data queries | Limited to consensus-layer data |
 
 ## CLI
 
@@ -23,16 +34,34 @@ The CLI is the primary tool for developers and operators interacting with a chai
 
 When used as a client, the CLI constructs a transaction or query, signs it if required, and sends it to a node over gRPC or the REST API.
 
-### How the CLI is structured
+### Using the CLI
 
-CLI commands are organized by subcommand. The root command groups operational server commands alongside client commands for querying and sending transactions:
+CLI commands are organized into two categories:
+
+- `query` commands retrieve information from chain state
+- `tx` commands construct and broadcast transactions
+
+Example commands:
 
 ```
-exampled tx counter add 10 --from mykey --chain-id example-1
 exampled query counter count
 ```
 
-`tx` subcommands construct and broadcast signed transactions. `query` subcommands send read-only requests and print the response.
+```
+exampled tx counter add 10 \
+  --from mykey \
+  --chain-id example-1 \
+  --gas auto \
+  --gas-adjustment 1.3 \
+  --fees 1000stake
+```
+
+- `--from` specifies the signing key
+- `--gas auto` asks the CLI to estimate gas usage
+- `--gas-adjustment` applies a safety multiplier to the estimate
+- `--fees` specifies the transaction fee
+
+Gas limits the computational work a transaction can perform. The full gas model is explained in [Execution Context, Gas, and Events](/sdk/next/learn/concepts/gas).
 
 ### How modules expose CLI commands with AutoCLI
 
@@ -100,25 +129,25 @@ This collects module options and address codecs and hands them to AutoCLI, which
 
 ## gRPC
 
-gRPC is the primary programmatic interface for interacting with a Cosmos SDK chain. It is defined using Protocol Buffers and offers strongly typed request and response types, efficient binary encoding, and generated client libraries for many languages.
+gRPC is the primary programmatic interface for interacting with a Cosmos SDK chain. It uses Protocol Buffers to define strongly typed request and response structures and supports generated clients for many programming languages.
 
 Each module exposes its functionality through two protobuf services:
 
 - A `Query` service for read-only access to module state
 - A `Msg` service for state-changing operations
 
-These services are defined in the module's `query.proto` and `tx.proto` files. The protobuf compiler generates server and client interfaces from them.
+These services are defined in the module's `query.proto` and `tx.proto` files. The protobuf definitions for the Cosmos SDK are published at [buf.build/cosmos/cosmos-sdk](https://buf.build/cosmos/cosmos-sdk).
 
 ### How modules expose gRPC services
 
-Each module registers its gRPC services during application startup via `RegisterServices`:
+Modules register their gRPC services during application startup via `RegisterServices`:
 
 ```go
 app.configurator = module.NewConfigurator(app.appCodec, app.MsgServiceRouter(), app.GRPCQueryRouter())
 err := app.ModuleManager.RegisterServices(app.configurator)
 ```
 
-The module manager iterates all modules and calls each module's `RegisterServices(cfg Configurator)` method. A typical module implementation looks like:
+Each module implements `RegisterServices` to connect service implementations to the application routers:
 
 ```go
 func (am AppModule) RegisterServices(cfg module.Configurator) {
@@ -129,22 +158,29 @@ func (am AppModule) RegisterServices(cfg module.Configurator) {
 
 `RegisterMsgServer` routes incoming `Msg` service calls to the module's `MsgServer` implementation. `RegisterQueryServer` routes incoming `Query` service calls to the module's `QueryServer` implementation.
 
-After registration, a gRPC client can call the counter module's `Count` query or `Add` message directly:
+### How to interact with gRPC
+
+Connect to the node's gRPC endpoint (default: `localhost:9090`) using a generated client:
 
 ```go
-grpc.NewClient("localhost:9090", ...)
-countertypes.NewQueryClient(conn).Count(ctx, &countertypes.QueryCountRequest{})
+conn, _ := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(insecure.NewCredentials()))
+queryClient := countertypes.NewQueryClient(conn)
+
+resp, _ := queryClient.Count(ctx, &countertypes.QueryCountRequest{})
 ```
 
-### gRPC transport
+The gRPC server can be configured in `app.toml`:
 
-The Cosmos SDK runs a gRPC server alongside the main chain process. The gRPC server address is configurable in `app.toml` (default: `0.0.0.0:9090`). Clients connect using standard gRPC tooling.
+- `grpc.enable = true|false` — enables or disables the gRPC server (default: `true`)
+- `grpc.address = {string}` — the `ip:port` the server binds to (default: `localhost:9090`)
+
+For more usage examples, see [Interact with the Node](/sdk/next/user/run-node/interact-node#using-grpc).
 
 ## REST via gRPC-gateway
 
-The Cosmos SDK also exposes a REST API. REST endpoints are not written by hand; they are generated automatically from the same protobuf definitions that define the gRPC services, using **gRPC-gateway**.
+The Cosmos SDK also exposes a REST API. REST endpoints are not written by hand; they are generated automatically from the same protobuf definitions used by gRPC, using **gRPC-gateway**.
 
-gRPC-gateway reads HTTP annotations in the `.proto` files and generates a reverse proxy that translates REST requests into gRPC calls. For example:
+gRPC-gateway reads HTTP annotations in the `.proto` files and generates a reverse proxy that translates REST requests into gRPC calls:
 
 ```protobuf
 service Query {
@@ -176,7 +212,38 @@ func (app *ExampleApp) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.AP
 }
 ```
 
-`BasicModuleManager.RegisterGRPCGatewayRoutes` iterates all modules and calls each module's `RegisterGRPCGatewayRoutes` to attach its gateway handlers to the HTTP mux. The REST API server address is configurable in `app.toml` (default: `0.0.0.0:1317`).
+The REST server can be configured in `app.toml`:
+
+- `api.enable = true|false` — enables or disables the REST server (default: `false`)
+- `api.address = {string}` — the `ip:port` the server binds to (default: `tcp://localhost:1317`)
+
+### Swagger
+
+When the REST server and Swagger are both enabled, the node exposes a Swagger (OpenAPI v2) specification at `http://localhost:1317/swagger/`. Swagger lists all REST endpoints, request parameters, and response schemas, and provides a browser-based interface for exploring the REST API.
+
+Both are disabled by default. Enable them in `app.toml`:
+
+```
+api.enable = true
+api.swagger = true
+```
+
+To generate Swagger documentation for your own custom modules, see [Protobuf Tooling](/sdk/next/build/tooling/protobuf).
+
+## CometBFT RPC
+
+CometBFT also exposes its own RPC server, independent of the Cosmos SDK. It serves consensus and blockchain data and is configured under the `rpc` table in `config.toml` (default: `tcp://localhost:26657`). An OpenAPI specification of all CometBFT RPC endpoints is available in the [CometBFT documentation](/cometbft/v0.38/docs/core/RPC).
+
+Some CometBFT RPC endpoints are directly related to the Cosmos SDK:
+
+- `/abci_query` — queries the application for state. The `path` parameter accepts any protobuf fully-qualified service method (for example, `/cosmos.bank.v1beta1.Query/AllBalances`), or special paths like `/app/simulate` and `/app/version`.
+- `/broadcast_tx_sync`, `/broadcast_tx_async`, `/broadcast_tx_commit` — broadcast a signed transaction to peers. The CLI, gRPC, and REST interfaces all use these CometBFT RPCs under the hood.
+
+## Where to find API documentation
+
+The Cosmos SDK publishes its protobuf definitions and gRPC service documentation at [buf.build/cosmos/cosmos-sdk](https://buf.build/cosmos/cosmos-sdk). The protobuf definitions are the source of truth. gRPC services and REST endpoints are both derived from them.
+
+For a live node, the Swagger UI at `http://localhost:1317/swagger/` documents all available REST endpoints for that specific chain.
 
 ## End-to-end interaction flow
 
