@@ -1,0 +1,113 @@
+---
+title: The Registry
+description: How CosmJS maps type URLs to Protobuf codecs for encoding and decoding messages
+---
+
+The `Registry` class (from `@cosmjs/proto-signing`) is the central type map that
+knows how to encode and decode Protobuf messages by type URL. When you call
+`signAndBroadcast`, the client uses its registry to serialize each
+`EncodeObject` into binary Protobuf wrapped in `Any`.
+
+## How It Works
+
+```
+  EncodeObject                         google.protobuf.Any
+  +--------------------+               +------------------------+
+  | typeUrl: string     |   Registry   | typeUrl: string         |
+  | value:  object      | ---------->  | value:  Uint8Array      |
+  +--------------------+   .encode()   +------------------------+
+                                          (Protobuf bytes)
+```
+
+Internally, the Registry keeps a `Map<string, GeneratedType>` where each key is
+a type URL and each value is a Protobuf codec. A codec is any object with
+`encode` and `decode` methods — the exact shape depends on the code generator
+used:
+
+| Generator | Instance method | Notes |
+|-----------|----------------|-------|
+| **ts-proto** (v1/v2) | `fromPartial` + `encode` + `decode` | Used by `cosmjs-types` |
+| **Telescope** | `fromPartial` + `encode` + `decode` | Same interface as ts-proto |
+| **protobufjs** | `create` + `encode` + `decode` | Slightly different API |
+
+All three are supported through the `GeneratedType` union:
+
+```typescript
+type GeneratedType =
+  | TsProtoGeneratedType
+  | TsProto2GeneratedType
+  | TelescopeGeneratedType
+  | PbjsGeneratedType;
+```
+
+## Default Types
+
+When you create a `SigningStargateClient` without a custom registry, it uses
+`defaultRegistryTypes` — a list of all standard Cosmos SDK message types:
+
+```typescript
+import { defaultRegistryTypes } from "@cosmjs/stargate";
+import { Registry } from "@cosmjs/proto-signing";
+
+const registry = new Registry(defaultRegistryTypes);
+```
+
+This includes messages from bank, staking, distribution, governance, authz,
+feegrant, group, IBC, and vesting modules.
+
+## Registering Custom Types
+
+If your chain has custom modules, register their generated types on top of the
+defaults:
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes } from "@cosmjs/stargate";
+import { MsgCreatePost } from "./generated/blog/tx";
+
+const registry = new Registry(defaultRegistryTypes);
+registry.register("/blog.v1.MsgCreatePost", MsgCreatePost);
+```
+
+Then pass the registry to the client:
+
+```typescript
+const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
+  registry,
+});
+```
+
+## Registry API
+
+| Method | Description |
+|--------|-------------|
+| `register(typeUrl, type)` | Add or overwrite a type URL mapping |
+| `lookupType(typeUrl)` | Get the codec for a type URL (or `undefined`) |
+| `encode(encodeObject)` | Encode an `EncodeObject` to Protobuf bytes |
+| `encodeAsAny(encodeObject)` | Encode and wrap in `google.protobuf.Any` |
+| `encodeTxBody(txBodyFields)` | Encode a full `TxBody` (wraps each message in `Any`) |
+| `decode(decodeObject)` | Decode Protobuf bytes using the type URL |
+| `decodeTxBody(bytes)` | Decode a `TxBody` and recursively decode its messages |
+
+## Encoding Flow
+
+When you call `signAndBroadcast`, this is what happens to your messages:
+
+```
+  EncodeObject[]
+       |
+       v  registry.encodeAsAny(msg) for each
+  Any[] (typeUrl + Protobuf bytes)
+       |
+       v  TxBody.fromPartial({ messages, memo })
+  TxBody
+       |
+       v  TxBody.encode(txBody).finish()
+  bodyBytes (Uint8Array)
+       |
+       v  combined with authInfoBytes into SignDoc
+  SignDoc
+       |
+       v  SignDoc.encode().finish()
+  signBytes (Uint8Array) --> SHA-256 --> signature
+```

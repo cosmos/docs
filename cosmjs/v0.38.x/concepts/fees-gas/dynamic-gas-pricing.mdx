@@ -1,0 +1,121 @@
+---
+title: Dynamic Gas Pricing
+description: Querying on-chain fee markets and the chain registry for gas prices
+---
+
+Some chains implement dynamic gas pricing through fee market modules. Instead of
+hardcoding a gas price, CosmJS can query the current base fee from the chain and
+adjust automatically.
+
+This is supported for:
+
+- **Osmosis** — EIP-1559 style fee market (`/osmosis.txfees.v1beta1.Query/GetEipBaseFee`)
+- **Skip feemarket** — used by Cosmos Hub and other chains (`/feemarket.feemarket.v1.Query/GasPrices`)
+
+## Configuration
+
+Pass a `DynamicGasPriceConfig` instead of a static `GasPrice`:
+
+```typescript
+import {
+  SigningStargateClient,
+  GasPrice,
+  DynamicGasPriceConfig,
+} from "@cosmjs/stargate";
+
+const dynamicConfig: DynamicGasPriceConfig = {
+  denom: "uatom",
+  minGasPrice: GasPrice.fromString("0.005uatom"),
+  maxGasPrice: GasPrice.fromString("0.1uatom"),
+  multiplier: 1.3,
+};
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.cosmos.network",
+  wallet,
+  { gasPrice: dynamicConfig },
+);
+
+const result = await client.signAndBroadcast(address, messages, "auto");
+```
+
+## How It Works
+
+When `"auto"` fee is used with a `DynamicGasPriceConfig`:
+
+1. The chain's feemarket module is queried for the current base gas price
+2. The `multiplier` is applied (default 1.3x) to stay above the minimum
+3. The result is clamped between `minGasPrice` and `maxGasPrice`
+4. If the query fails, `minGasPrice` is used as a fallback
+
+## DynamicGasPriceConfig Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `denom` | `string` | Yes | Token denomination to query the gas price for |
+| `minGasPrice` | `GasPrice` | Yes | Floor price (also used as fallback if the query fails) |
+| `maxGasPrice` | `GasPrice` | No | Ceiling price. If not set, no maximum is enforced |
+| `multiplier` | `number` | No | Multiplier on the queried price. Defaults to 1.3 |
+
+## Checking Support
+
+You can verify whether a chain supports dynamic gas pricing before configuring
+it:
+
+```typescript
+import { checkDynamicGasPriceSupport } from "@cosmjs/stargate";
+
+const supported = await checkDynamicGasPriceSupport(
+  queryClient,
+  "uatom",
+  "cosmoshub-4",
+);
+```
+
+## Getting Gas Prices from the Chain Registry
+
+CosmJS does not integrate with the
+[Cosmos Chain Registry](https://github.com/cosmos/chain-registry) directly, but
+you can use it as a source for gas prices. The registry publishes recommended gas
+prices for each chain in its `chain.json` files.
+
+### Fetching from the Chain Registry
+
+```typescript
+import { GasPrice } from "@cosmjs/stargate";
+
+const registryUrl =
+  "https://raw.githubusercontent.com/cosmos/chain-registry/master/cosmoshub/chain.json";
+const response = await fetch(registryUrl);
+const chainInfo = await response.json();
+
+const feeToken = chainInfo.fees.fee_tokens.find(
+  (t: any) => t.denom === "uatom",
+);
+
+const gasPrice = GasPrice.fromString(
+  `${feeToken.average_gas_price}${feeToken.denom}`,
+);
+```
+
+The chain registry typically provides three gas price tiers per token:
+
+| Field | Description |
+|-------|-------------|
+| `low_gas_price` | Minimum price — may be rejected during congestion |
+| `average_gas_price` | Recommended default |
+| `high_gas_price` | For priority during high traffic |
+
+Using `average_gas_price` is a reasonable default. Use `high_gas_price` for
+time-sensitive transactions.
+
+### Libraries That Wrap the Registry
+
+Several community libraries provide typed access to the chain registry:
+
+- [`chain-registry`](https://www.npmjs.com/package/chain-registry) — typed
+  chain registry data as an npm package
+- [`@chain-registry/client`](https://www.npmjs.com/package/@chain-registry/client) —
+  client with fetching and caching
+
+These are external packages, not part of CosmJS.

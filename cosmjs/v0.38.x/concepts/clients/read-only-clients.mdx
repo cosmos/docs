@@ -1,0 +1,147 @@
+---
+title: Read-Only Clients
+description: Querying Cosmos SDK and CosmWasm chains with StargateClient and CosmWasmClient
+---
+
+CosmJS provides two parallel client hierarchies — **Stargate** for standard
+Cosmos SDK chains and **CosmWasm** for chains with smart contract support. Each
+hierarchy has a read-only client for queries and a signing client for
+transactions.
+
+```
+StargateClient (read-only)          CosmWasmClient (read-only)
+      │                                    │
+      ▼                                    ▼
+SigningStargateClient (signing)     SigningCosmWasmClient (signing)
+```
+
+Read-only clients connect to a chain's RPC endpoint and expose query methods.
+They never need a wallet or private key.
+
+## StargateClient
+
+The primary read-only client for Cosmos SDK chains.
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.cosmos.network");
+```
+
+### Factory Methods
+
+| Method | Description |
+|--------|-------------|
+| `StargateClient.connect(endpoint, options?)` | Connect to an RPC endpoint (auto-detects CometBFT version) |
+| `StargateClient.create(cometClient, options?)` | Create from an existing CometBFT client |
+
+### Query Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getChainId()` | `string` | Chain identifier |
+| `getHeight()` | `number` | Latest block height |
+| `getBlock(height?)` | `Block` | Block at height (latest if omitted) |
+| `getAccount(address)` | `Account \| null` | Account info (number, sequence, pubkey) |
+| `getSequence(address)` | `SequenceResponse` | Account number and sequence |
+| `getBalance(address, denom)` | `Coin` | Balance for a single denomination |
+| `getAllBalances(address)` | `Coin[]` | All balances for an address |
+| `getBalanceStaked(address)` | `Coin \| null` | Total staked balance |
+| `getDelegation(delegator, validator)` | `Coin \| null` | Delegation to a specific validator |
+| `getTx(hash)` | `IndexedTx \| null` | Transaction by hash |
+| `searchTx(query)` | `IndexedTx[]` | Search transactions by events |
+
+```typescript
+const balance = await client.getBalance("cosmos1...", "uatom");
+const block = await client.getBlock();
+const account = await client.getAccount("cosmos1...");
+```
+
+### Options
+
+```typescript
+interface StargateClientOptions {
+  readonly accountParser?: AccountParser;
+}
+```
+
+## CosmWasmClient
+
+The read-only client for CosmWasm-enabled chains. Provides the same core query
+methods as `StargateClient` plus smart contract queries.
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await CosmWasmClient.connect("https://rpc.osmosis.zone");
+```
+
+### CosmWasm-Specific Query Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getCodes()` | `Code[]` | All uploaded code entries |
+| `getCodeDetails(codeId)` | `CodeDetails` | Code metadata and wasm bytecode |
+| `getContracts(codeId)` | `string[]` | Contract addresses instantiated from a code ID |
+| `getContractsByCreator(creator)` | `string[]` | Contracts created by an address |
+| `getContract(address)` | `Contract` | Contract metadata (code ID, label, creator, admin) |
+| `getContractCodeHistory(address)` | `ContractCodeHistoryEntry[]` | Migration history |
+| `queryContractRaw(address, key)` | `Uint8Array \| null` | Raw key-value store lookup |
+| `queryContractSmart(address, queryMsg)` | `JsonObject` | Execute a read-only smart query |
+
+```typescript
+const contract = await client.getContract("osmo1contractaddress...");
+
+const tokenInfo = await client.queryContractSmart("osmo1contractaddress...", {
+  token_info: {},
+});
+```
+
+## Query Extensions
+
+Both clients use a `QueryClient` internally that can be extended with module
+query support. `StargateClient` wires up Auth, Bank, Staking, and Tx extensions
+by default. `CosmWasmClient` wires up Auth, Bank, Wasm, and Tx.
+
+For advanced use, you can create a `QueryClient` directly with any combination
+of extensions:
+
+```typescript
+import { connectComet } from "@cosmjs/tendermint-rpc";
+import {
+  QueryClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+} from "@cosmjs/stargate";
+
+const cometClient = await connectComet("https://rpc.cosmos.network");
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+);
+
+const validators = await queryClient.staking.validators("BOND_STATUS_BONDED");
+const rewards = await queryClient.distribution.delegationTotalRewards("cosmos1...");
+```
+
+### Available Extensions
+
+| Extension | Namespace | Provides |
+|-----------|-----------|----------|
+| `setupAuthExtension` | `auth` | Account lookup |
+| `setupBankExtension` | `bank` | Balances, supply, denom metadata |
+| `setupStakingExtension` | `staking` | Delegations, validators, pool, params |
+| `setupDistributionExtension` | `distribution` | Rewards, commission, community pool |
+| `setupGovExtension` | `gov` | Proposals, votes, deposits, tally |
+| `setupIbcExtension` | `ibc` | Channels, clients, connections, transfers |
+| `setupMintExtension` | `mint` | Inflation, annual provisions, params |
+| `setupSlashingExtension` | `slashing` | Signing info, params |
+| `setupAuthzExtension` | `authz` | Grants |
+| `setupFeegrantExtension` | `feegrant` | Fee allowances |
+| `setupTxExtension` | `tx` | Transaction lookup, simulation |
+| `setupWasmExtension` | `wasm` | Smart contract queries (from `@cosmjs/cosmwasm`) |
