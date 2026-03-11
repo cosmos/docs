@@ -255,10 +255,10 @@ genesisModuleOrder := []string{
 	genutiltypes.ModuleName,
 }
 app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
-app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
+app.ModuleManager.SetOrderExportGenesis(exportModuleOrder...)
 ```
 
-`SetOrderExportGenesis` controls the order modules serialize their state when the chain is exported to a genesis file (for hard forks or snapshot-based testnets). It can differ from `SetOrderInitGenesis` but in most chains the same order works for both.
+`SetOrderExportGenesis` controls the order modules serialize their state when the chain is exported to a genesis file (for hard forks or snapshot-based testnets). The export order can differ from the init genesis order; in the example chain they use different orderings.
 
 The comments in the example app explain the reasoning: `genutil` must run after `staking` so that staking pools are initialized before genesis transactions are processed, and after `auth` so that it can access auth parameters.
 
@@ -354,7 +354,7 @@ func (app *ExampleApp) setAnteHandler(txConfig client.TxConfig) {
 
 The AnteHandler runs before any message in a transaction executes. It verifies signatures, validates and increments the account sequence number, deducts fees, and meters gas. If it fails, the transaction is rejected before any module logic runs.
 
-A PostHandler can also be registered with `app.SetPostHandler`. It runs after all messages in a transaction execute successfully, in the same state branch, and is reverted if it fails. The SDK's default PostHandler chain is minimal; chains use it for features like transaction tips. For a deeper look at how the AnteHandler fits into transaction execution, see [AnteHandler](/sdk/next/learn/concepts/baseapp#antehandler).
+A PostHandler can also be registered with `app.SetPostHandler`. It runs after all messages in a transaction execute (regardless of whether they succeeded), in the same state branch, and is reverted if it fails. The SDK's default PostHandler chain is minimal. For a deeper look at how the AnteHandler fits into transaction execution, see [AnteHandler](/sdk/next/learn/concepts/baseapp#antehandler).
 
 ## Sealing with LoadLatestVersion
 
@@ -368,7 +368,7 @@ if loadLatest {
 }
 ```
 
-`LoadLatestVersion` validates that all required components are configured, mounts the stores, initializes the check state, and sets `BaseApp.sealed` to `true`. Any setter called after this point panics. This enforces that all wiring happens before the application starts serving requests.
+`LoadLatestVersion` calls `storeLoader` to load the latest committed store state from the database, then calls `Init` which validates that required components are configured (cms and stateManager), initializes the check state, and sets `BaseApp.sealed` to `true`. Any setter called after this point panics. This enforces that all wiring happens before the application starts serving requests.
 
 On first launch, CometBFT calls `InitChain` which triggers `InitChainer`, which calls `ModuleManager.InitGenesis` to populate each module's state from `genesis.json`.
 
@@ -400,7 +400,7 @@ At runtime, CometBFT drives the application through ABCI. Each ABCI call dispatc
 
 - `InitChain` calls `InitChainer`, which runs `ModuleManager.InitGenesis`.
 - `FinalizeBlock` calls `PreBlocker`, `BeginBlocker`, each transaction's AnteHandler and message handlers, then `EndBlocker`.
-- `CheckTx` validates a transaction through the AnteHandler without writing state.
+- `CheckTx` validates a transaction through the AnteHandler and writes to the internal CheckTx state if it passes.
 - `Commit` persists the finalized block state.
 
 The modules never call each other directly. They interact through keeper interfaces that are wired at initialization time, and they participate in the block lifecycle through hooks that the module manager coordinates in a fixed, declared order. See [BaseApp Overview](/sdk/next/learn/concepts/baseapp) for how ABCI calls flow through the application, and [Modules](/sdk/next/learn/concepts/modules) for how individual modules are structured.
