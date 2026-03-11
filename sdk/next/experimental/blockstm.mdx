@@ -1,0 +1,177 @@
+---
+noindex: true
+title: "Block-STM: Parallel Transaction Execution"
+---
+
+<Note>
+**Synopsis**
+Block-STM enables parallel execution of transactions during `FinalizeBlock`, using optimistic concurrency control to improve block processing throughput.
+</Note>
+
+<Note>
+**Prerequisite Readings**
+
+* [BaseApp](/sdk/next/learn/advanced/baseapp)
+* [Transactions](/sdk/next/learn/advanced/transactions)
+* [Store](/sdk/next/learn/advanced/store)
+
+</Note>
+
+## Background
+
+Block-STM is an algorithm originally published in the [Block-STM paper](https://arxiv.org/pdf/2203.06871) and implemented for the Aptos blockchain. The algorithm was then written for Cosmos SDK compatible chains in Go by developers for the Cronos blockchain in [go-block-stm](https://github.com/crypto-org-chain/go-block-stm).
+
+This library was forked and directly integrated into the Cosmos SDK with accompanying changes to the `baseapp` and `store` packages. Subsequent changes and improvements have been made on top of the original implementation to further optimize performance in both memory and time.
+
+## Algorithm Overview
+
+Block-STM implements a form of optimistic concurrency control to enable parallel execution of transactions. It does this by implementing read and write set tracking on top of the SDK's IAVL storage layer. This, combined with the absolute ordering of transactions provided by the block proposal, is used in a validation phase which determines if any two executed transactions have conflicting storage access. In the case of conflicting storage access, the algorithm provides a means for re-execution and re-validation of the conflicting transactions based on the ordering in the proposal.
+
+Block-STM is currently only integrated into the `FinalizeBlock` phase of execution, meaning the code path is never accessed until the block is agreed upon in consensus. It is possible that the algorithm may be extended in the future to support different execution models, but as of right now it expects a complete block and returns its result after the entire block has been executed. For this reason, Block-STM is expected to produce identical results to serial execution. In other words, the `AppHash` produced by Block-STM's parallel execution should be equal to the `AppHash` produced by the default serial transaction runner.
+
+## App Integration
+
+Integration of parallel execution is abstracted into two interfaces: `DeliverTxFunc` and `TxRunner`.
+
+```go
+// DeliverTxFunc is the function called for each transaction in order to produce
+// a single ExecTxResult. `memTx` is an optional in-memory representation of
+// the transaction, which can be used to avoid decoding the transaction.
+type DeliverTxFunc func(
+    tx []byte,
+    memTx Tx,
+    ms storetypes.MultiStore,
+    txIndex int,
+    incarnationCache map[string]any,
+) *abci.ExecTxResult
+
+// TxRunner defines an interface for types which can be used to execute the
+// DeliverTxFunc. It should return an array of *abci.ExecTxResult corresponding
+// to the result of executing each transaction provided to the Run function.
+type TxRunner interface {
+    Run(
+        ctx context.Context,
+        ms storetypes.MultiStore,
+        txs [][]byte,
+        deliverTx DeliverTxFunc,
+    ) ([]*abci.ExecTxResult, error)
+}
+```
+
+The `TxRunner` is the primary interface that developers wire into their application. The `baseapp` package provides an option to set it up:
+
+```go
+func (app *BaseApp) SetBlockSTMTxRunner(txRunner sdk.TxRunner) {
+    app.txRunner = txRunner
+}
+```
+
+### Runner Implementations
+
+Two implementations of `TxRunner` are provided in the `baseapp/txnrunner` package:
+
+```go
+NewDefaultRunner(txDecoder sdk.TxDecoder) *DefaultRunner
+NewSTMRunner(
+    txDecoder sdk.TxDecoder,
+    stores []storetypes.StoreKey,
+    workers int,
+    estimate bool,
+    coinDenom func(storetypes.MultiStore) string,
+) *STMRunner
+```
+
+`NewDefaultRunner` is used by `BaseApp` by default and provides serial execution without using the Block-STM code paths. You do not need to wire this in explicitly.
+
+`NewSTMRunner` constructs a runner which uses parallel execution. Its parameters are:
+
+* **`txDecoder`** — A standard `sdk.TxDecoder`, readily available in any SDK application.
+
+* **`stores`** — A list of every store key used in your application. Since Block-STM needs to track store usage across transactions, it must be passed all module-level store keys. Here is an example taken from the Cosmos EVM:
+
+```go
+keys := storetypes.NewKVStoreKeys(
+    authtypes.StoreKey, banktypes.StoreKey, stakingtypes.StoreKey,
+    minttypes.StoreKey, distrtypes.StoreKey, slashingtypes.StoreKey,
+    govtypes.StoreKey, consensusparamtypes.StoreKey,
+    upgradetypes.StoreKey, feegrant.StoreKey, evidencetypes.StoreKey,
+    authzkeeper.StoreKey,
+    // IBC keys
+    ibcexported.StoreKey, ibctransfertypes.StoreKey,
+    // Cosmos EVM store keys
+    evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey,
+)
+oKeys := storetypes.NewObjectStoreKeys(
+    banktypes.ObjectStoreKey, evmtypes.ObjectKey,
+)
+
+var nonTransientKeys []storetypes.StoreKey
+for _, k := range keys {
+    nonTransientKeys = append(nonTransientKeys, k)
+}
+for _, k := range oKeys {
+    nonTransientKeys = append(nonTransientKeys, k)
+}
+```
+
+* **`workers`** — The number of parallel workers. Experimentation has shown diminishing returns above your system's hardware parallelism. The recommended value is:
+
+```go
+import "runtime"
+
+workers := min(runtime.GOMAXPROCS(0), runtime.NumCPU())
+```
+
+* **`estimate`** — Controls whether the system should proactively determine transaction read/write conflicts before execution. Set this to `true` in all cases.
+
+* **`coinDenom`** — A function that returns the staking coin denom at runtime. This is used during estimation to reason about which keys in the `bank` module will be modified when fees are collected. A hard-coded value is acceptable; the value should be your chain's bond denom.
+
+### Full Wiring Example
+
+Here is a complete example taken from the Cosmos EVM's `evmd` application:
+
+```go
+bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
+    encodingConfig.TxConfig.TxDecoder(),
+    nonTransientKeys,
+    min(goruntime.GOMAXPROCS(0), goruntime.NumCPU()),
+    true,
+    func(ms storetypes.MultiStore) string { return sdk.DefaultBondDenom },
+))
+```
+
+## Parallel Transaction Optimization
+
+Once Block-STM is wired in, you may initially notice that most blocks execute slower than with serial execution. This is due to the overhead of re-executing transactions when any two have conflicting reads or writes. To realize performance gains, you need to reduce storage access conflicts between transactions.
+
+Work has already been done within the SDK and Cosmos EVM for common transaction types such as bank sends and EVM gas sends. The following steps describe the additional configuration needed.
+
+### Disable the Block Gas Meter
+
+The block gas meter is difficult to support when executing transactions in parallel. Disabling it is safe if validators validate the total gas wanted in `ProcessProposal`, which is the case in the default handler.
+
+```go
+bApp.SetDisableBlockGasMeter(true)
+```
+
+### Enable Virtual Fee Collection (EVM-specific)
+
+This alters how fee collection works for EVM transactions, accumulating fees to the fee collector module in the `EndBlocker` instead of using regular sends during transaction execution.
+
+```go
+app.EVMKeeper.EnableVirtualFeeCollection()
+```
+
+### Set Up the Object Store in the Bank Keeper
+
+This enables the bank keeper to collect fees in the `EndBlocker` instead of requiring every transaction to send fees directly to the `FeeCollector` module account.
+
+```go
+app.BankKeeper = app.BankKeeper.WithObjStoreKey(oKeys[banktypes.ObjectStoreKey])
+```
+
+### Custom Modules
+
+All other changes to parallelize common transactions were done in a way that does not require configuration.
+
+For custom transaction types or custom modules, additional changes to KV store access patterns may be required. There is no generalized approach for this yet. The common pattern for functionality that requires access to the same storage key is to write intermediate values to transient or object storage and use an `EndBlocker` to collect the values after all transaction execution completes.
