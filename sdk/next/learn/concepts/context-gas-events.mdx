@@ -2,11 +2,11 @@
 title: Execution Context, Gas, and Events
 ---
 
-In the previous section, you learned how data is serialized and why every validator must encode state identically. This page covers the runtime environment that modules execute within: the context object that carries block metadata and state access, the gas system that limits computation, and the event system that allows modules to emit observable signals.
+In the previous section, [Encoding and Protobuf](/sdk/next/learn/concepts/encoding) explained how data is serialized and why every validator must encode state identically. This page covers the runtime environment that modules execute within: the context object that carries block metadata and state access, the gas system that limits computation, and the event system that allows modules to emit observable signals.
 
 ## What is `sdk.Context`
 
-Every message handler, keeper method, and block hook in the Cosmos SDK receives an `sdk.Context`. It is the execution environment for a single unit of work (a transaction, a query, or a block hook) and carries everything that code needs to read state, emit events, and consume gas. Rather than passing the store, gas meter, and block header as separate arguments to every function, Context bundles them into a single value.
+Every message handler, keeper method, and block hook in the Cosmos SDK receives an `sdk.Context`. It is the execution environment for a single unit of work (a transaction, a query, or a block hook) and carries everything that code needs to read state, emit events, and consume gas. Rather than passing the store, gas meter, and block header as separate arguments to every function, `Context` bundles them into a single value.
 
 The `Context` struct is defined in [`types/context.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go):
 
@@ -32,7 +32,7 @@ Context exposes read-only access to the current block's metadata (see [`types/co
 - `ctx.ChainID()` returns the chain identifier string.
 - `ctx.Logger()` returns a structured logger scoped to the current execution context. Modules use this for operational logging (e.g., logging an upgrade activation or an unexpected state) without affecting consensus.
 
-These values are populated by `BaseApp` from the block header provided by CometBFT before any block logic runs. Modules read them to implement time-dependent logic (for example, checking whether a vesting period has elapsed) or to tag events with the block height.
+These values are populated by [`BaseApp`](/sdk/next/learn/concepts/baseapp) from the block header provided by CometBFT before any block logic runs. Modules read them to implement time-dependent logic (for example, checking whether a vesting period has elapsed) or to tag events with the block height.
 
 `ctx.IsCheckTx()` returns true when the context is being used for mempool validation rather than block execution. For finer-grained branching, `ctx.ExecMode()` returns the precise execution mode: `ExecModeCheck`, `ExecModeReCheck`, `ExecModeSimulate`, `ExecModePrepareProposal`, `ExecModeProcessProposal`, `ExecModeFinalize`, and others (see [`types/context.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go#L19) for more details). Modules that need to behave differently during simulation or proposal handling use `ExecMode()` instead of `IsCheckTx()`.
 
@@ -64,7 +64,7 @@ writeCache() // flush branch to parent context
 
 ### What gas measures
 
-Gas is a unit of computation. In the Cosmos SDK, gas accounts for both computation and state access. Every store read, store write, and iterator step costs gas. Complex computations such as signature verification in the AnteHandler also cost gas.
+Gas is a unit of computation. In the Cosmos SDK, gas accounts for both computation and state access. Every store read, store write, and iterator step costs gas. Complex computations such as signature verification in the `AnteHandler` also cost gas.
 
 The gas system exists to prevent abuse. Without a gas limit, a single transaction could exhaust a node's resources with an unbounded computation or an unindexed state scan.
 
@@ -95,7 +95,7 @@ Modules do not need to manually track gas for ordinary state access — the stor
 
 ### When gas runs out
 
-If gas is exhausted during execution, `ConsumeGas` panics with `ErrorOutOfGas`. `BaseApp` recovers from this panic, discards all state changes from the transaction, and returns an error to the user. Fees may still be charged for the gas consumed up to the point of failure, but none of the transaction's state changes are committed.
+If gas is exhausted during execution, `ConsumeGas` panics with `ErrorOutOfGas`. `BaseApp` recovers from this panic, discards the current message execution branch, and returns an error to the user. Fees may still be charged for the gas consumed up to the point of failure, and `AnteHandler` side effects may already have been applied before message execution started.
 
 ### Block gas limit
 
@@ -176,4 +176,4 @@ If execution succeeds → state changes committed, events returned in block resu
 
 The context carries the gas meter and event manager into every keeper call. Gas is consumed transparently at the store layer. Events accumulate and are returned as part of the block result once execution completes.
 
-The next section explains how an SDK application is structured as a codebase: where modules live, what goes in `app/`, and how all the pieces are assembled.
+The next section, [Intro to SDK Structure](/sdk/next/learn/concepts/sdk-structure), explains how an SDK application is structured as a codebase: where modules live, what goes in `app/`, and how all the pieces are assembled.
