@@ -2,7 +2,7 @@
 title: Encoding and Protobuf
 ---
 
-As described in the previous section, modules write structured state values into the KV store as raw bytes. Encoding defines how those structured values are serialized into bytes, and why every validator must produce exactly the same bytes. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
+As described in [State, Storage, and Genesis](/sdk/next/learn/concepts/store), modules write structured state values into the KV store as raw bytes. Encoding defines how those structured values are serialized into bytes, and why every validator must produce exactly the same bytes. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
 
 ## What is Protobuf?
 
@@ -18,13 +18,13 @@ message MsgSend {
 }
 ```
 
-Each field has a name, a type, and a field number. The field numbers are what protobuf actually uses during encoding; field names are only present in the schema, not in the serialized bytes. This is why protobuf is compact and why you can rename fields without breaking wire compatibility.
+Each field has a name, a type, and a field number. The field numbers are what protobuf actually uses during encoding; field names are only present in the schema, not in the serialized bytes. 
 
 ## Why the Cosmos SDK uses protobuf
 
 The Cosmos SDK uses protobuf for a fundamental reason: consensus requires determinism.
 
-Every validator in the network independently executes each block. After execution, each validator computes the AppHash, a cryptographic hash of the application state. For validators to agree on the AppHash, they must all produce exactly the same bytes for every piece of state they write.
+Every validator in the network independently executes each block. After execution, each validator computes the [app hash](/sdk/next/learn/concepts/store#app-hash), a cryptographic hash of the application state. For validators to agree on the app hash, they must all produce exactly the same bytes for every piece of state they write.
 
 Protobuf alone does not guarantee this. The Cosmos SDK uses protobuf **with additional deterministic encoding rules** formalized in [ADR-027 (Deterministic Protobuf Serialization)](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/docs/architecture/adr-027-deterministic-protobuf-serialization.md). ADR-027 specifies constraints such as requiring fields to appear in ascending field-number order and varint encodings to be as short as possible. The SDK validates incoming transactions against these rules before processing them, so a non-deterministically encoded transaction is rejected rather than producing divergent state. Every validator encoding the same data under these rules produces an identical byte sequence.
 
@@ -123,9 +123,13 @@ Most public and persisted data types in modern SDK modules are defined in `.prot
 
 Each module defines its transaction messages in a `tx.proto` file. The `MsgSend` definition above is an example. When a user submits a transaction, the SDK serializes the transaction body (including its messages) to binary using protobuf before broadcasting it.
 
+[todo: link to tutorial tx.proto section]
+
 ### Queries
 
 Modules define their query services in `query.proto`. Request and response types are protobuf messages. The SDK uses gRPC for queries, and gRPC uses protobuf as its serialization format by definition.
+
+[todo: link to tutorial query proto section]
 
 ### State types
 
@@ -381,4 +385,4 @@ AppHash (Merkle root over all KV bytes)
 
 Determinism comes from the combination of canonical transaction encoding (ADR-027), deterministic application logic, and consistent protobuf serialization of stored state. Two validators executing the same transactions under these rules always produce the same bytes at every layer, and therefore always arrive at the same AppHash.
 
-The next section explains the runtime execution environment that modules operate within: `sdk.Context`, gas metering, and events.
+The next section, [Execution Context, Gas, and Events](/sdk/next/learn/concepts/context-gas-events), explains the runtime execution environment that modules operate within: `sdk.Context`, gas metering, and events.
