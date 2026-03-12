@@ -78,7 +78,7 @@ TxDecoder
 sdk.Tx
 ```
 
-This step happens before the transaction enters the execution pipeline. Without it, `BaseApp` cannot inspect messages, run the ante handler, or route execution to the correct module.
+This step happens before the transaction enters the execution pipeline. Without it, `BaseApp` cannot inspect messages, run the `AnteHandler`, or route execution to the correct module.
 
 ## Execution modes
 
@@ -104,15 +104,15 @@ RunTx
   └─ PostHandler    → optional post-execution middleware
 ```
 
-If the AnteHandler fails, message execution does not begin. If any message fails, the transaction reverts atomically; all messages commit or none do.
+If the `AnteHandler` fails, message execution does not begin. If any message fails, message execution reverts atomically; all message writes commit or none do.
 
-## AnteHandler
+## `AnteHandler`
 
 The `AnteHandler` is middleware that runs before any message in a transaction executes. It verifies cryptographic signatures, validates and increments the account sequence number, deducts transaction fees, and sets up the gas meter for the transaction.
 
-{/* TODO: move the AnteHandler configuration example (SetAnteHandler, HandlerOptions, ordering rules) to the app.go page, where it's actionable. Keep only the concept here. then link out to the app.go page. */}
+For the application wiring side, including `SetAnteHandler`, `HandlerOptions`, and constructor ordering, see [AnteHandler configuration in `app.go`](/sdk/next/learn/concepts/app-go#antehandler-configuration).
 
-If the AnteHandler fails, the transaction is rejected and its messages never execute. If the AnteHandler succeeds but a message later fails, the AnteHandler's state writes — fee deduction and sequence increment — are already flushed to `finalizeBlockState` and will be committed with the block. Fees are charged even for transactions whose messages fail.
+If the `AnteHandler` fails, the transaction is rejected and its messages never execute. If the `AnteHandler` succeeds but a message later fails, the `AnteHandler`'s state writes, such as fee deduction and sequence increment for ordered transactions, are already flushed to `finalizeBlockState` and will be committed with the block. Fees are charged even for transactions whose messages fail.
 
 ## Message routing
 
@@ -135,7 +135,7 @@ This routing is entirely type-URL-based. Modules do not need to know about each 
 
 ## Queries
 
-For read-only access to application state, `BaseApp` uses the **`GRPCQueryRouter`** to route incoming gRPC queries to the correct module query service. Queries bypass the transaction execution pipeline and directly read committed state. They do not go through the AnteHandler, do not consume gas in the same way, and do not mutate state.
+For read-only access to application state, `BaseApp` uses the **`GRPCQueryRouter`** to route incoming gRPC queries to the correct module query service. Queries bypass the transaction execution pipeline and directly read committed state. They do not go through the `AnteHandler`, do not consume gas in the same way, and do not mutate state.
 
 ## Store management
 
@@ -149,9 +149,9 @@ Before executing each transaction, `BaseApp` creates a cached, copy-on-write vie
 
 ## CheckTx and mempool validation
 
-Before a transaction reaches block execution, it goes through `CheckTx`. `BaseApp` runs the AnteHandler in CheckTx mode to validate signatures, check sequence numbers, and verify fees. Each validator also enforces a configurable `minGasPrices` floor, and transactions offering less than the minimum gas price are rejected here as a spam protection measure. Transactions that fail `CheckTx` are rejected and do not enter the mempool.
+Before a transaction reaches block execution, it goes through `CheckTx`. `BaseApp` runs the `AnteHandler` in `CheckTx` mode to validate signatures, check sequence numbers, and verify fees. Each validator also enforces a configurable `minGasPrices` floor, and transactions offering less than the minimum gas price are rejected here as a spam protection measure. Transactions that fail `CheckTx` are rejected and do not enter the mempool.
 
-`CheckTx` does not execute messages and does not write state. It exists solely to protect the mempool from invalid or malformed transactions before they consume block space. After each block commits, CometBFT triggers a recheck pass (`ReCheckTx`) that re-validates all pending mempool transactions against the new state, and any transactions that became invalid (for example, because their sequence number was consumed by a competing transaction) are evicted at this point.
+`CheckTx` does not execute messages. It does run the `AnteHandler`, and if ante succeeds the resulting writes are persisted to `BaseApp`'s internal `CheckTx` state rather than to committed chain state. This is how the mempool tracks transaction validity before block execution. After each block commits, CometBFT triggers a recheck pass (`ReCheckTx`) that re-validates all pending mempool transactions against the new state, and any transactions that became invalid (for example, because their sequence number was consumed by a competing transaction) are evicted at this point.
 
 ## Coordinating block execution
 
@@ -169,27 +169,25 @@ FinalizeBlock
        → returns AppHash
 ```
 
-**PreBlock** runs before any block logic. It handles changes that must take effect before the block begins, such as activating a chain upgrade or modifying consensus parameters.
+[`PreBlock`](/sdk/next/learn/concepts/lifecycle.mdx#preblock) runs before any block logic. It handles changes that must take effect before the block begins, such as activating a chain upgrade or modifying consensus parameters.
 
-**BeginBlock** runs after PreBlock and handles per-block housekeeping: minting inflation rewards, distributing staking rewards, resetting per-block counters.
+[`BeginBlock`](/sdk/next/learn/concepts/modules#beginblock) runs after [`PreBlock`](/sdk/next/learn/concepts/lifecycle#preblock) and handles per-block housekeeping: minting inflation rewards, distributing staking rewards, resetting per-block counters.
 
-**Transactions** execute sequentially in block order. Each is atomic: if any message fails, the entire transaction reverts.
+[Transactions](/sdk/next/learn/concepts/transactions) execute sequentially in block order. Message execution for each transaction is atomic: if any message fails, the message execution branch reverts. `AnteHandler` side effects may already have been applied.
 
-**EndBlock** runs after all transactions. It handles logic that depends on the block's cumulative state — for example, tallying governance votes after all vote messages have been processed, or updating validator power after all delegation changes.
+[`EndBlock`](/sdk/next/learn/concepts/modules#endblock) runs after all transactions. It handles logic that depends on the block's cumulative state — for example, tallying governance votes after all vote messages have been processed, or updating validator power after all delegation changes.
 
-After `FinalizeBlock` completes, `BaseApp` computes and returns the app hash — the Merkle root of all committed state. When CometBFT subsequently calls `Commit`, `BaseApp` writes `finalizeBlockState` to the root store, resets `checkState` to the newly committed state, and clears `finalizeBlockState` to `nil` in preparation for the next block.
-
-{/* todo: add link to lifecycle page and module page */}
+After `FinalizeBlock` completes, `BaseApp` computes and returns the app hash — the Merkle root of all committed state. See [App hash](/sdk/next/learn/concepts/store#app-hash) for how it relates to the multistore and deterministic execution. When CometBFT subsequently calls `Commit`, `BaseApp` writes `finalizeBlockState` to the root store, resets `checkState` to the newly committed state, and clears `finalizeBlockState` to `nil` in preparation for the next block.
 
 ## Module Manager
 
 `BaseApp` exposes `PreBlock`, `BeginBlock`, and `EndBlock` as lifecycle hook points. Every standard SDK application wires these to a `ModuleManager`, which holds the full set of registered modules and their execution ordering. When a hook fires, `ModuleManager` iterates its ordered module list and calls each module's corresponding hook in sequence. Ordering matters: some modules depend on others having already updated state before they run.
 
-{/* TODO: move the ModuleManager struct, SetPreBlocker/SetBeginBlocker/SetEndBlocker wiring, mm.BeginBlock(ctx) delegation, and ordering configuration to the app.go page, where it's actionable. add link to that page*/}
+The `app.go` page shows how the application constructs the `ModuleManager`, wires it into `BaseApp`, and configures ordering in practice. See [Module Manager in `app.go`](/sdk/next/learn/concepts/app-go#module-manager).
 
 ## Block proposal and vote extensions
 
-ABCI 2.0 added a proposal phase that runs during consensus rounds, before `FinalizeBlock` executes. `BaseApp` exposes four handlers for this phase, with default implementations wired at construction:
+[ABCI 2.0](/sdk/next/build/abci/introduction#abci-20) added a proposal phase that runs during consensus rounds, before `FinalizeBlock` executes. `BaseApp` exposes four handlers for this phase, with default implementations wired at construction:
 
 - `PrepareProposal`: called on the current block proposer to assemble a block from the mempool. The default selects transactions up to the block gas limit. Chains can override this to implement custom ordering, filtering, or injection of protocol-level transactions.
 - `ProcessProposal`: called on every validator to validate an incoming proposal. The default accepts any structurally valid proposal. Chains that use `PrepareProposal` to inject data typically also override this to verify that data is present and valid.
@@ -207,7 +205,6 @@ All four are configurable in `app.go` via `SetPrepareProposal`, `SetProcessPropo
 CometBFT → ABCI → BaseApp → Modules → State
 ```
 
-It implements ABCI, coordinates the block lifecycle (PreBlock → BeginBlock → transactions → EndBlock), routes messages to module handlers via the `MsgServiceRouter`, routes queries via the `GRPCQueryRouter`, runs the AnteHandler before each transaction, and manages the multistore with copy-on-write caching for atomicity. State changes are committed at block end; validation and simulation run against branched state and never touch committed data.
+It implements ABCI, coordinates the block lifecycle (`PreBlock` → `BeginBlock` → transactions → `EndBlock`), routes messages to module handlers via the `MsgServiceRouter`, routes queries via the `GRPCQueryRouter`, runs the `AnteHandler` before each transaction, and manages the multistore with copy-on-write caching for atomicity. State changes are committed at block end; validation and simulation run against branched state and never touch committed data.
 
-The next section explains `app.go`: how `BaseApp` is instantiated, configured, and wired with modules to produce a complete, running chain.
-{/* todo: add link to app.go page */}
+The next section, [app.go Overview](/sdk/next/learn/concepts/app-go), explains how `BaseApp` is instantiated, configured, and wired with modules to produce a complete, running chain.
