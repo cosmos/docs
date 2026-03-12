@@ -6,15 +6,13 @@ Before writing a module or chain, it helps to understand how the Cosmos SDK orga
 
 ## What is an SDK application
 
-A Cosmos SDK application is a Go binary that implements a deterministic state machine. It runs alongside CometBFT inside then node daemon process. CometBFT drives consensus and the SDK application executes transactions and maintains state.
+A Cosmos SDK application is a Go binary that implements a deterministic state machine. It runs alongside CometBFT inside the node daemon process. CometBFT drives consensus and the SDK application executes transactions and maintains state.
 
 Every SDK application is composed of three main elements:
 
-- **`BaseApp`**: the execution engine that implements the ABCI and orchestrates transaction processing
-- **Modules**: self-contained units of business logic, state, messages, and queries
-- **`app.go`**: the wiring layer that instantiates `BaseApp`, registers modules, and configures the application at startup
-
-{/* todo: link above */}
+- [`BaseApp`](/sdk/next/learn/concepts/baseapp): the execution engine that implements the ABCI and orchestrates transaction processing
+- [Modules](/sdk/next/learn/concepts/modules): self-contained units of business logic, state, messages, and queries
+- [`app.go`](/sdk/next/learn/concepts/app-go): the wiring layer that instantiates `BaseApp`, registers modules, and configures the application at startup
 
 `BaseApp` and `app.go` are covered in depth in the next two sections. This page focuses on how they are organized in the codebase.
 
@@ -45,7 +43,7 @@ Each directory has a distinct responsibility:
 
 - `x/` contains the modules. Each subdirectory is a separate, self-contained module. Built-in Cosmos SDK modules (`x/auth`, `x/bank`, `x/staking`, etc.) follow the same layout and are imported as Go packages. Your custom modules live alongside them.
 
-- `app/` contains `app.go`, which assembles the application: creating `BaseApp`, mounting stores, initializing keepers, and registering all modules with the ModuleManager.
+- `app/` contains `app.go`, which assembles the application: creating `BaseApp`, mounting stores, initializing keepers, and registering all modules with the `ModuleManager`.
 
 - `cmd/` contains `main.go`, the entrypoint for the node binary. It parses command-line flags, reads configuration files, and starts the daemon process that runs both the CometBFT node and the SDK application.
 
@@ -66,7 +64,7 @@ Proto definitions live separately in `proto/`, not inside `x/`. See [Intro to Mo
 
 ## How modules are assembled into an application
 
-Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManager holds the full set of registered modules and coordinates their lifecycle hooks (`InitGenesis`, `BeginBlock`, `EndBlock`, and service registration) across the application. Module ordering is configured explicitly in `app.go` and matters: for example, `x/staking` must finalize delegation changes in `EndBlock` before `x/distribution` calculates rewards. 
+Modules are assembled through the `ModuleManager` in [`app.go`](/sdk/next/learn/concepts/app-go). The `ModuleManager` holds the full set of registered modules and coordinates their lifecycle hooks (`InitGenesis`, `BeginBlock`, `EndBlock`, and service registration) across the application. Module ordering is configured explicitly in `app.go` and matters: for example, in `simapp` the distribution module runs before slashing in `BeginBlock` so validator rewards are handled before slashing updates are applied.
 
 {/* todo: link to module manager in baseapp */}
 
@@ -74,14 +72,14 @@ Modules are assembled through the **ModuleManager** in `app.go`. The ModuleManag
 
 ## The role of `app.go`
 
-`app.go` is the single file that defines a specific chain. It is where the application is assembled from its parts. Here is a breakdown of the steps it takes:
+[`app.go`](/sdk/next/learn/concepts/app-go) is the single file that defines a specific chain. It is where the application is assembled from its parts. Here is a breakdown of the steps it takes:
 
 1. Create a `BaseApp` instance with the application name, logger, database, and codec.
 2. Create a `StoreKey` for each module and mount it to the multistore.
 3. Instantiate each `Keeper`, passing in the codec, store key, and references to other keepers the module depends on.
 4. Create the `ModuleManager` with all module instances.
-5. Configure execution ordering: which modules run first during genesis, BeginBlock, and EndBlock.
-6. Register all gRPC services (message and query handlers) through the ModuleManager.
+5. Configure execution ordering: which modules run first during genesis, `BeginBlock`, and `EndBlock`.
+6. Register all gRPC services (message and query handlers) through the `ModuleManager`.
 7. Set the `AnteHandler` and other middleware.
 
 Because `app.go` is plain Go code, it is fully customizable. A chain includes exactly the modules it needs, wires keepers together as required, and controls the execution order of all lifecycle hooks. 
@@ -117,7 +115,7 @@ myapp/
 
 - `go.mod` / `go.sum`: Standard Go module files. `go.mod` declares the Cosmos SDK version and all other imported packages. `go.sum` provides verifiable checksums for the full dependency tree.
 - `Makefile`: The standard entry point for development tasks: `make build` compiles the binary, `make test` runs unit tests, `make proto-gen` regenerates Go code from `.proto` files. Most SDK chains include targets for linting, simulation tests, and Docker builds.
-- `scripts/`: Shell scripts and configuration for tooling that the Makefile invokes — typically `buf` configuration for protobuf compilation, scripts for checking dependency consistency, and helpers for running local testnets.
+- `scripts/`: Shell scripts and configuration for tooling that the Makefile invokes.
 
 ### The node binary (`cmd/`)
 
@@ -132,7 +130,7 @@ The `cmd/` directory produces the node daemon binary (e.g., `simd`, `gaiad`, `wa
 
 ### Node home directory
 
-The repository contains the source code for the chain. When you actually run a node, the binary generates a separate home directory on disk that holds runtime configuration and chain data. Running `myappdaemon init` creates this directory:
+A typical repository contains the source code for a chain. When you actually run a node, the binary generates a separate home directory on disk that holds runtime configuration and chain data. Running `myappdaemon init` creates this directory:
 
 ```
 ~/.myapp/                  # Node home directory (configurable with --home)
@@ -157,6 +155,6 @@ Each configuration file controls a distinct layer of the node:
 
 An SDK application is a deterministic state machine composed of modules assembled in `app.go`. The codebase follows a conventional layout: modules in `x/`, application wiring in `app/`, the binary entrypoint in `cmd/`, and Protobuf definitions in `proto/`.
 
-The ModuleManager assembles modules and coordinates their lifecycle hooks across the application. `BaseApp` provides the ABCI implementation that connects the state machine to CometBFT's consensus engine.
+The `ModuleManager` assembles modules and coordinates their lifecycle hooks across the application. `BaseApp` provides the ABCI implementation that connects the state machine to CometBFT's consensus engine.
 
-The next section explains what `BaseApp` is and how it coordinates transaction execution in detail.
+The next section, [BaseApp Overview](/sdk/next/learn/concepts/baseapp), explains what `BaseApp` is and how it coordinates transaction execution in detail.
