@@ -10,10 +10,8 @@ A Cosmos SDK application can be conceptually split into layers:
 
 - [CometBFT](/cometbft) (consensus engine) — orders and proposes blocks
 - [ABCI](/sdk/next/learn/intro/sdk-app-architecture#abci-application-blockchain-interface) (Application-Blockchain Interface) — the protocol CometBFT uses to talk to the Cosmos SDK application
-- SDK application (`BaseApp` + modules) — the deterministic state machine that executes transactions
-- Protobuf schemas — define transactions, messages, state, and query types
-
-{/* todo: link to sdk and encoding pages */}
+- SDK application ([`BaseApp`](/sdk/next/learn/concepts/baseapp) + [modules](/sdk/next/learn/concepts/modules)) — the deterministic state machine that executes transactions
+- [Protobuf schemas](/sdk/next/learn/concepts/encoding) — define transactions, messages, state, and query types
 
 This page maps the block and transaction lifecycle back to those layers.
 
@@ -21,11 +19,11 @@ This page maps the block and transaction lifecycle back to those layers.
 
 CometBFT and the SDK application are two separate processes with distinct responsibilities. 
 - [CometBFT](/cometbft/v0.38/docs/introduction/intro) handles consensus: ordering transactions, managing validators, and driving block production. 
-- The [SDK application](/sdk/next/learn/intro/sdk-app-architecture#cosmos-sdk-application) handles state: executing transactions and updating the chain's data. 
+- The [SDK application](/sdk/next/concepts/sdk-structure) handles state: executing transactions and updating the chain's data. 
 
-The **ABCI** (Application Blockchain Interface) is the protocol that connects them: CometBFT calls ABCI methods on the application to drive each phase of the block lifecycle, and the application responds.
+The [ABCI](/sdk/next/learn/intro/sdk-app-architecture#abci-application-blockchain-interface) (Application Blockchain Interface) is the protocol that connects them: CometBFT calls ABCI methods on the application to drive each phase of the block lifecycle, and the application responds.
 
-`BaseApp` {/* todo: link to baseapp */} is the SDK's implementation of the ABCI interface. It receives these calls from CometBFT and orchestrates execution across modules. Modules plug into `BaseApp` and execute their logic during the appropriate phases.
+[`BaseApp`](/sdk/next/learn/concepts/baseapp) is the SDK's implementation of the ABCI interface. It receives these calls from CometBFT and orchestrates execution across modules. Modules plug into `BaseApp` and execute their logic during the appropriate phases.
 
 ```python
 +---------------------+          |         +-------------------------+
@@ -64,7 +62,7 @@ Commit                           |
 
 `InitChain` runs once when the chain starts for the first time. `BaseApp` loads `genesis.json`, which defines the chain's initial state, and calls each module's `InitGenesis` to populate its store. The initial validator set is established. Genesis runs before the first block begins.
 
-{/* todo: link to store#genesis-and-chain-initialization */}
+For how `genesis.json` becomes module state, see [Genesis and chain initialization](/sdk/next/learn/concepts/store#genesis-and-chain-initialization).
 
 ## CheckTx and the mempool
 
@@ -81,23 +79,22 @@ Mempool
 ```
 
 Transactions are sent as raw protobuf-encoded bytes.
-
-{/* todo: link to encoding section above */}
+For how those bytes are encoded deterministically, see [Encoding and Protobuf](/sdk/next/learn/concepts/encoding).
 
 During `CheckTx`, the SDK application's `BaseApp` decodes the transaction, verifies signatures and sequences, validates fees and gas, and performs basic message validation. 
+For the account sequence model, see [Accounts](/sdk/next/learn/concepts/accounts). For gas metering and fee-related execution details, see [Execution Context, Gas, and Events](/sdk/next/learn/concepts/context-gas-events).
 
-{/* todo: link to signatures, sequence fees, and gas sections above */}
 If validation fails, the transaction is rejected. If it passes, it enters the mempool. The mempool is a node's in-memory pool of validated transactions waiting to be included in a block.
 
 Validated transactions wait in the mempool until CometBFT selects a block proposer for the next round.
 
 ## PrepareProposal
 
-Each round, [CometBFT](/cometbft/v0.38/docs/introduction/intro#intro-to-abci) selects one validator to propose a block. `PrepareProposal` is called on that validator only. `BaseApp` selects transactions from the mempool respecting the block's `MaxTxBytes` and `MaxGas` limits and returns the final transaction list. {/* todo: link to baseapp#prepareproposal */}
+Each round, [CometBFT](/cometbft/v0.38/docs/introduction/intro#intro-to-abci) selects one validator to propose a block. `PrepareProposal` is called on that validator only. `BaseApp` selects transactions from the mempool respecting the block's `MaxTxBytes` and `MaxGas` limits and returns the final transaction list. For where this handler is configured, see [Block proposal and vote extensions](/sdk/next/learn/concepts/baseapp#block-proposal-and-vote-extensions).
 
 ## ProcessProposal
 
-Once the other validators receive the proposed block, CometBFT calls `ProcessProposal`. `BaseApp` verifies each transaction and returns `ACCEPT` or `REJECT`. No state is written. Once more than two-thirds of voting power accepts the block and consensus is reached, CometBFT calls `FinalizeBlock`. {/* todo: link to baseapp#processproposal */}
+Once the other validators receive the proposed block, CometBFT calls `ProcessProposal`. `BaseApp` verifies each transaction and returns `ACCEPT` or `REJECT`. No state is written. Once more than two-thirds of voting power accepts the block and consensus is reached, CometBFT calls `FinalizeBlock`. For the execution-model view of these handlers, see [Block proposal and vote extensions](/sdk/next/learn/concepts/baseapp#block-proposal-and-vote-extensions).
 
 ## FinalizeBlock
 
@@ -119,23 +116,23 @@ PreBlock → BeginBlock → transaction execution → EndBlock
 
 After `BeginBlock`, `BaseApp` iterates over each transaction in the block and runs it through a fixed pipeline.
 
-#### Step 1: AnteHandler
+#### Step 1: `AnteHandler`
 
-Configured in a Cosmos SDK chain's `app.go` file, the `AnteHandler` runs first for every transaction. It verifies the transaction's signature, increments the sequence number, deducts the fee, and meters the gas. {/* todo: link to baseapp#antehandler */}
+Configured in a Cosmos SDK chain's [`app.go`](/sdk/next/learn/concepts/app-go), the `AnteHandler` runs first for every transaction. For standard ordered transactions, it verifies signatures, checks sequence numbers, deducts fees, and meters gas. See [BaseApp](/sdk/next/learn/concepts/baseapp#antehandler) for the full middleware model.
 
-If the AnteHandler fails, the transaction aborts and its messages do not execute.
+If the `AnteHandler` fails, the transaction aborts and its messages do not execute.
 
 #### Step 2: Message routing and execution
 
-Each message in a transaction is routed via `BaseApp`'s `MsgServiceRouter` {/* todo: link to baseapp#msgservicerouter */} to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. `BaseApp` routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation.
+Each message in a transaction is routed via `BaseApp`'s `MsgServiceRouter` to the appropriate module's protobuf `Msg` service. Messages are module-specific and typically defined in a module's `tx.proto`. `BaseApp` routes these messages to the module's registered protobuf `Msg` service handler, which calls the module's `MsgServer` implementation. See [Message routing](/sdk/next/learn/concepts/baseapp#message-routing) for the router's role in the execution pipeline.
 
-The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys. {/* todo: link to msgserver and keeper sections */}
+The `MsgServer` contains the execution logic for that message type. It validates the message content, applies business rules, and updates state. State is read and written through the module's keeper, which manages access to the module's KV store and encapsulates its storage keys. [Intro to Modules](/sdk/next/learn/concepts/modules) explains how `MsgServer` and `Keeper` divide responsibilities.
 
 Messages execute sequentially in the order they appear in the transaction.
 
 #### Step 3: Atomicity
 
-Transactions are atomic: all messages succeed or none are committed.
+Message execution is atomic: all messages succeed or none of the message execution writes are committed.
 
 ```text
 Tx
@@ -144,9 +141,9 @@ Tx
   └─ Msg 3
 ```
 
-If any message fails, all state changes from that transaction are discarded and the transaction returns an error. The next transaction in the block is then executed. `BaseApp` uses cached stores internally to implement this.
+If any message fails, the message execution branch for that transaction is discarded and the transaction returns an error. The next transaction in the block is then executed. `BaseApp` uses cached stores internally to implement this. `AnteHandler` side effects may already have been applied before message execution begins.
 
-{/* todo: add section linking to unordered tx  */}
+If the chain enables unordered transactions, the normal sequence check is bypassed and replay protection uses a timeout timestamp plus unordered nonce tracking. For the client-facing flow, see [Generating an Unordered Transaction](/sdk/next/user/run-node/txs#generating-an-unordered-transaction).
 
 ### `EndBlock`
 
@@ -192,8 +189,7 @@ BaseApp commits KVStores
 ```
 
 <Note>
-The hooks that run at each phase (the AnteHandler, BeginBlocker, EndBlocker, and InitChainer) are registered in your chain's `app.go` before any block executes. `app.go` is the configuration layer that wires modules into `BaseApp`. Both are covered in detail in later sections.
-{/* todo: add links to app.go and BaseApp sections */}
+The hooks that run at each phase (the `AnteHandler`, `BeginBlocker`, `EndBlocker`, and `InitChainer`) are registered in your chain's [`app.go`](/sdk/next/learn/concepts/app-go) before any block executes. `app.go` is the configuration layer that wires modules into `BaseApp`.
 </Note>
 
 CometBFT drives block processing through ABCI. `BaseApp` implements ABCI and orchestrates execution.
@@ -203,8 +199,8 @@ CometBFT drives block processing through ABCI. `BaseApp` implements ABCI and orc
 - `ProcessProposal` runs on all validators to accept or reject the proposed block
 - Each block is executed inside a single `FinalizeBlock` call
 - Within `FinalizeBlock`: `PreBlock` → `BeginBlock` → transactions → `EndBlock`
-- Each transaction runs through AnteHandler → message routing → message execution
-- Transactions are atomic: all messages commit or none do
+- Each transaction runs through `AnteHandler` → message routing → message execution
+- Message execution within a transaction is atomic: all messages commit or none do
 - `FinalizeBlock` computes and returns the app hash; `Commit` persists state to disk
 
-Protobuf ensures canonical encoding so all validators interpret transactions identically.
+Protobuf ensures canonical encoding so all validators interpret transactions identically. The next section, [Intro to Modules](/sdk/next/learn/concepts/modules), turns from block execution to the module structure that actually implements chain logic.
