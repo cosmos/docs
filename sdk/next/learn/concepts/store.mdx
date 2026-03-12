@@ -20,9 +20,7 @@ State₂
 
 At its lowest level, the Cosmos SDK stores state as **key-value pairs**. Both keys and values are byte arrays. Modules encode structured data into those bytes using Protocol Buffers, and decode them back when reading.
 
-See [Encoding] for details on how modules serialize data into bytes.
-
-{/* todo: add link to encoding page */}
+See [Encoding and Protobuf](/sdk/next/learn/concepts/encoding) for details on how modules serialize data into bytes.
 The following example shows a conceptual example of how the bank module stores balances:
 
 ```go
@@ -34,13 +32,13 @@ key:   0x2 | 20 | cosmos1abc...xyz | uatom
 value: ProtocolBuffer(1000000)
 ```
 
-The key encodes the store prefix, address length, address, and denomination. The value is a Protocol Buffer-encoded amount. See [`x/bank/types/keys.go`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/x/bank/types/keys.go) for the actual implementation.
+The key encodes the store prefix, address length, address, and denomination. The value is a Protocol Buffer-encoded amount. See [`x/bank/types/keys.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/types/keys.go) for the actual implementation.
 
 Each module owns its own namespace in the key-value store. Keys are defined by the module and typically begin with a byte prefix that distinguishes them from other module keys.
 
 ## Multistore
 
-Every module has its own KVStore, and all module stores are mounted inside a [multistore](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/store/rootmulti/store.go) that is committed as a single state root.
+Every module has its own KVStore, and all module stores are mounted inside a [multistore](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/rootmulti/store.go) that is committed as a single state root.
 
 A module can only read and write to its own store through its keeper. Access is gated by a `StoreKey`, which is a typed capability object registered at app startup. Modules that don't hold the key cannot open the store.
 
@@ -49,7 +47,10 @@ This isolation follows an object-capabilities model:
 1. Modules cannot directly mutate another module's state
 2. Cross-module interaction must go through exposed keeper methods
 
-When a block finishes executing, the multistore computes a new root hash (the **app hash**) that represents the entire application state. That hash is returned to CometBFT, included in the block header, and is what makes the chain's state verifiable. {/* todo: link to lifecycle page */}
+
+
+When a block finishes executing, the multistore computes a new root hash (the **app hash**) that represents the entire application state. That hash is returned to CometBFT, included in the block header, and is what makes the chain's state verifiable. [Transaction Lifecycle](/sdk/next/learn/concepts/lifecycle) explains where that app hash is produced and committed.
+
 
 The full storage stack from top to bottom is:
 
@@ -67,9 +68,9 @@ Database backend (goleveldb by default)
 
 ## How state is stored (IAVL and commit stores)
 
-Each module's KVStore is backed by a [`CommitKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/iavl/store.go#L31). [See the store spec for more details.](/sdk/v0.53/build/spec/store/store)
+Each module's KVStore is backed by a [`CommitKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/iavl/store.go#L31). [See the store spec for more details.](/sdk/next/build/spec/store/store)
 
-By default, the Cosmos SDK uses [**IAVL**](https://github.com/cosmos/iavl), a versioned AVL Merkle tree.
+By default, the Cosmos SDK uses [IAVL](https://github.com/cosmos/iavl), a versioned AVL Merkle tree.
 
 IAVL gives every read and write of the tree `O(log n)` complexity, meaning the time to read or write a key scales with the height of the tree, not the total number of keys. It also versions state on each block commit, and produces deterministic root hashes that can be used to generate Merkle proofs for light clients.
 
@@ -96,6 +97,10 @@ Only modified nodes are rewritten, and unchanged nodes are shared across version
 
 Because of this, state transitions must be deterministic, encoding must be deterministic, and transaction ordering must be consistent.
 
+### App hash
+
+The **app hash** is the cryptographic root hash of the application's committed state. It summarizes all module stores together through the `CommitMultiStore`. Because every validator executes the same state transitions deterministically, they should all compute the same app hash for a given block.
+
 ### Database backend
 
 The IAVL tree does not store data in memory. It writes versioned nodes to a database backend, which is a key-value store on disk.
@@ -116,11 +121,11 @@ Beyond the base KVStore, the SDK provides several specialized store wrappers.
 
 ### CommitKVStore (persistent store)
 
-The [`CommitKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/iavl/store.go#L31) is the main persistent store backed by IAVL. It persists across blocks, produces versioned commits, and contributes to the app hash.
+The [`CommitKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/iavl/store.go#L31) is the main persistent store backed by IAVL. It persists across blocks, produces versioned commits, and contributes to the app hash.
 
 ### CacheMultiStore (transaction isolation)
 
-Before executing each transaction, the Cosmos SDK's BaseApp struct creates a [`CacheMultiStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/cachemulti/store.go) — a cached, copy-on-write view of the multistore.
+Before executing each transaction, the Cosmos SDK's `BaseApp` creates a [`CacheMultiStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/cachemulti/store.go) — a cached, copy-on-write view of the multistore.
 
 All writes during that transaction occur in this cached layer:
 
@@ -135,14 +140,13 @@ Multistore
 - If the transaction succeeds, changes are written to the underlying store.
 - If the transaction fails, the cache is discarded and no state changes are committed.
 
-
 This is how transaction atomicity is implemented in the store layer.
 
 ### Ephemeral store types
 
-[**Transient stores**](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/transient/store.go) are cleared at the end of each block. They are used for temporary per-block data such as counters or intermediate calculations, and do not affect the app hash.
+[Transient stores](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/transient/store.go) are cleared at the end of each block. They are used for temporary per-block data such as counters or intermediate calculations, and do not affect the app hash.
 
-[**Memory stores**](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/mem/store.go) survive block commits but reset when the node restarts — their `Commit()` is a no-op and data is never written to disk. They are used for in-process caching of data that is expensive to recompute each block but does not need to survive a restart. Modules access them via `MemoryStoreKey`, mounted with `MountMemoryStores` in `app.go`.
+[Memory stores](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/mem/store.go) survive block commits but reset when the node restarts — their `Commit()` is a no-op and data is never written to disk. They are used for in-process caching of data that is expensive to recompute each block but does not need to survive a restart. Modules access them via `MemoryStoreKey`, mounted with `MountMemoryStores` in `app.go`.
 
 | Store type | Survives block commit | Survives restart |
 |---|---|---|
@@ -152,18 +156,16 @@ This is how transaction atomicity is implemented in the store layer.
 
 ### Gas and trace store wrappers
 
-All store accesses are wrapped with additional behavior by the [`GasKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/gaskv/store.go) and [`TraceKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/tracekv/store.go) wrappers.
+All store accesses are wrapped with additional behavior by the [`GasKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/gaskv/store.go) and [`TraceKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/tracekv/store.go) wrappers.
 
 - `GasKVStore` charges gas for each read and write
 - `TraceKVStore` logs each store operation for debugging
 
-Because state access is the dominant cost of transaction execution, the SDK charges gas at the store layer so that expensive reads and writes are reflected in transaction fees. Every read and write of a KVStore costs gas, and expensive operations naturally cost more.
-
-{/* todo: link to gas */}
+Because state access is the dominant cost of transaction execution, the SDK charges gas at the store layer so that expensive reads and writes are reflected in transaction fees. Every read and write of a KVStore costs gas, and expensive operations naturally cost more. [Execution Context, Gas, and Events](/sdk/next/learn/concepts/context-gas-events) explains how gas metering works at runtime.
 
 ### Prefix store
 
-A [**prefix store**](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/prefix/store.go) wraps a KVStore and automatically prepends a fixed byte prefix to every key. This lets keepers scope their reads and writes to a sub-namespace without manually constructing prefixed keys on every call.
+A [**prefix store**](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/prefix/store.go) wraps a KVStore and automatically prepends a fixed byte prefix to every key. This lets keepers scope their reads and writes to a sub-namespace without manually constructing prefixed keys on every call.
 
 ```go
 prefixStore := prefix.NewStore(kvStore, types.KeyPrefix("balances"))
@@ -195,9 +197,7 @@ k.Counter.Set(ctx, count+1)
 
 The Collections API defines the storage schema, handles encoding and decoding, ensures consistent key construction, and makes state access type-safe.
 
-Under the hood, collections still store data in a KVStore. Collections are used to provide a safer abstraction over raw byte keys. See [`collections/collections.go`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/collections/collections.go) for the base interface definitions.
-
-{/* todo: link to collections package page */}
+Under the hood, collections still store data in a KVStore. Collections are used to provide a safer abstraction over raw byte keys. See [`collections/collections.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/collections/collections.go) for the base interface definitions. For the full package guide, see [Collections](/sdk/next/build/packages/collections).
 
 ## How modules access state
 
@@ -225,14 +225,13 @@ The keeper exposes high-level methods that construct keys, encode values, and en
 func (k Keeper) GetBalance(ctx sdk.Context, addr sdk.AccAddress) sdk.Coins
 func (k Keeper) SetParams(ctx sdk.Context, params types.Params)
 ```
-
-{/* todo: add link to keeper section of intro to modules page */}
+For the keeper's role within a module, see [Keeper](/sdk/next/learn/concepts/modules#keeper).
 
 ## Genesis and chain initialization
 
 Before the first block executes, the chain must start with an initial state called **genesis**, defined in `genesis.json`. Genesis is the first write to the KVStores — it is how every module's state exists before any transaction runs.
 
-During `InitChain`, BaseApp calls each module's `InitGenesis` to populate its store:
+During `InitChain`, `BaseApp` calls each module's `InitGenesis` to populate its store:
 
 ```
 genesis.json
@@ -244,15 +243,12 @@ Module.InitGenesis
 KVStores populated
 ```
 
-For information on how modules define their genesis methods (`DefaultGenesis`, `ValidateGenesis`, `InitGenesis`, `ExportGenesis`) and initialization ordering, see [modules](./modules.mdx) and the [lifecycle page](./lifecycle.mdx).
+For information on how modules define their genesis methods (`DefaultGenesis`, `ValidateGenesis`, `InitGenesis`, `ExportGenesis`) and initialization ordering, see [Intro to Modules](/sdk/next/learn/concepts/modules) and [Transaction Lifecycle](/sdk/next/learn/concepts/lifecycle).
 
-{/* todo: add correct links to modules and lifecycle pages */}
-
+{/* todo: link to genesis in tutorial */}
 
 ## Next steps
 
-For more information on stores, pruning strategies, and store configuration, see the [store spec](/sdk/v0.53/build/spec/store/store). For the full store interface definitions, see [`store/types/store.go`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/store/types/store.go) in the SDK source.
+For more information on stores, pruning strategies, and store configuration, see the [store spec](/sdk/next/build/spec/store/store). For the full store interface definitions, see [`store/types/store.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/types/store.go) in the SDK source.
 
-Because KV stores only hold raw bytes, modules must serialize structured data before writing it. The next section explains how the Cosmos SDK uses Protocol Buffers to encode that data deterministically, and why every validator must produce exactly the same bytes.
-
-{/* todo: link to next page */}
+Because KV stores only hold raw bytes, modules must serialize structured data before writing it. The next section, [Encoding and Protobuf](/sdk/next/learn/concepts/encoding), explains how the Cosmos SDK uses Protocol Buffers to encode that data deterministically, and why every validator must produce exactly the same bytes.
