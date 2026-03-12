@@ -1,0 +1,157 @@
+---
+title: "Query Extensions"
+description: "Build typed query extensions that wrap your module's gRPC query service"
+---
+
+CosmJS uses the **query extension** pattern to expose typed query methods on the client. Each extension wraps a protobuf `QueryClientImpl` generated from your module's `.proto` files and attaches its methods to a shared `QueryClient`.
+
+## The Extension Pattern
+
+An extension is a function that takes a `QueryClient` and returns an object with your query methods, namespaced under a key that represents your module:
+
+```typescript
+import { createProtobufRpcClient, QueryClient } from "@cosmjs/stargate";
+import { QueryClientImpl } from "./generated/blog/v1/query";
+
+export interface BlogExtension {
+  readonly blog: {
+    readonly post: (id: bigint) => Promise<Post>;
+    readonly posts: (author: string) => Promise<Post[]>;
+  };
+}
+
+export function setupBlogExtension(base: QueryClient): BlogExtension {
+  const rpc = createProtobufRpcClient(base);
+  const queryService = new QueryClientImpl(rpc);
+
+  return {
+    blog: {
+      post: async (id: bigint) => {
+        const { post } = await queryService.Post({ id });
+        if (!post) throw new Error(`Post ${id} not found`);
+        return post;
+      },
+      posts: async (author: string) => {
+        const { posts } = await queryService.Posts({ author });
+        return posts;
+      },
+    },
+  };
+}
+```
+
+The three layers work together:
+
+1. `createProtobufRpcClient` wraps the `QueryClient` into a protobuf-compatible RPC transport
+2. `QueryClientImpl` (generated from your `.proto` files) provides typed query methods over that transport
+3. Your extension function maps those raw RPC calls into a developer-friendly API
+
+<Info>
+The outer key (`blog` above) namespaces your methods on the query client. Choose a name that matches your module to avoid collisions with other extensions.
+</Info>
+
+## Composing Extensions
+
+Use `QueryClient.withExtensions` to combine your extension with built-in ones:
+
+```typescript
+import { QueryClient, setupBankExtension, setupStakingExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupBlogExtension,
+);
+
+const post = await queryClient.blog.post(1n);
+const balance = await queryClient.bank.balance("cosmos1abc...", "utoken");
+```
+
+`QueryClient.withExtensions` supports up to 18 extensions, which is enough for even the most feature-rich chains. The resulting client is fully typed — TypeScript knows about all the query namespaces you've composed.
+
+## Using QueryClientImpl Directly
+
+If you only need a quick one-off query without composing extensions, use the generated query service directly:
+
+```typescript
+import { createProtobufRpcClient, QueryClient } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+import { QueryClientImpl } from "./generated/blog/v1/query";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = new QueryClient(cometClient);
+const rpc = createProtobufRpcClient(queryClient);
+const blogQuery = new QueryClientImpl(rpc);
+
+const { post } = await blogQuery.Post({ id: 1n });
+```
+
+This approach skips the extension boilerplate and is useful for scripts, debugging, or when you only query a single module.
+
+## Handling Pagination
+
+Many Cosmos SDK queries return paginated results. Pass `PageRequest` to control pagination and iterate through all pages:
+
+```typescript
+import { createPagination, createProtobufRpcClient, QueryClient } from "@cosmjs/stargate";
+import { QueryClientImpl } from "./generated/blog/v1/query";
+
+export interface BlogExtension {
+  readonly blog: {
+    readonly allPosts: (paginationKey?: Uint8Array) => Promise<{
+      readonly posts: Post[];
+      readonly nextKey: Uint8Array | undefined;
+    }>;
+  };
+}
+
+export function setupBlogExtension(base: QueryClient): BlogExtension {
+  const rpc = createProtobufRpcClient(base);
+  const queryService = new QueryClientImpl(rpc);
+
+  return {
+    blog: {
+      allPosts: async (paginationKey?: Uint8Array) => {
+        const response = await queryService.Posts({
+          pagination: createPagination(paginationKey),
+        });
+        return {
+          posts: response.posts,
+          nextKey: response.pagination?.nextKey,
+        };
+      },
+    },
+  };
+}
+```
+
+Iterate through all pages:
+
+```typescript
+const allPosts: Post[] = [];
+let nextKey: Uint8Array | undefined;
+
+do {
+  const page = await queryClient.blog.allPosts(nextKey);
+  allPosts.push(...page.posts);
+  nextKey = page.nextKey?.length ? page.nextKey : undefined;
+} while (nextKey);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Protobuf Types" icon="cube" href="/cosmjs/v0.38.x/guides/extending/custom-types">
+    Register message types in the Registry for signing transactions.
+  </Card>
+  <Card title="Custom Modules" icon="puzzle-piece" href="/cosmjs/v0.38.x/guides/extending/custom-modules">
+    Combine query extensions with types and Amino converters into a complete module.
+  </Card>
+  <Card title="Code Generation" icon="wand-magic-sparkles" href="/cosmjs/v0.38.x/guides/extending/code-generation">
+    Generate QueryClientImpl and message codecs from protobuf definitions.
+  </Card>
+</CardGroup>

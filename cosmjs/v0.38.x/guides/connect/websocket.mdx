@@ -1,0 +1,95 @@
+---
+title: "WebSocket Transport"
+description: "Connect over WebSocket for persistent connections and real-time event subscriptions"
+---
+
+Use a `ws://` or `wss://` URL to connect over WebSocket. This gives you a persistent connection and is the only transport that supports real-time event subscriptions.
+
+## Using High-Level Clients
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("wss://rpc.my-chain.network");
+```
+
+The transport is selected automatically based on the URL scheme.
+
+## Subscriptions
+
+WebSocket connections can subscribe to new blocks and transactions:
+
+```typescript
+import { Comet38Client, WebsocketClient } from "@cosmjs/tendermint-rpc";
+
+const wsClient = new WebsocketClient("wss://rpc.my-chain.network");
+const cometClient = await Comet38Client.create(wsClient);
+
+const newBlocks = cometClient.subscribeNewBlock();
+const subscription = newBlocks.subscribe({
+  next: (event) => {
+    console.info("New block:", event.header.height);
+  },
+  error: (err) => console.error(err),
+  complete: () => console.info("Subscription ended"),
+});
+
+// Clean up when done
+subscription.unsubscribe();
+cometClient.disconnect();
+```
+
+Available subscription methods on CometBFT clients:
+
+| Method | Events |
+|--------|--------|
+| `subscribeNewBlock()` | Full block data on each new block |
+| `subscribeNewBlockHeader()` | Block header only |
+| `subscribeTx(query?)` | Transactions matching an optional query |
+
+## Reconnection
+
+`WebsocketClient` reconnects automatically with exponential backoff (100 ms initial, doubling up to 5 seconds). Requests made while disconnected are queued and sent when the connection is restored.
+
+## Error Handler
+
+The `WebsocketClient` constructor accepts an optional error handler as its second argument:
+
+```typescript
+const wsClient = new WebsocketClient("wss://rpc.my-chain.network", (err) => {
+  console.error("WebSocket error:", err);
+});
+```
+
+If omitted, errors are thrown by default.
+
+## Checking Subscription Support
+
+Not all transports support event subscriptions. Only `WebsocketClient` implements the streaming interface. If you have a `CometClient` and need to check at runtime, verify the underlying RPC client is a `WebsocketClient`:
+
+```typescript
+import { WebsocketClient } from "@cosmjs/tendermint-rpc";
+
+if (rpcClient instanceof WebsocketClient) {
+  const stream = cometClient.subscribeNewBlock();
+  // ...
+} else {
+  // Fall back to polling
+}
+```
+
+Calling `subscribeNewBlock()`, `subscribeNewBlockHeader()`, or `subscribeTx()` on a CometBFT client backed by an HTTP transport throws `"This RPC client type cannot subscribe to events"`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP Transport" icon="globe" href="/cosmjs/v0.38.x/guides/connect/http">
+    Use HTTP for stateless request-response queries.
+  </Card>
+  <Card title="Timeouts" icon="clock" href="/cosmjs/v0.38.x/guides/connect/timeouts">
+    Configure WebSocket connection and broadcast timeouts.
+  </Card>
+  <Card title="Connection Errors" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/connect/errors">
+    Handle WebSocket errors and reconnection failures.
+  </Card>
+</CardGroup>

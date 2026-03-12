@@ -1,0 +1,102 @@
+---
+title: "Executing Contracts"
+description: "Execute single or batched contract calls with funds and parse transaction events"
+---
+
+Executing a contract sends a JSON message that triggers state changes. You can attach native tokens, batch multiple executions atomically, and inspect the emitted events.
+
+## Basic Execution
+
+```typescript
+const result = await client.execute(
+  address,
+  contractAddress,
+  { increment: {} },
+  "auto",
+);
+
+const { transactionHash, events, gasUsed } = result;
+```
+
+## Execute with Funds
+
+Attach native tokens to the execution message. The tokens are transferred to the contract as part of the message execution.
+
+```typescript
+const result = await client.execute(
+  address,
+  contractAddress,
+  { deposit: {} },
+  "auto",
+  "depositing tokens",
+  [{ denom: "uosmo", amount: "5000000" }],
+);
+```
+
+## Execute Multiple Contracts Atomically
+
+Bundle multiple contract calls into a single transaction using `executeMultiple`. If any call fails, the entire transaction is reverted.
+
+```typescript
+const result = await client.executeMultiple(
+  address,
+  [
+    {
+      contractAddress: counterAddress,
+      msg: { increment: {} },
+    },
+    {
+      contractAddress: registryAddress,
+      msg: { register: { name: "alice" } },
+      funds: [{ denom: "uosmo", amount: "5000" }],
+    },
+  ],
+  "auto",
+);
+```
+
+Each instruction in the array follows the `ExecuteInstruction` interface:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contractAddress` | `string` | Target contract address |
+| `msg` | `JsonObject` | The JSON execute message |
+| `funds` | `Coin[]` | Optional native tokens to attach |
+
+## Parsing Events
+
+Contract executions emit custom events under the `"wasm"` event type. These contain contract-defined key-value attributes.
+
+```typescript
+const result = await client.execute(address, contractAddress, { release: {} }, "auto");
+
+const wasmEvents = result.events.filter((e) => e.type === "wasm");
+for (const event of wasmEvents) {
+  for (const attr of event.attributes) {
+    console.info(`${attr.key}: ${attr.value}`);
+  }
+}
+```
+
+When using `executeMultiple`, each contract call produces its own set of wasm events. Filter by the `_contract_address` attribute to distinguish which contract emitted each event.
+
+## Execution Result
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transactionHash` | `string` | Upper-case hex transaction hash |
+| `height` | `number` | Block height of inclusion |
+| `events` | `Event[]` | All transaction events (including `"wasm"` events) |
+| `gasWanted` | `bigint` | Gas requested |
+| `gasUsed` | `bigint` | Gas consumed |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Contract Administration" icon="shield" href="/cosmjs/v0.38.x/guides/cosmwasm/administration">
+    Migrate contracts and manage admin privileges.
+  </Card>
+  <Card title="Gas and Advanced Usage" icon="gauge-high" href="/cosmjs/v0.38.x/guides/cosmwasm/gas-and-advanced">
+    Gas estimation, custom messages, and binary helpers.
+  </Card>
+</CardGroup>

@@ -1,0 +1,236 @@
+---
+title: "@cosmjs/crypto"
+description: "Cryptographic primitives for blockchain applications"
+---
+
+Low-level cryptographic library providing hashing, signing, HD key derivation, and encryption. Wraps `@noble/*` libraries with type safety and a consistent API.
+
+```bash
+npm install @cosmjs/crypto
+```
+
+## Hashing
+
+### Convenience Functions
+
+| Function | Parameters | Returns | Output Size |
+|----------|------------|---------|-------------|
+| `sha256` | `data: Uint8Array` | `Uint8Array` | 32 bytes |
+| `sha512` | `data: Uint8Array` | `Uint8Array` | 64 bytes |
+| `keccak256` | `data: Uint8Array` | `Uint8Array` | 32 bytes |
+| `ripemd160` | `data: Uint8Array` | `Uint8Array` | 20 bytes |
+
+### Incremental Hashing Classes
+
+For large data, use the class API with `update()` for incremental hashing:
+
+| Class | Methods |
+|-------|---------|
+| `Sha256` | `constructor(data?: Uint8Array)`, `update(data: Uint8Array): Sha256`, `digest(): Uint8Array` |
+| `Sha512` | `constructor(data?: Uint8Array)`, `update(data: Uint8Array): Sha512`, `digest(): Uint8Array` |
+| `Keccak256` | `constructor(data?: Uint8Array)`, `update(data: Uint8Array): Keccak256`, `digest(): Uint8Array` |
+| `Ripemd160` | `constructor(data?: Uint8Array)`, `update(data: Uint8Array): Ripemd160`, `digest(): Uint8Array` |
+
+```typescript
+import { sha256, Sha256, keccak256 } from "@cosmjs/crypto";
+
+const hash = sha256(new Uint8Array([1, 2, 3]));
+
+const hasher = new Sha256();
+hasher.update(chunk1);
+hasher.update(chunk2);
+const incrementalHash = hasher.digest();
+```
+
+### Hmac
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `hashFunction: HashFunction`, `key: Uint8Array` | `Hmac` |
+| `update` | `data: Uint8Array` | `Hmac` |
+| `digest` | — | `Uint8Array` |
+
+```typescript
+import { Hmac, Sha256 } from "@cosmjs/crypto";
+
+const hmac = new Hmac(Sha256, key);
+hmac.update(message);
+const mac = hmac.digest();
+```
+
+## Secp256k1
+
+Elliptic curve operations for Cosmos, Bitcoin, and Ethereum signing.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `makeKeypair` (static) | `privkey: Uint8Array` | `Promise<Secp256k1Keypair>` |
+| `createSignature` (static) | `messageHash: Uint8Array`, `privkey: Uint8Array` | `Promise<ExtendedSecp256k1Signature>` |
+| `verifySignature` (static) | `signature: Secp256k1Signature`, `messageHash: Uint8Array`, `pubkey: Uint8Array` | `Promise<boolean>` |
+| `compressPubkey` (static) | `pubkey: Uint8Array` | `Uint8Array` |
+| `uncompressPubkey` (static) | `pubkey: Uint8Array` | `Uint8Array` |
+| `trimRecoveryByte` (static) | `signature: Uint8Array` | `Uint8Array` |
+
+### Types
+
+```typescript
+interface Secp256k1Keypair {
+  readonly pubkey: Uint8Array;  // 33 bytes (compressed) or 65 bytes
+  readonly privkey: Uint8Array; // 32 bytes
+}
+```
+
+```typescript
+import { Secp256k1, sha256 } from "@cosmjs/crypto";
+
+const keypair = await Secp256k1.makeKeypair(privkey);
+const hash = sha256(message);
+const signature = await Secp256k1.createSignature(hash, keypair.privkey);
+const valid = await Secp256k1.verifySignature(signature, hash, keypair.pubkey);
+```
+
+## Secp256k1Signature / ExtendedSecp256k1Signature
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `r` | `Uint8Array` | 32 bytes |
+| `s` | `Uint8Array` | 32 bytes |
+| `recovery` | `number` | 0 or 1 (extended only) |
+
+| Method | Returns |
+|--------|---------|
+| `toFixedLength()` | `Uint8Array` (64 bytes) |
+| `toDer()` | `Uint8Array` |
+| `fromFixedLength(data)` (static) | `Secp256k1Signature` / `ExtendedSecp256k1Signature` |
+| `fromDer(data)` (static) | `Secp256k1Signature` |
+
+## Ed25519
+
+Edwards-curve digital signature algorithm for fast, deterministic signing.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `makeKeypair` (static) | `seed: Uint8Array` | `Promise<Ed25519Keypair>` |
+| `createSignature` (static) | `message: Uint8Array`, `keypair: Ed25519Keypair` | `Promise<Uint8Array>` |
+| `verifySignature` (static) | `signature: Uint8Array`, `message: Uint8Array`, `pubkey: Uint8Array` | `Promise<boolean>` |
+
+<Info>
+  Ed25519 hashes the message internally. Do not pre-hash the message before signing.
+</Info>
+
+```typescript
+import { Ed25519 } from "@cosmjs/crypto";
+
+const keypair = await Ed25519.makeKeypair(seed32bytes);
+const signature = await Ed25519.createSignature(message, keypair);
+const valid = await Ed25519.verifySignature(signature, message, keypair.pubkey);
+```
+
+## BIP-39 Mnemonics
+
+### Bip39
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `encode` (static) | `entropy: Uint8Array` | `EnglishMnemonic` |
+| `decode` (static) | `mnemonic: EnglishMnemonic` | `Uint8Array` |
+| `mnemonicToSeed` (static) | `mnemonic: EnglishMnemonic`, `password?: string` | `Promise<Uint8Array>` |
+
+### EnglishMnemonic
+
+Validates and wraps a BIP-39 English mnemonic string. Throws on invalid input.
+
+```typescript
+import { Bip39, EnglishMnemonic, Random } from "@cosmjs/crypto";
+
+const mnemonic = Bip39.encode(Random.getBytes(32));  // 24 words
+const mnemonic12 = Bip39.encode(Random.getBytes(16)); // 12 words
+
+const validated = new EnglishMnemonic("your mnemonic words ...");
+const seed = await Bip39.mnemonicToSeed(validated);
+```
+
+## SLIP-10 HD Key Derivation
+
+### Slip10
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `derivePath` (static) | `curve: Slip10Curve`, `seed: Uint8Array`, `path: HdPath` | `Slip10Result` |
+
+### Path Utilities
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `stringToPath` | `pathString: string` | `HdPath` |
+| `pathToString` | `path: HdPath` | `string` |
+| `slip10CurveFromString` | `curve: string` | `Slip10Curve` |
+
+### Types
+
+```typescript
+type HdPath = readonly Slip10RawIndex[];
+
+interface Slip10Result {
+  readonly privkey: Uint8Array;
+  readonly chainCode: Uint8Array;
+}
+
+enum Slip10Curve {
+  Secp256k1 = "Bitcoin seed",
+  Ed25519 = "ed25519 seed",
+}
+```
+
+```typescript
+import { Slip10, Slip10Curve, stringToPath, Bip39, EnglishMnemonic } from "@cosmjs/crypto";
+
+const mnemonic = new EnglishMnemonic("your mnemonic ...");
+const seed = await Bip39.mnemonicToSeed(mnemonic);
+const hdPath = stringToPath("m/44'/118'/0'/0/0");
+const { privkey } = Slip10.derivePath(Slip10Curve.Secp256k1, seed, hdPath);
+```
+
+## Encryption
+
+### Xchacha20poly1305Ietf
+
+Authenticated encryption using XChaCha20-Poly1305.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `encrypt` (static) | `plaintext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Uint8Array` |
+| `decrypt` (static) | `ciphertext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Uint8Array` |
+
+The constant `xchacha20NonceLength` is `24`.
+
+### Argon2id
+
+Password-based key derivation.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `execute` (static) | `password: string`, `salt: Uint8Array`, `options: Argon2idOptions` | `Promise<Uint8Array>` |
+
+```typescript
+interface Argon2idOptions {
+  readonly outputLength: number;
+  readonly opsLimit: number;
+  readonly memLimitKib: number;
+}
+```
+
+## Random
+
+Cryptographically secure random number generation.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getBytes` (static) | `count: number` | `Uint8Array` |
+
+```typescript
+import { Random } from "@cosmjs/crypto";
+
+const nonce = Random.getBytes(24);
+const privkey = Random.getBytes(32);
+```

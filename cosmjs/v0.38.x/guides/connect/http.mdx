@@ -1,0 +1,75 @@
+---
+title: "HTTP Transport"
+description: "Connect to Cosmos SDK chains over HTTP using direct and batched RPC clients"
+---
+
+HTTP is the default transport for `http://` and `https://` endpoints. Each query sends a single JSON-RPC POST request using the platform's `fetch` API. There is no persistent connection — each call is independent.
+
+## Using High-Level Clients
+
+Pass an HTTP URL to `connect` and CosmJS handles the rest:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const height = await client.getHeight();
+client.disconnect();
+```
+
+## Using the HTTP Client Directly
+
+For more control, create an `HttpClient` and pass it through the CometBFT client layer:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+import { Comet38Client, HttpClient } from "@cosmjs/tendermint-rpc";
+
+const rpcClient = new HttpClient("https://rpc.my-chain.network");
+const cometClient = await Comet38Client.create(rpcClient);
+const client = StargateClient.create(cometClient);
+```
+
+<Note>
+When constructing the CometBFT client manually, you need to know the node's version. Use `Tendermint37Client` for Tendermint 0.37, `Comet38Client` for CometBFT 0.38, or `Comet1Client` for CometBFT 1.x.
+</Note>
+
+## Batching HTTP Requests
+
+`HttpBatchClient` groups multiple concurrent `execute()` calls into a single JSON-RPC batch request, reducing HTTP round-trips:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+import { Comet38Client, HttpBatchClient } from "@cosmjs/tendermint-rpc";
+
+const rpcClient = new HttpBatchClient("https://rpc.my-chain.network", {
+  batchSizeLimit: 10,
+  dispatchInterval: 50,
+});
+
+const cometClient = await Comet38Client.create(rpcClient);
+const client = StargateClient.create(cometClient);
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `batchSizeLimit` | `number` | 20 | Max requests per batch. Queue flushes when this limit is reached. |
+| `dispatchInterval` | `number` | 20 | Milliseconds between automatic queue flushes. |
+| `httpTimeout` | `number` | — | Request timeout in milliseconds. |
+
+Batching is useful when your application fires many independent queries in rapid succession — for example, fetching balances for a list of addresses.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="WebSocket Transport" icon="plug" href="/cosmjs/v0.38.x/guides/connect/websocket">
+    Use persistent connections and real-time subscriptions.
+  </Card>
+  <Card title="Custom Endpoints" icon="key" href="/cosmjs/v0.38.x/guides/connect/custom-endpoints">
+    Attach authentication headers to HTTP and batched clients.
+  </Card>
+  <Card title="Timeouts" icon="clock" href="/cosmjs/v0.38.x/guides/connect/timeouts">
+    Configure HTTP request and batch timeouts.
+  </Card>
+</CardGroup>

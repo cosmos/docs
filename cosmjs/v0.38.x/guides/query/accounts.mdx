@@ -1,0 +1,94 @@
+---
+title: "Account Queries"
+description: "Look up account info, sequence numbers, and handle custom account types with AccountParser"
+---
+
+Account data is available through both the high-level client and the auth extension. Use `StargateClient` methods for most cases, and drop down to the auth extension when you need the raw protobuf response.
+
+## Using StargateClient
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const account = await client.getAccount("cosmos1...");
+if (account) {
+  console.info(account.address);
+  console.info(account.accountNumber);
+  console.info(account.sequence);
+  console.info(account.pubkey);
+}
+
+const seq = await client.getSequence("cosmos1...");
+console.info(seq.accountNumber, seq.sequence);
+```
+
+`getAccount` returns `null` for addresses that have never received tokens. `getSequence` throws if the account does not exist.
+
+## Supported Account Types
+
+The default `accountFromAny` parser handles these Cosmos SDK account types:
+
+| Type URL | Account Type |
+|----------|-------------|
+| `/cosmos.auth.v1beta1.BaseAccount` | Standard account |
+| `/cosmos.auth.v1beta1.ModuleAccount` | Module-owned account |
+| `/cosmos.vesting.v1beta1.BaseVestingAccount` | Base vesting |
+| `/cosmos.vesting.v1beta1.ContinuousVestingAccount` | Continuous vesting |
+| `/cosmos.vesting.v1beta1.DelayedVestingAccount` | Delayed vesting |
+| `/cosmos.vesting.v1beta1.PeriodicVestingAccount` | Periodic vesting |
+
+Any unrecognized type URL causes `accountFromAny` to throw. Use a custom `AccountParser` to handle chain-specific account types.
+
+## Using the Auth Extension Directly
+
+```typescript
+import { QueryClient, setupAuthExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupAuthExtension);
+
+const anyAccount = await queryClient.auth.account("cosmos1...");
+```
+
+The auth extension returns the raw protobuf `Any` type. `StargateClient` parses this with `accountFromAny`, which handles `BaseAccount`, `ModuleAccount`, and all vesting account types.
+
+## Custom Account Parser
+
+Chains with non-standard account types require a custom `AccountParser`:
+
+```typescript
+import { StargateClient, accountFromAny } from "@cosmjs/stargate";
+
+function myAccountParser(any: Any): Account {
+  if (any.typeUrl === "/my.chain.CustomAccount") {
+    const decoded = MyCustomAccount.decode(any.value);
+    return {
+      address: decoded.address,
+      pubkey: null,
+      accountNumber: decoded.accountNumber,
+      sequence: decoded.sequence,
+    };
+  }
+  return accountFromAny(any);
+}
+
+const client = await StargateClient.connect("https://rpc.my-chain.network", {
+  accountParser: myAccountParser,
+});
+```
+
+<Tip>
+Fall back to `accountFromAny` for standard types so your parser stays forward-compatible with Cosmos SDK updates.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Bank Queries" icon="building-columns" href="/cosmjs/v0.38.x/guides/query/bank">
+    Token balances and supply.
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/query/error-handling">
+    Handle missing accounts and other query errors.
+  </Card>
+</CardGroup>

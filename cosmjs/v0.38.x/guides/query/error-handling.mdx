@@ -1,0 +1,79 @@
+---
+title: "Query Error Handling"
+description: "Handle missing accounts, NotFound errors, broadcast failures, and timeouts"
+---
+
+CosmJS queries can throw errors for various reasons. The high-level clients handle common cases gracefully, but you should be aware of the patterns for each type of failure.
+
+## Missing Accounts
+
+`getAccount` returns `null` when the address has never received tokens. It catches `rpc error: code = NotFound` from the chain and converts it to `null`:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const account = await client.getAccount("cosmos1unknown...");
+if (account === null) {
+  console.info("Account does not exist on chain");
+}
+```
+
+<Note>
+`getSequence` throws if the account does not exist — call `getAccount` first if the address might not be funded.
+</Note>
+
+## Missing Delegations
+
+`getDelegation` returns `null` when there is no delegation between the given delegator and validator. It catches `"key not found"` errors:
+
+```typescript
+const delegation = await client.getDelegation("cosmos1...", "cosmosvaloper1...");
+if (delegation === null) {
+  console.info("No delegation to this validator");
+}
+```
+
+## NotFound Errors on Extensions
+
+Extension methods do not catch errors automatically. A query for a non-existent resource (e.g., a denom that doesn't exist) throws with a message matching `rpc error: code = NotFound`:
+
+```typescript
+try {
+  const metadata = await queryClient.bank.denomMetadata("nonexistent");
+} catch (error) {
+  if (error instanceof Error && /code = NotFound/i.test(error.message)) {
+    console.info("Denomination not found");
+  } else {
+    throw error;
+  }
+}
+```
+
+## Broadcast Errors
+
+When broadcasting fails at the CheckTx stage, a `BroadcastTxError` is thrown with `code`, `codespace`, and `log` fields. If the transaction is accepted but not included in a block within the timeout, a `TimeoutError` is thrown with the `txId` so you can check later:
+
+```typescript
+import { TimeoutError, BroadcastTxError } from "@cosmjs/stargate";
+
+try {
+  const result = await client.broadcastTx(signedTx);
+} catch (error) {
+  if (error instanceof BroadcastTxError) {
+    console.info("Rejected:", error.code, error.codespace, error.log);
+  } else if (error instanceof TimeoutError) {
+    console.info("Timed out, check later with txId:", error.txId);
+  }
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Transaction Queries" icon="receipt" href="/cosmjs/v0.38.x/guides/query/transactions">
+    Search and decode transactions.
+  </Card>
+  <Card title="Querying Overview" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/query/querying">
+    All available query methods and extensions.
+  </Card>
+</CardGroup>

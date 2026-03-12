@@ -1,0 +1,105 @@
+---
+title: "Pagination"
+description: "Navigate large result sets page by page using CosmJS pagination keys"
+---
+
+Many Cosmos SDK queries return paginated results. CosmJS query extensions accept an optional `paginationKey` parameter on paginated methods. Responses include a `pagination` field with a `nextKey` for fetching subsequent pages.
+
+## Manual Page-by-Page
+
+```typescript
+import { QueryClient, setupStakingExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupStakingExtension);
+
+let paginationKey: Uint8Array | undefined = undefined;
+
+do {
+  const response = await queryClient.staking.validators(
+    "BOND_STATUS_BONDED",
+    paginationKey,
+  );
+
+  for (const validator of response.validators) {
+    console.info(validator.description?.moniker);
+  }
+
+  paginationKey = response.pagination?.nextKey;
+} while (paginationKey !== undefined && paginationKey.length !== 0);
+```
+
+## How It Works
+
+<Steps>
+<Step title="First call">
+Omit `paginationKey` (or pass `undefined`). CosmJS sends an empty `PageRequest` to the chain.
+</Step>
+<Step title="Read the cursor">
+The response includes `pagination.nextKey` — a `Uint8Array` cursor pointing to the next page.
+</Step>
+<Step title="Fetch next page">
+Pass the `nextKey` into the next call to fetch the following page.
+</Step>
+<Step title="Detect last page">
+When `nextKey` is `undefined` or empty, you've reached the last page.
+</Step>
+</Steps>
+
+## Collecting All Results
+
+A common pattern is to accumulate all pages into a single array:
+
+```typescript
+import { QueryClient, StakingExtension } from "@cosmjs/stargate";
+import { Validator } from "cosmjs-types/cosmos/staking/v1beta1/staking";
+
+async function getAllValidators(
+  queryClient: QueryClient & StakingExtension,
+): Promise<Validator[]> {
+  const allValidators: Validator[] = [];
+  let paginationKey: Uint8Array | undefined = undefined;
+
+  do {
+    const { validators, pagination } = await queryClient.staking.validators(
+      "BOND_STATUS_BONDED",
+      paginationKey,
+    );
+    allValidators.push(...validators);
+    paginationKey = pagination?.nextKey;
+  } while (paginationKey !== undefined && paginationKey.length !== 0);
+
+  return allValidators;
+}
+```
+
+<Info>
+`StargateClient.getBalanceStaked` uses this exact pattern internally to sum all delegations across pages.
+</Info>
+
+## Paginated Methods by Module
+
+| Module | Paginated Methods |
+|--------|------------------|
+| **Bank** | `totalSupply` |
+| **Staking** | `validators`, `delegatorDelegations`, `delegatorUnbondingDelegations`, `delegatorValidators`, `validatorDelegations`, `validatorUnbondingDelegations`, `redelegations` |
+| **Gov** | `proposals`, `votes`, `deposits` |
+| **Distribution** | `validatorSlashes` |
+| **Authz** | `grants`, `granteeGrants`, `granterGrants` |
+| **Feegrant** | `allowances` |
+| **Slashing** | `signingInfos` |
+| **IBC** | `channels`, `connectionChannels`, `packetCommitments`, `packetAcknowledgements`, `states`, `consensusStates`, `connections`, `denomTraces` |
+
+<Tip>
+The IBC extension provides `all*` convenience methods (e.g., `allChannels()`, `allConnections()`, `allDenomTraces()`) that handle pagination internally and return all results in one call.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Querying Overview" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/query/querying">
+    All available query extensions.
+  </Card>
+  <Card title="Bank Queries" icon="building-columns" href="/cosmjs/v0.38.x/guides/query/bank">
+    Example of paginated supply queries.
+  </Card>
+</CardGroup>
