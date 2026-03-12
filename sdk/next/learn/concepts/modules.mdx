@@ -8,6 +8,8 @@ In the Cosmos SDK, **modules** define that logic.
 
 Modules are the fundamental building blocks of a Cosmos SDK application. Each module encapsulates a specific piece of functionality, such as accounts, token transfers, validator management, governance, or any custom logic you define.
 
+{/* TODO: link to counter module example walkthrough when it is published in the docs */}
+
 ## Why modules exist
 
 A blockchain application needs to manage many independent concerns (accounts, balances, validator management, etc). Instead of placing all logic in a single monolithic state machine, the Cosmos SDK divides the application into modules. The SDK provides a base layer that allows these modules to operate together as a cohesive blockchain.
@@ -20,7 +22,7 @@ A module is a self-contained unit of state and logic.
 
 At a high level, a module defines:
 
-- [State](#state): a kv store namespace that contains the module's data
+- [State](#state): a `KVStore` namespace that contains the module's data
 - [Messages](#messages): the actions the module allows
 - [Queries](#queries): read-only access to the module's state
 - [`MsgServer`](#message-execution-msgserver): validates, applies business logic, and delegates to the keeper
@@ -67,8 +69,7 @@ service Msg {
 }
 ```
 
-The `service Msg` block is referred to as the `Msg service` in the Cosmos SDK. The protobuf compiler generates a `MsgServer` interface from it, which the module implements in Go. `BaseApp` routes each incoming message to the correct implementation by its fully-qualified method name (e.g., `/cosmos.bank.v1beta1.MsgSend`).
-{/* todo: link to baseapp page */}
+The `service Msg` block is referred to as the `Msg service` in the Cosmos SDK. The protobuf compiler generates a `MsgServer` interface from it, which the module implements in Go. [`BaseApp`](/sdk/next/learn/concepts/baseapp) routes each incoming message by its type URL (for example, `/cosmos.bank.v1beta1.MsgSend`) to the correct implementation.
 
 `MsgSend`  above is an example of a message type definition. It represents a request to transfer tokens from one account to another. When included in a transaction and executed:
 
@@ -106,14 +107,13 @@ The `MsgServer` is responsible for:
 - Delegating to keeper methods that validate inputs, enforce business rules, and perform state transitions
 - Returning a response
 
-{/* todo: link to Build a Module tutorial */}
-The following examples are from the `x/counter` tutorial, which walks you through building a module that lets accounts increment a shared counter.
+The following example is from the minimal counter module tutorial example, which walks you through building a module that lets users increment a shared counter. {/* TODO: link to Build a Module tutorial */}
 
 The following is the counter module's `Add` handler which is the `MsgServer` method that processes a request to increment the counter:
 
 ```go
 func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*types.MsgAddResponse, error) {
-    newCount, err := m.AddCount(ctx, request.GetSender(), request.GetAdd())
+    newCount, err := m.AddCount(ctx, request.GetAdd())
     if err != nil {
         return nil, err
     }
@@ -122,9 +122,9 @@ func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*type
 }
 ```
 
-In this example, `Add` is permissionless; any account can call it. All validation (overflow check, `MaxAddValue` limit), fee charging, state mutation, event emission, and telemetry live in the keeper's `AddCount` method. This keeps `msg_server.go` focused on message routing and authorization, while the keeper's named methods can be reused from other entry points such as `BeginBlock` or governance proposals.
+In the minimal tutorial, `Add` is permissionless and delegates directly to the keeper. The handler itself contains almost no business logic. That keeps `msg_server.go` focused on request handling, while the keeper owns the actual state transition.
 
-For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding (`x/counter`): {/* todo: link to counter tutorial */}
+The full counter module example adds richer patterns on top of that minimal shape. For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding: {/* TODO: link to counter module example walkthrough */}
 
 ```go
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
@@ -147,11 +147,11 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 
 ## Keeper
 
-A module's **keeper** is its state access layer. It owns the module's KV store and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
+A module's **`Keeper`** is its state access layer. It owns the module's `KVStore` and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
 
 The `MsgServer` and `QueryServer` both embed the keeper. It is best practice for business logic to be implemented in keeper methods rather than the `MsgServer`, so the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
 
-The following is an example of the `x/counter` keeper from the counter module tutorial, which holds a single state item: {/* todo: link to counter tutorial */}
+The following keeper example is from the minimal counter module example. It holds a single state item and shows the smallest useful keeper shape. {/* TODO: link to minimal counter module example */}
 
 ```go
 type Keeper struct {
@@ -169,7 +169,7 @@ func (k *Keeper) AddCount(ctx context.Context, amount uint64) (uint64, error) {
 }
 ```
 
-`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store. `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly. For details on how the keeper opens its store from the context it receives, see [Execution Context](/sdk/next/learn/concepts/context-gas-events).
+`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store using the [Collections API](/sdk/next/learn/concepts/store#collections-api-typed-state-access). `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly. For details on how the keeper opens its store from the context it receives, see [Execution Context](/sdk/next/learn/concepts/context-gas-events).
 
 ### Inter-module access
 
@@ -186,7 +186,7 @@ Each module defines an `expected_keepers.go` file that declares the interfaces i
 
 This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
 
-{/* todo: link to counter tutorial section on expected keepers */}
+{/* TODO: link to minimal counter module example section on expected keepers */}
 
 ### Block hooks
 
@@ -194,16 +194,16 @@ Modules may execute logic at specific points in the block lifecycle by implement
 
 - `HasBeginBlocker` — runs logic at the start of each block
 - `HasEndBlocker` — runs logic at the end of each block
-- `HasPreBlocker` — runs logic before BeginBlock, used for consensus parameter changes
+- `HasPreBlocker` — runs logic before `BeginBlock`, used for consensus parameter changes
 
-Hooks are optional, and modules should only implement the hooks they need. These hooks are invoked during block execution by a `ModuleManager` in the `BaseApp`, which calls each registered module's hooks in a configured order. {/* todo: link to baseapp#module-manager */}
+Hooks are optional, and modules should only implement the hooks they need. These hooks are invoked during block execution by the `ModuleManager` in [`BaseApp`](/sdk/next/learn/concepts/baseapp#module-manager), which calls each registered module's hooks in a configured order. For the application wiring side, see [Module Manager in `app.go`](/sdk/next/learn/concepts/app-go#module-manager).
 
 A module implements a hook by defining the corresponding method on its `AppModule` struct in `module.go`:
 
 ```go
-func (a AppModule) PreBlock(ctx context.Context) error {
-    // runs before BeginBlock; used for consensus parameter changes
-    return nil
+func (a AppModule) PreBlock(ctx context.Context) (appmodule.ResponsePreBlock, error) {
+    // runs before BeginBlock; used for logic that must take effect before block execution
+    return &sdk.ResponsePreBlock{}, nil
 }
 
 func (a AppModule) BeginBlock(ctx context.Context) error {
@@ -217,13 +217,7 @@ func (a AppModule) EndBlock(ctx context.Context) error {
 }
 ```
 
-Implementing these methods satisfies the corresponding interface (`HasPreBlocker`, `HasBeginBlocker`, `HasEndBlocker`). The module also needs to be registered with the `ModuleManager` in `app.go` for the hooks to be called. That wiring is covered in the `app.go` section.
-
-{/* todo: link to baseapp#module-manager — ModuleManager coordinates hook invocation order across all modules */}
-
-{/* todo: link to app.go section */}
-
-{/* todo: link to tutorial block hooks section */}
+Defining these methods opts the module into the corresponding block hooks. The module also needs to be registered with the `ModuleManager` in [`app.go`](/sdk/next/learn/concepts/app-go#module-manager) for the hooks to be called.
 
 ### Genesis initialization
 
@@ -236,9 +230,9 @@ Each module implements:
 - `InitGenesis`: writes the genesis state into the module's store at chain start
 - `ExportGenesis`: reads the module's current state and serializes it as genesis data
 
-During `InitChain`, BaseApp calls each module's `InitGenesis` to populate its state from `genesis.json`.
+During `InitChain`, `BaseApp` calls each module's `InitGenesis` to populate its state from `genesis.json`.
 
-{/* todo: link to lifecycle page init genesis section */}
+For where this happens in the block lifecycle, see [InitChain (genesis only)](/sdk/next/learn/concepts/lifecycle#initchain-genesis-only).
 {/* todo: link to tutorial genesis section */}
 
 ## Built-in and custom modules
@@ -310,6 +304,4 @@ Putting everything together you've learned so far:
 Account → Transaction → Message → Module → MsgServer → Keeper → State
 ```
 
-In the next section, you will look more closely at how module state is stored, how genesis initializes it, and how the application commits deterministic state transitions.
-
-{/* todo: link to next page */}
+In the next section, [State, Storage, and Genesis](/sdk/next/learn/concepts/store), you will look more closely at how module state is stored, how genesis initializes it, and how the application commits deterministic state transitions.
