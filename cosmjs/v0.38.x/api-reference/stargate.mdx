@@ -1,0 +1,316 @@
+---
+title: "@cosmjs/stargate"
+description: "High-level client for Cosmos SDK 0.40+ (Stargate) chains"
+---
+
+The primary client library for interacting with Cosmos SDK chains. Provides read-only querying via `StargateClient` and transaction signing/broadcasting via `SigningStargateClient`.
+
+```bash
+npm install @cosmjs/stargate
+```
+
+## StargateClient
+
+Read-only client for querying blockchain state.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connect` | `endpoint: string \| HttpEndpoint`, `options?: StargateClientOptions` | `Promise<StargateClient>` |
+| `create` | `cometClient: CometClient`, `options?: StargateClientOptions` | `StargateClient` |
+
+### Instance Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getChainId` | — | `Promise<string>` |
+| `getHeight` | — | `Promise<number>` |
+| `getAccount` | `searchAddress: string` | `Promise<Account \| null>` |
+| `getSequence` | `address: string` | `Promise<SequenceResponse>` |
+| `getBlock` | `height?: number` | `Promise<Block>` |
+| `getBalance` | `address: string`, `searchDenom: string` | `Promise<Coin>` |
+| `getAllBalances` | `address: string` | `Promise<readonly Coin[]>` |
+| `getBalanceStaked` | `address: string` | `Promise<Coin \| null>` |
+| `getDelegation` | `delegatorAddress: string`, `validatorAddress: string` | `Promise<Coin \| null>` |
+| `getTx` | `id: string` | `Promise<IndexedTx \| null>` |
+| `searchTx` | `query: SearchTxQuery` | `Promise<IndexedTx[]>` |
+| `broadcastTx` | `tx: Uint8Array`, `timeoutMs?: number`, `pollIntervalMs?: number` | `Promise<DeliverTxResponse>` |
+| `broadcastTxSync` | `tx: Uint8Array` | `Promise<string>` |
+| `disconnect` | — | `void` |
+
+### Usage
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const balance = await client.getBalance("cosmos1...", "uatom");
+const account = await client.getAccount("cosmos1...");
+const block = await client.getBlock();
+const tx = await client.getTx("ABC123...");
+
+client.disconnect();
+```
+
+## SigningStargateClient
+
+Extends `StargateClient` with transaction signing and broadcasting. Inherits all read-only methods above.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connectWithSigner` | `endpoint: string \| HttpEndpoint`, `signer: OfflineSigner`, `options?: SigningStargateClientOptions` | `Promise<SigningStargateClient>` |
+| `createWithSigner` | `cometClient: CometClient`, `signer: OfflineSigner`, `options?: SigningStargateClientOptions` | `SigningStargateClient` |
+| `offline` | `signer: OfflineSigner`, `options?: SigningStargateClientOptions` | `Promise<SigningStargateClient>` |
+
+### Instance Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `simulate` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `memo: string \| undefined` | `Promise<number>` |
+| `sendTokens` | `senderAddress: string`, `recipientAddress: string`, `amount: readonly Coin[]`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `delegateTokens` | `delegatorAddress: string`, `validatorAddress: string`, `amount: Coin`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `undelegateTokens` | `delegatorAddress: string`, `validatorAddress: string`, `amount: Coin`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `withdrawRewards` | `delegatorAddress: string`, `validatorAddress: string`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `signAndBroadcast` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `timeoutHeight?: bigint` | `Promise<DeliverTxResponse>` |
+| `signAndBroadcastSync` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `timeoutHeight?: bigint` | `Promise<string>` |
+| `sign` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee`, `memo: string`, `explicitSignerData?: SignerData`, `timeoutHeight?: bigint` | `Promise<TxRaw>` |
+
+### Instance Properties
+
+| Property | Type |
+|----------|------|
+| `registry` | `Registry` |
+| `broadcastTimeoutMs` | `number \| undefined` |
+| `broadcastPollIntervalMs` | `number \| undefined` |
+
+### Usage
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...");
+const [{ address }] = await wallet.getAccounts();
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const result = await client.sendTokens(
+  address,
+  "cosmos1recipient...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+);
+
+await client.signAndBroadcast(address, [msg], "auto", "memo");
+```
+
+## GasPrice
+
+Represents a gas price as an amount and denomination.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `amount: Decimal`, `denom: string` | `GasPrice` |
+| `fromString` (static) | `gasPrice: string` | `GasPrice` |
+| `toString` | — | `string` |
+
+| Property | Type |
+|----------|------|
+| `amount` | `Decimal` |
+| `denom` | `string` |
+
+## calculateFee
+
+Calculates transaction fees from a gas limit and gas price.
+
+```typescript
+function calculateFee(gasLimit: number, gasPrice: GasPrice | string): StdFee
+```
+
+```typescript
+import { calculateFee, GasPrice } from "@cosmjs/stargate";
+
+const fee = calculateFee(200_000, GasPrice.fromString("0.025uatom"));
+// { amount: [{ denom: "uatom", amount: "5000" }], gas: "200000" }
+```
+
+## QueryClient
+
+Base query client that supports modular extensions.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `withExtensions` (static) | `cometClient: CometClient`, `...extensionSetups: QueryExtensionSetup[]` | `QueryClient & Extensions` |
+| `queryAbci` | `path: string`, `request: Uint8Array`, `desiredHeight?: number` | `Promise<QueryAbciResponse>` |
+
+### Query Extensions
+
+Setup functions to add module-specific query methods:
+
+| Function | Namespace | Key Methods |
+|----------|-----------|-------------|
+| `setupBankExtension` | `bank` | `balance`, `allBalances`, `totalSupply`, `supplyOf` |
+| `setupStakingExtension` | `staking` | `validators`, `delegation`, `delegatorDelegations`, `unbondingDelegation` |
+| `setupGovExtension` | `gov` | `proposals`, `proposal`, `deposits`, `votes`, `tally` |
+| `setupDistributionExtension` | `distribution` | `delegationRewards`, `delegationTotalRewards`, `communityPool` |
+| `setupMintExtension` | `mint` | `inflation`, `annualProvisions`, `params` |
+| `setupAuthExtension` | `auth` | `account`, `accounts` |
+| `setupIbcExtension` | `ibc` | `channel.channel`, `channel.channels`, `transfer.denomTrace` |
+| `setupTxExtension` | `tx` | `getTx`, `simulate` |
+| `setupSlashingExtension` | `slashing` | `signingInfos`, `params` |
+| `setupFeegrantExtension` | `feegrant` | `allowance`, `allowances` |
+| `setupAuthzExtension` | `authz` | `grants` |
+
+```typescript
+import { QueryClient, setupBankExtension, setupStakingExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupStakingExtension,
+);
+
+const balance = await queryClient.bank.balance("cosmos1...", "uatom");
+const validators = await queryClient.staking.validators("BOND_STATUS_BONDED");
+```
+
+## AminoTypes
+
+Manages conversion between Protobuf messages and Amino JSON format.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `types: AminoConverters` | `AminoTypes` |
+| `toAmino` | `encodeObject: EncodeObject` | `AminoMsg` |
+| `fromAmino` | `aminoMsg: AminoMsg` | `EncodeObject` |
+
+## Key Types
+
+### DeliverTxResponse
+
+```typescript
+interface DeliverTxResponse {
+  readonly height: number;
+  readonly txIndex: number;
+  readonly code: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly rawLog?: string;
+  readonly msgResponses: Array<{ readonly typeUrl: string; readonly value: Uint8Array }>;
+  readonly gasUsed: bigint;
+  readonly gasWanted: bigint;
+}
+```
+
+### IndexedTx
+
+```typescript
+interface IndexedTx {
+  readonly height: number;
+  readonly txIndex: number;
+  readonly hash: string;
+  readonly code: number;
+  readonly events: readonly Event[];
+  readonly rawLog: string;
+  readonly tx: Uint8Array;
+  readonly msgResponses: Array<{ readonly typeUrl: string; readonly value: Uint8Array }>;
+  readonly gasUsed: bigint;
+  readonly gasWanted: bigint;
+}
+```
+
+### Block
+
+```typescript
+interface Block {
+  readonly id: string;
+  readonly header: BlockHeader;
+  readonly txs: readonly Uint8Array[];
+}
+```
+
+### BlockHeader
+
+```typescript
+interface BlockHeader {
+  readonly version: { readonly block: string; readonly app: string };
+  readonly height: number;
+  readonly chainId: string;
+  readonly time: string;
+}
+```
+
+### SigningStargateClientOptions
+
+```typescript
+interface SigningStargateClientOptions extends StargateClientOptions {
+  readonly registry?: Registry;
+  readonly aminoTypes?: AminoTypes;
+  readonly broadcastTimeoutMs?: number;
+  readonly broadcastPollIntervalMs?: number;
+  readonly gasPrice?: GasPrice | DynamicGasPriceConfig;
+}
+```
+
+### SignerData
+
+```typescript
+interface SignerData {
+  readonly accountNumber: number;
+  readonly sequence: number;
+  readonly chainId: string;
+}
+```
+
+### Account
+
+```typescript
+interface Account {
+  readonly address: string;
+  readonly pubkey: Pubkey | null;
+  readonly accountNumber: number;
+  readonly sequence: number;
+}
+```
+
+### SequenceResponse
+
+```typescript
+interface SequenceResponse {
+  readonly accountNumber: number;
+  readonly sequence: number;
+}
+```
+
+## Helper Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `assertIsDeliverTxSuccess` | `result: DeliverTxResponse` | `void` (throws on failure) |
+| `assertIsDeliverTxFailure` | `result: DeliverTxResponse` | `void` (throws on success) |
+| `isDeliverTxSuccess` | `result: DeliverTxResponse` | `boolean` |
+| `isDeliverTxFailure` | `result: DeliverTxResponse` | `boolean` |
+| `coin` | `amount: number \| string`, `denom: string` | `Coin` |
+| `coins` | `amount: number \| string`, `denom: string` | `Coin[]` |
+| `parseCoins` | `input: string` | `Coin[]` |
+| `makeCosmoshubPath` | `account: number` | `HdPath` |
+| `createPagination` | `paginationKey?: Uint8Array` | `PageRequest \| undefined` |
+| `createProtobufRpcClient` | `base: QueryClient` | `ProtobufRpcClient` |
+| `decodeCosmosSdkDecFromProto` | `input: string \| Uint8Array` | `Decimal` |
+
+## Error Classes
+
+| Class | Description |
+|-------|-------------|
+| `BroadcastTxError` | Thrown when a transaction fails during broadcast |
+| `TimeoutError` | Thrown when broadcast times out waiting for inclusion |

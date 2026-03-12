@@ -1,0 +1,84 @@
+---
+title: "@cosmjs/ledger-amino"
+description: "Ledger hardware wallet integration for Amino signing"
+---
+
+Provides Ledger hardware wallet support for Amino transaction signing. Implements the `OfflineAminoSigner` interface, making it compatible with `SigningStargateClient` and `SigningCosmWasmClient`.
+
+```bash
+npm install @cosmjs/ledger-amino
+```
+
+<Info>
+  Requires the Cosmos app installed on your Ledger device and a transport library like `@ledgerhq/hw-transport-webusb` (browser) or `@ledgerhq/hw-transport-node-hid` (Node.js).
+</Info>
+
+## LedgerSigner
+
+Implements `OfflineAminoSigner` using a Ledger hardware wallet.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `transport: Transport`, `options?: LedgerSignerOptions` | `LedgerSigner` |
+| `getAccounts` | — | `Promise<readonly AccountData[]>` |
+| `signAmino` | `signerAddress: string`, `signDoc: StdSignDoc` | `Promise<AminoSignResponse>` |
+
+### Options
+
+```typescript
+interface LedgerSignerOptions {
+  readonly hdPaths?: readonly HdPath[];
+  readonly prefix?: string;
+  readonly ledgerAppName?: string;
+}
+```
+
+### Usage
+
+```typescript
+import TransportWebUSB from "@ledgerhq/hw-transport-webusb";
+import { LedgerSigner } from "@cosmjs/ledger-amino";
+import { makeCosmoshubPath } from "@cosmjs/amino";
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const transport = await TransportWebUSB.create();
+const signer = new LedgerSigner(transport, {
+  hdPaths: [makeCosmoshubPath(0)],
+  prefix: "cosmos",
+});
+
+const [{ address }] = await signer.getAccounts();
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  signer,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const result = await client.sendTokens(
+  address,
+  "cosmos1recipient...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+);
+```
+
+## LedgerConnector
+
+Low-level interface for direct communication with the Cosmos Ledger app.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `transport: Transport`, `options?: { ledgerAppName?: string }` | `LedgerConnector` |
+| `getPublicKey` | `hdPath: HdPath` | `Promise<Uint8Array>` |
+| `getPubkeyAndAddress` | `hdPath: HdPath`, `prefix: string` | `Promise<AddressAndPubkey>` |
+| `sign` | `message: Uint8Array`, `hdPath: HdPath` | `Promise<Uint8Array>` |
+
+### Types
+
+```typescript
+interface AddressAndPubkey {
+  readonly pubkey: Uint8Array;
+  readonly address: string;
+}
+```

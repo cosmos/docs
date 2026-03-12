@@ -1,0 +1,105 @@
+---
+title: "Custom RPC Endpoints"
+description: "Attach authentication headers and compose transport layers for custom RPC providers"
+---
+
+Many RPC providers require authentication headers. CosmJS supports this through the `HttpEndpoint` interface, which lets you attach headers to every request.
+
+## Custom Headers
+
+Pass an `HttpEndpoint` object instead of a plain URL to attach headers to every request:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+import { HttpEndpoint } from "@cosmjs/tendermint-rpc";
+
+const endpoint: HttpEndpoint = {
+  url: "https://rpc.my-chain.network",
+  headers: {
+    Authorization: "Bearer <token>",
+    "X-Api-Key": "<key>",
+  },
+};
+
+const client = await StargateClient.connect(endpoint);
+```
+
+`HttpEndpoint` works everywhere a string URL is accepted — `StargateClient.connect`, `SigningStargateClient.connectWithSigner`, `CosmWasmClient.connect`, `connectComet`, `HttpClient`, and `HttpBatchClient`.
+
+<Note>
+When you pass an `HttpEndpoint` object, the transport is always HTTP — even if the URL uses a `ws://` scheme.
+</Note>
+
+## Custom Headers with Batching
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+import { Comet38Client, HttpBatchClient, HttpEndpoint } from "@cosmjs/tendermint-rpc";
+
+const endpoint: HttpEndpoint = {
+  url: "https://rpc.my-chain.network",
+  headers: { Authorization: "Bearer <token>" },
+};
+
+const rpcClient = new HttpBatchClient(endpoint, {
+  batchSizeLimit: 10,
+  httpTimeout: 15_000,
+});
+
+const cometClient = await Comet38Client.create(rpcClient);
+const client = StargateClient.create(cometClient);
+```
+
+## Signing Client with Custom Endpoint
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { HttpEndpoint } from "@cosmjs/tendermint-rpc";
+
+const endpoint: HttpEndpoint = {
+  url: "https://rpc.my-chain.network",
+  headers: { Authorization: "Bearer <token>" },
+};
+
+const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
+  gasPrice: GasPrice.fromString("0.025uatom"),
+});
+```
+
+## Full Manual Configuration
+
+For maximum control — custom headers, timeouts, batching, and a specific CometBFT version — compose the layers yourself:
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { Comet38Client, HttpBatchClient, HttpEndpoint } from "@cosmjs/tendermint-rpc";
+
+const endpoint: HttpEndpoint = {
+  url: "https://rpc.my-chain.network",
+  headers: { Authorization: "Bearer <token>" },
+};
+
+const rpcClient = new HttpBatchClient(endpoint, {
+  batchSizeLimit: 10,
+  dispatchInterval: 50,
+  httpTimeout: 15_000,
+});
+
+const cometClient = await Comet38Client.create(rpcClient);
+
+const client = SigningStargateClient.createWithSigner(cometClient, wallet, {
+  gasPrice: GasPrice.fromString("0.025uatom"),
+  broadcastTimeoutMs: 120_000,
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Version Detection" icon="code" href="/cosmjs/v0.38.x/guides/connect/version-detection">
+    Understand CometBFT auto-detection and when to skip it.
+  </Card>
+  <Card title="Timeouts" icon="clock" href="/cosmjs/v0.38.x/guides/connect/timeouts">
+    Configure timeout values at every layer.
+  </Card>
+</CardGroup>

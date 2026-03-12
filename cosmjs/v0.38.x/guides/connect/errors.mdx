@@ -1,0 +1,80 @@
+---
+title: "Connection Errors"
+description: "Handle transport errors, broadcast failures, and timeouts when connecting to Cosmos chains"
+---
+
+CosmJS surfaces errors at two levels: transport-level errors from the RPC client, and broadcast-level errors from transaction submission.
+
+## Transport-Level Errors
+
+| Scenario | Error |
+|----------|-------|
+| Connection refused | `Error` with `ECONNREFUSED` or `fetch failed` |
+| HTTP status >= 400 | `Error` with status code and response body |
+| JSON-RPC error response | `Error` with serialized JSON-RPC error object |
+| HTTP request timeout | `AbortError` from `fetch` (via `AbortSignal.timeout()`) |
+| WebSocket handshake timeout | `Error("Connection attempt timed out after X ms")` |
+| Missing URL protocol | `Error("Endpoint URL is missing a protocol. Expected 'https://' or 'http://'.")` |
+
+## Broadcast Errors
+
+When a signed transaction is submitted but rejected during `CheckTx` (for example, insufficient fees or an invalid signature), the client throws a `BroadcastTxError`:
+
+```typescript
+import { BroadcastTxError } from "@cosmjs/stargate";
+
+try {
+  await client.signAndBroadcast(address, messages, fee);
+} catch (error) {
+  if (error instanceof BroadcastTxError) {
+    console.error("Code:", error.code, "Codespace:", error.codespace, "Log:", error.log);
+  }
+  throw error;
+}
+```
+
+## Timeout Errors
+
+When a transaction is submitted successfully but not included in a block before the timeout expires, the client throws a `TimeoutError` with the transaction hash:
+
+```typescript
+import { TimeoutError } from "@cosmjs/stargate";
+
+try {
+  await client.signAndBroadcast(address, messages, fee);
+} catch (error) {
+  if (error instanceof TimeoutError) {
+    console.error("Tx may still land. Hash:", error.txId);
+  }
+  throw error;
+}
+```
+
+<Warning>
+A `TimeoutError` does not mean the transaction failed — it may still be included in a later block. You can query for it later using `client.getTx(error.txId)`.
+</Warning>
+
+## Fire-and-Forget Broadcasting
+
+If you don't want to wait for block inclusion, use `signAndBroadcastSync` to get the transaction hash immediately after submission:
+
+```typescript
+const txHash = await client.signAndBroadcastSync(address, messages, fee);
+```
+
+This avoids the polling loop and the `TimeoutError` entirely. Use it when your application handles confirmation tracking separately.
+
+## No Built-In Retry
+
+Neither `HttpClient` nor `HttpBatchClient` retry failed requests. If your application needs retry logic for transient network errors, wrap the RPC client or implement retries at the application level.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Timeouts" icon="clock" href="/cosmjs/v0.38.x/guides/connect/timeouts">
+    Configure timeout values to tune error behavior.
+  </Card>
+  <Card title="Connect to a Chain" icon="link" href="/cosmjs/v0.38.x/guides/connect/connect">
+    Return to the connection overview.
+  </Card>
+</CardGroup>
