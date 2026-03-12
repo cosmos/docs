@@ -2,9 +2,9 @@
 title: app.go Overview
 ---
 
-`app.go` is where all the parts of an application are wired together into a working chain. It creates a `BaseApp` instance (the ABCI layer that talks to CometBFT), allocates a dedicated KV store for each module, and initializes each module's keeper with its store and dependencies. It then registers every module with the `ModuleManager`, configures execution ordering, mounts stores, and sets the lifecycle hooks and `AnteHandler`. Finally, it seals the application with `LoadLatestVersion`.
+`app.go` is where an application is assembled into a working chain. It creates the `BaseApp` instance that talks to CometBFT, allocates store keys, initializes keepers, registers modules, configures execution ordering, mounts stores, and sets lifecycle hooks and the `AnteHandler`. Finally, it seals the application with `LoadLatestVersion`.
 
-The result is a single constructor function called `NewExampleApp` that returns a fully wired, ready-to-run chain.
+The result is a single constructor, `NewExampleApp`, that returns a fully wired, ready-to-run chain.
 
 Most examples on this page come from the counter module example in the `example` repo, where `x/counter` is wired into a fuller chain. The minimal counter module example shows the smaller `app.go` delta needed to add `x/counter` to a stripped-down app. 
 {/* TODO: link to minimal counter module example when it is published in the docs */}
@@ -27,8 +27,8 @@ Most examples on this page come from the counter module example in the `example`
 
 This sequence is strict:
  - Keepers require store keys, so keys come first.
- - The `ModuleManager` requires keepers, so keepers come before modules.
- - Lifecycle hooks require a `ModuleManager`, so the `ModuleManager` is created before hooks are set.
+ - The `ModuleManager` depends on keepers, so modules come after keeper construction.
+ - Lifecycle hooks depend on the `ModuleManager`, so hook wiring comes later.
  - `LoadLatestVersion` seals `BaseApp`, so it runs last.
 
 ## The app struct
@@ -56,9 +56,7 @@ type ExampleApp struct {
 }
 ```
 
-Embedding `*baseapp.BaseApp` gives `ExampleApp` the full `BaseApp` interface: ABCI methods, the message and query routers, store management, and lifecycle hooks. The keeper fields are exported so test code and CLI helpers can reference them. The `keys` map holds the KV store keys allocated during initialization. The real example app includes additional keepers and helper fields; this excerpt shows the part of the struct that matters for understanding the wiring pattern.
-
-{/* todo: link to example app.go */}
+Embedding `*baseapp.BaseApp` gives `ExampleApp` the full `BaseApp` interface: ABCI methods, message and query routers, store management, and lifecycle hooks. The keeper fields are exported so test code and CLI helpers can reference them. The `keys` map holds the KV store keys allocated during initialization. The real example app includes additional keepers and helper fields; this excerpt shows the part of the struct that matters for understanding the wiring pattern.
 
 ## Creating `BaseApp`
 
@@ -74,9 +72,7 @@ bApp.SetInterfaceRegistry(interfaceRegistry)
 bApp.SetTxEncoder(txConfig.TxEncoder())
 ```
 
-`baseapp.NewBaseApp` creates the `BaseApp` with a name, logger, database, and `TxDecoder`. The `TxDecoder` is how `BaseApp` turns raw transaction bytes from CometBFT into an `sdk.Tx` it can inspect and route. Additional functional options (`baseAppOptions`) let callers configure pruning, minimum gas prices, chain ID, and optimistic execution without modifying `NewExampleApp` directly. The full example app also wires legacy Amino support, tracing, and interface registration around this excerpt. See [`BaseApp` Overview](/sdk/next/learn/concepts/baseapp) for a full description of its fields and behavior.
-
-{/* todo: link to example app.go */}
+`baseapp.NewBaseApp` creates the `BaseApp` with a name, logger, database, and `TxDecoder`. The `TxDecoder` is how `BaseApp` turns raw transaction bytes from CometBFT into an `sdk.Tx` it can inspect and route. Additional functional options (`baseAppOptions`) let callers configure pruning, minimum gas prices, chain ID, and optimistic execution without modifying `NewExampleApp` directly. The full example app also wires legacy Amino support, tracing, and interface registration around this excerpt. See [`BaseApp` Overview](/sdk/next/learn/concepts/baseapp) for a fuller description of its fields and behavior.
 
 
 ## Allocating store keys
@@ -96,7 +92,7 @@ keys := storetypes.NewKVStoreKeys(
 )
 ```
 
-Each module defines its store key name as a string constant in `types/keys.go` (for example, `countertypes.StoreKey = "counter"`). `NewKVStoreKeys` takes those names and allocates a `*storetypes.KVStoreKey` for each one. Keys are passed to keeper constructors and later mounted on the `CommitMultiStore` via `MountKVStores`. No two modules share a key; the key is what enforces store isolation between modules.
+Each module defines its store key name as a string constant in `types/keys.go` (for example, `countertypes.StoreKey = "counter"`). `NewKVStoreKeys` takes those names and allocates a `*storetypes.KVStoreKey` for each one. Keys are passed to keeper constructors and later mounted on the `CommitMultiStore` via `MountKVStores`. No two modules share a key; that isolation is what keeps module state separate.
 
 ## Initializing keepers
 
@@ -115,11 +111,9 @@ app.CounterKeeper = counterkeeper.NewKeeper(
 )
 ```
 
-`runtime.NewKVStoreService(key)` wraps the raw store key in a service interface that keepers use to open their store from a context. This keeps keepers from holding direct references to the underlying store; they retrieve it at runtime from the context passed into each method.
+`runtime.NewKVStoreService(key)` wraps the raw store key in a service interface that keepers use to open their store from a context. This keeps keepers from holding direct references to the underlying store. Instead, they retrieve it at runtime from the context passed into each method.
 
-The keeper initialization order matters: `BankKeeper` receives `app.AccountKeeper` as an argument, so `AccountKeeper` must be initialized first. The same dependency ordering applies throughout. The counter module example also passes `app.BankKeeper` into `counterkeeper.NewKeeper`, showing how custom modules depend on existing module services. Where modules are interdependent (such as staking and distribution), hooks connect them after both keepers exist:
-
-{/* todo: link to example app.go */}
+The keeper initialization order matters: `BankKeeper` receives `app.AccountKeeper` as an argument, so `AccountKeeper` must be initialized first. The same dependency ordering applies throughout. The counter module example also passes `app.BankKeeper` into `counterkeeper.NewKeeper`, showing how custom modules depend on existing module services. Where modules are interdependent, hooks connect them after both keepers exist:
 
 ```go
 app.StakingKeeper.SetHooks(
@@ -146,9 +140,7 @@ app.ModuleManager = module.NewManager(
 )
 ```
 
-`module.NewManager` takes a list of `AppModule` implementations. Each `AppModule` wraps a keeper and satisfies the interfaces the `ModuleManager` uses: genesis, block hooks, message and query service registration, and simulation support. The real example app includes the full built-in module set around `x/counter`; this excerpt shows the basic registration pattern. The `BasicModuleManager` is then derived from the `ModuleManager` and used for codec registration and default genesis handling.
-
-{/* todo: link to example app.go */}
+`module.NewManager` takes a list of `AppModule` implementations. Each `AppModule` wraps a keeper and satisfies the interfaces the `ModuleManager` uses: genesis, block hooks, message and query service registration, and simulation support. The real example app includes the full built-in module set around `x/counter`; this excerpt shows the basic registration pattern. The `BasicModuleManager` is then derived from the `ModuleManager` for codec registration and default genesis handling.
 
 
 ## Module Manager
@@ -200,11 +192,9 @@ app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
 app.ModuleManager.SetOrderExportGenesis(exportModuleOrder...)
 ```
 
-`SetOrderExportGenesis` controls the order modules serialize their state when the chain is exported to a genesis file (for hard forks or snapshot-based testnets). The export order can differ from the init genesis order; in the example chain they use different orderings.
+`SetOrderExportGenesis` controls the order modules serialize their state when the chain is exported to a genesis file, for example during a hard fork or when creating a snapshot-based testnet. The export order can differ from the init genesis order; in the example chain they use different orderings.
 
 The comments in the example app explain the reasoning: `genutil` must run after `staking` so that staking pools are initialized before genesis transactions are processed, and after `auth` so that it can access auth parameters.
-
-{/* todo: link to example app.go */}
 
 
 Each hook type has its own ordering constraint:
@@ -297,7 +287,7 @@ if loadLatest {
 }
 ```
 
-`LoadLatestVersion` calls `storeLoader` to load the latest committed store state from the database, then calls `Init` which validates that required components are configured (cms and stateManager), initializes the check state, and sets `BaseApp.sealed` to `true`. Any setter called after this point panics. This enforces that all wiring happens before the application starts serving requests.
+`LoadLatestVersion` calls `storeLoader` to load the latest committed store state from the database, then calls `Init`, which validates that required components are configured, initializes the check state, and sets `BaseApp.sealed` to `true`. Any setter called after this point panics. This enforces that all wiring happens before the application starts serving requests.
 
 On first launch, CometBFT calls `InitChain` which triggers `InitChainer`, which calls `ModuleManager.InitGenesis` to populate each module's state from `genesis.json`.
 
@@ -332,4 +322,4 @@ At runtime, CometBFT drives the application through ABCI. Each ABCI call dispatc
 - `CheckTx` validates a transaction through the `AnteHandler` and writes to the internal `CheckTx` state if it passes.
 - `Commit` persists the finalized block state.
 
-The modules never call each other directly. They interact through keeper interfaces that are wired at initialization time, and they participate in the block lifecycle through hooks that the `ModuleManager` coordinates in a fixed, declared order. See [BaseApp Overview](/sdk/next/learn/concepts/baseapp) for how ABCI calls flow through the application, and [Intro to Modules](/sdk/next/learn/concepts/modules) for how individual modules are structured. The next section, [CLI, gRPC, and REST API](/sdk/next/learn/concepts/cli-grpc-rest), explains how clients interact with the chain once that wiring is in place.
+Modules never call each other directly. They interact through keeper interfaces wired at initialization time, and they participate in the block lifecycle through hooks that the `ModuleManager` coordinates in a fixed, declared order. See [BaseApp Overview](/sdk/next/learn/concepts/baseapp) for how ABCI calls flow through the application, and [Intro to Modules](/sdk/next/learn/concepts/modules) for how individual modules are structured. The next section, [CLI, gRPC, and REST API](/sdk/next/learn/concepts/cli-grpc-rest), explains how clients interact with the chain once that wiring is in place.
