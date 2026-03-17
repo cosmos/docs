@@ -147,14 +147,37 @@ The `grpc.Server` is a concrete gRPC server, which spawns and serves all gRPC qu
 
 * `grpc.enable = true|false` field defines if the gRPC server should be enabled. Defaults to `true`.
 * `grpc.address = {string}` field defines the `ip:port` the server should bind to. Defaults to `localhost:9090`.
+* `grpc.max-recv-msg-size = {int}` defines the maximum message size in bytes the server can receive. Defaults to 10MB.
+* `grpc.max-send-msg-size = {int}` defines the maximum message size in bytes the server can send. Defaults to `math.MaxInt32`.
 
 <Tip>
 `~/.simapp` is the directory where the node's configuration and databases are stored. By default, it's set to `~/.{app_name}`.
 </Tip>
 
+### Historical gRPC query routing
+
+The Cosmos SDK supports routing historical state queries to multiple gRPC backends based on block height ranges. This is useful when operating a network of archive nodes, each holding a different slice of chain history.
+
+Configure `historical-grpc-address-block-range` in `app.toml` as a JSON string that maps gRPC backend addresses to inclusive block height ranges:
+
+```toml
+# Each entry maps a gRPC address to a [start_block, end_block] range (inclusive).
+# Queries carrying the x-cosmos-block-height metadata header are routed to the
+# backend whose range contains the requested height.
+historical-grpc-address-block-range = '{"archive-node-1:9090": [0, 1000000], "archive-node-2:9090": [1000001, 2000000]}'
+```
+
+Block ranges must be non-overlapping. If no backend matches the requested height, the local node handles the query. Leave this field empty (the default) to disable historical routing.
+
 Once the gRPC server is started, you can send requests to it using a gRPC client. Some examples are given in our [Interact with the Node](/sdk/next/user/run-node/interact-node#using-grpc) tutorial.
 
+Two endpoints expose CometBFT block results via gRPC:
+
+- `GetBlockResults(height)` - returns the ABCI results for a specific block height, including `finalize_block_events`
+- `GetLatestBlockResults()` - returns the ABCI results for the latest committed block
+
 An overview of all available gRPC endpoints shipped with the Cosmos SDK is [Protobuf documentation](https://buf.build/cosmos/cosmos-sdk).
+
 
 ## REST Server
 
