@@ -1,0 +1,42 @@
+---
+title: Direct vs Amino Signing
+description: The two Cosmos signing modes and how CosmJS chooses between them
+---
+
+Cosmos supports two signing modes. `SigningStargateClient` automatically picks
+the right one based on the signer you provide.
+
+## Direct (Protobuf)
+
+The modern default. The transaction is serialized as Protobuf bytes, hashed with
+SHA-256, and signed. This is the most compact encoding and supports all message
+types.
+
+- Wallet: `DirectSecp256k1HdWallet` from `@cosmjs/proto-signing`
+- Interface: `OfflineDirectSigner` (has `signDirect` method)
+- Sign mode: `SIGN_MODE_DIRECT`
+
+## Amino (JSON)
+
+The legacy format. The transaction is serialized as deterministic JSON (sorted
+keys, escaped special characters), hashed with SHA-256, and signed. Required for
+Ledger hardware wallets and some older chains.
+
+- Wallet: `Secp256k1HdWallet` from `@cosmjs/amino`
+- Interface: `OfflineAminoSigner` (has `signAmino` method)
+- Sign mode: `SIGN_MODE_LEGACY_AMINO_JSON`
+
+## Automatic Detection
+
+You don't need to choose manually. Pass any `OfflineSigner` to
+`connectWithSigner` and the client determines the mode at signing time:
+
+```typescript
+import { isOfflineDirectSigner } from "@cosmjs/proto-signing";
+
+// The client checks internally:
+// isOfflineDirectSigner(signer) ? signDirect(...) : signAmino(...)
+```
+
+If your signer implements both `signDirect` and `signAmino`, Direct signing
+takes precedence.

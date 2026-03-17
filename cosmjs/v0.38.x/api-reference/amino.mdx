@@ -1,0 +1,253 @@
+---
+title: "@cosmjs/amino"
+description: "Amino encoding, signing, and wallet management"
+---
+
+Provides Amino JSON encoding and signing capabilities for Cosmos SDK transactions. Essential for legacy signing, Ledger hardware wallets, and backwards compatibility.
+
+```bash
+npm install @cosmjs/amino
+```
+
+## Secp256k1HdWallet
+
+HD wallet using BIP-39 mnemonic with Amino JSON signing. Implements `OfflineAminoSigner`.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `generate` | `length?: 12 \| 15 \| 18 \| 21 \| 24`, `options?: Partial<Secp256k1HdWalletOptions>` | `Promise<Secp256k1HdWallet>` |
+| `fromMnemonic` | `mnemonic: string`, `options?: Partial<Secp256k1HdWalletOptions>` | `Promise<Secp256k1HdWallet>` |
+| `deserialize` | `serialization: string`, `password: string` | `Promise<Secp256k1HdWallet>` |
+| `deserializeWithEncryptionKey` | `serialization: string`, `encryptionKey: Uint8Array` | `Promise<Secp256k1HdWallet>` |
+
+### Instance Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getAccounts` | — | `Promise<readonly AccountData[]>` |
+| `signAmino` | `signerAddress: string`, `signDoc: StdSignDoc` | `Promise<AminoSignResponse>` |
+| `serialize` | `password: string` | `Promise<string>` |
+| `serializeWithEncryptionKey` | `encryptionKey: Uint8Array`, `kdfConfiguration: KdfConfiguration` | `Promise<string>` |
+
+### Instance Properties
+
+| Property | Type |
+|----------|------|
+| `mnemonic` | `string` |
+
+### Options
+
+```typescript
+interface Secp256k1HdWalletOptions {
+  readonly bip39Password: string;      // default: ""
+  readonly hdPaths: readonly HdPath[]; // default: [makeCosmoshubPath(0)]
+  readonly prefix: string;             // default: "cosmos"
+}
+```
+
+### Usage
+
+```typescript
+import { Secp256k1HdWallet, makeCosmoshubPath } from "@cosmjs/amino";
+
+const wallet = await Secp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "cosmos",
+  hdPaths: [makeCosmoshubPath(0), makeCosmoshubPath(1)],
+});
+
+const [account1, account2] = await wallet.getAccounts();
+```
+
+## Secp256k1Wallet
+
+Single-key wallet for Amino JSON signing. Implements `OfflineAminoSigner`.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `fromKey` (static) | `privkey: Uint8Array`, `prefix?: string` | `Promise<Secp256k1Wallet>` |
+| `getAccounts` | — | `Promise<readonly AccountData[]>` |
+| `signAmino` | `signerAddress: string`, `signDoc: StdSignDoc` | `Promise<AminoSignResponse>` |
+
+## Address Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `pubkeyToAddress` | `pubkey: Pubkey`, `prefix: string` | `string` |
+| `pubkeyToRawAddress` | `pubkey: Pubkey` | `Uint8Array` |
+| `rawSecp256k1PubkeyToRawAddress` | `pubkeyRaw: Uint8Array` | `Uint8Array` |
+| `rawEd25519PubkeyToRawAddress` | `pubkeyRaw: Uint8Array` | `Uint8Array` |
+| `rawEthSecp256k1PubkeyToRawAddress` | `pubkeyRaw: Uint8Array` | `Uint8Array` |
+
+## Coin Utilities
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `coin` | `amount: number \| string`, `denom: string` | `Coin` |
+| `coins` | `amount: number \| string`, `denom: string` | `Coin[]` |
+| `parseCoins` | `input: string` | `Coin[]` |
+| `addCoins` | `a: Coin`, `b: Coin` | `Coin` |
+
+```typescript
+import { coin, coins, parseCoins, addCoins } from "@cosmjs/amino";
+
+const amount = coin(1000000, "uatom");
+const amounts = coins(500, "uatom");
+const parsed = parseCoins("1000uatom,500ustake");
+const total = addCoins(coin(100, "uatom"), coin(50, "uatom"));
+```
+
+## Pubkey Encoding
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `encodeSecp256k1Pubkey` | `pubkey: Uint8Array` | `Secp256k1Pubkey` |
+| `encodeEd25519Pubkey` | `pubkey: Uint8Array` | `Ed25519Pubkey` |
+| `encodeEthSecp256k1Pubkey` | `pubkey: Uint8Array` | `EthSecp256k1Pubkey` |
+| `encodeAminoPubkey` | `pubkey: Pubkey` | `Uint8Array` |
+| `decodeAminoPubkey` | `amino: Uint8Array` | `Pubkey` |
+| `encodeBech32Pubkey` | `pubkey: Pubkey`, `prefix: string` | `string` |
+| `decodeBech32Pubkey` | `bechEncoded: string` | `Pubkey` |
+
+## Signature Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `encodeSecp256k1Signature` | `pubkey: Uint8Array`, `signature: Uint8Array` | `StdSignature` |
+| `encodeEthSecp256k1Signature` | `pubkey: Uint8Array`, `signature: Uint8Array` | `StdSignature` |
+| `decodeSignature` | `signature: StdSignature` | `{ pubkey: Uint8Array; signature: Uint8Array }` |
+
+## Sign Document Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `makeSignDoc` | `msgs: readonly AminoMsg[]`, `fee: StdFee`, `chainId: string`, `memo: string`, `accountNumber: number \| string`, `sequence: number \| string` | `StdSignDoc` |
+| `serializeSignDoc` | `signDoc: StdSignDoc` | `Uint8Array` |
+
+## Multisig
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `createMultisigThresholdPubkey` | `pubkeys: readonly SinglePubkey[]`, `threshold: number` | `MultisigThresholdPubkey` |
+
+## Key Types
+
+### Coin
+
+```typescript
+interface Coin {
+  readonly denom: string;
+  readonly amount: string;
+}
+```
+
+### StdFee
+
+```typescript
+interface StdFee {
+  readonly amount: readonly Coin[];
+  readonly gas: string;
+  readonly granter?: string;
+  readonly payer?: string;
+}
+```
+
+### AminoMsg
+
+```typescript
+interface AminoMsg {
+  readonly type: string;
+  readonly value: any;
+}
+```
+
+### StdSignDoc
+
+```typescript
+interface StdSignDoc {
+  readonly chain_id: string;
+  readonly account_number: string;
+  readonly sequence: string;
+  readonly fee: StdFee;
+  readonly msgs: readonly AminoMsg[];
+  readonly memo: string;
+}
+```
+
+### AccountData
+
+```typescript
+interface AccountData {
+  readonly address: string;
+  readonly algo: Algo;
+  readonly pubkey: Uint8Array;
+}
+```
+
+### OfflineAminoSigner
+
+```typescript
+interface OfflineAminoSigner {
+  readonly getAccounts: () => Promise<readonly AccountData[]>;
+  readonly signAmino: (signerAddress: string, signDoc: StdSignDoc) => Promise<AminoSignResponse>;
+}
+```
+
+### AminoSignResponse
+
+```typescript
+interface AminoSignResponse {
+  readonly signed: StdSignDoc;
+  readonly signature: StdSignature;
+}
+```
+
+### StdSignature
+
+```typescript
+interface StdSignature {
+  readonly pub_key: Pubkey;
+  readonly signature: string;
+}
+```
+
+### Pubkey Types
+
+```typescript
+interface Secp256k1Pubkey {
+  readonly type: "tendermint/PubKeySecp256k1";
+  readonly value: string;
+}
+
+interface Ed25519Pubkey {
+  readonly type: "tendermint/PubKeyEd25519";
+  readonly value: string;
+}
+
+interface EthSecp256k1Pubkey {
+  readonly type: "ethermint/PubKeyEthSecp256k1";
+  readonly value: string;
+}
+
+interface MultisigThresholdPubkey {
+  readonly type: "tendermint/PubKeyMultisigThreshold";
+  readonly value: {
+    readonly threshold: string;
+    readonly pubkeys: readonly SinglePubkey[];
+  };
+}
+```
+
+## Other Exports
+
+| Function/Type | Purpose |
+|---------------|---------|
+| `makeCosmoshubPath(account)` | Creates HD path `m/44'/118'/0'/0/{account}` |
+| `omitDefault(value)` | Omit protobuf default values |
+| `isStdTx(value)` | Type guard for StdTx |
+| `makeStdTx(signDoc, signature)` | Create StdTx from sign doc and signature |
+| `extractKdfConfiguration(serialization)` | Extract KDF config from serialized wallet |
+| `executeKdf(password, config)` | Execute key derivation function |
+| `isEthereumSecp256k1Account(account)` | Check if account uses Ethereum secp256k1 |
+| `getAminoPubkey(account)` | Get amino pubkey from account data |

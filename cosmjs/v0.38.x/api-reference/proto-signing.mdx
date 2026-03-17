@@ -1,0 +1,195 @@
+---
+title: "@cosmjs/proto-signing"
+description: "Protobuf-based transaction signing for Cosmos SDK 0.40+"
+---
+
+Provides Protobuf Direct signing mode for modern Cosmos SDK chains. This is the preferred signing method for new applications.
+
+```bash
+npm install @cosmjs/proto-signing
+```
+
+## DirectSecp256k1HdWallet
+
+HD wallet using BIP-39 mnemonic with Protobuf Direct signing. Implements `OfflineDirectSigner`.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `generate` | `length?: 12 \| 15 \| 18 \| 21 \| 24`, `options?: Partial<DirectSecp256k1HdWalletOptions>` | `Promise<DirectSecp256k1HdWallet>` |
+| `fromMnemonic` | `mnemonic: string`, `options?: Partial<DirectSecp256k1HdWalletOptions>` | `Promise<DirectSecp256k1HdWallet>` |
+| `deserialize` | `serialization: string`, `password: string` | `Promise<DirectSecp256k1HdWallet>` |
+| `deserializeWithEncryptionKey` | `serialization: string`, `encryptionKey: Uint8Array` | `Promise<DirectSecp256k1HdWallet>` |
+
+### Instance Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getAccounts` | — | `Promise<readonly AccountData[]>` |
+| `signDirect` | `signerAddress: string`, `signDoc: SignDoc` | `Promise<DirectSignResponse>` |
+| `serialize` | `password: string` | `Promise<string>` |
+| `serializeWithEncryptionKey` | `encryptionKey: Uint8Array`, `kdfConfiguration: KdfConfiguration` | `Promise<string>` |
+
+### Instance Properties
+
+| Property | Type |
+|----------|------|
+| `mnemonic` | `string` |
+
+### Options
+
+```typescript
+interface DirectSecp256k1HdWalletOptions {
+  readonly bip39Password: string;   // default: ""
+  readonly hdPaths: readonly HdPath[]; // default: [makeCosmoshubPath(0)]
+  readonly prefix: string;          // default: "cosmos"
+}
+```
+
+### Usage
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.generate(24, { prefix: "cosmos" });
+const [{ address, pubkey }] = await wallet.getAccounts();
+
+const restored = await DirectSecp256k1HdWallet.fromMnemonic(wallet.mnemonic, {
+  prefix: "osmo",
+  hdPaths: [makeCosmoshubPath(0), makeCosmoshubPath(1)],
+});
+```
+
+## DirectSecp256k1Wallet
+
+Single-key wallet for Protobuf Direct signing. Implements `OfflineDirectSigner`.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `fromKey` (static) | `privkey: Uint8Array`, `prefix?: string` | `Promise<DirectSecp256k1Wallet>` |
+| `getAccounts` | — | `Promise<readonly AccountData[]>` |
+| `signDirect` | `address: string`, `signDoc: SignDoc` | `Promise<DirectSignResponse>` |
+
+## DirectEthSecp256k1HdWallet
+
+HD wallet using Ethereum's secp256k1 curve for chains with EVM compatibility. Same API as `DirectSecp256k1HdWallet`.
+
+## DirectEthSecp256k1Wallet
+
+Single-key wallet using Ethereum's secp256k1 curve. Same API as `DirectSecp256k1Wallet`.
+
+## Registry
+
+Maps type URLs to protobuf codec implementations for encoding and decoding messages.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `customTypes?: Iterable<[string, GeneratedType]>` | `Registry` |
+| `register` | `typeUrl: string`, `type: GeneratedType` | `void` |
+| `lookupType` | `typeUrl: string` | `GeneratedType \| undefined` |
+| `encode` | `encodeObject: EncodeObject` | `Uint8Array` |
+| `encodeAsAny` | `encodeObject: EncodeObject` | `Any` |
+| `encodeTxBody` | `txBodyFields: TxBodyValue` | `Uint8Array` |
+| `decode` | `decodeObject: DecodeObject` | `any` |
+| `decodeTxBody` | `txBody: Uint8Array` | `TxBody` |
+
+### Usage
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes } from "@cosmjs/stargate";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+
+const registry = new Registry(defaultRegistryTypes);
+registry.register("/my.custom.MsgCustom", MsgCustom);
+
+const encoded = registry.encode({
+  typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+  value: MsgSend.fromPartial({
+    fromAddress: "cosmos1sender...",
+    toAddress: "cosmos1recipient...",
+    amount: [{ denom: "uatom", amount: "1000" }],
+  }),
+});
+```
+
+## Key Types
+
+### EncodeObject
+
+```typescript
+interface EncodeObject {
+  readonly typeUrl: string;
+  readonly value: any;
+}
+```
+
+### DecodeObject
+
+```typescript
+interface DecodeObject {
+  readonly typeUrl: string;
+  readonly value: Uint8Array;
+}
+```
+
+### TxBodyEncodeObject
+
+```typescript
+interface TxBodyEncodeObject extends EncodeObject {
+  readonly typeUrl: "/cosmos.tx.v1beta1.TxBody";
+  readonly value: TxBodyValue;
+}
+```
+
+### AccountData
+
+```typescript
+interface AccountData {
+  readonly address: string;
+  readonly algo: Algo;
+  readonly pubkey: Uint8Array;
+}
+```
+
+### OfflineDirectSigner
+
+```typescript
+interface OfflineDirectSigner {
+  readonly getAccounts: () => Promise<readonly AccountData[]>;
+  readonly signDirect: (signerAddress: string, signDoc: SignDoc) => Promise<DirectSignResponse>;
+}
+```
+
+### OfflineSigner
+
+```typescript
+type OfflineSigner = OfflineAminoSigner | OfflineDirectSigner;
+```
+
+### DecodedTxRaw
+
+```typescript
+interface DecodedTxRaw {
+  readonly authInfo: AuthInfo;
+  readonly body: TxBody;
+  readonly signatures: readonly Uint8Array[];
+}
+```
+
+## Helper Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `makeAuthInfoBytes` | `signers: ReadonlyArray<{ pubkey: Any; sequence: bigint \| number }>`, `feeAmount: readonly Coin[]`, `gasLimit: number`, `feeGranter?: string`, `feePayer?: string`, `signMode?: SignMode` | `Uint8Array` |
+| `makeSignDoc` | `bodyBytes: Uint8Array`, `authInfoBytes: Uint8Array`, `chainId: string`, `accountNumber: number` | `SignDoc` |
+| `makeSignBytes` | `signDoc: SignDoc` | `Uint8Array` |
+| `decodeTxRaw` | `tx: Uint8Array` | `DecodedTxRaw` |
+| `encodePubkey` | `pubkey: Pubkey` | `Any` |
+| `decodePubkey` | `pubkey: Any \| null` | `Pubkey \| null` |
+| `makeCosmoshubPath` | `account: number` | `HdPath` |
+| `coin` | `amount: number \| string`, `denom: string` | `Coin` |
+| `coins` | `amount: number \| string`, `denom: string` | `Coin[]` |
+| `parseCoins` | `input: string` | `Coin[]` |
+| `extractKdfConfiguration` | `serialization: string` | `KdfConfiguration` |
