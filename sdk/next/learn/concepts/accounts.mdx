@@ -23,9 +23,9 @@ type BaseAccount struct {
 
 Accounts can be used in other modules to associate on-chain state with an identity. For example, the bank module (`x/bank`) maps account addresses to token balances, and the staking module maps them to delegations.
 
-The private key and seed phrase are never stored on-chain; they are kept locally by the user or wallet.
+The private key and [seed phrase](#seed-phrases) are never stored on-chain; they are kept locally by the user or wallet.
 
-An account does not execute logic itself; instead, it authorizes transactions. On standard ordered transactions, the account's sequence number is used for replay protection during transaction processing. Balance changes are handled by the modules that process the transaction's messages.
+An account does not execute logic itself; instead, it authorizes [transactions](/sdk/next/learn/concepts/transactions). Balance changes for accounts are handled by the modules that process the transaction's messages. An account's sequence number is used for [replay protection](#sequences-and-replay-protection) during transaction processing.
 
 ## Public and private keys
 
@@ -45,12 +45,9 @@ apple maple river stone cloud frame picnic ladder jungle orbit solar velvet
 
 A private key is then derived from the seed phrase using a deterministic algorithm. Cosmos wallets follow common standards such as:
 
-- BIP-39 (mnemonic phrases)
-  https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
-- BIP-32 (hierarchical deterministic wallets)
-  https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
-- BIP-44 (multi-account derivation paths)
-  https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki
+- [BIP-39 (mnemonic phrases)](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)
+- [BIP-32 (hierarchical deterministic wallets)](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki)
+- [BIP-44 (multi-account derivation paths)](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
 
 From the seed phrase, a binary seed is computed and used to derive a master private key. From that master key, specific private keys are derived along a path (for example: `m/44'/118'/0'/0/0`, where `118` is the Cosmos coin type). Each private key produces a public key.
 
@@ -58,7 +55,13 @@ Control of the seed phrase means control of the derived private keys and therefo
 
 ## Addresses
 
-An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. This address is what users share and what appears in state and transactions.
+An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. This address is what users share and what appears in state and transactions:
+
+```text
+cosmos1qnk2n4nlkpw9xfqntladh74er2xa62wgas7mv0
+```
+
+An address is not the same as a public key. Because an address is only a hash of the public key, users can generate addresses and receive funds entirely offline. The public key is revealed on-chain the first time the account signs a transaction, at which point validators can verify the signature and the chain stores the public key alongside the account metadata.
 
 ```text
 Seed Phrase
@@ -70,23 +73,9 @@ Public Key
 Address
 ```
 
-An address is not the same thing as a public key. The address is derived from the public key, but it does not reveal the public key directly.
-
-To receive tokens, only the address is needed. The chain can credit balances to that address without knowing the public key.
-
-The public key is typically revealed on-chain the first time the account signs a transaction. That first transaction includes the public key so validators can verify the signature. After that, the chain stores the public key alongside the account metadata.
-
-This separation between address and public key is important: it allows accounts to be derived and displayed locally from a seed phrase before any on-chain activity. Users can generate addresses offline and receive funds without ever submitting a transaction. The account only needs to be initialized on-chain when the user sends their first transaction.
-
 ## Sequences and replay protection
 
-Transactions in the Cosmos SDK can be ordered or unordered.Ordered transactions are the default and are processed in the order they are submitted. 
-
-For standard ordered transactions, each on-chain account tracks a sequence number. The sequence number starts at zero for a newly created account and is checked as part of transaction processing so that old signed transactions cannot be replayed.
-
-The sequence number exists to prevent replay attacks, which occur when an old signed transaction is submitted a second time. Because the sequence number must be current, a previously signed transaction with an old sequence is rejected.
-
-Sequence numbers also ensure transactions from a single account execute in a specific order, which matters when transactions depend on each other (for example, sending tokens then immediately staking them).
+There are two types of transactions in the Cosmos SDK: ordered and unordered. Ordered transactions are the default. Each account tracks a sequence number starting at zero that increments with each transaction. The network rejects any transaction whose sequence number does not match the current value, preventing replay attacks and ensuring that dependent transactions from the same account execute in order (for example, sending tokens then immediately staking them). Unordered transactions bypass this check and use a timeout-based mechanism instead.
 
 Example:
 
