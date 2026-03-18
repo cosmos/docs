@@ -1,0 +1,40 @@
+---
+title: Adaptive Sync
+description: "Running blocksync and consensus simultaneously"
+---
+
+<Warning>
+  Adaptive sync is experimental in this release. It has been tested under a range of network conditions including node kills, restarts, disconnects, and pauses, but it must be tested thoroughly before being used on a production chain.
+</Warning>
+
+Adaptive sync is an experimental feature that runs [blocksync](/cometbft/next/docs/core/block-sync) and consensus simultaneously. In normal operation, a node catching up to the network runs blocksync to download and apply historical blocks, then switches to consensus once it is caught up. With adaptive sync enabled, the node participates in consensus from the moment it starts, ingesting blocks fetched by blocksync directly into the consensus engine as they arrive.
+
+The practical effect is that a catching-up node can vote, propose, and process mempool transactions without waiting to finish syncing. This reduces time-to-liveness for nodes rejoining the network and can improve overall network resilience when multiple validators are catching up at the same time.
+
+## When to use it
+
+Adaptive sync is useful when you want a validator node to become an active consensus participant as quickly as possible after a restart, a prolonged outage, or an initial sync from genesis. It is not required for correctness, and nodes without it enabled will still catch up and join consensus normally. The tradeoff is additional complexity during the catch-up phase in exchange for faster liveness recovery.
+
+## How it works
+
+When adaptive sync is enabled, the blocksync reactor runs a block ingestor loop instead of the standard pool routine. The ingestor polls for fetched blocks every 10 milliseconds. When two consecutive blocks are available, it verifies the first using the second block's commit via the light client against the current state, then passes the verified block to the consensus engine via the `BlockIngestor` interface (`IngestVerifiedBlock`). The consensus engine skips the normal proposal and voting rounds for this block, jumping directly to the commit phase via a dedicated internal handler.
+
+Because blocksync and consensus are running together, a few things work differently:
+
+- Peer status is requested every 1 second instead of every 10 seconds, so the node tracks network height more aggressively.
+- Peer timeouts are treated as transient errors. The node will attempt to reconnect to a timed-out peer rather than permanently disconnecting. This avoids shedding peers that are temporarily slow or overloaded during a busy sync period.
+- If consensus processes a block before the ingestor reaches it, the ingestor skips that block and continues. Both reactors share the same block store, so there is no duplication of committed state.
+- The mempool accepts incoming transactions immediately, rather than waiting until the node is caught up.
+
+## Enabling adaptive sync
+
+Adaptive sync is disabled by default. To enable it, set `adaptive_sync = true` under the `[blocksync]` section of `config.toml`:
+
+```toml
+[blocksync]
+version = "v0"
+adaptive_sync = true
+```
+
+
+Adaptive sync only applies when blocksync is active. On a node that is already caught up and running in consensus mode, the setting has no effect.
