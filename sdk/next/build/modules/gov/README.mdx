@@ -54,6 +54,12 @@ staking token of the chain.
 * [Events](#events)
   * [EndBlocker](#endblocker)
   * [Handlers](#handlers)
+* [Hooks](#hooks)
+  * [AfterProposalSubmission](#afterproposalsubmission)
+  * [AfterProposalDeposit](#afterproposaldeposit)
+  * [AfterProposalVote](#afterproposalvote)
+  * [AfterProposalFailedMinDeposit](#afterproposalfailedmindeposit)
+  * [AfterProposalVotingPeriodEnded](#afterproposalvotingperiodended)
 * [Parameters](#parameters)
 * [Client](#client)
   * [CLI](#cli)
@@ -184,7 +190,7 @@ For a weighted vote to be valid, the `options` field must not contain duplicate 
 
 #### Custom Vote Calculation
 
-Cosmos SDK v0.53.0 introduced an option for developers to define a custom vote result and voting power calculation function.
+Cosmos SDK v0.53.0 introduced an option for developers to define a custom vote result and voting power calculation function. As of v0.54, `x/gov` has been decoupled from `x/staking`: the `keeper.NewKeeper` constructor now requires a `CalculateVoteResultsAndVotingPowerFn` as a required parameter instead of a `StakingKeeper`. To use the default staking-based tally logic, wrap your staking keeper with `keeper.NewDefaultCalculateVoteResultsAndVotingPower(stakingKeeper)`.
 
 ```go expandable
 package keeper
@@ -203,7 +209,7 @@ import (
 
 // CalculateVoteResultsAndVotingPowerFn is a function signature for calculating vote results and voting power
 // It can be overridden to customize the voting power calculation for proposals
-// It gets the proposal tallied and the validators governance infos (bonded tokens, voting power, etc.)
+// It gets the proposal tallied and the validators governance infos (validator power, voting power, etc.)
 // It must return the total voting power and the results of the vote
 type CalculateVoteResultsAndVotingPowerFn func(
 	ctx context.Context,
@@ -260,7 +266,7 @@ valAddrStr, err := k.sk.ValidatorAddressCodec().BytesToString(voter)
 validators[valAddrStr] = val
 
 				// delegation shares * bonded / total shares
-    votingPower := delegation.GetShares().MulInt(val.BondedTokens).Quo(val.DelegatorShares)
+    votingPower := delegation.GetShares().MulInt(val.ValidatorPower).Quo(val.DelegatorShares)
     for _, option := range vote.Options {
     weight, _ := math.LegacyNewDecFromStr(option.Weight)
     subPower := votingPower.Mul(weight)
@@ -300,7 +306,7 @@ return false, nil
     continue
 }
     sharesAfterDeductions := val.DelegatorShares.Sub(val.DelegatorDeductions)
-    votingPower := sharesAfterDeductions.MulInt(val.BondedTokens).Quo(val.DelegatorShares)
+    votingPower := sharesAfterDeductions.MulInt(val.ValidatorPower).Quo(val.DelegatorShares)
     for _, option := range val.Vote {
     weight, _ := math.LegacyNewDecFromStr(option.Weight)
     subPower := votingPower.Mul(weight)
@@ -327,7 +333,7 @@ getCurrentValidators(ctx context.Context) (map[string]v1.ValidatorGovInfo, error
 
 currValidators[validator.GetOperator()] = v1.NewValidatorGovInfo(
 			valBz,
-			validator.GetBondedTokens(),
+			validator.GetValidatorPower(),
 			validator.GetDelegatorShares(),
 			math.LegacyZeroDec(),
 			v1.WeightedVoteOptions{
@@ -361,7 +367,7 @@ tallyResults = v1.NewTallyResultFromMap(results)
 
 	// TODO: Upgrade the spec to cover all of these cases & remove pseudocode.
 	// If there is no staked coins, the proposal fails
-	totalBonded, err := k.sk.TotalBondedTokens(ctx)
+	totalBonded, err := k.sk.TotalValidatorPower(ctx)
     if err != nil {
     return false, false, tallyResults, err
 }
@@ -437,12 +443,11 @@ func myCustomVotingFunction(
   runtime.NewKVStoreService(keys[govtypes.StoreKey]),
   app.AccountKeeper,
   app.BankKeeper,
-  app.StakingKeeper,
-  app.DistrKeeper,
+  app.DistrKeeper, // optional: can be nil if the module address is not used as a cancellation fee destination
   app.MsgServiceRouter(),
   govConfig,
   authtypes.NewModuleAddress(govtypes.ModuleName).String(),
-  govkeeper.WithCustomCalculateVoteResultsAndVotingPowerFn(myCustomVotingFunction),
+  myCustomVotingFunction, // required: CalculateVoteResultsAndVotingPowerFn
 )
 ```
 
@@ -903,6 +908,58 @@ The governance module emits the following events:
 | message                | sender                | `{senderAddress}` |
 
 * \[0] Event only emitted if the voting period starts during the submission.
+
+## Hooks
+
+The governance module exposes a `GovHooks` interface that allows other modules to react to governance events.
+
+```go
+type GovHooks interface {
+    AfterProposalSubmission(ctx context.Context, proposalID uint64, proposerAddr sdk.AccAddress) error
+    AfterProposalDeposit(ctx context.Context, proposalID uint64, depositorAddr sdk.AccAddress) error
+    AfterProposalVote(ctx context.Context, proposalID uint64, voterAddr sdk.AccAddress) error
+    AfterProposalFailedMinDeposit(ctx context.Context, proposalID uint64) error
+    AfterProposalVotingPeriodEnded(ctx context.Context, proposalID uint64) error
+}
+```
+
+### AfterProposalSubmission
+
+Called after a proposal is submitted. The hook receives the proposal ID and the proposer's address.
+
+**Note:** The `proposerAddr` parameter was added in a recent release. If you are implementing `GovHooks`, you must update your `AfterProposalSubmission` method signature to include `proposerAddr sdk.AccAddress` as a third parameter.
+
+**Before:**
+
+```go
+func (h MyGovHooks) AfterProposalSubmission(ctx context.Context, proposalID uint64) error {
+    // implementation
+}
+```
+
+**After:**
+
+```go
+func (h MyGovHooks) AfterProposalSubmission(ctx context.Context, proposalID uint64, proposerAddr sdk.AccAddress) error {
+    // implementation
+}
+```
+
+### AfterProposalDeposit
+
+Called after a deposit is made on a proposal.
+
+### AfterProposalVote
+
+Called after a vote is cast on a proposal.
+
+### AfterProposalFailedMinDeposit
+
+Called when a proposal fails to reach the minimum deposit within the deposit period.
+
+### AfterProposalVotingPeriodEnded
+
+Called when a proposal's voting period ends.
 
 ## Parameters
 
