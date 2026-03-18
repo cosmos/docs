@@ -1,0 +1,388 @@
+---
+title: Encoding and Protobuf
+---
+
+As described in [State, Storage, and Genesis](/sdk/next/learn/concepts/store), modules write structured state values into the KV store as raw bytes. Encoding defines how those structured values are serialized into bytes, and why every validator must produce exactly the same bytes. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
+
+## What is Protobuf?
+
+[Protocol Buffers](https://protobuf.dev/) (protobuf) is a language-neutral, binary serialization format developed by Google. You define your data structures in `.proto` files using a schema language, then generate code in your target language from that schema. The generated code handles serialization (converting structured data into bytes) and deserialization (converting bytes back into structured data).
+
+A simple protobuf message looks like this:
+
+```proto
+message MsgSend {
+  string from_address = 1;
+  string to_address   = 2;
+  repeated Coin amount = 3;
+}
+```
+
+Each field has a name, a type, and a field number. The field numbers are what protobuf actually uses during encoding; field names are only present in the schema, not in the serialized bytes. 
+
+## Why the Cosmos SDK uses protobuf
+
+The Cosmos SDK uses protobuf for a fundamental reason: consensus requires determinism.
+
+Every validator in the network independently executes each block. After execution, each validator computes the [app hash](/sdk/next/learn/concepts/store#app-hash), a cryptographic hash of the application state. For validators to agree on the app hash, they must all produce exactly the same bytes for every piece of state they write.
+
+Protobuf alone does not guarantee this. The Cosmos SDK uses protobuf **with additional deterministic encoding rules** formalized in [ADR-027 (Deterministic Protobuf Serialization)](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/docs/architecture/adr-027-deterministic-protobuf-serialization.md). ADR-027 specifies constraints such as requiring fields to appear in ascending field-number order and varint encodings to be as short as possible. The SDK validates incoming transactions against these rules before processing them, so a non-deterministically encoded transaction is rejected rather than producing divergent state. Every validator encoding the same data under these rules produces an identical byte sequence.
+
+Beyond determinism, protobuf provides:
+
+- **Compact encoding**: binary wire format is smaller than JSON or XML, which matters for transaction throughput and block size.
+- **Schema evolution**: fields can be added or deprecated without breaking existing clients, which is critical for chain upgrades.
+- **Code generation**: `.proto` files generate Go structs, gRPC service stubs, and REST gateway handlers automatically.
+- **Cross-language support**: clients in any language can interact with the chain by generating code from the same `.proto` files.
+
+## Binary and JSON encoding
+
+The Cosmos SDK uses protobuf in two encoding modes:
+
+**Binary encoding** is the default for everything that participates in consensus: transactions written to blocks, state stored in KV stores, and genesis data. Binary encoding is compact and deterministic. When a transaction is broadcast to the network, it travels as protobuf binary. When a module writes state, it serializes values to protobuf binary before calling `Set` on the store.
+
+**JSON encoding** is used for human-readable output: the CLI, gRPC-gateway REST endpoints, and off-chain tooling. The Cosmos SDK uses protobuf's JSON encoding (`ProtoMarshalJSON`) rather than standard Go JSON, which preserves field names from the `.proto` schema and handles special types like `Any` correctly.
+
+It is important to keep in mind that **binary encoding is consensus-critical**. Two validators must produce identical binary bytes for identical data. JSON is only used where humans or external clients need to read the data; it never influences the AppHash.
+
+```text
+Consensus-critical path         Human-readable path
+─────────────────────────       ─────────────────────────
+Transaction bytes (binary)      CLI output (JSON)
+State KV values (binary)        REST API responses (JSON)
+Genesis KV state (binary)       Block explorers (JSON)
+```
+
+Note: genesis data is distributed as JSON in `genesis.json`, but during chain initialization `InitGenesis` deserializes that JSON into protobuf structs and writes them to the KV store as binary. The KV store (and therefore the AppHash) only ever contains the binary form.
+
+## Transaction encoding
+
+Transactions are protobuf messages defined in [`cosmos.tx.v1beta1`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.6/proto/cosmos/tx/v1beta1/tx.proto). A transaction is composed of three parts:
+
+```text
+Tx
+ ├─ TxBody
+ │   └─ repeated google.protobuf.Any messages
+ ├─ AuthInfo
+ │   ├─ repeated SignerInfo (each with sequence)
+ │   └─ Fee
+ └─ repeated bytes signatures
+```
+
+- **TxBody** contains the messages to execute, serialized as `repeated google.protobuf.Any messages`.
+- **AuthInfo** contains signer information (including the per-signer sequence number) and fee.
+- **signatures** contains the cryptographic signatures, one per signer.
+
+Messages inside the transaction are stored as `google.protobuf.Any` values so that a single transaction can contain multiple message types from different modules.
+
+When a user submits a transaction, the SDK encodes it as a `TxRaw`—a flat structure with the `TxBody` bytes, `AuthInfo` bytes, and signatures already serialized. It then broadcasts that binary representation over the network.
+
+## Transaction signing and `SignDoc`
+
+Transactions are not signed directly. Instead, the SDK constructs a deterministic structure called a **`SignDoc`**, which defines exactly what bytes the signer commits to:
+
+```text
+SignDoc
+ ├─ body_bytes        (serialized TxBody)
+ ├─ auth_info_bytes   (serialized AuthInfo, includes sequence per signer)
+ ├─ chain_id          (prevents cross-chain replay)
+ └─ account_number    (ties the signature to a specific on-chain account)
+```
+
+The `SignDoc` is serialized to protobuf binary and then signed with the user's private key:
+
+```text
+signature = Sign(proto.Marshal(SignDoc))
+```
+
+Because `SignDoc` is serialized deterministically, all validators verify the exact same bytes when checking transaction signatures. The per-signer sequence number lives in `AuthInfo.SignerInfo.sequence` and is included in `auth_info_bytes`, which is part of `SignDoc`—this is what prevents replay attacks.
+
+## Sign modes
+
+A **sign mode** determines what bytes a signer commits to when signing a transaction. The SDK supports multiple sign modes to accommodate different clients and hardware:
+
+- `SIGN_MODE_DIRECT` (default): the signer signs over the protobuf-binary-serialized `SignDoc` described above. This is compact, deterministic, and the correct choice for all new development.
+
+- `SIGN_MODE_LEGACY_AMINO_JSON`: the signer signs over an Amino JSON-encoded `StdSignDoc` instead of the protobuf `SignDoc`. This exists for backward compatibility with hardware wallets (e.g., older Ledger firmware) and client tooling that predates protobuf. New modules and chains should not depend on it.
+
+- `SIGN_MODE_TEXTUAL`: the signer signs over a human-readable CBOR-encoded representation of the transaction, designed to display legibly on hardware wallet screens (introduced in v0.50, see [ADR-050](/sdk/next/build/architecture/adr-050-sign-mode-textual)). This is the SDK's newer direction for human-readable signing on hardware wallets, intended to replace `SIGN_MODE_LEGACY_AMINO_JSON` over time. Its specification is versioned and has evolved across SDK releases.
+
+- `SIGN_MODE_DIRECT_AUX`: allows N-1 signers in a multi-signer transaction to sign over only `TxBody` and their own `SignerInfo`, without specifying fees. The designated fee payer signs last using `SIGN_MODE_DIRECT`. This simplifies multi-signature UX.
+
+The sign mode is negotiated at transaction construction time and does not affect how state is stored or how validators execute transactions. It only affects what bytes are signed. The full list of sign modes is defined in [`signing.proto`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.6/proto/cosmos/tx/signing/v1beta1/signing.proto#L17).
+
+<Note>
+**For module developers:** `SIGN_MODE_DIRECT` requires no extra work. If you want your module's messages to be signable on Ledger hardware wallets using `SIGN_MODE_LEGACY_AMINO_JSON`, register your message types with the Amino codec via `RegisterLegacyAminoCodec` in your module's `codec.go`.
+</Note>
+
+## How protobuf is used in modules
+
+Most public and persisted data types in modern SDK modules are defined in `.proto` files and serialized with protobuf. This covers the core API surface: transaction messages, query request/response types, stored state values, and genesis state.
+
+### Messages and transactions
+
+Each module defines its transaction messages in a `tx.proto` file. The `MsgSend` definition above is an example. When a user submits a transaction, the SDK serializes the transaction body (including its messages) to binary using protobuf before broadcasting it.
+
+[todo: link to tutorial tx.proto section]
+
+### Queries
+
+Modules define their query services in `query.proto`. Request and response types are protobuf messages. The SDK uses gRPC for queries, and gRPC uses protobuf as its serialization format by definition.
+
+[todo: link to tutorial query proto section]
+
+### State types
+
+Data stored in the KV store is protobuf-encoded. A module that stores a custom struct first marshals it to bytes using the codec, then writes those bytes to the store. When reading, it unmarshals the bytes back into the struct. Note that only *values* are protobuf-encoded; *keys* are manually constructed byte sequences, not protobuf. Key layout is covered in the [State, Storage, and Genesis](/sdk/next/learn/concepts/store) section.
+
+### Genesis
+
+Genesis state is defined in `genesis.proto`. `InitGenesis` and `ExportGenesis` use protobuf to deserialize genesis state from `genesis.json` and serialize it back.
+
+A concrete example shows how a module reads and writes typed state as bytes:
+
+```go
+// write: marshal the coin amount to bytes, then set in store
+bz, err := k.cdc.Marshal(&amount)
+store.Set(key, bz)
+
+// read: get bytes from store, unmarshal back to coin
+var amount sdk.Coin
+bz := store.Get(key)
+k.cdc.Unmarshal(bz, &amount)
+```
+
+The codec (`k.cdc`) is the protobuf codec described in the next section.
+
+## The codec and interface registry
+
+The Cosmos SDK wraps protobuf in a **codec** that modules use for marshaling and unmarshaling. The primary implementation is [`ProtoCodec`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/proto_codec.go), which calls protobuf's `Marshal` and `Unmarshal` under the hood.
+
+```go
+type ProtoCodec struct {
+    interfaceRegistry types.InterfaceRegistry
+}
+
+func (pc *ProtoCodec) Marshal(o ProtoMarshaler) ([]byte, error)
+func (pc *ProtoCodec) Unmarshal(bz []byte, ptr ProtoMarshaler) error
+```
+
+Keepers hold a reference to the codec and use it to encode and decode state:
+
+```go
+type Keeper struct {
+    cdc   codec.BinaryCodec
+    store storetypes.StoreKey
+}
+```
+
+The codec is initialized once at app startup and passed to each keeper during initialization.
+
+### Interface types and `Any`
+
+Protobuf is strongly typed. You cannot store a field as "some implementation of an interface" directly in a protobuf message. The Cosmos SDK solves this using protobuf's [`google.protobuf.Any`](https://protobuf.dev/programming-guides/proto3/#any), which wraps an arbitrary message type alongside a URL that identifies what type it contains.
+
+`Any` is used anywhere the SDK needs to serialize a value whose concrete type is not known at compile time. The most common example is public keys. An account might use a secp256k1 key, an ed25519 key, or a multisig key. The `BaseAccount` stores the public key as `Any`:
+
+```proto
+message BaseAccount {
+  string     address        = 1;
+  google.protobuf.Any pub_key = 2;
+  uint64     account_number = 3;
+  uint64     sequence       = 4;
+}
+```
+
+The `Any` field holds the serialized public key bytes plus a type URL like `/cosmos.crypto.secp256k1.PubKey`. When the SDK reads the account, it uses the type URL to look up the concrete Go type, then unmarshals the bytes into that type.
+
+#### Messages inside transactions
+
+Transaction messages are the most common use of `Any` in the SDK. A transaction can carry multiple message types from different modules (`bank.MsgSend`, `staking.MsgDelegate`, `gov.MsgVote`) in a single `TxBody`. Because protobuf requires concrete types at the field level, each message is packed into an `Any` before being placed inside the transaction:
+
+```text
+MsgSend
+   ↓ pack into Any
+Any {
+  type_url: "/cosmos.bank.v1beta1.MsgSend"
+  value:    <protobuf binary bytes>
+}
+   ↓ placed in TxBody.messages
+repeated google.protobuf.Any messages
+```
+
+During decoding, the SDK reads the `type_url`, looks up the concrete type in the interface registry, and unmarshals the bytes into the correct message struct. This is why every `sdk.Msg` implementation must be registered with `RegisterInterfaces` before the application starts.
+
+<Warning>
+The Cosmos SDK uses type URLs with a leading `/` but without the `type.googleapis.com` prefix (e.g. `/cosmos.bank.v1beta1.MsgSend`, not `type.googleapis.com/cosmos.bank.v1beta1.MsgSend`). If you need to pack a value into an `Any` manually, use `anyutil.New` from `github.com/cosmos/cosmos-proto/anyutil` rather than `anypb.New` from `google.golang.org/protobuf/types/known/anypb` — the standard library helper inserts the `type.googleapis.com` prefix, which breaks SDK type resolution.
+</Warning>
+
+This lookup is handled by the **interface registry**.
+
+### Interface registry
+
+The [`InterfaceRegistry`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/types/interface_registry.go) is a runtime map from type URLs to Go types. When the SDK encounters an `Any` value, it queries the registry with the type URL to find the concrete Go type, then uses protobuf to unmarshal the bytes.
+
+```text
+Any { type_url, value_bytes }
+           ↓
+   InterfaceRegistry.Resolve(type_url)
+           ↓
+   concrete Go type
+           ↓
+   proto.Unmarshal(value_bytes, concreteType)
+```
+
+Without the interface registry, the SDK cannot decode `Any` values. This is why types must be explicitly registered before they can be deserialized.
+
+## Registering interface implementations
+
+Because the interface registry is a runtime lookup table, every concrete type that implements an SDK interface must be registered before the application starts. This is done with `RegisterInterfaces`:
+
+```go
+// in codec registration, typically in module.go or types/codec.go
+func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    registry.RegisterImplementations(
+        (*cryptotypes.PubKey)(nil),
+        &secp256k1.PubKey{},
+        &ed25519.PubKey{},
+    )
+}
+```
+
+This tells the registry: "a `PubKey` interface can be a `secp256k1.PubKey` or an `ed25519.PubKey`." If a type is used in an `Any` field anywhere in the application and is not registered, the codec will fail to unmarshal it and return an error.
+
+Each module calls `RegisterInterfaces` during app initialization, and `app.go` calls these registration functions through the module manager when building the app. Custom types that implement SDK interfaces must follow the same pattern.
+
+### `codec.go`
+
+By convention, modules collect all codec registration in a single file: `x/mymodule/types/codec.go`. This file typically contains two functions:
+
+```go
+// RegisterInterfaces registers protobuf interface implementations with the registry.
+// Called during app initialization so the SDK can decode Any values at runtime.
+func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
+    registry.RegisterImplementations((*sdk.Msg)(nil),
+        &MsgAdd{},
+        &MsgUpdateParams{},
+    )
+}
+
+// RegisterLegacyAminoCodec registers message types for Amino JSON encoding.
+// Required only if you want messages signable via SIGN_MODE_LEGACY_AMINO_JSON
+// (e.g., Ledger hardware wallets using older firmware).
+func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+    cdc.RegisterConcrete(&MsgAdd{}, "mymodule/Add", nil)
+}
+```
+
+`RegisterInterfaces` is required for every module that defines message types. Without it, the SDK cannot decode those messages from transactions. `RegisterLegacyAminoCodec` is optional and only needed for Ledger hardware wallet support via `SIGN_MODE_LEGACY_AMINO_JSON`.
+
+{/* todo: link to tutorial codec.go section */}
+
+## Proto-to-code generation workflow
+
+Writing `.proto` files produces `.pb.go` files through a code generation step. The generated Go code contains struct definitions, marshal/unmarshal methods, and gRPC service stubs. You never edit these generated files directly.
+
+The workflow is:
+
+**1. Write the `.proto` file**
+
+Proto files for a module live in the `proto/` directory at the repository root:
+
+```
+proto/myapp/mymodule/v1/
+├── tx.proto       # message types (MsgAdd, MsgAddResponse, ...)
+├── query.proto    # query service (QueryCount, ...)
+├── state.proto    # on-chain state types
+└── genesis.proto  # genesis state
+```
+
+A message definition:
+
+```proto
+syntax = "proto3";
+package myapp.mymodule.v1;
+
+message MsgAdd {
+  string sender = 1;
+  uint64 add    = 2;
+}
+
+message MsgAddResponse {
+  uint64 updated_count = 1;
+}
+
+service Msg {
+  rpc Add(MsgAdd) returns (MsgAddResponse);
+}
+```
+
+**2. Run code generation**
+
+```bash
+# example — the exact target varies by project
+make proto-gen
+```
+
+This runs `buf` (or `protoc` with plugins) against the `.proto` files and produces Go code under the module's `types/` directory:
+
+```
+x/mymodule/types/
+├── tx.pb.go        # generated: MsgAdd, MsgAddResponse, Marshal/Unmarshal methods
+├── query.pb.go     # generated: query request/response types
+├── query.pb.gw.go  # generated: gRPC-gateway REST handlers
+└── state.pb.go     # generated: on-chain state types
+```
+
+**3. Use the generated types**
+
+The generated structs implement `proto.Message` and can be passed directly to the codec for marshaling, registered with the interface registry, and used in keeper methods and message handlers:
+
+```go
+// handler receives the generated type
+func (m msgServer) Add(ctx context.Context, req *types.MsgAdd) (*types.MsgAddResponse, error) {
+    count, err := m.AddCount(ctx, req.Sender, req.Add)
+    if err != nil {
+        return nil, err
+    }
+    return &types.MsgAddResponse{UpdatedCount: count}, nil
+}
+```
+
+The generated gRPC service stub is registered with BaseApp's message router, connecting the handler to the transaction execution pipeline automatically.
+
+## Legacy Amino encoding
+
+Before protobuf, the Cosmos SDK used a custom serialization format called **Amino** for transaction encoding, JSON signing documents, and interface serialization. Protobuf has replaced it in all of those roles. The `LegacyAmino` codec still exists for backward compatibility, but is not used in the consensus-critical path.
+
+Some legacy components still reference it:
+
+- `LegacyAmino` is still present in the codec package for backward-compatibility
+- `LegacyAminoPubKey` (multisig) is registered alongside protobuf public key types
+- Some older chains, hardware wallets, and client tooling depend on Amino JSON signing
+
+New modules and chains should use protobuf exclusively.
+
+## Encoding in context
+
+Every layer of the Cosmos SDK depends on encoding:
+
+```
+Transaction (binary protobuf)
+    ↓ broadcast over p2p
+CometBFT
+    ↓ passes raw bytes to application
+BaseApp
+    ↓ decodes transaction, extracts messages
+Module MsgServer
+    ↓ processes message, calls keeper
+Keeper
+    ↓ marshals state value to bytes
+KVStore (raw bytes)
+    ↓ committed to disk
+AppHash (Merkle root over all KV bytes)
+```
+
+Determinism comes from the combination of canonical transaction encoding (ADR-027), deterministic application logic, and consistent protobuf serialization of stored state. Two validators executing the same transactions under these rules always produce the same bytes at every layer, and therefore always arrive at the same AppHash.
+
+The next section, [Execution Context, Gas, and Events](/sdk/next/learn/concepts/context-gas-events), explains the runtime execution environment that modules operate within: `sdk.Context`, gas metering, and events.

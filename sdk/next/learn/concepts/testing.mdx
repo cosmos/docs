@@ -1,0 +1,356 @@
+---
+title: Testing in the SDK
+---
+
+The Cosmos SDK provides a layered testing approach that mirrors the architecture of the framework itself. Tests are organized into three levels, each testing a progressively larger slice of the application. This page uses the counter module example in the `example` repo, not the minimal counter module example, because the fuller module includes the testing surfaces needed for these examples.
+
+{/* TODO: link to counter module example walkthrough when it is published in the docs throughout this page. */}
+
+## Three testing levels
+
+### Keeper unit tests
+
+Keeper unit tests verify keeper logic in isolation, without starting a full application. They construct a minimal in-memory context with a real KV store, initialize the keeper under test, and call its methods directly. No server, no network, no block processing.
+
+The counter module keeper tests live in `x/counter/keeper/keeper_test.go`. The test suite sets up a keeper with a live store and mock dependencies:
+
+```go
+type KeeperTestSuite struct {
+	suite.Suite
+
+	ctx         sdk.Context
+	keeper      *keeper.Keeper
+	queryClient types.QueryClient
+	msgServer   types.MsgServer
+	bankKeeper  *MockBankKeeper
+	authority   string
+}
+
+func (s *KeeperTestSuite) SetupTest() {
+	key := storetypes.NewKVStoreKey("counter")
+	storeService := runtime.NewKVStoreService(key)
+	testCtx := testutil.DefaultContextWithDB(s.T(), key, storetypes.NewTransientStoreKey("transient_test"))
+	ctx := testCtx.Ctx.WithBlockHeader(cmtproto.Header{Time: cmttime.Now()})
+	encCfg := moduletestutil.MakeTestEncodingConfig()
+
+	s.authority = "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn"
+	s.bankKeeper = &MockBankKeeper{}
+	k := keeper.NewKeeper(storeService, encCfg.Codec, s.bankKeeper, keeper.WithAuthority(s.authority))
+
+	s.ctx = ctx
+	s.keeper = k
+
+	queryHelper := baseapp.NewQueryServerTestHelper(ctx, encCfg.InterfaceRegistry)
+	types.RegisterQueryServer(queryHelper, keeper.NewQueryServer(k))
+	s.queryClient = types.NewQueryClient(queryHelper)
+	s.msgServer = keeper.NewMsgServerImpl(k)
+}
+```
+
+`testutil.DefaultContextWithDB` creates a real KV store backed by an in-memory database. `moduletestutil.MakeTestEncodingConfig` returns a codec configured for the test. The `MockBankKeeper` replaces the real bank keeper with a struct whose behavior can be controlled per test case:
+
+```go
+type MockBankKeeper struct {
+	SendCoinsFromAccountToModuleFn func(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
+}
+```
+
+A typical keeper test case covers the happy path and the error conditions with table-driven tests:
+
+```go
+func (s *KeeperTestSuite) TestAddCount() {
+	testCases := []struct {
+		name         string
+		setup        func()
+		sender       string
+		amount       uint64
+		expErr       bool
+		expErrMsg    string
+		expPostCount uint64
+	}{
+		{
+			name: "add to zero counter",
+			setup: func() {
+				err := s.keeper.InitGenesis(s.ctx, &types.GenesisState{
+					Count:  0,
+					Params: types.Params{MaxAddValue: 100},
+				})
+				s.Require().NoError(err)
+			},
+			sender:       "cosmos1test",
+			amount:       10,
+			expErr:       false,
+			expPostCount: 10,
+		},
+		{
+			name: "add exceeds max_add_value - should error",
+			setup: func() {
+				err := s.keeper.InitGenesis(s.ctx, &types.GenesisState{
+					Count:  0,
+					Params: types.Params{MaxAddValue: 50},
+				})
+				s.Require().NoError(err)
+			},
+			sender:    "cosmos1test",
+			amount:    100,
+			expErr:    true,
+			expErrMsg: "exceeds max allowed",
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setup()
+
+			newCount, err := s.keeper.AddCount(s.ctx, tc.sender, tc.amount)
+			if tc.expErr {
+				s.Require().Error(err)
+				if tc.expErrMsg != "" {
+					s.Require().Contains(err.Error(), tc.expErrMsg)
+				}
+			} else {
+				s.Require().NoError(err)
+				s.Require().Equal(tc.expPostCount, newCount)
+
+				count, err := s.keeper.GetCount(s.ctx)
+				s.Require().NoError(err)
+				s.Require().Equal(tc.expPostCount, count)
+			}
+		})
+	}
+}
+```
+
+`msg_server_test.go` uses the same suite to test the `MsgServer` layer, including event emission:
+
+```go
+func (s *KeeperTestSuite) TestMsgAddEmitsEvent() {
+	s.SetupTest()
+	err := s.keeper.InitGenesis(s.ctx, &types.GenesisState{
+		Count:  0,
+		Params: types.Params{MaxAddValue: 100},
+	})
+	s.Require().NoError(err)
+
+	_, err = s.msgServer.Add(s.ctx, &types.MsgAddRequest{Sender: "cosmos1test", Add: 42})
+	s.Require().NoError(err)
+
+	events := s.ctx.EventManager().Events()
+	s.Require().NotEmpty(events)
+
+	found := false
+	for _, event := range events {
+		if event.Type == "count_increased" {
+			found = true
+		}
+	}
+	s.Require().True(found, "count_increased event not found")
+}
+```
+
+Keeper unit tests are fast, deterministic, and surgical. They are the right level for testing business logic, error conditions, edge cases, and event emission.
+
+### Integration tests
+
+Integration tests verify behavior across the full application stack. They start a real in-memory network with one or more validators, wait for blocks to be produced, broadcast actual signed transactions via gRPC, and query the resulting state. These tests exercise the AnteHandler, message routing, block execution, and state commitment together.
+
+The counter module integration tests live in `tests/counter_test.go`. The test suite uses `testutil/network` from the Cosmos SDK to spin up a full in-memory chain:
+
+```go
+type E2ETestSuite struct {
+	suite.Suite
+
+	cfg     network.Config
+	network *network.Network
+	conn    *grpc.ClientConn
+}
+
+func (s *E2ETestSuite) SetupSuite() {
+	s.T().Log("setting up e2e test suite")
+
+	var err error
+	s.cfg = network.DefaultConfig(NewTestNetworkFixture)
+	s.cfg.NumValidators = 1
+
+	// Customize counter genesis to set initial count and permissive params
+	genesisState := s.cfg.GenesisState
+	counterGenesis := countertypes.GenesisState{
+		Count: 0,
+		Params: countertypes.Params{
+			MaxAddValue: 1000,
+			AddCost:     nil,
+		},
+	}
+	counterGenesisBz, err := s.cfg.Codec.MarshalJSON(&counterGenesis)
+	s.Require().NoError(err)
+	genesisState[countertypes.ModuleName] = counterGenesisBz
+	s.cfg.GenesisState = genesisState
+
+	s.network, err = network.New(s.T(), s.T().TempDir(), s.cfg)
+	s.Require().NoError(err)
+
+	_, err = s.network.WaitForHeight(2)
+	s.Require().NoError(err)
+
+	val0 := s.network.Validators[0]
+	s.conn, err = grpc.NewClient(
+		val0.AppConfig.GRPC.Address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.ForceCodec(codec.NewProtoCodec(s.cfg.InterfaceRegistry).GRPCCodec())),
+	)
+	s.Require().NoError(err)
+}
+```
+
+`NewTestNetworkFixture` (in `tests/test_helpers.go`) constructs the `ExampleApp` with `dbm.NewMemDB()` and returns a `network.TestFixture` that configures the in-memory validator. This lets the SDK's network test helper start a real application with real consensus.
+
+A test that exercises the full transaction path:
+
+```go
+func (s *E2ETestSuite) TestAddCounter() {
+	val := s.network.Validators[0]
+
+	initialCount := s.getCurrentCount()
+
+	txBuilder := s.mkCounterAddTx(val, 42)
+	txBytes, err := val.ClientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
+	s.Require().NoError(err)
+
+	txClient := txtypes.NewServiceClient(s.conn)
+	grpcRes, err := txClient.BroadcastTx(
+		context.Background(),
+		&txtypes.BroadcastTxRequest{
+			Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
+			TxBytes: txBytes,
+		},
+	)
+	s.Require().NoError(err)
+	s.Require().Equal(uint32(0), grpcRes.TxResponse.Code, "tx failed: %s", grpcRes.TxResponse.RawLog)
+
+	s.Require().NoError(s.network.WaitForNextBlock())
+
+	finalCount := s.getCurrentCount()
+	s.Require().Equal(initialCount+42, finalCount)
+}
+```
+
+Integration tests are slower than keeper unit tests because they start a real consensus engine and wait for blocks. They exist to catch failures at the boundaries: AnteHandler rejections, routing errors, genesis state mismatches, and cross-module interactions that only manifest when the full stack is running.
+
+### Simulation tests
+
+Simulation tests are property-based tests. Instead of testing specific inputs, they generate large volumes of random operations and verify that the application's invariants hold throughout. They catch bugs that deterministic test cases miss: unexpected ordering effects, state corruption under high load, and invariant violations that only appear after many sequential operations.
+
+The Cosmos SDK simulation framework drives this through [`simsx`](#simsx-and-simd). The counter module defines a message factory that generates random `MsgAddRequest` messages:
+
+```go
+// x/counter/simulation/msg_factory.go
+
+func MsgAddFactory() simsx.SimMsgFactoryFn[*types.MsgAddRequest] {
+	return func(ctx context.Context, testData *simsx.ChainDataSource, reporter simsx.SimulationReporter) ([]simsx.SimAccount, *types.MsgAddRequest) {
+		sender := testData.AnyAccount(reporter)
+		if reporter.IsSkipped() {
+			return nil, nil
+		}
+
+		r := testData.Rand()
+		addAmount := uint64(r.Intn(100) + 1)
+
+		msg := &types.MsgAddRequest{
+			Sender: sender.AddressBech32,
+			Add:    addAmount,
+		}
+
+		return []simsx.SimAccount{sender}, msg
+	}
+}
+```
+
+The simulation runner selects a random account and a random add amount within valid bounds, then executes the message against the live application. This runs thousands of times across a simulated block sequence.
+
+The top-level simulation test in `sim_test.go` wires everything together:
+
+```go
+//go:build sims
+
+func TestFullAppSimulation(t *testing.T) {
+	simsx.Run(t, NewExampleApp, setupStateFactory)
+}
+
+func setupStateFactory(app *ExampleApp) simsx.SimStateFactory {
+	return simsx.SimStateFactory{
+		Codec:         app.AppCodec(),
+		AppStateFn:    simtestutil.AppStateFn(app.AppCodec(), app.SimulationManager(), app.DefaultGenesis()),
+		BlockedAddr:   BlockedAddresses(),
+		AccountSource: app.AccountKeeper,
+		BalanceSource: app.BankKeeper,
+	}
+}
+```
+
+The `//go:build sims` build tag means simulation tests are excluded from regular `go test` runs and only execute when explicitly requested with `-tags sims`. This keeps CI fast.
+
+The simulation manager is initialized in `app.go`:
+
+```go
+overrideModules := map[string]module.AppModuleSimulation{
+	authtypes.ModuleName: auth.NewAppModule(appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, nil),
+}
+app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
+app.sm.RegisterStoreDecoders()
+```
+
+`NewSimulationManagerFromAppModules` collects simulation support from all modules that implement `AppModuleSimulation`. `RegisterStoreDecoders` registers human-readable decoders for each module's store entries, used when the simulation framework logs state for debugging.
+
+## Test utilities
+
+### testutil
+
+The [`testutil`](https://github.com/cosmos/cosmos-sdk/tree/main/testutil) package provides helpers for constructing in-memory contexts for unit tests:
+
+- `testutil.DefaultContextWithDB` creates a real `sdk.Context` backed by an in-memory KV store. Keeper unit tests use this to get a realistic execution context without starting a full node.
+- `moduletestutil.MakeTestEncodingConfig` returns a codec with standard interface registration, suitable for keeper tests.
+- `baseapp.NewQueryServerTestHelper` creates a `QueryServiceTestHelper` that implements both the gRPC Server and ClientConn interfaces, allowing keeper tests to register query services and invoke them directly without a network connection.
+
+### testify suite
+
+The SDK's test files use the [`testify/suite`](https://pkg.go.dev/github.com/stretchr/testify/suite) package. A `suite.Suite` groups test setup, teardown, and test methods into a single struct. `SetupTest` runs before each test method; `SetupSuite` runs once before all tests in the suite.
+
+```go
+func TestKeeperTestSuite(t *testing.T) {
+	suite.Run(t, new(KeeperTestSuite))
+}
+```
+
+`suite.Run` discovers methods on the struct whose names start with `Test` and runs them as individual test cases. `s.Require()` returns assertion helpers that stop the test immediately on failure, while `s.Assert()` continues after a failure.
+
+## simsx and simd
+
+[`simsx`](https://github.com/cosmos/cosmos-sdk/tree/main/testutil/simsx) is the simulation execution framework. It provides:
+
+- `SimMsgFactoryFn`: a function type that implements the `SimMsgFactoryX` interface for message factories. Each factory selects random accounts and parameters, constructs a message, and returns it for execution.
+- `ChainDataSource`: provides access to random accounts, balances, and other chain data during message construction.
+- `SimulationReporter`: allows a factory to signal that it should be skipped (for example, if no suitable account exists).
+- `simsx.Run`: the top-level entry point that drives a full simulation run against the application.
+
+[`simd`](/sdk/next/user/run-node/prerequisites) is the reference simulation binary provided by the Cosmos SDK. It is a fully configured simapp (`simapp`) compiled as a standalone binary, used to run simulations against the SDK's own module set without setting up a custom chain. For a custom chain like the example app, you use your own binary with the `sims` build tag. To learn how to run an example chain, visit the [simd node tutorial](/sdk/next/user/run-node/run-node).
+
+To run simulations against the example app:
+
+```bash
+go test -tags sims -run TestFullAppSimulation ./...
+```
+
+## Telemetry
+
+The counter module uses OpenTelemetry to emit metrics from keeper operations:
+
+```go
+var (
+	meter = otel.Meter("github.com/cosmos/example/x/counter")
+
+	countMetric metric.Int64Counter
+)
+```
+
+The SDK provides a telemetry package built around OpenTelemetry, with legacy support for go-metrics. Modules can emit counters, gauges, and histograms from keeper methods to expose runtime behavior for monitoring. See [Telemetry](/sdk/next/learn/advanced/telemetry) for full details.
