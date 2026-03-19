@@ -108,7 +108,15 @@ When updating documentation:
 
 ## Example Tutorial Sync (cosmos/example ↔ this repo)
 
-The Cosmos SDK example chain tutorials live in `sdk/next/tutorials/example/` (files `01-prerequisites.mdx` through `05-run-and-test.mdx`) and are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change to these files, a PR is automatically opened on the other repo with the content transformed between formats (H1 ↔ frontmatter, absolute ↔ relative links). The transform script lives at `scripts/docs-sync/transform.py` in `cosmos/example`. When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
+The Cosmos SDK example chain tutorials live in `sdk/next/tutorials/example/` (files `00-overview.mdx` through `05-run-and-test.mdx`) and are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change to these files, a PR is automatically opened on the other repo with the content transformed between formats (H1 ↔ frontmatter, absolute ↔ relative links).
+
+The transform script exists in two places and must be kept in sync:
+- `scripts/docs-sync/transform.py` in **this repo** — used by `.github/workflows/docs-sync-to-example.yml` to transform `.mdx` → `.md` when syncing to `cosmos/example`
+- `scripts/docs-sync/transform.py` in **`cosmos/example`** — used for manual local syncs in both directions
+
+`scripts/docs-sync/` is explicitly unignored in `.gitignore` (the default `scripts/*` rule would otherwise hide it).
+
+When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
 
 ## Internal Links
 
