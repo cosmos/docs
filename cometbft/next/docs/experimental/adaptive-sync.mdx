@@ -6,7 +6,7 @@ description: "Run blocksync and consensus simultaneously for better catch-up liv
 <Warning>
   This is an experimental feature.
   It has been tested under a range of network conditions and perturbations, but you should validate it
-  for your specific workload before enabling it on a mainnet chain.
+  for your specific workload before enabling it on a production mainnet chain.
 </Warning>
 
 AdaptiveSync allows a node to run [blocksync](/cometbft/next/docs/core/block-sync) and consensus at the same time.
@@ -15,9 +15,25 @@ In the default flow, a node starts in blocksync, catches up, then switches to co
 Under sustained load (for example, busy RPC nodes), a node can remain behind and struggle to catch up.
 With short block times, this can hurt network liveness.
 
-With `adaptive_sync` enabled, consensus still works normally, but it can also ingest already 
-available blocks from blocksync. This acts as a fallback path when a node is behind, allowing it to recover
+With `adaptive_sync` enabled, consensus still works normally, but it can also ingest already available 
+blocks from blocksync. This acts as a fallback path when a node is behind, allowing it to recover 
 more quickly during traffic spikes and continue progressing with the network.
+
+AdaptiveSync does not change consensus safety or finality rules. It changes catch-up behavior, not block validity rules.
+
+## Scope and compatibility
+
+- AdaptiveSync is intended for nodes that can temporarily lag, especially RPC-heavy or high-throughput deployments.
+- It is experimental; enable it gradually and validate in your own network conditions before broad rollout.
+- If you run mixed node roles (validators, sentries, RPC nodes), test each role separately.
+
+## How it works
+
+1. The node continues running consensus as usual.
+2. If the node is behind, blocks obtained by blocksync can be handed to consensus ingestion.
+3. If a candidate block is already included by consensus, it is skipped.
+4. If not already included, it is ingested and applied through normal validation paths.
+5. The node converges faster during transient load spikes while preserving normal consensus behavior.
 
 ## When to use it
 
@@ -28,6 +44,12 @@ Enable `adaptive_sync` if your nodes can temporarily fall behind and need better
 - **RPC-heavy nodes** that may lag during periods of high request volume.
 
 If your network is stable and nodes consistently keep up, the default mode may already be sufficient.
+
+**Notes**:
+
+- Running this fallback path may slightly increase CPU and I/O during catch-up windows
+- Constant blocksync message processing may increase network traffic.
+- Gains are most visible during temporary overload.
 
 ## Configuration
 
