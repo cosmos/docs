@@ -1,0 +1,105 @@
+name: Docs Sync → cosmos/example
+
+# Runs when example tutorial .mdx files change on main.
+# Transforms .mdx → .md and opens a PR on the example repo.
+# If a sync PR is already open, updates it instead of opening a new one.
+# Skip if the commit was itself produced by the sync (loop guard).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sdk/next/tutorials/example/**"
+
+jobs:
+  sync:
+    name: Sync example tutorials to cosmos/example
+    runs-on: ubuntu-latest
+    # Loop guard: skip commits that the docs-sync bot created
+    if: "!contains(github.event.head_commit.message, '[docs-sync]')"
+
+    steps:
+      - name: Checkout cosmos/docs
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Checkout cosmos/example
+        uses: actions/checkout@v4
+        with:
+          repository: cosmos/example
+          # Fine-grained PAT with contents:write and pull-requests:write on cosmos/example
+          token: ${{ secrets.EXAMPLE_REPO_TOKEN }}
+          path: cosmos-example
+
+      - name: Transform Mintlify → example repo format
+        run: |
+          python3 scripts/docs-sync/transform.py \
+            --direction to-example \
+            --input sdk/next/tutorials/example/ \
+            --output-dir cosmos-example/docs/
+
+      - name: Check for changes
+        id: diff
+        run: |
+          cd cosmos-example
+          [ -n "$(git status --porcelain docs/)" ] \
+            && echo "changed=true" >> "$GITHUB_OUTPUT" \
+            || echo "changed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update PR on cosmos/example
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.EXAMPLE_REPO_TOKEN }}
+        run: |
+          cd cosmos-example
+
+          git config user.name  "docs-sync[bot]"
+          git config user.email "docs-sync[bot]@users.noreply.github.com"
+
+          # Check for an existing open sync PR
+          EXISTING=$(gh pr list \
+            --repo cosmos/example \
+            --label "docs-sync" \
+            --state open \
+            --json number,headRefName \
+            --jq '.[0]')
+
+          if [ -n "$EXISTING" ]; then
+            PR_NUMBER=$(echo "$EXISTING" | jq -r '.number')
+            BRANCH=$(echo "$EXISTING" | jq -r '.headRefName')
+
+            # Stash the transform output before switching branches,
+            # then restore it on top of the existing sync branch.
+            git stash
+            git fetch origin "$BRANCH"
+            git checkout "$BRANCH"
+            git stash pop
+            git add docs/
+            git commit -m "docs: sync example tutorials from cosmos/docs [docs-sync]"
+            git push origin "$BRANCH"
+
+            gh pr comment "$PR_NUMBER" \
+              --repo cosmos/example \
+              --body "Sync updated: cosmos/docs was updated before this PR merged. Branch has been refreshed — please re-review."
+            echo "Updated existing PR #$PR_NUMBER"
+
+          else
+            BRANCH="docs-sync/from-docs-$(date +%Y%m%d-%H%M%S)"
+            git checkout -b "$BRANCH"
+            git add docs/
+            git commit -m "docs: sync example tutorials from cosmos/docs [docs-sync]"
+            git push origin "$BRANCH"
+
+            gh pr create \
+              --repo cosmos/example \
+              --head "$BRANCH" \
+              --base main \
+              --title "docs: sync example tutorials from cosmos/docs" \
+              --label "docs-sync" \
+              --body "Auto-synced from cosmos/docs. Transforms sdk/next/tutorials/example/*.mdx to docs/*.md. Do not edit docs/ files directly in cosmos/example — edit the source and let the sync bot update them."
+          fi
