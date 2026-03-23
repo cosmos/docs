@@ -18,6 +18,14 @@ type IBCModule struct {
 }
 ```
 
+All `IBCModule` implementations must also implement `SetICS4Wrapper`, which is called by the `IBCStackBuilder` during application setup to wire the ICS4 channel handler into the module:
+
+```go
+func (im *IBCModule) SetICS4Wrapper(wrapper porttypes.ICS4Wrapper) {
+  im.keeper.SetICS4Wrapper(wrapper)
+}
+```
+
 Additionally, in the `module.go` file, add the following line:
 
 ```go
@@ -110,6 +118,7 @@ OnChanOpenAck(
   ctx sdk.Context,
   portID,
   channelID string,
+  counterpartyChannelID string,
   counterpartyVersion string,
 )
 
@@ -287,7 +296,9 @@ func (im IBCModule)
 
 OnRecvPacket(
   ctx sdk.Context,
+  channelVersion string,
   packet channeltypes.Packet,
+  relayer sdk.AccAddress,
 )
 
 ibcexported.Acknowledgement {
@@ -337,9 +348,11 @@ func (im IBCModule)
 
 OnAcknowledgementPacket(
   ctx sdk.Context,
+  channelVersion string,
   packet channeltypes.Packet,
   acknowledgement []byte,
-) (*sdk.Result, error) {
+  relayer sdk.AccAddress,
+) error {
   / Decode acknowledgement
     ack := DecodeAcknowledgement(acknowledgement)
 
@@ -364,8 +377,10 @@ func (im IBCModule)
 
 OnTimeoutPacket(
   ctx sdk.Context,
+  channelVersion string,
   packet channeltypes.Packet,
-) (*sdk.Result, error) {
+  relayer sdk.AccAddress,
+) error {
   / do custom timeout logic
 }
 ```
