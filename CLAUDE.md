@@ -106,6 +106,73 @@ When updating documentation:
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 
+## Internal Link Format
+
+All internal links in MDX files must use absolute root-relative paths **without** the `.mdx` extension:
+
+```text
+✅ /sdk/next/changelog/release-notes
+❌ ./release-notes.mdx
+❌ ../changelog/release-notes.mdx
+```
+
+Mintlify resolves links by URL path, not filesystem path. Relative or extension-suffixed links will break in production.
+
+## File Operations Checklist
+
+When **adding**, **deleting**, **moving**, or **renaming** any `.mdx` file:
+
+1. **Update `docs.json`** — Add, remove, or update the page entry in the navigation structure. Every page must be registered to appear in the sidebar.
+2. **Add redirects** — For deleted, renamed, or moved pages, add a redirect in `docs.json` so existing links and search results don't 404.
+3. **Fix backlinks** — Search for all internal links pointing to the old path and update them to the new path.
+
+```bash
+# Find broken internal links
+npx mint broken-links
+```
+
+### Redirects in `docs.json`
+
+Redirects are defined as a top-level `"redirects"` array in `docs.json`. Each entry has a `source` and `destination`, both as root-relative paths without `.mdx` extensions:
+
+```json
+"redirects": [
+  {
+    "source": "/ibc/next/old-page-name",
+    "destination": "/ibc/next/new-page-name"
+  }
+]
+```
+
+Wildcards are supported:
+
+```json
+{ "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
+```
+
+**Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
+
+### Versioning in `docs.json` and `versions.json`
+
+**`docs.json`** controls the version *dropdown UI* shown in the sidebar. Each product is a `dropdown` entry inside `navigation`, with a `versions` array. Each version entry contains its own `tabs`, `groups`, and `pages`:
+
+```json
+{
+  "dropdown": "IBC",
+  "versions": [
+    {
+      "version": "next",
+      "tabs": [ ... ]
+    },
+    {
+      "version": "v10.1.x",
+      "tabs": [ ... ]
+    }
+  ]
+}
+```
+
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components

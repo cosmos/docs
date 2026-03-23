@@ -13,20 +13,35 @@ The protocol realizes this interoperability by specifying a set of data structur
 
 <Note>
 **Notice**
-Since ibc-go v10, there are two versions of the protocol in the same release: IBC classic and IBC v2. The protocols are seperate - a connection uses either IBC classic or IBC v2
+Since ibc-go v10, there are two versions of the protocol in the same release: IBC classic and IBC v2. The protocols are separate - a connection uses either IBC classic or IBC v2
 </Note>
 
-## High-level overview of IBC v2
+## Overview of IBC v2
 
-For a high level overview of IBC v2, please refer to [this blog post.](https://ibcprotocol.dev/blog/ibc-v2-announcement) For a more detailed understanding of the IBC v2 protocol, please refer to the [IBC v2 protocol specification.](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2)
+IBC v2 is a streamlined redesign of the IBC Classic protocol. It reduces architectural complexity and expands IBC connectivity to gas-metered environments such as the EVM. The protocol is organized around three components:
 
-If you are interested in using the cannonical deployment of IBC v2, connecting Cosmos chains and Ethereum, take a look at the [IBC Eureka](/skip-go/eureka/eureka-overview) documentation to get started.
+-  **Clients** track the consensus state of a counterparty chain and serve as the primary identifier for a connection. A packet in IBC v2 references a source client and a destination client — not a channel — and is verified by proving the packet commitment against the counterparty's stored consensus state.
+-  **Router** directs packets to the correct application module by port ID. It consolidates the routing logic that was previously spread across connections, channels, and the port router in IBC Classic into a single abstraction.
+-  **Applications** implement the `IBCModule` interface to handle the packet lifecycle: `OnSendPacket`, `OnRecvPacket`, `OnAcknowledgementPacket`, and `OnTimeoutPacket`. There are no channel handshake callbacks; application version and encoding are declared per-payload at send time.
+
+Packets in IBC v2 carry one or more **Payloads**. Each payload specifies the source port, destination port, application version, encoding (e.g. protobuf, JSON, or ABI), and the raw application data. A single packet can carry payloads for multiple applications simultaneously. Execution is atomic: if any payload fails, all state changes from that packet are rolled back.
+
+Notable features of IBC v2:
+
+- **Relayers** are off-chain processes that observe packet commitments on the sending chain and submit them with Merkle proofs to the receiving chain, and do the same in reverse for acknowledgements and timeouts. Relaying is permissionless by default; IBC v2 optionally allows chains to restrict relaying per client to an authorized allowlist.
+- **Client pairs are the connection primitive**: two chains communicate via a pair of light clients, one on each chain. Before packets can flow, each chain registers the other's client ID as its counterparty. This replaces the multi-step connection and channel handshakes of IBC Classic.
+- **Flexible client types**: clients are not restricted to light clients. Any verification model can be implemented — light clients, multi-sig, ZK-proof verifiers, or conditional clients. This enables cost-efficient light client verification on chains like Ethereum.
+- **No channel upgrades**: since application version and encoding are declared per-payload, applications can change their wire format without a channel upgrade coordination process. All application versions route through the same client connection.
+- **Timestamp-only timeout**: IBC v2 packets carry a single Unix timestamp timeout (in seconds). Block heights are chain-specific and don't translate across heterogeneous chains like Ethereum, so timestamps are used instead as a universal primitive. If a packet is not received before the timeout, a relayer can submit a proof of non-receipt and the sending chain times out the packet.
+
+For a detailed understanding of the protocol design, refer to the [IBC v2 specification.](/ibc/next/spec/IBC_V2/README) For a high-level introduction, see the [IBC v2 announcement blog post.](https://ibcprotocol.dev/blog/ibc-v2-announcement) If you are interested in using IBC v2 to connect Cosmos chains and Ethereum, take a look at the [IBC Eureka](/skip-go/eureka/eureka-overview) documentation.
+
 
 ## High-level overview of IBC Classic
 
 The following diagram shows how IBC works at a high level:
 
-![Light Mode IBC Overview](/ibc/images/images/ibcoverview-light.svg#gh-light-mode-only)![Dark Mode IBC Overview](/ibc/images/images/ibcoverview-dark.svg#gh-dark-mode-only)
+![Dark Mode IBC Overview](/ibc/images/images/ibcoverview-dark.svg)
 
 The transport layer (TAO) provides the necessary infrastructure to establish secure connections and authenticate data packets between chains. The application layer builds on top of the transport layer and defines exactly how data packets should be packaged and interpreted by the sending and receiving chains.
 
