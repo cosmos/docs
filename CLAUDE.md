@@ -55,17 +55,19 @@ cd tests && npm test
 ## Architecture & Structure
 
 ### Documentation Organization
-The documentation follows a hierarchical structure configured in `docs.json`. The repo is a multi-product docs site; each product has its own top-level directory with versioned subdirectories.
+The documentation follows a hierarchical structure configured in `docs.json`:
 
-#### Top-level product directories
+- **docs/documentation/** - Main documentation content
+  - `concepts/` - Core concepts (accounts, gas, transactions, IBC)
+  - `cosmos-sdk/` - SDK modules and protocol details
+  - `smart-contracts/` - Precompiles and predeployed contracts
+  - `integration/` - Integration guides and migration docs
+  - `getting-started/` - Quick start guides and tooling
 
-- **`ibc/`** — IBC (Inter-Blockchain Communication) docs. Versions: `next/` (active), `v10.1.x`, `v8.5.x`, `v7.8.x`, `v6.3.x`, `v5.4.x`, `v4.6.x`, `v0.2.0`
-- **`evm/`** — Cosmos EVM docs. Versions: `next/`, `v0.5.0`, `v0.4.x`
-- **`sdk/`** — Cosmos SDK docs. Versions: `next/`, `v0.53`, `v0.50`, `v0.47`
-- **`hub/`** — Cosmos Hub docs. Versions: `v25/`
-- **`cometbft/`** — CometBFT docs. Versions: `v0.38/`, `v0.37/`
-- **`skip-go/`** — Skip Go docs (unversioned, flat structure)
-- **`enterprise/`** — Enterprise docs
+- **docs/api-reference/** - API documentation
+  - `ethereum-json-rpc/` - RPC methods, OpenAPI spec, and explorer
+
+- **docs/changelog/** - Release notes auto-synced from cosmos/evm
 
 ### Key Technical Components
 
@@ -170,15 +172,11 @@ Wildcards are supported:
 }
 ```
 
-**`versions.json`** is a *custom script config* (not a Mintlify-native file). It is used by the scripts in `scripts/versioning/` to manage changelog syncing, version freezing, and related automation. It defines each product's available versions, default version, upstream GitHub repository, and changelog path. It does not affect the live docs UI directly — changes here only affect what the scripts do.
-
-## Session State
-
-`WORKING.md` in the repo root tracks active work, recent changes, and known issues for the current session. It is gitignored and mintignored. Check it at the start of any session to understand what was last being worked on.
 
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components
+- Navigation structure must be updated in `docs.json` when adding new pages
 - Interactive RPC documentation is generated from the source `methods.mdx` file
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
