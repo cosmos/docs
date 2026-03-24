@@ -1,0 +1,185 @@
+---
+title: "Gas and Advanced Usage"
+description: "Gas estimation, custom messages, binary helpers, and the wasm query extension"
+---
+
+This page covers gas configuration for CosmWasm transactions, building custom encode objects, working with the CosmWasm `Binary` type, and using the low-level wasm query extension for fine-grained pagination.
+
+## Gas Estimation
+
+### Auto Gas
+
+When you pass `"auto"` as the fee, the client simulates the transaction and applies a gas multiplier:
+
+| Operation | Default Multiplier | Reason |
+|-----------|-------------------|--------|
+| `upload` | 1.1x | Upload simulation is very accurate |
+| All others | 1.4x | General safety margin for state changes |
+
+You can pass a numeric multiplier instead of `"auto"` for finer control:
+
+```typescript
+const result = await client.execute(
+  address,
+  contractAddress,
+  { complex_operation: {} },
+  1.6,
+);
+```
+
+### Static Fees
+
+For full control, provide an explicit fee object:
+
+```typescript
+import { coins } from "@cosmjs/stargate";
+
+const fee = {
+  amount: coins(5000, "uosmo"),
+  gas: "300000",
+};
+
+const result = await client.execute(address, contractAddress, { increment: {} }, fee);
+```
+
+### Gas Simulation
+
+Simulate a transaction to estimate gas without broadcasting:
+
+```typescript
+import { toUtf8 } from "@cosmjs/encoding";
+import { MsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
+
+const msg = {
+  typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+  value: MsgExecuteContract.fromPartial({
+    sender: address,
+    contract: contractAddress,
+    msg: toUtf8(JSON.stringify({ increment: {} })),
+    funds: [],
+  }),
+};
+
+const gasEstimate = await client.simulate(address, [msg], "estimating gas");
+```
+
+## Working with Binary Data
+
+The `toBinary` and `fromBinary` helpers convert JavaScript objects to and from the base64-encoded JSON format used by CosmWasm `Binary` fields:
+
+```typescript
+import { toBinary, fromBinary } from "@cosmjs/cosmwasm";
+
+const encoded = toBinary({ some: "data" });
+// "eyJzb21lIjoiZGF0YSJ9"
+
+const decoded = fromBinary(encoded);
+// { some: "data" }
+```
+
+This is useful when composing nested messages, such as sending a sub-message through a contract:
+
+```typescript
+await client.execute(
+  address,
+  multisigAddress,
+  {
+    propose: {
+      msg: toBinary({ transfer: { recipient: "osmo1...", amount: "1000000" } }),
+    },
+  },
+  "auto",
+);
+```
+
+## Building Custom Messages
+
+For advanced use cases, construct CosmWasm encode objects directly and broadcast them via `signAndBroadcast`:
+
+```typescript
+import { toUtf8 } from "@cosmjs/encoding";
+import { MsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
+
+const msg = {
+  typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+  value: MsgExecuteContract.fromPartial({
+    sender: address,
+    contract: contractAddress,
+    msg: toUtf8(JSON.stringify({ increment: {} })),
+    funds: [{ denom: "uosmo", amount: "1000" }],
+  }),
+};
+
+const result = await client.signAndBroadcast(address, [msg], "auto");
+```
+
+### Mixing CosmWasm and Cosmos SDK Messages
+
+This approach lets you combine contract calls with standard Cosmos SDK messages in a single atomic transaction:
+
+```typescript
+import { toUtf8 } from "@cosmjs/encoding";
+import { MsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
+
+const executeMsg = {
+  typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+  value: MsgExecuteContract.fromPartial({
+    sender: address,
+    contract: contractAddress,
+    msg: toUtf8(JSON.stringify({ claim_rewards: {} })),
+    funds: [],
+  }),
+};
+
+const sendMsg = {
+  typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+  value: {
+    fromAddress: address,
+    toAddress: "osmo1recipient...",
+    amount: [{ denom: "uosmo", amount: "500000" }],
+  },
+};
+
+const result = await client.signAndBroadcast(address, [executeMsg, sendMsg], "auto");
+```
+
+## Wasm Query Extension
+
+For fine-grained control over pagination or when building a custom query client, use the wasm extension directly instead of the high-level `CosmWasmClient` methods:
+
+```typescript
+import { QueryClient } from "@cosmjs/stargate";
+import { setupWasmExtension } from "@cosmjs/cosmwasm";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupWasmExtension);
+
+const { codeInfos, pagination } = await queryClient.wasm.listCodeInfo();
+const allState = await queryClient.wasm.getAllContractState("osmo1contractaddr...");
+```
+
+### Available Extension Methods
+
+| Method | Description |
+|--------|-------------|
+| `listCodeInfo(paginationKey?)` | List all uploaded codes |
+| `getCode(id)` | Download original Wasm by code ID |
+| `listContractsByCodeId(id, paginationKey?)` | List contract addresses for a code ID |
+| `listContractsByCreator(creator, paginationKey?)` | List contracts created by an address |
+| `getContractInfo(address)` | Get contract metadata |
+| `getContractCodeHistory(address, paginationKey?)` | Get migration history |
+| `getAllContractState(address, paginationKey?)` | Dump all contract storage |
+| `queryContractRaw(address, key)` | Read a single storage key |
+| `queryContractSmart(address, query)` | Execute a smart query |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CosmWasm Overview" icon="book" href="/cosmjs/v0.38.x/guides/cosmwasm/cosmwasm">
+    Back to the CosmWasm guide overview.
+  </Card>
+  <Card title="Stargate vs CosmWasm" icon="code-compare" href="/cosmjs/v0.38.x/concepts/clients/stargate-vs-cosmwasm">
+    Comparing the two client families and when to use each.
+  </Card>
+</CardGroup>

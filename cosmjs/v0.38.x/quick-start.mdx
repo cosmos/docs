@@ -1,0 +1,171 @@
+---
+title: Quick Start
+description: Install CosmJS, connect to a Cosmos SDK chain, query state, and send your first transaction
+---
+
+This guide walks you through installing CosmJS, connecting to a Cosmos SDK chain, querying on-chain state, and sending your first transaction.
+
+## Prerequisites
+
+- **Node.js** v22 or later
+- **npm**, **yarn**, or **pnpm**
+- A Cosmos SDK chain RPC endpoint (e.g. `https://rpc.my-chain.network` for the Cosmos Hub)
+
+<Steps>
+<Step title="Install">
+
+<CodeGroup>
+```bash npm
+npm install @cosmjs/stargate @cosmjs/proto-signing
+```
+```bash yarn
+yarn add @cosmjs/stargate @cosmjs/proto-signing
+```
+```bash pnpm
+pnpm add @cosmjs/stargate @cosmjs/proto-signing
+```
+</CodeGroup>
+
+</Step>
+<Step title="Connect to a chain">
+
+Create a read-only client and verify the connection:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const rpcEndpoint = "https://cosmos-rpc.polkachu.com";
+const client = await StargateClient.connect(rpcEndpoint);
+
+const chainId = await client.getChainId();
+const height = await client.getHeight();
+console.log(`Connected to ${chainId} at height ${height}`);
+```
+
+<Tip>
+Find RPC endpoints for any Cosmos chain in the [chain registry](https://github.com/cosmos/chain-registry).
+</Tip>
+
+</Step>
+<Step title="Query balances">
+
+Use the connected client to look up any account's balance:
+
+```typescript
+const address = "cosmos1...";
+const balance = await client.getBalance(address, "uatom");
+console.log(`Balance: ${balance.amount} ${balance.denom}`);
+
+const account = await client.getAccount(address);
+console.log("Account:", account);
+
+const allBalances = await client.getAllBalances(address);
+console.log("All balances:", allBalances);
+```
+
+</Step>
+<Step title="Create a signer">
+
+To send transactions you need a signer. You can create one from a mnemonic for development, or connect a browser wallet like [Keplr](https://keplr.app) in production.
+
+<Tabs>
+<Tab title="From mnemonic">
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+  "your mnemonic words here ...",
+  { prefix: "cosmos" },
+);
+const [{ address }] = await wallet.getAccounts();
+console.log("Signer address:", address);
+```
+
+<Warning>
+Never hard-code or commit mnemonics. Use environment variables or a secrets manager.
+</Warning>
+
+</Tab>
+<Tab title="Keplr wallet (browser)">
+
+```typescript
+const chainId = "cosmoshub-4";
+await window.keplr.enable(chainId);
+const offlineSigner = window.keplr.getOfflineSigner(chainId);
+const [{ address }] = await offlineSigner.getAccounts();
+console.log("Keplr address:", address);
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step title="Send tokens">
+
+Connect a signing client and broadcast a token transfer:
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const signingClient = await SigningStargateClient.connectWithSigner(
+  rpcEndpoint,
+  wallet, // or offlineSigner from Keplr
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const result = await signingClient.sendTokens(
+  address,
+  "cosmos1recipientaddress...",
+  [{ denom: "uatom", amount: "1000000" }], // 1 ATOM = 1,000,000 uatom
+  "auto",
+);
+
+console.log("Tx hash:", result.transactionHash);
+console.log("Gas used:", result.gasUsed);
+```
+
+<Info>
+Setting fee to `"auto"` lets CosmJS simulate the transaction and estimate gas automatically. You can also pass an explicit `StdFee` object for fine-grained control.
+</Info>
+
+</Step>
+<Step title="Send arbitrary messages">
+
+For transactions beyond simple token transfers, construct message objects directly:
+
+```typescript
+import { MsgDelegate } from "cosmjs-types/cosmos/staking/v1beta1/tx";
+
+const msg = {
+  typeUrl: "/cosmos.staking.v1beta1.MsgDelegate",
+  value: MsgDelegate.fromPartial({
+    delegatorAddress: address,
+    validatorAddress: "cosmosvaloper1...",
+    amount: { denom: "uatom", amount: "1000000" },
+  }),
+};
+
+const result = await signingClient.signAndBroadcast(address, [msg], "auto");
+console.log("Tx hash:", result.transactionHash);
+```
+
+</Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Clients" icon="plug" href="/cosmjs/v0.38.x/concepts/clients/read-only-clients">
+    Understand read-only and signing client architecture.
+  </Card>
+  <Card title="Querying" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/query/querying">
+    Query balances, staking, governance, and custom modules.
+  </Card>
+  <Card title="Fees & Gas" icon="gas-pump" href="/cosmjs/v0.38.x/concepts/fees-gas/gas-and-fees">
+    Configure gas pricing, simulation, and fee calculation.
+  </Card>
+  <Card title="CosmWasm" icon="file-code" href="/cosmjs/v0.38.x/guides/cosmwasm/cosmwasm">
+    Deploy, instantiate, and execute smart contracts.
+  </Card>
+</CardGroup>
