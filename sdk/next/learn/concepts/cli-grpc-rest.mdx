@@ -1,0 +1,306 @@
+---
+title: CLI, gRPC, and REST API
+---
+
+A Cosmos SDK chain exposes three external interfaces for interacting with it: a command-line interface (CLI), a gRPC API, and a REST API. Each is a different surface over the same underlying chain logic. Users and developers can choose whichever interface suits their use case without affecting how the chain processes or validates transactions.
+
+## How users interact with a chain
+
+Every operation a user performs falls into one of two categories:
+
+- **Transactions**: state-changing operations broadcast to the network and included in blocks (send tokens, delegate stake, vote on a proposal)
+- **Queries**: read-only requests that return data from the current chain state without going through consensus
+
+Both categories are accessible through the CLI, gRPC, and REST interfaces. The interfaces differ in how requests are constructed and transmitted, not in what they can do.
+
+None of these interfaces affect consensus. Transactions are validated and ordered by the consensus engine (CometBFT); the interfaces are simply delivery mechanisms that carry signed transactions to the network and return results.
+
+For the transaction and query model underneath these interfaces, see [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions).
+
+## Interface comparison
+
+All endpoints default to `localhost` and must be configured to be accessible over the public internet.
+
+| Interface | Default port | Best for | Notes |
+|---|---|---|---|
+| **CLI** | — | Development, testing, and node operations | Best for operator and developer workflows |
+| **gRPC** | 9090 | Wallets, backend services, and SDK clients | Not supported in browsers (requires HTTP/2) |
+| **REST** | 1317 | Web applications, scripts, and environments without gRPC support | Use when gRPC is unavailable; REST is disabled by default |
+| **CometBFT RPC** | 26657 | Consensus and blockchain data queries | Limited to consensus-layer data |
+
+## CLI
+
+The CLI is the primary tool for developers and operators interacting with a chain from the terminal. Most Cosmos SDK chains ship a single binary that acts as both the server process and the CLI client. It is common to append a `d` suffix to the binary name to indicate that it is a daemon process, such as `exampled` or `simd`.
+
+For a hands-on walkthrough of running a local chain and using the CLI, see the [Running and Testing](/sdk/next/tutorials/example/05-run-and-test) tutorial.
+
+When used as a client, the CLI constructs a transaction or query, signs it if required, and submits it through the node client interface.
+
+To learn how to run a local node and use the CLI, see [Run a Local Node](/sdk/next/user/run-node/prerequisites).
+
+### Using the CLI
+
+CLI commands are organized into two categories:
+
+- `query` commands retrieve information from chain state
+- `tx` commands construct and broadcast transactions
+
+Example commands:
+
+```
+exampled query counter count
+```
+
+```
+exampled tx counter add 10 \
+  --from mykey \
+  --chain-id example-1 \
+  --gas auto \
+  --gas-adjustment 1.3 \
+  --fees 1000stake
+```
+
+- `--from` specifies the signing key
+- `--gas auto` asks the CLI to estimate gas usage
+- `--gas-adjustment` applies a safety multiplier to the estimate
+- `--fees` specifies the transaction fee
+
+Gas limits the computational work a transaction can perform. The full gas model is explained in [Execution Context, Gas, and Events](/sdk/next/learn/concepts/context-gas-events).
+
+For a full CLI reference for the example chain, see [CLI reference](/sdk/next/tutorials/example/05-run-and-test#cli-reference) in the Running and Testing tutorial.
+
+### How modules expose CLI commands with `AutoCLI`
+
+In modern Cosmos SDK applications, modules expose CLI commands through **`AutoCLI`**. `AutoCLI` reads a module's protobuf service definitions and generates CLI commands automatically, without requiring modules to hand-write Cobra command boilerplate. The counter snippets in this section are from the minimal counter module example. See the [Build a Module from Scratch](/sdk/next/tutorials/example/03-build-a-module) tutorial.
+
+A module opts into `AutoCLI` by implementing `AutoCLIOptions()` on its `AppModule`:
+
+```go
+func (a AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
+	return &autocliv1.ModuleOptions{
+		Query: &autocliv1.ServiceCommandDescriptor{
+			Service:              "example.counter.Query",
+			EnhanceCustomCommand: true,
+			RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+					RpcMethod: "Count",
+					Use:       "count",
+					Short:     "Query the current counter value",
+				},
+			},
+		},
+		Tx: &autocliv1.ServiceCommandDescriptor{
+			Service:              "example.counter.Msg",
+			EnhanceCustomCommand: true,
+			RpcCommandOptions: []*autocliv1.RpcCommandOptions{
+				{
+					RpcMethod:      "Add",
+					Use:            "add [amount]",
+					Short:          "Add to the counter",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "add"}},
+				},
+			},
+		},
+	}
+}
+```
+
+`AutoCLI` uses this configuration to generate the `exampled tx counter add` and `exampled query counter count` commands. The `Service` field names the protobuf service, and `RpcCommandOptions` maps individual RPC methods to CLI subcommands with positional arguments, flags, and help text.
+
+The `AutoCliOpts()` method on the application struct collects these options from all modules and passes them to the `AutoCLI` framework at startup:
+
+```go
+func (app *ExampleApp) AutoCliOpts() autocli.AppOptions {
+	modules := make(map[string]appmodule.AppModule)
+	for _, m := range app.ModuleManager.Modules {
+		if moduleWithName, ok := m.(module.HasName); ok {
+			moduleName := moduleWithName.Name()
+			if appModule, ok := moduleWithName.(appmodule.AppModule); ok {
+				modules[moduleName] = appModule
+			}
+		}
+	}
+
+	return autocli.AppOptions{
+		Modules:               modules,
+		ModuleOptions:         runtimeservices.ExtractAutoCLIOptions(app.ModuleManager.Modules),
+		AddressCodec:          authcodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
+		ValidatorAddressCodec: authcodec.NewBech32Codec(sdk.GetConfig().GetBech32ValidatorAddrPrefix()),
+		ConsensusAddressCodec: authcodec.NewBech32Codec(sdk.GetConfig().GetBech32ConsensusAddrPrefix()),
+	}
+}
+```
+
+This collects module options and address codecs and hands them to `AutoCLI`, which wires the generated commands into the root command.
+
+## gRPC
+
+gRPC is the primary programmatic interface for interacting with a Cosmos chain. It uses Protocol Buffers to define strongly typed request and response structures and supports generated clients for many programming languages.
+
+Each module exposes its functionality through two protobuf services:
+
+- A `Query` service for read-only access to module state
+- A `Msg` service for state-changing operations
+
+These services are defined in the module's `query.proto` and `tx.proto` files. The protobuf definitions for the Cosmos SDK are published at [buf.build/cosmos/cosmos-sdk](https://buf.build/cosmos/cosmos-sdk).
+
+### How modules expose gRPC services
+
+Modules register their gRPC services during application startup via `RegisterServices`:
+
+```go
+app.configurator = module.NewConfigurator(app.appCodec, app.MsgServiceRouter(), app.GRPCQueryRouter())
+err := app.ModuleManager.RegisterServices(app.configurator)
+```
+
+Each module implements `RegisterServices` to connect service implementations to the application routers:
+
+```go
+func (am AppModule) RegisterServices(cfg module.Configurator) {
+	types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+	types.RegisterQueryServer(cfg.QueryServer(), keeper.NewQueryServer(am.keeper))
+}
+```
+
+`RegisterMsgServer` routes incoming `Msg` service calls to the module's `MsgServer` implementation. `RegisterQueryServer` routes incoming `Query` service calls to the module's `QueryServer` implementation.
+
+### How to interact with gRPC
+
+Connect to the node's gRPC endpoint (default: `localhost:9090`) using a generated client:
+
+```go
+conn, _ := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(insecure.NewCredentials()))
+queryClient := countertypes.NewQueryClient(conn)
+
+resp, _ := queryClient.Count(ctx, &countertypes.QueryCountRequest{})
+```
+
+The gRPC server can be configured in `app.toml`:
+
+- `grpc.enable = true|false` — enables or disables the gRPC server (default: `true`)
+- `grpc.address = {string}` — the `ip:port` the server binds to (default: `localhost:9090`)
+
+For more usage examples, see [Interact with the Node](/sdk/next/user/run-node/interact-node#using-grpc).
+
+## REST via gRPC-gateway
+
+The Cosmos SDK also exposes a REST API. REST endpoints are not written by hand; they are generated automatically from the same protobuf definitions used by gRPC, using **gRPC-gateway**.
+
+gRPC-gateway reads HTTP annotations in the `.proto` files and generates a reverse proxy that translates REST requests into gRPC calls:
+
+```protobuf
+service Query {
+  rpc Count(QueryCountRequest) returns (QueryCountResponse) {
+    option (google.api.http) = {
+      get: "/example/counter/v1/count"
+    };
+  }
+}
+```
+
+This annotation causes gRPC-gateway to generate a `GET /example/counter/v1/count` HTTP endpoint. The gateway receives the HTTP request, marshals it into a `QueryCountRequest`, calls the gRPC `Count` handler, and returns the response as JSON.
+
+### Registering REST routes
+
+REST routes are registered in `RegisterAPIRoutes`:
+
+```go
+func (app *ExampleApp) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
+	clientCtx := apiSvr.ClientCtx
+	// Register new tx routes from grpc-gateway.
+	authtx.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+	// Register new CometBFT queries routes from grpc-gateway.
+	cmtservice.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+	// Register node gRPC service for grpc-gateway.
+	nodeservice.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+	// Register grpc-gateway routes for all modules.
+	app.BasicModuleManager.RegisterGRPCGatewayRoutes(clientCtx, apiSvr.GRPCGatewayRouter)
+}
+```
+
+The REST server can be configured in `app.toml`:
+
+- `api.enable = true|false` — enables or disables the REST server (default: `false`)
+- `api.address = {string}` — the `ip:port` the server binds to (default: `tcp://localhost:1317`)
+
+### Swagger
+
+When the REST server and Swagger are both enabled, the node exposes a Swagger (OpenAPI v2) specification at `http://localhost:1317/swagger/`. Swagger lists all REST endpoints, request parameters, and response schemas, and provides a browser-based interface for exploring the REST API.
+
+Both are disabled by default. Enable them in `app.toml`:
+
+```
+api.enable = true
+api.swagger = true
+```
+
+To generate Swagger documentation for your own custom modules, see [Protobuf Tooling](/sdk/next/build/tooling/protobuf).
+
+## CometBFT RPC
+
+CometBFT also exposes its own RPC server, independent of the Cosmos SDK. It serves consensus and blockchain data and is configured under the `rpc` table in `config.toml` (default: `tcp://localhost:26657`). An OpenAPI specification of all CometBFT RPC endpoints is available in the [CometBFT documentation](/cometbft/v0.38/docs/core/RPC).
+
+Some CometBFT RPC endpoints are directly related to the Cosmos SDK:
+
+- `/abci_query` — queries the application for state. The `path` parameter accepts any protobuf fully-qualified service method (for example, `/cosmos.bank.v1beta1.Query/AllBalances`), or special paths like `/app/simulate` and `/app/version`.
+- `/broadcast_tx_sync`, `/broadcast_tx_async`, `/broadcast_tx_commit` — broadcast a signed transaction to peers. The CLI, gRPC, and REST interfaces all use these CometBFT RPCs under the hood.
+
+
+## End-to-end interaction flow
+
+To illustrate how these interfaces connect, here is the path of a `counter add` transaction from the user's terminal to a state change on the chain. This example follows the minimal counter module example's CLI shape. See the [Build a Module from Scratch](/sdk/next/tutorials/example/03-build-a-module#step-9-autocli) tutorial.
+
+```
+User runs: exampled tx counter add 10 --from mykey --chain-id example-1
+  ↓
+CLI (AutoCLI generated command)
+  Constructs MsgAddRequest{Sender: mykey, Add: 10}
+  Signs the transaction with mykey
+  Encodes to protobuf bytes
+  ↓
+Broadcast through the node client interface
+  ↓
+Node: CheckTx
+  AnteHandler verifies signature, deducts fee, meters gas
+  Transaction enters the mempool
+  ↓
+CometBFT: block proposal and consensus
+  ↓
+FinalizeBlock: transaction executed
+  AnteHandler runs again (finalizeBlock mode)
+  MsgServiceRouter routes MsgAddRequest → counter module MsgServer
+  MsgServer.Add calls keeper.AddCount
+  Keeper reads current count, adds 10, writes new count
+  ↓
+Commit: state change persisted
+  ↓
+User receives TxResponse with code 0
+```
+
+A query follows a shorter path that bypasses consensus entirely:
+
+```
+User runs: exampled query counter count
+  ↓
+CLI (AutoCLI generated command)
+  Constructs QueryCountRequest{}
+  Sends directly to node gRPC query endpoint
+  ↓
+GRPCQueryRouter routes to counter QueryServer
+  QueryServer.Count calls keeper.GetCount
+  Keeper reads current count from store
+  ↓
+QueryCountResponse{Count: 10} returned to user
+```
+
+Queries do not enter the mempool, are not included in blocks, and do not pass through the `AnteHandler`. They read committed state and return immediately.
+
+## Interfaces and consensus
+
+The CLI, gRPC, and REST interfaces are transport layers. They construct, sign, and deliver messages, but they do not participate in consensus and cannot affect the determinism of block execution.
+
+- Transactions become part of consensus only after they pass `CheckTx` and are included in a proposed block. The interface used to submit the transaction has no bearing on how it is validated or ordered.
+- Queries bypass the transaction pipeline entirely. They read committed state from a node and never reach the consensus engine.
+- Any node in the network can serve queries or accept transaction submissions. The result is always the same committed state, regardless of which node or which interface is used.
+
+This separation means that changing the CLI or REST surface of a module (renaming a command, adding a new query) never requires a chain upgrade. Only changes to message types, keeper logic, or state schema affect consensus. The next section, [Testing in the SDK](/sdk/next/learn/concepts/testing), shows how to test those behaviors once they are wired up.

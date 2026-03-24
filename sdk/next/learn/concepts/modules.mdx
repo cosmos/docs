@@ -1,0 +1,344 @@
+---
+title: Intro to Modules
+---
+
+In the previous section, you saw how blocks and transactions are processed. But where does the actual application logic of a blockchain live?
+
+In the Cosmos SDK, **modules** define that logic.
+
+Modules are the fundamental building blocks of a Cosmos SDK application. Each module encapsulates a specific piece of functionality, such as accounts, token transfers, validator management, governance, or any custom logic you define.
+
+To see a complete working module, follow the [Build a module tutorial series](/sdk/next/tutorials/example/00-overview).
+
+## Why modules exist
+
+A blockchain application needs to manage many independent concerns (accounts, balances, validator management, etc). Instead of placing all logic in a single monolithic state machine, the Cosmos SDK divides the application into modules. The SDK provides a base layer that allows these modules to operate together as a cohesive blockchain.
+
+Each module owns a slice of state, defines its messages and queries, implements its business rules, and hooks into the block lifecycle and genesis as needed. This keeps the application organized, composable, and easier to reason about. It also separates safety concerns between modules, creating a more secure system.
+
+## What a module defines
+
+A module is a self-contained unit of state and logic.
+
+At a high level, a module defines:
+
+- [State](#state): a `KVStore` namespace that contains the module's data
+- [Messages](#messages): the actions the module allows
+- [Queries](#queries): read-only access to the module's state
+- [`MsgServer`](#message-execution-msgserver): validates, applies business logic, and delegates to the keeper
+- [Keeper](#keeper): the state access layer: the only sanctioned path to the store
+- [Params](#params): governance-controlled configuration stored on-chain
+
+### State
+
+State is the data persisted on the chain: everything that transactions can read from or write to. When a transaction is executed, modules apply state transitions or deterministic updates to this stored data.
+
+Each module owns its own part of the blockchain state. For example:
+
+- The `x/auth` module stores account metadata.
+- The `x/bank` module stores account balances.
+
+Modules do not share storage directly. Each module has its own key-value store namespace located in a `multistore`. For example, the bank module's store might contain entries like:
+
+```
+// x/bank store (conceptual)
+balances | cosmos1abc...xyz | uatom  →  1000000
+balances | cosmos1def...uvw | uatom  →   500000
+```
+
+The key encodes the namespace, address, and denomination. The value is the encoded amount. No other module can read or write these entries directly, only the [module's keeper](#keeper) can. To learn more about how state is stored and accessed, see [Store](/sdk/next/learn/concepts/store).
+
+### Messages
+
+As you learned in the [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions) section, each module defines the actions it allows via messages (`sdk.Msg`).
+
+Messages are defined in the module's `tx.proto` file under a `service Msg` block, and implemented by that module's `MsgServer`. Here is a simplified example from the bank module:
+
+```protobuf
+// Message type definition
+message MsgSend {
+  string from_address = 1;
+  string to_address   = 2;
+  repeated cosmos.base.v1beta1.Coin amount = 3;
+}
+
+// Msg service — groups all messages for this module
+service Msg {
+  rpc Send(MsgSend) returns (MsgSendResponse);
+}
+```
+
+The `service Msg` block is referred to as the `Msg service` in the Cosmos SDK. The protobuf compiler generates a `MsgServer` interface from it, which the module implements in Go. [`BaseApp`](/sdk/next/learn/concepts/baseapp) routes each incoming message by its type URL (for example, `/cosmos.bank.v1beta1.MsgSend`) to the correct implementation.
+
+`MsgSend`  above is an example of a message type definition. It represents a request to transfer tokens from one account to another. When included in a transaction and executed:
+
+1. The sender's balance is checked.
+2. The amount is deducted from `from_address`.
+3. The amount is credited to `to_address`.
+
+### Queries
+
+Modules expose read-only access to their state through query services, defined in `query.proto`. Queries do not modify state and do not go through block execution. For example:
+
+```
+// query.proto
+rpc Balance(QueryBalanceRequest) returns (QueryBalanceResponse);
+```
+
+In this case, the caller provides an address and denomination; the query reads the balance from the x/bank keeper and returns it without modifying state.
+
+### Business logic
+
+While messages define intent, the `MsgServer` and `Keeper` work together to execute that intent and apply state transitions to the module.
+
+Business logic is conceptually split across two layers:
+
+- The [`MsgServer`](#message-execution-msgserver) handles the transaction-facing logic: it validates inputs, applies message-level business rules, and where required checks authorization. Once satisfied, it delegates state transitions to the keeper.
+- The [`Keeper`](#keeper) owns the module's state: it defines the storage schema and provides the only authorized path for reading and writing it. Message handlers, block hooks, and governance proposals all go through keeper methods to make state changes. All state changes must go through the keeper, nothing accesses the store directly.
+
+### Message execution (`MsgServer`)
+
+Each module implements a `MsgServer`, which is invoked by `BaseApp`'s message router when a message is routed to that module.
+
+The `MsgServer` is responsible for:
+
+- Checking authorization when required
+- Delegating to keeper methods that validate inputs, enforce business rules, and perform state transitions
+- Returning a response
+
+The following example is from the minimal counter module tutorial example, which walks you through building a module that lets users increment a shared counter. See the [Build a Module from Scratch](/sdk/next/tutorials/example/03-build-a-module) tutorial.
+
+The following is the counter module's `Add` handler which is the `MsgServer` method that processes a request to increment the counter:
+
+```go
+func (m msgServer) Add(ctx context.Context, request *types.MsgAddRequest) (*types.MsgAddResponse, error) {
+    newCount, err := m.AddCount(ctx, request.GetAdd())
+    if err != nil {
+        return nil, err
+    }
+
+    return &types.MsgAddResponse{UpdatedCount: newCount}, nil
+}
+```
+
+In the minimal tutorial, `Add` is permissionless and delegates directly to the keeper. The handler itself contains almost no business logic. That keeps `msg_server.go` focused on request handling, while the keeper owns the actual state transition.
+
+The full counter module example adds richer patterns on top of that minimal shape. For privileged messages like `MsgUpdateParams`, the `MsgServer` checks the caller against the stored authority before proceeding. See the [Full Counter Module Walkthrough](/sdk/next/tutorials/example/04-counter-walkthrough#params-and-authority).
+
+```go
+func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+    if m.authority != msg.Authority {
+        return nil, sdkerrors.Wrapf(
+            govtypes.ErrInvalidSigner,
+            "invalid authority; expected %s, got %s",
+            m.authority,
+            msg.Authority,
+        )
+    }
+
+    if err := m.SetParams(ctx, msg.Params); err != nil {
+        return nil, err
+    }
+
+    return &types.MsgUpdateParamsResponse{}, nil
+}
+```
+
+## Keeper
+
+A module's **`Keeper`** is its state access layer. It owns the module's `KVStore` and provides typed methods for reading and writing state. The store fields are unexported, so nothing outside the `keeper` package can access them directly.
+
+The `MsgServer` and `QueryServer` both embed the keeper. It is best practice for business logic to be implemented in keeper methods rather than the `MsgServer`, so the same rules apply whether the caller is a message handler, a block hook, or a governance proposal.
+
+The following keeper example is from the minimal counter module example. It holds a single state item and shows the smallest useful keeper shape. See [Step 5: Keeper](/sdk/next/tutorials/example/03-build-a-module#step-5-keeper) in the tutorial.
+
+```go
+type Keeper struct {
+    Schema  collections.Schema
+    counter collections.Item[uint64]
+}
+
+func (k *Keeper) AddCount(ctx context.Context, amount uint64) (uint64, error) {
+    count, err := k.GetCount(ctx)
+    if err != nil {
+        return 0, err
+    }
+    newCount := count + amount
+    return newCount, k.counter.Set(ctx, newCount)
+}
+```
+
+`counter` uses `collections.Item[uint64]`, a typed single-value entry backed by the module's KV store using the [Collections API](/sdk/next/learn/concepts/store#collections-api-typed-state-access). `AddCount` reads the current value, increments it, and writes it back. All state access goes through the keeper: nothing outside the `keeper` package can reach `counter` directly. For details on how the keeper opens its store from the context it receives, see [Execution Context](/sdk/next/learn/concepts/context-gas-events).
+
+### Inter-module access
+
+Modules are isolated by default. Each module owns its state, and direct access to that state is restricted through the module's keeper. Other modules cannot arbitrarily mutate another module's storage.
+
+Instead, modules interact through explicitly defined keeper interfaces. 
+
+For example:
+
+- The staking module calls methods on the bank keeper to transfer tokens.
+- The governance module calls parameter update methods on other modules.
+
+Each module defines an `expected_keepers.go` file that declares the interfaces it requires from other modules. This makes cross-module dependencies explicit: a module can only call methods the other module has chosen to expose.
+
+This design keeps dependencies auditable and prevents accidental or unsafe cross-module state mutation.
+
+To see expected keepers and cross-module fee collection in practice, see [Expected keepers and fee collection](/sdk/next/tutorials/example/04-counter-walkthrough#expected-keepers-and-fee-collection) in the Full Counter Module Walkthrough.
+
+### Params
+
+Most modules expose a `Params` struct: a set of configuration values stored on-chain that control the module's behavior. Unlike regular state, params are intentionally stable: they only change through governance, not through user transactions. Examples include the minimum governance deposit, the maximum number of validators, or mint module inflation bounds. Params are stored under a single key (typically a `collections.Item[Params]`) and updated by submitting a governance proposal.
+
+To update params, a governance proposal submits a [`MsgUpdateParams`](/sdk/next/build/modules/consensus/README#msgupdateparams) message. The `MsgServer` checks that the caller is the designated authority address (usually the governance module account) before writing the new values to the store. See [Message execution (`MsgServer`)](#message-execution-msgserver) for a code example of this pattern.
+
+The authority address is set at keeper construction time in [`app.go`](/sdk/next/learn/concepts/app-go#initializing-keepers).
+
+For chain-level consensus parameters, the [`x/consensus`](/sdk/next/build/modules/consensus) module manages them centrally; it also supports [`AuthorityParams`](/sdk/next/build/modules/consensus/README#authorityparams), which lets governance update the authority address on-chain without a software upgrade.
+
+To see params implemented in a working module, see [Params and authority](/sdk/next/tutorials/example/04-counter-walkthrough#params-and-authority) in the Full Counter Module Walkthrough.
+
+### Block hooks
+
+Modules may execute logic at specific points in the block lifecycle by implementing optional hook interfaces in the `AppModule` struct in `module.go`:
+
+- `HasBeginBlocker` — runs logic at the start of each block
+- `HasEndBlocker` — runs logic at the end of each block
+- `HasPreBlocker` — runs logic before `BeginBlock`, used for consensus parameter changes
+
+Hooks are optional, and modules should only implement the hooks they need. These hooks are invoked during block execution by the `ModuleManager` in [`BaseApp`](/sdk/next/learn/concepts/baseapp#module-manager), which calls each registered module's hooks in a configured order. For the application wiring side, see [Module Manager in `app.go`](/sdk/next/learn/concepts/app-go#module-manager).
+
+A module implements a hook by defining the corresponding method on its `AppModule` struct in `module.go`:
+
+```go
+func (a AppModule) PreBlock(ctx context.Context) (appmodule.ResponsePreBlock, error) {
+    // runs before BeginBlock; used for logic that must take effect before block execution
+    return &sdk.ResponsePreBlock{}, nil
+}
+
+func (a AppModule) BeginBlock(ctx context.Context) error {
+    // runs at the start of each block
+    return nil
+}
+
+func (a AppModule) EndBlock(ctx context.Context) error {
+    // runs at the end of each block
+    return nil
+}
+```
+
+Defining these methods opts the module into the corresponding block hooks. The module also needs to be registered with the `ModuleManager` in [`app.go`](/sdk/next/learn/concepts/app-go#module-manager) for the hooks to be called.
+
+### Genesis initialization
+
+Modules define how their state is initialized when the chain starts.
+
+Each module implements:
+
+- `DefaultGenesis`: returns the module's default genesis state
+- `ValidateGenesis`: validates the genesis state before the chain starts
+- `InitGenesis`: writes the genesis state into the module's store at chain start
+- `ExportGenesis`: reads the module's current state and serializes it as genesis data
+
+During `InitChain`, `BaseApp` calls each module's `InitGenesis` to populate its state from `genesis.json`.
+
+For where this happens in the block lifecycle, see [InitChain (genesis only)](/sdk/next/learn/concepts/lifecycle#initchain-genesis-only).
+For a walkthrough of genesis implementation, see [Step 2: Proto files](/sdk/next/tutorials/example/03-build-a-module#step-2-proto-files) and [Step 8: module.go](/sdk/next/tutorials/example/03-build-a-module#step-8-modulego) in the Build a Module tutorial.
+
+## Built-in and custom modules
+
+The Cosmos SDK ships with a set of core modules that most chains use. Click any module to learn more:
+
+| Module | What it does |
+| --- | --- |
+| [x/auth](/sdk/next/build/modules/auth) | Accounts, authentication, and transaction signing |
+| [x/bank](/sdk/next/build/modules/bank) | Token balances and transfers |
+| [x/staking](/sdk/next/build/modules/staking) | Validator set and delegations |
+| [x/gov](/sdk/next/build/modules/gov) | On-chain governance and proposals |
+| [x/distribution](/sdk/next/build/modules/distribution) | Staking reward distribution |
+| [x/slashing](/sdk/next/build/modules/slashing) | Validator penalty enforcement |
+| [x/mint](/sdk/next/build/modules/mint) | Token issuance |
+| [x/evidence](/sdk/next/build/modules/evidence) | Submission and handling of validator misbehavior |
+| [x/upgrade](/sdk/next/build/modules/upgrade) | Coordinated chain upgrades |
+| [x/authz](/sdk/next/build/modules/authz) | Delegated message authorization |
+| [x/feegrant](/sdk/next/build/modules/feegrant) | Fee allowances between accounts |
+| [x/consensus](/sdk/next/build/modules/consensus) | On-chain management of CometBFT consensus params |
+
+The above are just a few of the modules available. Applications can include any subset of these modules and can define entirely new custom modules. For the full list, see [List of Modules](/sdk/next/build/modules/modules).
+
+[Cosmos Enterprise](/enterprise/overview) provides additional hardened modules for production networks with more demanding requirements:
+
+| Module | What it does |
+| --- | --- |
+| [Proof of Authority](/enterprise/components/poa/overview) | Permissioned validator set managed by an on-chain authority, replacing token-based staking |
+| [Group](/enterprise/components/group/overview) | On-chain multisig accounts and collective decision-making with configurable voting policies |
+| [Network Manager](/enterprise/components/network-manager) | Infrastructure management for high-availability node operations |
+
+A Cosmos SDK blockchain is ultimately a collection of modules assembled into a single application. This customization of modules and application logic down to the lowest levels of a chain is what makes the Cosmos SDK so flexible and powerful.
+
+## Anatomy of a module (high-level)
+
+Modules live under the `x/` directory of an SDK application:
+
+```
+x/
+├── auth/        # Accounts and authentication
+├── bank/        # Token balances and transfers
+├── poa/         # Proof-of-authority validator management
+├── gov/         # Governance system
+└── mymodule/    # Your custom module
+```
+
+Each subdirectory under `x/` is a self-contained module.
+An application composes multiple modules together to form a complete blockchain.
+
+Inside a module, you will typically see a structure like this:
+
+```
+x/mymodule/
+├── keeper/
+│   ├── keeper.go        # Keeper struct and state access methods
+│   ├── msg_server.go    # MsgServer implementation
+│   └── query_server.go  # QueryServer implementation
+├── types/
+│   ├── expected_keepers.go  # Interfaces for other modules' keepers
+│   ├── keys.go              # Store key definitions
+│   └── *.pb.go              # Generated from proto definitions
+└── module.go            # AppModule implementation and hook registration
+```
+
+Proto files live separately at the repository root, not inside `x/`:
+
+```
+proto/myapp/mymodule/v1/
+├── tx.proto       # Message definitions
+├── query.proto    # Query service definitions
+├── state.proto    # On-chain state types
+└── genesis.proto  # Genesis state definition
+```
+
+- `keeper/`: Contains the `Keeper` struct (state access) and implementations of the `MsgServer` and `QueryServer` interfaces.
+- `types/`: Defines the module's public types: generated protobuf structs, store keys, and the `expected_keepers.go` interfaces that declare what this module needs from other modules.
+- `module.go`: Connects the module to the application and registers genesis handlers, block hooks, and message and query services.
+- `.proto` files: Define messages, queries, state schemas, and genesis state. Go code is generated from these files and used throughout the module.
+
+Check out the [Module Tutorial](/sdk/next/tutorials/example/00-overview) to learn how to build a module from scratch. 
+
+## Modules in context
+
+Putting everything together you've learned so far:
+
+- **Accounts** authorize transactions.
+- **Transactions** carry messages and execution constraints.
+- **Blocks** order transactions and define commit boundaries.
+- **Modules** define the business rules of execution.
+- **MsgServer** validates messages and orchestrates state transitions.
+- **Keeper** performs controlled reads and writes to module state.
+- **State** persists the deterministic result of execution.
+
+```
+Account → Transaction → Message → Module → MsgServer → Keeper → State
+```
+
+In the next section, [State, Storage, and Genesis](/sdk/next/learn/concepts/store), you will look more closely at how module state is stored, how genesis initializes it, and how the application commits deterministic state transitions.

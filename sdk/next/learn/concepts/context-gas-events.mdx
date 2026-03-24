@@ -1,0 +1,179 @@
+---
+title: Execution Context, Gas, and Events
+---
+
+In the previous section, [Encoding and Protobuf](/sdk/next/learn/concepts/encoding) explained how data is serialized and why every validator must encode state identically. This page covers the runtime environment that modules execute within: the context object that carries block metadata and state access, the gas system that limits computation, and the event system that allows modules to emit observable signals.
+
+## What is `sdk.Context`
+
+Every message handler, keeper method, and block hook in the Cosmos SDK receives an `sdk.Context`. It is the execution environment for a single unit of work (a transaction, a query, or a block hook) and carries everything that code needs to read state, emit events, and consume gas. Rather than passing the store, gas meter, and block header as separate arguments to every function, `Context` bundles them into a single value.
+
+The `Context` struct is defined in [`types/context.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go):
+
+```go
+type Context struct {
+    ms            storetypes.MultiStore
+    chainID       string
+    gasMeter      storetypes.GasMeter
+    blockGasMeter storetypes.GasMeter
+    eventManager  EventManagerI
+    // ... additional fields
+}
+```
+
+Context is a value type. It is passed by value and mutated through `With*` methods that return a new copy. This means a module can safely derive a sub-context (for example, with a different gas meter) without affecting the caller's context.
+
+### Block metadata
+
+Context exposes read-only access to the current block's metadata (see [`types/context.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go)):
+
+- `ctx.BlockHeight()` returns the current block number.
+- `ctx.BlockTime()` returns the block's timestamp.
+- `ctx.ChainID()` returns the chain identifier string.
+- `ctx.Logger()` returns a structured logger scoped to the current execution context. Modules use this for operational logging (e.g., logging an upgrade activation or an unexpected state) without affecting consensus.
+
+These values are populated by [`BaseApp`](/sdk/next/learn/concepts/baseapp) from the block header provided by CometBFT before any block logic runs. Modules read them to implement time-dependent logic (for example, checking whether a vesting period has elapsed) or to tag events with the block height.
+
+`ctx.IsCheckTx()` returns true when the context is being used for mempool validation rather than block execution. For finer-grained branching, `ctx.ExecMode()` returns the precise execution mode: `ExecModeCheck`, `ExecModeReCheck`, `ExecModeSimulate`, `ExecModePrepareProposal`, `ExecModeProcessProposal`, `ExecModeFinalize`, and others (see [`types/context.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go#L19) for more details). Modules that need to behave differently during simulation or proposal handling use `ExecMode()` instead of `IsCheckTx()`.
+
+### Context and state access
+
+State is accessed through context. The context holds a reference to the multistore, and each keeper opens its own store through the context:
+
+```go
+func (k Keeper) GetCount(ctx context.Context) (uint64, error) {
+    return k.counter.Get(ctx)
+}
+```
+
+The keeper does not hold a direct reference to the live multistore; it opens its module's store from the context on each call. This is why context must be passed to every keeper method: it is the gateway to the current block's state, the gas meter, and the event manager for that execution unit.
+
+### Atomic sub-execution with `CacheContext`
+
+Modules that need to attempt a sub-operation and revert it on failure can call [`ctx.CacheContext()`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/context.go#L410), which returns a branched copy of the context and a `writeCache` function. All state changes in the sub-operation go into the branch. Calling `writeCache()` flushes them to the parent context; not calling it discards them atomically.
+
+```go
+cacheCtx, writeCache := ctx.CacheContext()
+if err := doRiskyOperation(cacheCtx); err != nil {
+    return err // branch is discarded, no state changes applied
+}
+writeCache() // flush branch to parent context
+```
+
+## Gas metering
+
+### What gas measures
+
+Gas is a unit of computation. In the Cosmos SDK, gas accounts for both computation and state access. Every store read, store write, and iterator step costs gas. Complex computations such as signature verification in the `AnteHandler` also cost gas.
+
+The gas system exists to prevent abuse. Without a gas limit, a single transaction could exhaust a node's resources with an unbounded computation or an unindexed state scan.
+
+### Gas limit and the transaction gas meter
+
+Every transaction specifies a gas limit in its `auth_info.fee.gas_limit` field. When `BaseApp` begins executing a transaction, it creates a `GasMeter` initialized with that limit and attaches it to the context.
+
+The [`GasMeter`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/types/gas.go#L41) interface provides two key methods:
+
+```go
+type GasMeter interface {
+    GasConsumed() Gas
+    ConsumeGas(amount Gas, descriptor string)
+    // ...
+}
+```
+
+`GasConsumed` returns the total gas used so far in the current execution unit. `ConsumeGas` adds to the running total and panics with `ErrorOutOfGas` if consumption exceeds the limit.
+
+### How gas is consumed
+
+Gas is consumed automatically at the store layer. Every read and write through the [`GasKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/gaskv/store.go#L13) wrapper charges gas before delegating to the underlying store:
+
+- A `Get` (store read) charges a flat read cost plus a per-byte cost for the key and value.
+- A `Set` (store write) charges a flat write cost plus a per-byte cost for the key and value.
+
+Modules do not need to manually track gas for ordinary state access — the store layer handles it automatically. Modules call `ctx.GasMeter().ConsumeGas(...)` directly only for computation costs that are not captured by store operations (for example, a module that performs a cryptographic operation outside the store).
+
+### When gas runs out
+
+If gas is exhausted during execution, `ConsumeGas` panics with `ErrorOutOfGas`. `BaseApp` recovers from this panic, discards the current message execution branch, and returns an error to the user. Fees may still be charged for the gas consumed up to the point of failure, and `AnteHandler` side effects may already have been applied before message execution started.
+
+### Block gas limit
+
+In addition to the per-transaction gas meter, there is a block-level gas meter that tracks total gas consumed by all transactions in a block. The block gas limit prevents a single block from consuming unbounded computation. If a transaction would cause the block's gas total to exceed the limit, it is excluded from the block. The block gas limit and minimum gas prices are configured in [`app.toml`](/sdk/next/tutorials/example/05-run-and-test#apptoml).
+
+## Events
+
+### What events are
+
+Events are observable signals emitted during transaction and block execution. A module emits events to describe what happened: tokens were transferred, a validator was slashed, a governance proposal passed. Events carry structured key-value data alongside a type string.
+
+Events are not part of consensus state. They are not stored in the KVStore, do not affect the app hash, and are not required for deterministic execution. Instead, they are collected by `BaseApp` and included in the block result, where indexers, explorers, and relayers consume them.
+
+### EventManager
+
+Modules emit events through the [`EventManager`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/events.go#L24), which is attached to the context.
+
+The `EventManager` is created fresh for each transaction and collects all events emitted during that execution.
+
+### Emitting events
+
+Modules emit events using [`EmitEvent`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/events.go#L35) or [`EmitTypedEvent`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/events.go#L57):
+
+```go
+// emit an untyped event
+ctx.EventManager().EmitEvent(sdk.NewEvent(
+    "increment",
+    sdk.NewAttribute("new_count", strconv.FormatUint(newCount, 10)),
+))
+```
+
+`EmitEvent` appends a raw key-value event to the manager's accumulated list.
+
+For events backed by protobuf message types, `EmitTypedEvent` serializes the message's fields into event attributes automatically:
+
+```go
+ctx.EventManager().EmitTypedEvent(&types.EventCounterIncremented{
+    NewCount: newCount,
+})
+```
+
+Using `EmitTypedEvent` is the modern approach. It provides type safety and makes the event schema explicit through proto definitions, allowing clients to deserialize events back into typed structs.
+
+### Block events and transaction events
+
+Events emitted during `BeginBlock` or `EndBlock` hooks are **block events**: they describe things that happened at the block level (inflation minted, validator updates applied). Events emitted inside a message handler are **transaction events**: they describe what a specific transaction did.
+
+Both types are included in the `FinalizeBlock` response that CometBFT returns to the network, but they are reported separately so clients can distinguish block-level activity from per-transaction activity.
+
+### Who consumes events
+
+Events are consumed outside the node:
+
+- **Block explorers** index events to show users what happened in a transaction (which tokens moved, which validator was slashed, which proposal passed).
+- **Relayers** (IBC) subscribe to specific event types to detect packet sends and acknowledgments.
+- **Indexers and off-chain services** build queryable databases of chain activity from event streams. Events can also be queried via the node's REST API and WebSocket endpoint.
+- **Wallets and UIs** display event data to users as transaction receipts.
+
+Events are included in the block result that CometBFT returns after each block. They are not replayed or reprocessed; once a block is finalized, its events are fixed.
+
+## Putting it together
+
+During transaction execution, context, gas, and events work together as the runtime layer:
+
+```
+BaseApp creates Context for the transaction
+    ↓
+AnteHandler runs
+    → signature verification, fee deduction, gas meter initialized
+    ↓
+Message handler runs
+    → each store read/write consumes gas via GasKVStore
+    → module logic emits events via EventManager
+    ↓
+If gas exhausted → panic → state reverted, fees charged for gas consumed
+If execution succeeds → state changes committed, events returned in block result
+```
+
+The context carries the gas meter and event manager into every keeper call. Gas is consumed transparently at the store layer. Events accumulate and are returned as part of the block result once execution completes.
+
+The next section, [Intro to SDK Structure](/sdk/next/learn/concepts/sdk-structure), explains how an SDK application is structured as a codebase: where modules live, what goes in `app/`, and how all the pieces are assembled.

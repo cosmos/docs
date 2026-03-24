@@ -4,4 +4,175 @@ description: Functionality to modify CometBFT's ABCI consensus params.
 noindex: true
 ---
 
-Functionality to modify CometBFT's ABCI consensus params.
+The `x/consensus` module allows governance to update CometBFT's ABCI consensus parameters on a live chain without a software upgrade.
+
+## Consensus Parameters
+
+The module manages the following CometBFT consensus parameters:
+
+### Block Parameters
+
+| Parameter | Description |
+| --- | --- |
+| `MaxBytes` | Maximum block size in bytes |
+| `MaxGas` | Maximum gas per block (`-1` for unlimited) |
+
+### Evidence Parameters
+
+| Parameter | Description |
+| --- | --- |
+| `MaxAgeNumBlocks` | Maximum age of evidence in blocks |
+| `MaxAgeDuration` | Maximum age of evidence as a duration |
+| `MaxBytes` | Maximum total evidence size per block in bytes |
+
+### Validator Parameters
+
+| Parameter | Description |
+| --- | --- |
+| `PubKeyTypes` | Supported public key types for validators (e.g., `ed25519`, `secp256k1`, `bls12381`) |
+
+### ABCI Parameters
+
+| Parameter | Description |
+| --- | --- |
+| `VoteExtensionsEnableHeight` | Block height at which vote extensions are enabled (`0` to disable) |
+
+## Messages
+
+### MsgUpdateParams
+
+Updates consensus parameters via governance. All of `block`, `evidence`, and `validator` must be provided. `abci` is optional.
+
+```go
+msg := &types.MsgUpdateParams{
+    Authority: authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+    Block: &cmtproto.BlockParams{
+        MaxBytes: 200000,
+        MaxGas:   100000000,
+    },
+    Evidence: &cmtproto.EvidenceParams{
+        MaxAgeNumBlocks: 302400,
+        MaxAgeDuration:  504 * time.Hour,
+        MaxBytes:        10000,
+    },
+    Validator: &cmtproto.ValidatorParams{
+        PubKeyTypes: []string{"ed25519"},
+    },
+    Abci: &cmtproto.ABCIParams{
+        VoteExtensionsEnableHeight: 0,
+    },
+}
+```
+
+## AuthorityParams
+
+Authority management can be centralized via the `x/consensus` module using `AuthorityParams`. The `AuthorityParams` field in `ConsensusParams` stores the authority address on-chain. When set, it takes precedence over the per-keeper authority parameter.
+
+Keeper constructors still accept the `authority` parameter. It is used as a fallback when no authority is configured in consensus params. 
+
+### How It Works
+
+When a module validates authority (e.g., in `UpdateParams`), it checks consensus params first. If no authority is set there, it falls back to the keeper's `authority` field:
+
+```go
+authority := sdkCtx.Authority() // from consensus params
+if authority == "" {
+    authority = k.authority       // fallback to keeper field
+}
+if authority != msg.Authority {
+    return nil, errors.Wrapf(...)
+}
+```
+
+To enable centralized authority, set the `AuthorityParams` in consensus params via a governance proposal targeting the `x/consensus` module's `MsgUpdateParams`.
+
+## CLI
+
+### Query
+
+#### params
+
+Query the current consensus parameters:
+
+```shell
+simd query consensus params
+```
+
+Example Output:
+
+```yml
+params:
+  abci:
+    vote_extensions_enable_height: "0"
+  block:
+    max_bytes: "200000"
+    max_gas: "-1"
+  evidence:
+    max_age_duration: 1814400s
+    max_age_num_blocks: "302400"
+    max_bytes: "10000"
+  validator:
+    pub_key_types:
+    - ed25519
+```
+
+### Transactions
+
+#### update-params-proposal
+
+Submit a governance proposal to update consensus parameters:
+
+```shell
+simd tx consensus update-params-proposal [block] [evidence] [validator] [abci] [flags]
+```
+
+Example:
+
+```shell
+simd tx consensus update-params-proposal \
+  '{"max_bytes":"200000","max_gas":"100000000"}' \
+  '{"max_age_num_blocks":"302400","max_age_duration":"1814400s","max_bytes":"10000"}' \
+  '{"pub_key_types":["ed25519"]}' \
+  '{"vote_extensions_enable_height":"0"}' \
+  --from mykey
+```
+
+## gRPC
+
+### Params
+
+Query the current consensus parameters:
+
+```shell
+grpcurl -plaintext localhost:9090 cosmos.consensus.v1.Query/Params
+```
+
+Example Output:
+
+```json
+{
+  "params": {
+    "block": {
+      "maxBytes": "200000",
+      "maxGas": "-1"
+    },
+    "evidence": {
+      "maxAgeNumBlocks": "302400",
+      "maxAgeDuration": "1814400s",
+      "maxBytes": "10000"
+    },
+    "validator": {
+      "pubKeyTypes": ["ed25519"]
+    },
+    "abci": {
+      "voteExtensionsEnableHeight": "0"
+    }
+  }
+}
+```
+
+## REST
+
+```
+GET /cosmos/consensus/v1/params
+```

@@ -2,7 +2,7 @@
 title: Accounts
 ---
 
-In [Blockchain Architecture](/sdk/v0.53/learn/intro/sdk-app-architecture), you learned that transactions change state and must be signed and validated. But who creates and signs these transactions? The answer is accounts.
+In [Cosmos SDK Architecture](/sdk/next/learn/intro/sdk-app-architecture), you learned that transactions change state and must be signed and validated. But who creates and signs these transactions? The answer is **accounts**.
 
 Accounts represent identities on a Cosmos SDK chain. They hold balances, authorize transactions with digital signatures, and prevent transaction replay using sequence numbers. Accounts are managed by the auth module (`x/auth`), which tracks account metadata like addresses, public keys, account numbers, and sequence numbers.
 
@@ -23,9 +23,9 @@ type BaseAccount struct {
 
 Accounts can be used in other modules to associate on-chain state with an identity. For example, the bank module (`x/bank`) maps account addresses to token balances, and the staking module maps them to delegations.
 
-The private key and seed phrase are never stored on-chain; they are kept locally by the user or wallet.
+The private key and [seed phrase](#seed-phrases) are never stored on-chain; they are kept locally by the user or wallet.
 
-An account does not execute logic itself; instead, it authorizes transactions. When a transaction is submitted and accepted, the account's sequence number increases. Balance changes are handled by the modules that process the transaction's messages.
+An account does not execute logic itself; instead, it authorizes [transactions](/sdk/next/learn/concepts/transactions). Balance changes for accounts are handled by the modules that process the transaction's messages. An account's sequence number is used for [replay protection](#sequences-and-replay-protection) during transaction processing.
 
 ## Public and private keys
 
@@ -33,7 +33,7 @@ Accounts are rooted in cryptographic keypairs. Cosmos SDK uses asymmetric crypto
 
 - A **private key** is used to sign transactions. Before signing, the transaction data is serialized and hashed; the private key then produces a digital signature over this hash. This signature proves ownership of the private key without revealing it. Private keys must always remain secret.
 
-- a **public key** is an identifying piece of information that is derived mathematically from the private key. It is used to verify that a message was signed by the private key associated with the public key and is used to identify the account. The corresponding public key is derived mathematically from the private key and is used by the network to verify those signatures. Because the public key is derived from the private key through a one-way function, it is not possible to derive the private key from the public key.
+- A **public key** is derived mathematically from the private key. The network uses it to verify signatures produced by the corresponding private key. Because the public key is derived through a one-way function, it is not possible to derive the private key from the public key.
 
 ## Seed phrases
 
@@ -45,12 +45,9 @@ apple maple river stone cloud frame picnic ladder jungle orbit solar velvet
 
 A private key is then derived from the seed phrase using a deterministic algorithm. Cosmos wallets follow common standards such as:
 
-- BIP-39 (mnemonic phrases)
-  https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
-- BIP-32 (hierarchical deterministic wallets)
-  https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
-- BIP-44 (multi-account derivation paths)
-  https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki
+- [BIP-39 (mnemonic phrases)](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)
+- [BIP-32 (hierarchical deterministic wallets)](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki)
+- [BIP-44 (multi-account derivation paths)](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
 
 From the seed phrase, a binary seed is computed and used to derive a master private key. From that master key, specific private keys are derived along a path (for example: `m/44'/118'/0'/0/0`, where `118` is the Cosmos coin type). Each private key produces a public key.
 
@@ -58,9 +55,15 @@ Control of the seed phrase means control of the derived private keys and therefo
 
 ## Addresses
 
-An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. This address is what users share and what appears in state and transactions.
+An address is a shortened identifier derived from the public key. The public key is hashed and encoded, typically in Bech32 format, with a prefix that indicates the chain, for example `cosmos`. This address is what users share and what appears in state and transactions:
 
+```text
+cosmos1qnk2n4nlkpw9xfqntladh74er2xa62wgas7mv0
 ```
+
+An address is not the same as a public key. Because an address is only a hash of the public key, users can generate addresses and receive funds entirely offline. The public key is revealed on-chain the first time the account signs a transaction, at which point validators can verify the signature and the chain stores the public key alongside the account metadata.
+
+```text
 Seed Phrase
     ↓ (BIP-39/BIP-32/BIP-44)
 Private Key (secp256k1)
@@ -70,25 +73,13 @@ Public Key
 Address
 ```
 
-An address is not the same thing as a public key. The address is derived from the public key, but it does not reveal the public key directly.
-
-To receive tokens, only the address is needed. The chain can credit balances to that address without knowing the public key.
-
-The public key is typically revealed on-chain the first time the account signs a transaction. That first transaction includes the public key so validators can verify the signature. After that, the chain stores the public key alongside the account metadata.
-
-This separation between address and public key is important: it allows accounts to be derived and displayed locally from a seed phrase before any on-chain activity. Users can generate addresses offline and receive funds without ever submitting a transaction. The account only needs to be initialized on-chain when the user sends their first transaction.
-
 ## Sequences and replay protection
 
-Each on-chain account tracks a sequence number. The sequence number starts at zero for a newly created account and increments by one after each successful transaction from that account.
-
-The sequence number exists to prevent replay attacks, which occur when an old signed transaction is submitted a second time.} Because the sequence number must be current, a previously signed transaction with an old sequence is rejected.}
-
-Sequence numbers also ensure transactions from a single account execute in a specific order, which matters when transactions depend on each other (for example, sending tokens then immediately staking them).
+There are two types of transactions in the Cosmos SDK: ordered and unordered. Ordered transactions are the default. Each account tracks a sequence number starting at zero that increments with each transaction. The network rejects any transaction whose sequence number does not match the current value, preventing replay attacks and ensuring that dependent transactions from the same account execute in order (for example, sending tokens then immediately staking them). Unordered transactions bypass this check and use a timeout-based mechanism instead.
 
 Example:
 
-```
+```text
 Initial state:
   sequence = 0
 
@@ -99,7 +90,11 @@ After second accepted transaction:
   sequence = 2
 ```
 
-If a signed transaction carries `sequence = 1` but the account's current sequence is `2`, the transaction is rejected, ensuring that transactions are applied in order and cannot be reused.
+If a signed transaction carries `sequence = 1` but the account's current sequence is `2`, the transaction is rejected, ensuring that ordered transactions are applied in order and cannot be reused.
+
+The Cosmos SDK also supports optional unordered transactions, which allow transactions from the same account to be submitted and processed without strict sequence ordering. When a chain enables unordered transactions, replay protection uses a timeout timestamp and unordered nonce tracking instead of the normal per-signer sequence check.
+
+See [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions#message-execution-and-atomicity) for more information. 
 
 ## Balances
 
@@ -115,7 +110,7 @@ Cosmos SDK supports several account types that extend the base account model:
 
 - **Base account**: A standard account that holds balances and signs transactions. This is the most common account type for users.
 
-- **Module account**: Owned by a module rather than a user. Module accounts are derived from the module name and cannot be controlled by a private key. For example, the staking module uses a module account to hold all delegated tokens, and the distribution module uses a module account to hold rewards before they are distributed. This design allows protocol logic to custody tokens without requiring a private key holder, which is essential for decentralized operations.
+- **Module account**: Owned by a [module](/sdk/next/learn/concepts/modules) rather than a user. Module accounts are derived from the module name and cannot be controlled by a private key. For example, the staking module uses a module account to hold all delegated tokens, and the distribution module uses a module account to hold rewards before they are distributed. This design allows protocol logic to custody tokens without requiring a private key holder, which is essential for decentralized operations. For a working example of adding a module account to receive fees, see [Module accounts](/sdk/next/tutorials/example/04-counter-walkthrough#module-accounts) in the Full Counter Module Walkthrough.
 
 - **Vesting account**: Holds tokens that unlock gradually over time according to a schedule. Vesting accounts are often used for team allocations or investor tokens that vest over months or years. They restrict spending to only unlocked tokens while still allowing the account to participate in staking and governance.
 
@@ -123,7 +118,7 @@ All account types rely on the same key and address structure but may impose addi
 
 ## Accounts and transaction authorization
 
-Accounts authorize transactions by producing digital signatures.
+Accounts authorize [transactions](/sdk/next/learn/concepts/transactions) by producing digital signatures.
 
 A transaction includes:
 
@@ -134,7 +129,7 @@ A transaction includes:
 
 When a transaction is signed, the transaction bytes are serialized and hashed. The private key then generates a digital signature over that hash. This signature proves that the holder of the private key approved the transaction, without revealing the private key itself.
 
-During execution:
+During execution of a standard ordered transaction:
 
 1. The signature is verified using the account's public key.
 2. The sequence number is checked against the account's current sequence.
@@ -160,8 +155,10 @@ State
 
 Accounts provide identity and authorization, transactions carry intent, and modules execute the logic. The result is stored in state.
 
+To learn more about the transaction flow in a Cosmos blockchain, visit the [Transaction Lifecycle page](/sdk/next/learn/concepts/lifecycle)
+
 ## Summary
 
 Accounts are the foundation of user interaction with a Cosmos SDK chain. They connect cryptographic keys to on-chain identity, authorize transaction execution, and prevent replay attacks.
 
-Understanding keys, addresses, balances, and sequence numbers provides the basis for understanding how transactions flow through the system. The next page, [Transaction Lifecycle](/sdk/v0.53/learn/beginner/tx-lifecycle), follows a transaction from creation through mempool admission, consensus, and execution to show how accounts interact with the broader blockchain architecture.
+Understanding keys, addresses, balances, and sequence numbers provides the basis for understanding how transactions flow through the system. The next page, [Transactions, Messages, and Queries](/sdk/next/learn/concepts/transactions), explains how accounts authorize the actions a transaction carries.
