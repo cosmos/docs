@@ -24,7 +24,7 @@ middleware developers must use the same serialization and deserialization method
 For middleware builders this means:
 
 ```go
-import transfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
+import transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 transfertypes.ModuleCdc.[Must]MarshalJSON
 func MarshalAsIBCDoes(ack channeltypes.Acknowledgement) ([]byte, error) {
     return transfertypes.ModuleCdc.MarshalJSON(&ack)
@@ -36,20 +36,19 @@ The interfaces a middleware must implement are found in [core/api](https://githu
 An `IBCMiddleware` struct implementing the `Middleware` interface, can be defined with its constructor as follows:
 
 ```go expandable
-/ @ x/module_name/ibc_middleware.go
+// @ x/module_name/ibc_middleware.go
 
-/ IBCMiddleware implements the IBCv2 middleware interface
+// IBCMiddleware implements the IBCv2 middleware interface
 type IBCMiddleware struct {
-    app                   api.IBCModule / underlying app or middleware
-  writeAckWrapper       api. WriteAcknowledgementWrapper / writes acknowledgement for an async acknowledgement
-  PacketDataUnmarshaler api.PacketDataUnmarshaler / optional interface
-  keeper                types.Keeper / required for stateful middleware
-  / Keeper may include middleware specific keeper and the ChannelKeeperV2
+    app             api.PacketUnmarshalerModuleV2 // underlying app or middleware (must implement PacketUnmarshalerModuleV2)
+    writeAckWrapper api.WriteAcknowledgementWrapper // writes acknowledgement for an async acknowledgement
+    keeper          types.Keeper // required for stateful middleware
+    // Keeper may include middleware specific keeper and the ChannelKeeperV2
 
-  / additional middleware specific fields
+    // additional middleware specific fields
 }
 
-/ NewIBCMiddleware creates a new IBCMiddleware given the keeper and underlying application
+// NewIBCMiddleware creates a new IBCMiddleware given the keeper and underlying application
 func NewIBCMiddleware(app api.IBCModule, 
 writeAckWrapper api.WriteAcknowledgementWrapper, 
 k types.Keeper
@@ -84,6 +83,37 @@ The `IBCModule` interface consists of the packet callbacks where cutom logic is 
 
 The packet callbacks are where the middleware performs most of its custom logic. The middleware may read the packet flow data and perform some additional packet handling, or it may modify the incoming data before it reaches the underlying application. This enables a wide degree of usecases, as a simple base application like token-transfer can be transformed for a variety of usecases by combining it with custom middleware, for example acting as a filter for which tokens can be sent and recieved.
 
+#### `OnSendPacket`
+
+```go expandable
+func (im IBCMiddleware)
+
+OnSendPacket(
+  ctx sdk.Context,
+	sourceClient string,
+	destinationClient string,
+	sequence uint64,
+	payload channeltypesv2.Payload,
+	signer sdk.AccAddress,
+)
+
+error {
+	// Middleware may choose to do custom preprocessing logic before calling the underlying app OnSendPacket
+	// Middleware may return error early to reject the packet send
+	// Middleware MUST NOT modify client identifiers and sequence
+	doCustomPreProcessLogic()
+
+	// call underlying app OnSendPacket
+	err := im.app.OnSendPacket(ctx, sourceClient, destinationClient, sequence, payload, signer)
+	if err != nil {
+		return err
+	}
+
+	// may perform some post send logic and return error here
+	return doCustomPostProcessLogic()
+}
+```
+
 #### `OnRecvPacket`
 
 ```go expandable
@@ -99,20 +129,20 @@ OnRecvPacket(
 )
 
 channeltypesv2.RecvPacketResult {
-	/ Middleware may choose to do custom preprocessing logic before calling the underlying app OnRecvPacket
-    / Middleware may choose to error early and return a RecvPacketResult Failure
-    / Middleware may choose to modify the payload before passing on to OnRecvPacket though this
-    / should only be done to support very advanced custom behavior
-    / Middleware MUST NOT modify client identifiers and sequence
+	// Middleware may choose to do custom preprocessing logic before calling the underlying app OnRecvPacket
+    // Middleware may choose to error early and return a RecvPacketResult Failure
+    // Middleware may choose to modify the payload before passing on to OnRecvPacket though this
+    // should only be done to support very advanced custom behavior
+    // Middleware MUST NOT modify client identifiers and sequence
     doCustomPreProcessLogic()
     
-	/ call underlying app OnRecvPacket
+	// call underlying app OnRecvPacket
     recvResult := im.app.OnRecvPacket(ctx, sourceClient, destinationClient, sequence, payload, relayer)
-    if recvResult.Status == PACKET_STATUS_FAILURE {
+    if recvResult.Status == channeltypesv2.PacketStatus_Async || recvResult.Status == channeltypesv2.PacketStatus_Failure {
     return recvResult
 }
 
-doCustomPostProcessLogic(recvResult) / middleware may modify recvResult
+doCustomPostProcessLogic(recvResult) // middleware may modify recvResult
     
     return recvResult
 }
@@ -136,22 +166,19 @@ OnAcknowledgementPacket(
 )
 
 error {
-	/ preprocessing logic may modify the acknowledgement before passing to 
-	/ the underlying app though this should only be done in advanced cases
-	/ Middleware may return error early
-	/ it MUST NOT change the identifiers of the clients or the sequence
+	// preprocessing logic may modify the acknowledgement before passing to 
+	// the underlying app though this should only be done in advanced cases
+	// Middleware may return error early
+	// it MUST NOT change the identifiers of the clients or the sequence
 	doCustomPreProcessLogic(payload, acknowledgement)
 
-	/ call underlying app OnAcknowledgementPacket
-	err = im.app.OnAcknowledgementPacket(
-		sourceClient, destinationClient, sequence,
-		acknowledgement, payload, relayer
-	)
+	// call underlying app OnAcknowledgementPacket
+	err := im.app.OnAcknowledgementPacket(ctx, sourceClient, destinationClient, sequence, acknowledgement, payload, relayer)
     if err != nil {
     return err
 }
 
-	/ may perform some post acknowledgement logic and return error here
+	// may perform some post acknowledgement logic and return error here
 	return doCustomPostProcessLogic()
 }
 ```
@@ -173,20 +200,17 @@ OnTimeoutPacket(
 )
 
 error {
-	/ Middleware may choose to do custom preprocessing logic before calling the underlying app OnTimeoutPacket
-	/ Middleware may return error early
+	// Middleware may choose to do custom preprocessing logic before calling the underlying app OnTimeoutPacket
+	// Middleware may return error early
 	doCustomPreProcessLogic(payload)
 
-	/ call underlying app OnTimeoutPacket
-	err = im.app.OnTimeoutPacket(
-		sourceClient, destinationClient, sequence,
-		payload, relayer
-	)
+	// call underlying app OnTimeoutPacket
+	err := im.app.OnTimeoutPacket(ctx, sourceClient, destinationClient, sequence, payload, relayer)
     if err != nil {
     return err
 }
 
-	/ may perform some post timeout logic and return error here
+	// may perform some post timeout logic and return error here
 	return doCustomPostProcessLogic()
 }
 ```
@@ -198,14 +222,14 @@ See [here](https://github.com/cosmos/ibc-go/blob/main/modules/apps/callbacks/v2/
 Middleware must also wrap the `WriteAcknowledgement` interface so that any acknowledgement written by the application passes through the middleware first. This allows middleware to modify or delay writing an acknowledgment before committed to the IBC store.
 
 ```go
-/ WithWriteAckWrapper sets the WriteAcknowledgementWrapper for the middleware.
+// WithWriteAckWrapper sets the WriteAcknowledgementWrapper for the middleware.
 func (im *IBCMiddleware)
 
 WithWriteAckWrapper(writeAckWrapper api.WriteAcknowledgementWrapper) {
     im.writeAckWrapper = writeAckWrapper
 }
 
-/ GetWriteAckWrapper returns the WriteAckWrapper
+// GetWriteAckWrapper returns the WriteAckWrapper
 func (im *IBCMiddleware)
 
 GetWriteAckWrapper()
@@ -220,9 +244,9 @@ api.WriteAcknowledgementWrapper {
 This is where the middleware acknowledgement handling is finalised. An example is shown in the [callbacks middleware](https://github.com/cosmos/ibc-go/blob/main/modules/apps/callbacks/v2/ibc_middleware.go#L369-L454)
 
 ```go expandable
-/ WriteAcknowledgement facilitates acknowledgment being written asynchronously
-/ The call stack flows from the IBC application to the IBC core handler
-/ Thus this function is called by the IBC app or a lower-level middleware
+// WriteAcknowledgement facilitates acknowledgment being written asynchronously
+// The call stack flows from the IBC application to the IBC core handler
+// Thus this function is called by the IBC app or a lower-level middleware
 func (im IBCMiddleware)
 
 WriteAcknowledgement(
@@ -233,10 +257,10 @@ WriteAcknowledgement(
 )
 
 error {
-    doCustomPreProcessLogic() / may modify acknowledgement
+    doCustomPreProcessLogic() // may modify acknowledgement
 
 	return im.writeAckWrapper.WriteAcknowledgement(
-		ctx, clientId, sequence, ack,
+		ctx, clientID, sequence, ack,
 	)
 }
 ```
@@ -252,18 +276,18 @@ The order of middleware **matters**, function calls from IBC to the application 
 The example integration is detailed for an IBC v2 stack using transfer and the callbacks middleware.
 
 ```go expandable
-/ Middleware Stacks
-/ initialising callbacks middleware  
+// Middleware Stacks
+// initialising callbacks middleware  
     maxCallbackGas := uint64(10_000_000)
     wasmStackIBCHandler := wasm.NewIBCHandler(app.WasmKeeper, app.IBCKeeper.ChannelKeeper, app.IBCKeeper.ChannelKeeper)
 
-/ Create the transferv2 stack with transfer and callbacks middleware
+// Create the transferv2 stack with transfer and callbacks middleware
   var ibcv2TransferStack ibcapi.IBCModule
 	ibcv2TransferStack = transferv2.NewIBCModule(app.TransferKeeper)
 
-ibcv2TransferStack = ibccallbacksv2.NewIBCMiddleware(transferv2.NewIBCModule(app.TransferKeeper), app.IBCKeeper.ChannelKeeperV2, wasmStackIBCHandler, app.IBCKeeper.ChannelKeeperV2, maxCallbackGas)
+ibcv2TransferStack = ibccallbacksv2.NewIBCMiddleware(ibcv2TransferStack, app.IBCKeeper.ChannelKeeperV2, wasmStackIBCHandler, app.IBCKeeper.ChannelKeeperV2, maxCallbackGas)
 
-/ Create static IBC v2 router, add app routes, then set and seal it
+// Create static IBC v2 router, add app routes, then set and seal it
   ibcRouterV2 := ibcapi.NewRouter()
 
 ibcRouterV2.AddRoute(ibctransfertypes.PortID, ibcv2TransferStack)
