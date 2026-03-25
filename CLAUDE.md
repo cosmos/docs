@@ -130,6 +130,10 @@ Always use absolute Mintlify paths for internal links — never relative file pa
 
 The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
 
+## Work Log
+
+Agents should log meaningful changes as they complete them — not at the end of the session. Each branch gets its own file in `work-log/`. Read [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format and instructions.
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components
