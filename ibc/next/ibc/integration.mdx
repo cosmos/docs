@@ -30,24 +30,24 @@ We need to register the core `ibc` and `transfer` `Keeper`s. The `transferv2` pa
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   ibckeeper "github.com/cosmos/ibc-go/v11/modules/core/keeper"
   ibctransferkeeper "github.com/cosmos/ibc-go/v11/modules/apps/transfer/keeper"
-  / ibc v2 import (no separate keeper needed)
+  // ibc v2 import (no separate keeper needed)
   transferv2 "github.com/cosmos/ibc-go/v11/modules/apps/transfer/v2"
 )
 
 type App struct {
-  / baseapp, keys and subspaces definitions
+  // baseapp, keys and subspaces definitions
 
-  / other keepers
-  / ...
-  IBCKeeper        *ibckeeper.Keeper / IBC Keeper must be a pointer in the app, so we can SetRouter on it correctly
-  TransferKeeper   *ibctransferkeeper.Keeper / for cross-chain fungible token transfers
+  // other keepers
+  // ...
+  IBCKeeper        *ibckeeper.Keeper // IBC Keeper must be a pointer in the app, so we can SetRouter on it correctly
+  TransferKeeper   *ibctransferkeeper.Keeper // for cross-chain fungible token transfers
 
-  / ...
-  / module and simulation manager definitions
+  // ...
+  // module and simulation manager definitions
 }
 ```
 
@@ -63,8 +63,8 @@ Initialize the IBC `Keeper`s (for core `ibc` and `transfer` modules), and any ad
 ```go expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
   ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
@@ -75,11 +75,11 @@ import (
 )
 
 func NewApp(...args) *App {
-  / define codecs and baseapp
+  // define codecs and baseapp
 
-  / ... other module keepers
+  // ... other module keepers
 
-  / Create IBC Keeper
+  // Create IBC Keeper
   app.IBCKeeper = ibckeeper.NewKeeper(
 		appCodec,
 		runtime.NewKVStoreService(keys[ibcexported.StoreKey]),
@@ -87,7 +87,7 @@ func NewApp(...args) *App {
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 	)
 
-  / Create Transfer Keeper
+  // Create Transfer Keeper
   app.TransferKeeper = ibctransferkeeper.NewKeeper(
 		appCodec,
 		app.AccountKeeper.AddressCodec(),
@@ -99,7 +99,7 @@ func NewApp(...args) *App {
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 	)
 
-  / ... continues
+  // ... continues
 }
 ```
 
@@ -116,8 +116,8 @@ Use `porttypes.NewIBCStackBuilder` to wire up a stack. The builder wires the `ap
 The transfer stack below shows how to wire up transfer with rate limiting and packet forward middleware. Note that `Base` is the bottom of the stack (the application), and each `Next` call adds a middleware on top:
 
 ```go expandable
-/ Create Transfer Stack for IBC Classic
-/ Stack order (top to bottom): RateLimit -> PacketForward -> Transfer
+// Create Transfer Stack for IBC Classic
+// Stack order (top to bottom): RateLimit -> PacketForward -> Transfer
 transferApp := transfer.NewIBCModule(app.TransferKeeper)
 
 transferStack := porttypes.NewIBCStackBuilder(app.IBCKeeper.ChannelKeeper).
@@ -152,24 +152,24 @@ Once the `Router` has been set, no new routes can be added.
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   porttypes "github.com/cosmos/ibc-go/v11/modules/core/05-port/types"
   ibctransfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 )
 
 func NewApp(...args) *App {
-  / .. continuation from above
+  // .. continuation from above
 
-  / Create static IBC router, add transfer module route, then set and seal it
+  // Create static IBC router, add transfer module route, then set and seal it
     ibcRouter := porttypes.NewRouter()
 
 ibcRouter.AddRoute(ibctransfertypes.ModuleName, transferStack)
-  / Setting Router will finalize all routes by sealing router
-  / No more routes can be added
+  // Setting Router will finalize all routes by sealing router
+  // No more routes can be added
   app.IBCKeeper.SetRouter(ibcRouter)
 
-  / ... continues
+  // ... continues
 ```
 
 #### IBC v2 Router
@@ -180,12 +180,12 @@ However, if instead, `someModule` is a prefix-based route, port IDs like `someMo
 Note that the router will panic when you add a route that conflicts with an already existing route. This is also the case if you add a prefix-based route that conflicts with an existing direct route or vice versa.
 
 ```go
-/ IBC v2 router creation
+// IBC v2 router creation
 	ibcRouterV2 := ibcapi.NewRouter()
 
 ibcRouterV2.AddRoute(ibctransfertypes.PortID, ibcv2TransferStack)
-  / Setting Router will finalize all routes by sealing router
-  / No more routes can be added
+  // Setting Router will finalize all routes by sealing router
+  // No more routes can be added
 	app.IBCKeeper.SetRouterV2(ibcRouterV2)
 ```
 
@@ -196,8 +196,8 @@ In order to use IBC, we need to add the new modules to the module `Manager` and 
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   "github.com/cosmos/cosmos-sdk/types/module"
 
   ibc "github.com/cosmos/ibc-go/v11/modules/core"
@@ -205,28 +205,28 @@ import (
 )
 
 func NewApp(...args) *App {
-  / ... continuation from above
+  // ... continuation from above
 
   app.ModuleManager = module.NewManager(
-    / other modules
-    / ...
-    / highlight-start
+    // other modules
+    // ...
+    // highlight-start
 +   ibc.NewAppModule(app.IBCKeeper),
 +   transfer.NewAppModule(app.TransferKeeper),
-    / highlight-end
+    // highlight-end
   )
 
-  / ...
+  // ...
 
   app.simulationManager = module.NewSimulationManagerFromAppModules(
-    / other modules
-    / ...
+    // other modules
+    // ...
     app.ModuleManager.Modules,
     map[string]module.AppModuleSimulation{
 },
   )
 
-  / ... continues
+  // ... continues
 ```
 
 ### Module account permissions
@@ -237,21 +237,21 @@ the `transfer` `ModuleAccount` to mint and burn relayed tokens.
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   "github.com/cosmos/cosmos-sdk/types/module"
   authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
-  / highlight-next-line
+  // highlight-next-line
 + ibctransfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 )
 
-/ app.go
+// app.go
 var (
-  / module account permissions
+  // module account permissions
   maccPerms = map[string][]string{
-    / other module accounts permissions
-    / ...
+    // other module accounts permissions
+    // ...
     ibctransfertypes.ModuleName: {
     authtypes.Minter, authtypes.Burner
 },
@@ -268,28 +268,28 @@ All light clients must be registered with `module.Manager` in a chain's app.go f
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   "github.com/cosmos/cosmos-sdk/types/module"
-  / highlight-next-line
+  // highlight-next-line
 + ibctm "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 )
 
-/ app.go
-/ after sealing the IBC router
+// app.go
+// after sealing the IBC router
     clientKeeper := app.IBCKeeper.ClientKeeper
     storeProvider := app.IBCKeeper.ClientKeeper.GetStoreProvider()
     tmLightClientModule := ibctm.NewLightClientModule(appCodec, storeProvider)
 
 clientKeeper.AddRoute(ibctm.ModuleName, &tmLightClientModule)
-/ ...
+// ...
 app.ModuleManager = module.NewManager(
-  / ...
+  // ...
   ibc.NewAppModule(app.IBCKeeper),
-  transfer.NewAppModule(app.TransferKeeper), / i.e ibc-transfer module
+  transfer.NewAppModule(app.TransferKeeper), // i.e ibc-transfer module
 
-  / register light clients on IBC
-  / highlight-next-line
+  // register light clients on IBC
+  // highlight-next-line
 + ibctm.NewAppModule(tmLightClientModule),
 )
 ```
@@ -314,8 +314,8 @@ connection handshake.
 ```go title="app.go" expandable
 import (
 
-  / other imports
-  / ...
+  // other imports
+  // ...
   stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
   ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
   ibckeeper "github.com/cosmos/ibc-go/v11/modules/core/keeper"
@@ -323,34 +323,34 @@ import (
 )
 
 func NewApp(...args) *App {
-  / ... continuation from above
+  // ... continuation from above
 
-  / add x/staking, ibc and transfer modules to BeginBlockers
+  // add x/staking, ibc and transfer modules to BeginBlockers
   app.ModuleManager.SetOrderBeginBlockers(
-    / other modules ...
+    // other modules ...
     stakingtypes.ModuleName,
     ibcexported.ModuleName,
     ibctransfertypes.ModuleName,
   )
 
 app.ModuleManager.SetOrderEndBlockers(
-    / other modules ...
+    // other modules ...
     stakingtypes.ModuleName,
     ibcexported.ModuleName,
     ibctransfertypes.ModuleName,
   )
 
-  / ...
+  // ...
     genesisModuleOrder := []string{
-    / other modules
-    / ...
+    // other modules
+    // ...
     ibcexported.ModuleName,
     ibctransfertypes.ModuleName,
 }
 
 app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
 
-  / ... continues
+  // ... continues
 ```
 
 That's it! You have now wired up the IBC module and the `transfer` module, and are now able to send fungible tokens across
