@@ -14,4 +14,8 @@
 - Deleted `sdk/next/learn/advanced/transactions.mdx` — content covered by `concepts/transactions`, `concepts/encoding` (sign modes), and `user/run-node/txs` (TxBuilder/broadcasting); fixed 9 backlinks
 - Deleted `sdk/next/learn/advanced/config.mdx` — nearly empty; node config covered in `user/run-node/run-node`; updated tutorials.mdx card to point to `run-production`
 - Deleted `sdk/next/learn/advanced/context.mdx` — fully covered by `concepts/context-gas-events`; fixed 8 backlinks
+- Deleted 5 deprecated pages and fixed backlinks: `building-apps/app-go-di`, `building-apps/runtime`, `building-modules/depinject`, `building-modules/invariants`, `packages/depinject`
 - Fixed stale `DeliverTx` references in `msg-services.mdx` and `telemetry.mdx` — replaced with `FinalizeBlock` (confirmed against cosmos-sdk source)
+- Deleted `sdk/next/learn/advanced/cli.mdx` — merged Configurations (PersistentPreRun, InterceptConfigs, custom logger) and Environment Variables sections into `autocli.mdx`; removed Note blocks and redundant intro from `autocli.mdx`; fixed backlinks in `module-manager.mdx`; removed from docs.json nav
+- Deleted `sdk/next/build/building-modules/module-interfaces.mdx` — legacy Cobra CLI patterns; added "Hand-Written Commands" section to `autocli.mdx` covering when/how to use manual commands; fixed 6 backlinks in `cli.mdx`, `messages-and-queries.mdx`, `intro.mdx`; removed from docs.json nav
+- Removed deprecated feature mentions across sdk/next: `app_di.go` → `app.go` in `prepare-proposal.mdx`, `process-proposal.mdx`, `simulation.mdx`; removed `RegisterInvariants` prose bullet points from `module-manager.mdx`; removed depinject mention from `autocli.mdx`

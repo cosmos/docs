@@ -3,20 +3,6 @@ noindex: true
 title: AutoCLI
 ---
 
-<Note>
-**Synopsis**
-This document details how to build CLI and REST interfaces for a module. Examples from various Cosmos SDK modules are included.
-</Note>
-
-<Note>
-**Prerequisite Readings**
-
-* [CLI](/sdk/next/learn/advanced/cli)
-
-</Note>
-
-The `autocli` (also known as `client/v2`) package is a [Go library](https://pkg.go.dev/cosmossdk.io/client/v2/autocli) for generating CLI (command line interface) interfaces for Cosmos SDK-based applications. It provides a simple way to add CLI commands to your application by generating them automatically based on your gRPC service definitions. Autocli generates CLI commands and flags directly from your protobuf messages, including options, input parameters, and output parameters. This means that you can easily add a CLI interface to your application without having to manually create and manage commands.
-
 ## Overview
 
 `autocli` generates CLI commands and flags for each method defined in your gRPC service. By default, it generates commands for each gRPC services. The commands are named based on the name of the service method.
@@ -39,7 +25,7 @@ Here are the steps to use AutoCLI:
 
 1. Ensure your app's modules implements the `appmodule.AppModule` interface.
 2. (optional) Configure how behave `autocli` command generation, by implementing the `func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions` method on the module.
-3. Use the `autocli.AppOptions` struct to specify the modules you defined. If you are using `depinject`, it can automatically create an instance of `autocli.AppOptions` based on your app's configuration.
+3. Use the `autocli.AppOptions` struct to specify the modules you defined.
 4. Use the `EnhanceRootCommand()` method provided by `autocli` to add the CLI commands for the specified modules to your root command.
 
 <Tip>
@@ -721,6 +707,131 @@ AutoCLIOptions() *autocliv1.ModuleOptions {
 }
 }
 ```
+
+## Root Command Setup
+
+For AutoCLI-generated commands (and hand-written commands) to work correctly — signing transactions, querying the chain, reading configuration — the root command must set up the `client.Context` and `server.Context` in a `PersistentPreRun` function. This runs before every subcommand and makes both contexts available to all child commands.
+
+```go
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/simapp/simd/cmd/root_v2.go#L81-L120
+```
+
+The two key calls inside `PersistentPreRun` are:
+
+- `SetCmdClientContextHandler` reads persistent flags via `ReadPersistentCommandFlags`, creates a `client.Context`, and sets it on the command context. This is what AutoCLI and hand-written commands use to sign transactions and connect to a node.
+- `InterceptConfigsPreRunHandler` creates the `server.Context`, loads `app.toml` and `config.toml` from the node home directory, and binds them to the server context's viper instance. This is what makes application configuration available at startup.
+
+### Custom logger
+
+By default, `InterceptConfigsPreRunHandler` sets the default SDK logger. To use a custom logger, use `InterceptConfigsAndCreateContext` instead and set the logger manually:
+
+```diff expandable
+-return server.InterceptConfigsPreRunHandler(cmd, customAppTemplate, customAppConfig, customCMTConfig)
+
++serverCtx, err := server.InterceptConfigsAndCreateContext(cmd, customAppTemplate, customAppConfig, customCMTConfig)
++if err != nil {
++	return err
++}
+
++// overwrite default server logger
++logger, err := server.CreateSDKLogger(serverCtx, cmd.OutOrStdout())
++if err != nil {
++	return err
++}
++serverCtx.Logger = logger.With(log.ModuleKey, "server")
+
++// set server context
++return server.SetCmdServerContext(cmd, serverCtx)
+```
+
+## Environment Variables
+
+Every CLI flag is automatically bound to an environment variable. The variable name is the app's `basename` in uppercase followed by the flag name, with `-` replaced by `_`. For example, `--node` for an app with basename `GAIA` binds to `GAIA_NODE`.
+
+This lets you pre-configure common flags instead of passing them on every command:
+
+```shell
+# set once in .env or shell profile
+GAIA_HOME=<path to home>
+GAIA_NODE=<node address>
+GAIA_CHAIN_ID="cosmoshub-4"
+GAIA_KEYRING_BACKEND="test"
+
+# then just run
+gaiad tx bank send alice bob 1000uatom --fees 500uatom
+```
+
+## Hand-Written Commands
+
+AutoCLI covers the standard case: one protobuf RPC method maps to one CLI command. For commands that don't fit that model, you can write Cobra commands manually and combine them with AutoCLI using `EnhanceCustomCommand: true`.
+
+Common reasons to write a command manually:
+
+- **Complex argument parsing** — multiple positional args that require custom validation or coin parsing before the message is built
+- **Commands that span multiple RPC calls** — e.g., building a transaction from inputs that require a preceding query
+- **Non-standard UX** — interactive prompts, offline signing flows, or commands that generate output rather than broadcast
+
+### Pattern
+
+A manual transaction command uses `client.GetClientTxContext` to retrieve the signing context, constructs a message, and passes it to `tx.GenerateOrBroadcastTxCLI`:
+
+```go
+func NewSendTxCmd() *cobra.Command {
+    cmd := &cobra.Command{
+        Use:   "send [from] [to] [amount]",
+        Short: "Send tokens from one account to another",
+        Args:  cobra.ExactArgs(3),
+        RunE: func(cmd *cobra.Command, args []string) error {
+            clientCtx, err := client.GetClientTxContext(cmd)
+            if err != nil {
+                return err
+            }
+
+            toAddr, err := sdk.AccAddressFromBech32(args[1])
+            if err != nil {
+                return err
+            }
+
+            coins, err := sdk.ParseCoinsNormalized(args[2])
+            if err != nil {
+                return err
+            }
+
+            msg := types.NewMsgSend(clientCtx.GetFromAddress(), toAddr, coins)
+            return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+        },
+    }
+
+    flags.AddTxFlagsToCmd(cmd)
+    return cmd
+}
+```
+
+Key elements:
+- `client.GetClientTxContext(cmd)` retrieves the client context (signer, node connection, codec)
+- `flags.AddTxFlagsToCmd(cmd)` adds standard transaction flags (`--from`, `--fees`, `--gas`, etc.)
+- `tx.GenerateOrBroadcastTxCLI` handles both `--generate-only` (offline) and live broadcast modes
+
+### Registering with AutoCLI
+
+To use manual commands alongside AutoCLI-generated ones, set `EnhanceCustomCommand: true` in `AutoCLIOptions()`. AutoCLI will add only the commands that are not already registered:
+
+```go
+func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+        Tx: &autocliv1.ServiceCommandDescriptor{
+            Service:              mymodule.Msg_ServiceDesc.ServiceName,
+            EnhanceCustomCommand: true, // keep manually registered tx commands
+        },
+        Query: &autocliv1.ServiceCommandDescriptor{
+            Service:              mymodule.Query_ServiceDesc.ServiceName,
+            EnhanceCustomCommand: true, // keep manually registered query commands
+        },
+    }
+}
+```
+
+Without `EnhanceCustomCommand: true`, AutoCLI skips command generation for any service that already has commands registered via `GetTxCmd()` or `GetQueryCmd()`.
 
 ## Summary
 
