@@ -161,6 +161,15 @@ simd start
 
 You should see blocks come in.
 
+### What happens when the node starts
+
+The `start` command (defined in [`server/start.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/server/start.go)) boots up the full-node in the following sequence:
+
+1. It opens the `db` (LevelDB by default) containing the latest persisted state. On first start, this is empty.
+2. It creates a new instance of the application via an `appCreator` function, which is the [application constructor](/sdk/next/learn/intro/sdk-app-architecture#constructor-function).
+3. It instantiates a CometBFT node using the application. As part of `node.New`, CometBFT checks that the application's block height matches its own. If the application is behind, it replays blocks to catch up. If the height is `0`, it calls [`InitChain`](/sdk/next/learn/concepts/baseapp#initchain) to initialize state from the genesis file.
+4. Once in sync, the node starts its RPC and P2P servers and begins dialing peers. During the handshake, if the node is behind its peers, it queries missing blocks sequentially. Once caught up, it waits for new block proposals and validator signatures.
+
 The previous command allows you to run a single node. This is enough for the next section on interacting with this node, but you may wish to run multiple nodes at the same time, and see how consensus happens between them.
 
 The naive way would be to run the same commands again in separate terminal windows. This is possible. However, [Docker Compose](https://docs.docker.com/compose/) can be leveraged to run a localnet. If you need inspiration on how to set up your own localnet with Docker Compose, refer to the Cosmos SDK's [`docker-compose.yml`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/docker-compose.yml).

@@ -6,7 +6,7 @@ noindex: true
 <Note>
 **Prerequisite Readings**
 
-* [Cosmos Blockchain Simulator](/sdk/next/learn/advanced/simulation)
+* [Module Simulation](/sdk/next/build/building-modules/simulator)
 
 </Note>
 
@@ -4062,3 +4062,47 @@ sims.RunWithSeeds(
 })
 }
 ```
+
+### Simulation test types
+
+The simulation framework provides four test functions, each testing a different failure scenario:
+
+* `TestFullAppSimulation`: General simulation mode. Runs the chain and specified operations for a given number of blocks, checking for panics.
+* `TestAppImportExport`: Exports the initial app state and creates a new app with the exported `genesis.json` as input, checking for store inconsistencies between the two.
+* `TestAppSimulationAfterImport`: Chains two simulations — the first provides its app state to the second. Useful for testing software upgrades or hard-forks from a live chain.
+* `TestAppStateDeterminism`: Checks that all nodes return the same values in the same order.
+
+### Simulator modes
+
+Simulations run in three modes:
+
+1. **Fully random** — initial state, module parameters, and simulation parameters are all pseudo-randomly generated.
+2. **From a `genesis.json` file** — initial state and module parameters are defined by the file. Useful for testing against a known state such as a live network export.
+3. **From a `params.json` file** — initial state is pseudo-randomly generated but module and simulation parameters are set manually. Available parameters are listed [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/x/simulation/client/cli/flags.go#L43-L70).
+
+<Tip>
+These modes are not mutually exclusive. For example, you can combine a randomly generated genesis state (mode 1) with manually defined simulation params (mode 3).
+</Tip>
+
+### Running via go test
+
+Simulations can be run directly with `go test`:
+
+```bash
+go test -mod=readonly github.com/cosmos/cosmos-sdk/simapp \
+  -run=TestApp<simulation_command> \
+  ...<flags> \
+  -v -timeout 24h
+```
+
+The full list of available flags is defined [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/x/simulation/client/cli/flags.go#L43-L70). For Makefile examples, see the Cosmos SDK [`Makefile`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/Makefile#L280-L340).
+
+### Debugging tips
+
+When encountering a simulation failure:
+
+* **Export app state** at the failure height using the `-ExportStatePath` flag.
+* **Use `-Verbose` logs** for a fuller picture of all operations involved.
+* **Try a different `-Seed`**. If the same error reproduces sooner, you will spend less time on each run.
+* **Reduce `-NumBlocks`** to isolate what the app state looks like at the block before failure.
+* **Add a [`Logger`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/x/staking/keeper/keeper.go#L77-L81)** to operations that are not being logged.
