@@ -140,3 +140,22 @@ Encoding instructs the amino json marshaler how to encode certain fields that ma
 // https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/proto/cosmos/bank/v1beta1/genesis.proto#L23
 (amino.encoding) = "legacy_coins",
 ```
+
+## Module Query Safe
+
+The `cosmos.query.v1.module_query_safe` annotation ([source](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/proto/cosmos/query/v1/query.proto)) marks a query method as safe to call from within the state machine — for example from another module's keeper, via ADR-033 intermodule calls, or from CosmWasm contracts.
+
+```proto
+rpc Balance(QueryBalanceRequest) returns (QueryBalanceResponse) {
+  option (cosmos.query.v1.module_query_safe) = true;
+}
+```
+
+When set to `true`, the annotation asserts that the query is:
+
+1. **Deterministic**: given a block height, it returns the exact same response on every call and does not introduce state-machine-breaking changes across SDK patch versions.
+2. **Gas-tracked**: gas consumption is correctly accounted for, preventing attack vectors where high-computation queries consume no gas.
+
+If you add this annotation to your own query, you must ensure both conditions hold. For queries that may consume significant gas (for example those with pagination that could be misconfigured), add a Protobuf comment warning downstream module developers.
+
+This annotation was introduced in v0.47.
