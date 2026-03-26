@@ -1,5 +1,5 @@
 ---
-title: Encoding and Protobuf
+title: Protobuf and Signing
 ---
 
 As described in [State, Storage, and Genesis](/sdk/next/learn/concepts/store), modules write structured state values into the KV store as raw bytes. Encoding defines how those structured values are serialized into bytes, and why every validator must produce exactly the same bytes. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
@@ -114,6 +114,25 @@ The sign mode is negotiated at transaction construction time and does not affect
 <Note>
 **For module developers:** `SIGN_MODE_DIRECT` requires no extra work. If you want your module's messages to be signable on Ledger hardware wallets using `SIGN_MODE_LEGACY_AMINO_JSON`, register your message types with the Amino codec via `RegisterLegacyAminoCodec` in your module's `codec.go`.
 </Note>
+
+## Message signers
+
+Every transaction message must declare which addresses are authorized to sign it. In v0.50+, this is done via the `cosmos.msg.v1.signer` protobuf annotation — the SDK reads the annotation at startup and automatically extracts signer addresses from that field. See [Protobuf Annotations](/sdk/next/build/building-modules/protobuf-annotations) for the full annotation reference.
+
+For messages that cannot use the annotation — for example, messages with non-standard signing logic such as EVM-compatible transactions — you can register a custom signer function using [`signing.CustomGetSigner`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/x/tx/signing/context.go#L126):
+
+```go
+signer := signing.CustomGetSigner{
+    MsgType: proto.MessageName(&MyMsg{}),
+    Fn: func(msg proto.Message) ([][]byte, error) {
+        m := msg.(*MyMsg)
+        // extract and return signer address bytes
+        return [][]byte{m.SignerBytes()}, nil
+    },
+}
+```
+
+To register it, call `signingOptions.DefineCustomGetSigners(msgType, fn)` on the `txsigning.Options` you pass to `authtx.NewTxConfigWithOptions` when building your app's `TxConfig`.
 
 ## How protobuf is used in modules
 

@@ -84,6 +84,8 @@ type GasMeter interface {
 
 `GasConsumed` returns the total gas used so far in the current execution unit. `ConsumeGas` adds to the running total and panics with `ErrorOutOfGas` if consumption exceeds the limit.
 
+When submitting a transaction, users specify two of the three values `fees`, `gas`, and `gas-prices` — the third is derived from the equation `fees = gas * gas-prices`. The `gas` value becomes `GasWanted`: the maximum gas the transaction is allowed to consume. The actual gas consumed during execution is `GasUsed`. Both `GasWanted` and `GasUsed` are returned to CometBFT when `FinalizeBlock` completes.
+
 ### How gas is consumed
 
 Gas is consumed automatically at the store layer. Every read and write through the [`GasKVStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/store/gaskv/store.go#L13) wrapper charges gas before delegating to the underlying store:
@@ -114,6 +116,16 @@ Events are not part of consensus state. They are not stored in the KVStore, do n
 Modules emit events through the [`EventManager`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/events.go#L24), which is attached to the context.
 
 The `EventManager` is created fresh for each transaction and collects all events emitted during that execution.
+
+### Standard event types
+
+The SDK automatically emits a `message` event for every transaction, with these attributes set by `BaseApp`:
+
+- `message.action` — the full type URL of the message (e.g., `/cosmos.bank.v1beta1.Msg/Send`)
+- `message.module` — the module name, derived from the type URL
+- `message.sender` — the signer address, if present
+
+These are defined as constants in [`types/events.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.53.x/types/events.go#L249-L261). Modules follow the same convention when emitting their own events.
 
 ### Emitting events
 
@@ -155,6 +167,16 @@ Events are consumed outside the node:
 - **Wallets and UIs** display event data to users as transaction receipts.
 
 Events are included in the block result that CometBFT returns after each block. They are not replayed or reprocessed; once a block is finalized, its events are fixed.
+
+### Querying events
+
+Events are indexed using the format `{type}.{key}={value}` and can be filtered when querying transactions. String values must be wrapped in single quotes.
+
+| Filter | Description |
+|---|---|
+| `tx.height=23` | All transactions at block height 23 |
+| `message.action='/cosmos.bank.v1beta1.Msg/Send'` | Transactions containing a bank Send message |
+| `message.module='bank'` | Transactions from the x/bank module |
 
 ## Putting it together
 
