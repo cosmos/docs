@@ -108,9 +108,15 @@ PreBlock → BeginBlock → transaction execution → EndBlock
 
 `PreBlock` runs before `BeginBlock` and is generally used for logic that must affect consensus-critical state before the block begins, such as activating a chain upgrade or modifying consensus parameters. Because these changes need to take effect before any block logic runs, they cannot happen inside `BeginBlock`. Modules may implement this via the `HasPreBlocker` extension interface on their `AppModule` (typically in `x/<module>/module.go`), and the application's `ModuleManager` invokes all registered PreBlockers during `FinalizeBlock`.
 
+If a `PreBlocker` modifies consensus parameters, it signals this by returning `ConsensusParamsChanged=true` in its `ResponsePreBlock`. `BaseApp` then refreshes the consensus params in the current context before proceeding to `BeginBlock`:
+
+```go
+app.finalizeBlockState.ctx = app.finalizeBlockState.ctx.WithConsensusParams(app.GetConsensusParams())
+```
+
 ### `BeginBlock`
 
-`BeginBlock` runs after `PreBlock` and handles per-block housekeeping that must happen before any transactions execute, regardless of the transactions in the block. Common uses include minting inflation rewards, distributing staking rewards, and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`.
+`BeginBlock` runs after `PreBlock` and handles per-block housekeeping that must happen before any transactions execute, regardless of the transactions in the block. Common uses include minting inflation rewards, distributing staking rewards, and resetting per-block state. Modules implement this via the `BeginBlock` function in `x/<module>/module.go`. Because `BeginBlock` and `EndBlock` run on every block, complex or expensive logic in these hooks can slow block execution; keep their work lightweight.
 
 ### Transaction execution
 
@@ -143,7 +149,7 @@ Tx
 
 If any message fails, the message execution branch for that transaction is discarded and the transaction returns an error. The next transaction in the block is then executed. `BaseApp` uses cached stores internally to implement this. `AnteHandler` side effects may already have been applied before message execution begins.
 
-If the chain enables unordered transactions, the normal sequence check is bypassed and replay protection uses a timeout timestamp plus unordered nonce tracking. For the client-facing flow, see [Generating an Unordered Transaction](/sdk/next/user/run-node/txs#generating-an-unordered-transaction).
+If the chain enables unordered transactions, the normal sequence check is bypassed and replay protection uses a timeout timestamp plus unordered nonce tracking. For the client-facing flow, see [Generating an Unordered Transaction](/sdk/next/node/txs#generating-an-unordered-transaction).
 
 ### `EndBlock`
 

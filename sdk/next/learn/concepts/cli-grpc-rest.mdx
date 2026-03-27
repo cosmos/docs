@@ -36,7 +36,7 @@ For a hands-on walkthrough of running a local chain and using the CLI, see the [
 
 When used as a client, the CLI constructs a transaction or query, signs it if required, and submits it through the node client interface.
 
-To learn how to run a local node and use the CLI, see [Run a Local Node](/sdk/next/user/run-node/prerequisites).
+To learn how to run a local node and use the CLI, see [Run a Local Node](/sdk/next/node/prerequisites).
 
 ### Using the CLI
 
@@ -179,8 +179,12 @@ The gRPC server can be configured in `app.toml`:
 
 - `grpc.enable = true|false` — enables or disables the gRPC server (default: `true`)
 - `grpc.address = {string}` — the `ip:port` the server binds to (default: `localhost:9090`)
+- `grpc.max-recv-msg-size` — maximum message size in bytes the server can receive (default: 10MB)
+- `grpc.max-send-msg-size` — maximum message size in bytes the server can send (default: `math.MaxInt32`)
 
-For more usage examples, see [Interact with the Node](/sdk/next/user/run-node/interact-node#using-grpc).
+For archive node setups, `grpc.historical-grpc-address-block-range` maps gRPC backend addresses to inclusive block height ranges, so historical queries are routed to the node holding that slice of chain history. The value is a JSON string, for example: `'{"archive-node-1:9090": [0, 1000000]}'`. Leave it empty (the default) to disable.
+
+For more usage examples, see [Interact with the Node](/sdk/next/node/interact-node#using-grpc).
 
 ## REST via gRPC-gateway
 
@@ -234,7 +238,7 @@ api.enable = true
 api.swagger = true
 ```
 
-To generate Swagger documentation for your own custom modules, see [Protobuf Tooling](/sdk/next/build/tooling/protobuf).
+To generate Swagger documentation for your own custom modules, see the [`proto-swagger-gen` script](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/scripts/protoc-swagger-gen.sh) in the Cosmos SDK.
 
 ## CometBFT RPC
 
@@ -242,8 +246,16 @@ CometBFT also exposes its own RPC server, independent of the Cosmos SDK. It serv
 
 Some CometBFT RPC endpoints are directly related to the Cosmos SDK:
 
-- `/abci_query` — queries the application for state. The `path` parameter accepts any protobuf fully-qualified service method (for example, `/cosmos.bank.v1beta1.Query/AllBalances`), or special paths like `/app/simulate` and `/app/version`.
+- `/abci_query` — queries the application for state. The `path` parameter accepts:
+  - any protobuf fully-qualified service method, for example `/cosmos.bank.v1beta1.Query/AllBalances`
+  - `/app/simulate` — simulate a transaction and return gas usage
+  - `/app/version` — return the application version
+  - `/store/{storeName}/key` — direct key lookup in a named store
+  - `/store/{storeName}/subspace` — prefix scan in a named store
+  - `/p2p/filter/addr/{addr}` and `/p2p/filter/id/{id}` — filter peers by address or node ID
 - `/broadcast_tx_sync`, `/broadcast_tx_async`, `/broadcast_tx_commit` — broadcast a signed transaction to peers. The CLI, gRPC, and REST interfaces all use these CometBFT RPCs under the hood.
+
+Two gRPC methods on the CometBFT service return ABCI block results: `GetBlockResults` (by height) and `GetLatestBlockResults`. These expose `finalize_block_events` and per-transaction results.
 
 
 ## End-to-end interaction flow
