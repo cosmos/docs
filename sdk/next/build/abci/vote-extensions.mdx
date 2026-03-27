@@ -3,128 +3,141 @@ title: Vote Extensions
 noindex: true
 ---
 
-<Note>
-**Synopsis**
-This section describes how the application can define and use vote extensions
-defined in ABCI++.
-</Note>
+Vote extensions are arbitrary bytes that validators can attach to their pre-commit vote at block height `H`. They are part of ABCI 2.0 and are available starting from CometBFT v0.38 and Cosmos SDK v0.50.
 
-## Extend Vote
+## Enabling vote extensions
 
-ABCI 2.0 (colloquially called ABCI++) allows an application to extend a pre-commit vote with arbitrary data. This process does NOT have to be deterministic, and the data returned can be unique to the
-validator process. The Cosmos SDK defines [`baseapp.ExtendVoteHandler`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/types/abci.go#L32):
+Vote extensions are controlled by the `VoteExtensionsEnableHeight` consensus parameter. At the configured height, CometBFT begins calling `ExtendVote` and `VerifyVoteExtension` on every validator. Extensions produced at height `H` are available to the block proposer at height `H+1` via `PrepareProposal`.
+
+To check whether vote extensions are active in a handler:
+
+```go
+cp := ctx.ConsensusParams()
+if cp.Abci != nil && req.Height > cp.Abci.VoteExtensionsEnableHeight {
+    // vote extensions are available
+}
+```
+
+`ConsensusParams().Abci` is a pointer and must be nil-checked before use.
+
+## ExtendVote
+
+The Cosmos SDK defines [`ExtendVoteHandler`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/types/abci.go#L48):
 
 ```go
 type ExtendVoteHandler func(Context, *abci.RequestExtendVote) (*abci.ResponseExtendVote, error)
 ```
 
-An application can set this handler in `app.go` via the `baseapp.SetExtendVoteHandler`
-`BaseApp` option function. The `sdk.ExtendVoteHandler`, if defined, is called during
-the `ExtendVote` ABCI method. Note that if an application decides to implement
-`baseapp.ExtendVoteHandler`, it MUST return a non-nil `VoteExtension`. However, the vote
-extension can be empty. See [here](/cometbft/v0.38/spec/abci/Methods#extendvote)
-for more details.
+Register a handler in `app.go` via `baseapp.SetExtendVoteHandler` (defined in [`baseapp/options.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/baseapp/options.go)):
 
-There are many decentralized censorship-resistant use cases for vote extensions.
-For example, a validator may want to submit prices for a price oracle or encryption
-shares for an encrypted transaction mempool. Note, an application should be careful
-to consider the size of the vote extensions as they could increase latency in block
-production. See [here](/cometbft/v0.38/docs/qa/CometBFT-QA-38#vote-extensions-testbed)
-for more details.
+```go
+app.SetExtendVoteHandler(myExtendVoteHandler)
+```
 
-Click [here](/sdk/next/build/abci/vote-extensions) if you would like a walkthrough of how to implement vote extensions.
+If `ExtendVoteHandler` is set, it **must** return a non-nil `VoteExtension`. An empty byte slice is valid.
 
-## Verify Vote Extension
+`ExtendVote` is called only on the local validator and does **not** need to be deterministic. Common uses include:
 
-Similar to extending a vote, an application can also verify vote extensions from
-other validators when validating their pre-commits. For a given vote extension,
-this process MUST be deterministic. The Cosmos SDK defines [`sdk.VerifyVoteExtensionHandler`](https://github.com/cosmos/cosmos-sdk/blob/v0.50.1/types/abci.go#L29-L31):
+- Submitting prices for an oracle
+- Sharing encryption shares for an encrypted mempool
+
+Keep extensions small — large extensions increase consensus latency. See [CometBFT QA results](/cometbft/v0.38/docs/qa/CometBFT-QA-38#vote-extensions-testbed) for benchmarks.
+
+## VerifyVoteExtension
+
+The SDK defines [`VerifyVoteExtensionHandler`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/types/abci.go#L52):
 
 ```go
 type VerifyVoteExtensionHandler func(Context, *abci.RequestVerifyVoteExtension) (*abci.ResponseVerifyVoteExtension, error)
 ```
 
-An application can set this handler in `app.go` via the `baseapp.SetVerifyVoteExtensionHandler`
-`BaseApp` option function. The `sdk.VerifyVoteExtensionHandler`, if defined, is called
-during the `VerifyVoteExtension` ABCI method. If an application defines a vote
-extension handler, it should also define a verification handler. Note, not all
-validators will share the same view of what vote extensions they verify depending
-on how votes are propagated. See [here](/cometbft/v0.38/spec/abci/Methods#verifyvoteextension)
-for more details.
+Register it in `app.go`:
 
-Additionally, please keep in mind that performance can be degraded if vote extensions are too big ([Link](/cometbft/v0.38/docs/qa/CometBFT-QA-38#vote-extensions-testbed)), so we highly recommend a size validation in `VerifyVoteExtensions`.
-
-## Vote Extension Propagation
-
-The agreed upon vote extensions at height `H` are provided to the proposing validator
-at height `H+1` during `PrepareProposal`. As a result, the vote extensions are
-not natively provided or exposed to the remaining validators during `ProcessProposal`.
-As a result, if an application requires that the agreed upon vote extensions from
-height `H` are available to all validators at `H+1`, the application must propagate
-these vote extensions manually in the block proposal itself. This can be done by
-"injecting" them into the block proposal, since the `Txs` field in `PrepareProposal`
-is just a slice of byte slices.
-
-`FinalizeBlock` will ignore any byte slice that doesn't implement an `sdk.Tx`, so
-any injected vote extensions will safely be ignored in `FinalizeBlock`. For more
-details on propagation, see the [ABCI++ 2.0 ADR](https://github.com/cosmos/cosmos-sdk/blob/main/docs/architecture/adr-064-abci-2.0.md#vote-extension-propagation--verification).
-
-### Recovery of injected Vote Extensions
-
-As stated before, vote extensions can be injected into a block proposal (along with
-other transactions in the `Txs` field). The Cosmos SDK provides a pre-FinalizeBlock
-hook to allow applications to recover vote extensions, perform any necessary
-computation on them, and then store the results in the cached store. These results
-will be available to the application during the subsequent `FinalizeBlock` call.
-
-An example of what a pre-FinalizeBlock hook could look like is shown below:
-
-```go expandable
-app.SetPreBlocker(func(ctx sdk.Context, req *abci.RequestFinalizeBlock)
-
-error {
-    allVEs := []VE{
-} // store all parsed vote extensions here
-    for _, tx := range req.Txs {
-        // define a custom function that tries to parse the tx as a vote extension
-        ve, ok := parseVoteExtension(tx)
-    if !ok {
-    continue
-}
-
-allVEs = append(allVEs, ve)
-}
-
-    // perform any necessary computation on the vote extensions and store the result
-    // in the cached store
-    result := compute(allVEs)
-    err := storeVEResult(ctx, result)
-    if err != nil {
-    return err
-}
-
-return nil
-})
+```go
+app.SetVerifyVoteExtensionHandler(myVerifyVoteExtensionHandler)
 ```
 
-Then, in an app's module, the application can retrieve the result of the computation
-of vote extensions from the cached store:
+`VerifyVoteExtension` is called on every validator for every peer's pre-commit. It **must** be deterministic — the same extension must produce the same result on every validator. If an application defines `ExtendVoteHandler`, it should also define a `VerifyVoteExtensionHandler`.
 
-```go expandable
-func (k Keeper)
+Always validate the size of incoming extensions in this handler.
 
-BeginBlocker(ctx context.Context)
+## Validating vote extension signatures
 
-error {
-    // retrieve the result of the computation of vote extensions from the cached store
-    result, err := k.GetVEResult(ctx)
-    if err != nil {
-    return err
-}
+Before processing vote extensions in `PrepareProposal` or `ProcessProposal`, validate that they are properly signed. The SDK provides [`baseapp.ValidateVoteExtensions`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/baseapp/abci_utils.go) for this:
 
-    // use the result of the computation of vote extensions
-    k.setSomething(result)
-
-return nil
+```go
+err := baseapp.ValidateVoteExtensions(ctx, valStore, req.Height, ctx.ChainID(), req.LocalLastCommit)
+if err != nil {
+    return nil, err
 }
 ```
+
+`ValidateVoteExtensions` verifies that each vote extension in the commit is correctly signed by its validator. `valStore` is a [`baseapp.ValidatorStore`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/baseapp/abci_utils.go), an interface with a single method:
+
+```go
+type ValidatorStore interface {
+    GetPubKeyByConsAddr(context.Context, sdk.ConsAddress) (cmtprotocrypto.PublicKey, error)
+}
+```
+
+Call `ValidateVoteExtensions` in both `PrepareProposal` (on `req.LocalLastCommit`) and `ProcessProposal` (on the `ExtendedCommitInfo` recovered from the injected transaction) before trusting any extension data.
+
+## Vote extension propagation
+
+Vote extensions from height `H` are provided only to the block proposer at height `H+1` via `req.LocalLastCommit` in `PrepareProposal`. They are **not** provided to other validators during `ProcessProposal`.
+
+If all validators need to use extension data at `H+1`, the proposer must inject it into the block proposal. Since the `Txs` field in `PrepareProposal` is a `[][]byte`, any byte slice — including a serialized extensions summary — can be prepended to the proposal:
+
+```go
+injectedVoteExtTx := StakeWeightedPrices{
+    StakeWeightedPrices: stakeWeightedPrices,
+    ExtendedCommitInfo:  req.LocalLastCommit,
+}
+bz, err := json.Marshal(injectedVoteExtTx)
+if err != nil {
+    return nil, err
+}
+proposalTxs = append([][]byte{bz}, proposalTxs...)
+```
+
+`FinalizeBlock` ignores any byte slice that does not implement `sdk.Tx`, so injected extensions are safely skipped during message execution.
+
+For more details on propagation design, see the [ABCI 2.0 ADR](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/docs/architecture/adr-064-abci-2.0.md#vote-extension-propagation--verification).
+
+## Recovery via PreBlocker
+
+The SDK's `PreBlocker` runs before any message execution in `FinalizeBlock`. Use it to recover injected vote extensions and make the results available to modules during the block:
+
+```go
+func (h *ProposalHandler) PreBlocker(ctx sdk.Context, req *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+    res := &sdk.ResponsePreBlock{}
+    if len(req.Txs) == 0 {
+        return res, nil
+    }
+    cp := ctx.ConsensusParams()
+    if cp.Abci != nil && req.Height > cp.Abci.VoteExtensionsEnableHeight {
+        var injectedVoteExtTx StakeWeightedPrices
+        if err := json.Unmarshal(req.Txs[0], &injectedVoteExtTx); err != nil {
+            return nil, err
+        }
+        if err := h.keeper.SetOraclePrices(ctx, injectedVoteExtTx.StakeWeightedPrices); err != nil {
+            return nil, err
+        }
+    }
+    return res, nil
+}
+```
+
+Register the PreBlocker in `app.go` (see [`baseapp/options.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/baseapp/options.go)):
+
+```go
+app.SetPreBlocker(proposalHandler.PreBlocker)
+```
+
+The `sdk.PreBlocker` type is defined in [`types/abci.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/types/abci.go):
+
+```go
+type PreBlocker func(Context, *abci.RequestFinalizeBlock) (*ResponsePreBlock, error)
+```
+
+State written to the context inside `PreBlocker` is available to all `BeginBlock` and message handlers in the same block.

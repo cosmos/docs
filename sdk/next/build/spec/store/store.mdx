@@ -13,7 +13,7 @@ abstractions.
 
 ### `Store`
 
-The bulk of the store interfaces are defined [here](https://github.com/cosmos/cosmos-sdk/blob/main/store/types/store.go),
+The bulk of the store interfaces are defined [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/store/types/store.go),
 where the base primitive interface, for which other interfaces build off of, is
 the `Store` type. The `Store` interface defines the ability to tell the type of
 the implementing store and the ability to cache wrap via the `CacheWrapper` interface.
@@ -39,7 +39,7 @@ maps to a `KVStore` will be illustrated below through the `CommitMultiStore`.
 
 Note, a `KVStore` cannot directly commit state. Instead, a `KVStore` can be wrapped
 by a `CacheKVStore` which extends a `KVStore` and provides the ability for the
-caller to execute `Write()` which commits state to the underlying state storage.
+caller to execute `Write()` which flushes pending writes to the parent `KVStore` in memory.
 Note, this doesn't actually flush writes to disk as writes are held in memory
 until `Commit()` is called on the `CommitMultiStore`.
 
@@ -96,7 +96,7 @@ bottom most layer. When requesting a store to perform reads or writes in a modul
 the typical abstraction layer in order is defined as follows:
 
 ```text
-iavl.Store <- cachekv.Store <- gaskv.Store <- cachemulti.Store <- rootmulti.Store
+rootmulti.Store -> cachemulti.Store -> gaskv.Store -> cachekv.Store -> iavl.Store
 ```
 
 ### Concurrent use of IAVL store
@@ -119,15 +119,12 @@ to `true` in the config TOML file.
 
 The `cachekv.Store` store wraps an underlying `KVStore`, typically a `iavl.Store`
 and contains an in-memory cache for storing pending writes to underlying `KVStore`.
-`Set` and `Delete` calls are executed on the in-memory cache, whereas `Has` calls
-are proxied to the underlying `KVStore`.
+`Set` and `Delete` calls are executed on the in-memory cache. `Has` checks the cache first, falling through to the underlying `KVStore` only on a cache miss.
 
 One of the most important calls to a `cachekv.Store` is `Write()`, which ensures
 that key-value pairs are written to the underlying `KVStore` in a deterministic
 and ordered manner by sorting the keys first. The store keeps track of "dirty"
-keys and uses these to determine what keys to sort. In addition, it also keeps
-track of deleted keys and ensures these are also removed from the underlying
-`KVStore`.
+keys and uses these to determine what keys to sort. Deletions are represented as zero-value (nil) entries; `Write()` detects these and calls `Delete` on the underlying `KVStore` for each one.
 
 The `cachekv.Store` also provides the ability to perform iteration and reverse
 iteration. Iteration is performed through the `cacheMergeIterator` type and uses
@@ -140,9 +137,7 @@ Note, all calls to CRUD and iteration operations on a `cachekv.Store` are thread
 The `gaskv.Store` store provides a simple implementation of a `KVStore`.
 Specifically, it just wraps an existing `KVStore`, such as a cache-wrapped
 `iavl.Store`, and incurs configurable gas costs for CRUD operations via
-`ConsumeGas()` calls defined on the `GasMeter` which exists in a `sdk.Context`
-and then proxies the underlying CRUD call to the underlying store. Note, the
-`GasMeter` is reset on each block.
+`ConsumeGas()` calls on a `GasMeter` passed at construction time, then proxies the underlying CRUD call to the wrapped store.
 
 ### `cachemulti.Store` & `rootmulti.Store`
 
@@ -158,8 +153,7 @@ state from each `KVStore` to disk and returning an application state Merkle root
 
 Queries can be performed to return state data along with associated state
 commitment proofs for both previous heights/versions and the current state root.
-Queries are routed based on store name, i.e. a module, along with other parameters
-which are defined in `abci.RequestQuery`.
+Queries are routed based on store name, i.e. a module, along with other parameters defined in the SDK's `RequestQuery` type.
 
 The `rootmulti.Store` also provides primitives for pruning data at a given
 height/version from state storage. When a height is committed, the `rootmulti.Store`
@@ -184,8 +178,7 @@ type PruningOptions struct {
 }
 ```
 
-The Cosmos SDK defines a preset number of pruning "strategies": `default`, `everything`
-`nothing`, and `custom`.
+The Cosmos SDK defines a preset number of pruning "strategies": `default`, `everything`, `nothing`, and `custom`.
 
 It is important to note that the `rootmulti.Store` considers each `KVStore` as a
 separate logical store. In other words, they do not share a Merkle tree or
