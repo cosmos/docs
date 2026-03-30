@@ -101,3 +101,9 @@
 - Renamed `sdk/next/modules/modules.mdx` title to "Module Directory"
 - Restructured `sdk/next/build/` filesystem to match In-depth Guides nav exactly: created `module-design/`, `abci/`, `tooling/`, `state/`, `upgrades/`, `testing/`, `reference/` subfolders; moved all 19 files from `building-modules/`, `building-apps/`, and `node/tools/` into appropriate subfolders; `build/tooling.mdx` → `build/tooling/tool-guide.mdx`; removed now-empty `building-modules/`, `building-apps/`, `node/tools/` directories; updated all backlinks across sdk/next/ and docs.json
 - Renamed `sdk/next/build/` → `sdk/next/guides/` to match the "In-depth Guides" nav section name; updated all backlinks across sdk/next/ MDX files and docs.json
+- Fixed warning: removed `import { useState, useEffect, useRef } from 'react'` from `snippets/blockchain-demo.jsx` — Mintlify provides React hooks automatically; external package imports are not allowed
+- Created `snippets/CLAUDE.md` — documents all files in the snippets folder and the no-external-imports rule
+- Nav restructure: moved `start-here` to second position in Overview group (after home page); folded home page and start-here into Overview group (removed separate "Home" group); home page title renamed to "Cosmos SDK Docs"
+- Renamed `sdk/next/learn/intro/blockchain-basics.mdx` title: "Introduction to Blockchains" → "Blockchain Basics"
+- `sdk/next/learn.mdx` cards: replaced "SDK Internals" card with "Start Here" card (first position); swapped "Overview" card to last position
+- Added Lucide icons to all 6 Build a Chain Tutorial pages via frontmatter (`book-open`, `list-checks`, `zap`, `box`, `code-2`, `terminal`)
