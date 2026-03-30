@@ -100,3 +100,4 @@
 - Added stub external-link pages `sdk/next/reference/cosmos-sdk-repo.mdx` and `sdk/next/reference/example-repo.mdx` (using `url` frontmatter); added to Developer Reference nav
 - Renamed `sdk/next/modules/modules.mdx` title to "Module Directory"
 - Restructured `sdk/next/build/` filesystem to match In-depth Guides nav exactly: created `module-design/`, `abci/`, `tooling/`, `state/`, `upgrades/`, `testing/`, `reference/` subfolders; moved all 19 files from `building-modules/`, `building-apps/`, and `node/tools/` into appropriate subfolders; `build/tooling.mdx` → `build/tooling/tool-guide.mdx`; removed now-empty `building-modules/`, `building-apps/`, `node/tools/` directories; updated all backlinks across sdk/next/ and docs.json
+- Renamed `sdk/next/build/` → `sdk/next/guides/` to match the "In-depth Guides" nav section name; updated all backlinks across sdk/next/ MDX files and docs.json
