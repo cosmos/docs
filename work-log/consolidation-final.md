@@ -84,3 +84,19 @@
 - Moved `sdk/next/build/abci/introduction.mdx` → `build/building-apps/abci.mdx`; updated all backlinks and docs.json nav
 - Rewrote `sdk/next/build/tooling.mdx` as a comprehensive "Tool Guide" — lists all builder tools by category (code generation, client library, state management, testing, node setup, keys/transactions, observability, IBC) with one-line descriptions and links; removed old tooling subdirectory entries
 - Moved `sdk/next/node/confix.mdx`, `cosmovisor.mdx`, `log.mdx`, `telemetry.mdx` → `sdk/next/node/tools/`; updated all backlinks and docs.json nav
+
+## 2026-03-30
+
+- Rewrote `sdk/next/build/building-modules/store.mdx` title to "Module Store Internals"
+- Rewrote `sdk/next/build/building-modules/collections.mdx` title to "Collections API"
+- Complete nav restructure of `sdk/next` in docs.json: renamed "Tutorial" → "Build a Chain Tutorial" with descriptive page titles; renamed "Blockchains" concepts subgroup → "Cosmos SDK Internals"; replaced "Chain Development" + scattered module dev groups with new "Developer Guides" section (subgroups: Module Design, ABCI, Tooling, State, Upgrades & Migrations, Testing and Observability); added "Developer Reference" section (packages, bech32, protobuf annotations, proto-docs); moved "Run a Node" to after tutorial; moved "v0.54 Upgrade" above Developer Guides; moved `building-modules/bech32` from State subgroup to Developer Reference
+- Deleted `sdk/next/user.mdx` — orphaned page with no nav entry
+- Deleted `sdk/next/build/building-modules/proto-docs.mdx` — replaced with stub MDX file using `url` frontmatter redirecting to `https://buf.build/cosmos/cosmos-sdk/docs/main`; updated 1 backlink in `tooling.mdx`
+- Fixed 4 broken `/sdk/next/node/log` links (tooling.mdx, run-node.mdx, upgrade.mdx, v054.mdx) → `/sdk/next/node/tools/log`
+- Added Bech32 link to `concepts/accounts.mdx` address section; added buf.build docs link to `concepts/encoding.mdx` code generation section
+- Renamed Developer Guides → "In-depth Guides" in docs.json nav
+- Created `sdk/next/learn/start-here.mdx` — learning path orientation page with sections for different reader goals; added to Overview nav after Cosmos Architecture
+- Created `sdk/next/build/guides.mdx` — In-depth Guides landing page listing all subgroups with one-liners; added as first item in In-depth Guides nav
+- Added stub external-link pages `sdk/next/reference/cosmos-sdk-repo.mdx` and `sdk/next/reference/example-repo.mdx` (using `url` frontmatter); added to Developer Reference nav
+- Renamed `sdk/next/modules/modules.mdx` title to "Module Directory"
+- Restructured `sdk/next/build/` filesystem to match In-depth Guides nav exactly: created `module-design/`, `abci/`, `tooling/`, `state/`, `upgrades/`, `testing/`, `reference/` subfolders; moved all 19 files from `building-modules/`, `building-apps/`, and `node/tools/` into appropriate subfolders; `build/tooling.mdx` → `build/tooling/tool-guide.mdx`; removed now-empty `building-modules/`, `building-apps/`, `node/tools/` directories; updated all backlinks across sdk/next/ and docs.json
