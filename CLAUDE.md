@@ -130,6 +130,20 @@ Always use absolute Mintlify paths for internal links — never relative file pa
 
 The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
 
+### Anchor Links
+
+Mintlify preserves special characters in anchor IDs — do not drop them. Rules:
+
+- Spaces → `-`
+- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` → kept with surrounding hyphens (e.g. `Gas & Fees` → `#gas-&-fees`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` → dropped (surrounding spaces still become `-`)
+- `-` in heading → stays as `-`, spaces around it collapse (e.g. `A - B` → `#a-b`)
+- All characters lowercased
+
+## Work Log
+
+Agents should log meaningful changes as they complete them — not at the end of the session. Each branch gets its own file in `work-log/`. Read [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format and instructions.
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components

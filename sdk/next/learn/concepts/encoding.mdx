@@ -1,5 +1,5 @@
 ---
-title: Encoding and Protobuf
+title: Protobuf and Signing
 ---
 
 As described in [State, Storage, and Genesis](/sdk/next/learn/concepts/store), modules write structured state values into the KV store as raw bytes. Encoding defines how those structured values are serialized into bytes, and why every validator must produce exactly the same bytes. This page explains how that encoding works, why the Cosmos SDK chose Protocol Buffers, and what that means for module development.
@@ -26,7 +26,7 @@ The Cosmos SDK uses protobuf for a fundamental reason: consensus requires determ
 
 Every validator in the network independently executes each block. After execution, each validator computes the [app hash](/sdk/next/learn/concepts/store#app-hash), a cryptographic hash of the application state. For validators to agree on the app hash, they must all produce exactly the same bytes for every piece of state they write.
 
-Protobuf alone does not guarantee this. The Cosmos SDK uses protobuf **with additional deterministic encoding rules** formalized in [ADR-027 (Deterministic Protobuf Serialization)](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/docs/architecture/adr-027-deterministic-protobuf-serialization.md). ADR-027 specifies constraints such as requiring fields to appear in ascending field-number order and varint encodings to be as short as possible. The SDK validates incoming transactions against these rules before processing them, so a non-deterministically encoded transaction is rejected rather than producing divergent state. Every validator encoding the same data under these rules produces an identical byte sequence.
+Protobuf alone does not guarantee this. The Cosmos SDK uses protobuf **with additional deterministic encoding rules** formalized in [ADR-027 (Deterministic Protobuf Serialization)](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/docs/architecture/adr-027-deterministic-protobuf-serialization.md). ADR-027 specifies constraints such as requiring fields to appear in ascending field-number order and varint encodings to be as short as possible. The SDK validates incoming transactions against these rules before processing them, so a non-deterministically encoded transaction is rejected rather than producing divergent state. Every validator encoding the same data under these rules produces an identical byte sequence.
 
 Beyond determinism, protobuf provides:
 
@@ -57,7 +57,7 @@ Note: genesis data is distributed as JSON in `genesis.json`, but during chain in
 
 ## Transaction encoding
 
-Transactions are protobuf messages defined in [`cosmos.tx.v1beta1`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.6/proto/cosmos/tx/v1beta1/tx.proto). A transaction is composed of three parts:
+Transactions are protobuf messages defined in [`cosmos.tx.v1beta1`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/proto/cosmos/tx/v1beta1/tx.proto). A transaction is composed of three parts:
 
 ```text
 Tx
@@ -105,15 +105,34 @@ A **sign mode** determines what bytes a signer commits to when signing a transac
 
 - `SIGN_MODE_LEGACY_AMINO_JSON`: the signer signs over an Amino JSON-encoded `StdSignDoc` instead of the protobuf `SignDoc`. This exists for backward compatibility with hardware wallets (e.g., older Ledger firmware) and client tooling that predates protobuf. New modules and chains should not depend on it.
 
-- `SIGN_MODE_TEXTUAL`: the signer signs over a human-readable CBOR-encoded representation of the transaction, designed to display legibly on hardware wallet screens (introduced in v0.50, see [ADR-050](/sdk/next/build/architecture/adr-050-sign-mode-textual)). This is the SDK's newer direction for human-readable signing on hardware wallets, intended to replace `SIGN_MODE_LEGACY_AMINO_JSON` over time. Its specification is versioned and has evolved across SDK releases.
+- `SIGN_MODE_TEXTUAL`: the signer signs over a human-readable CBOR-encoded representation of the transaction, designed to display legibly on hardware wallet screens (introduced in v0.50, see [ADR-050](/sdk/next/reference/architecture/adr-050-sign-mode-textual)). This is the SDK's newer direction for human-readable signing on hardware wallets, intended to replace `SIGN_MODE_LEGACY_AMINO_JSON` over time. Its specification is versioned and has evolved across SDK releases.
 
 - `SIGN_MODE_DIRECT_AUX`: allows N-1 signers in a multi-signer transaction to sign over only `TxBody` and their own `SignerInfo`, without specifying fees. The designated fee payer signs last using `SIGN_MODE_DIRECT`. This simplifies multi-signature UX.
 
-The sign mode is negotiated at transaction construction time and does not affect how state is stored or how validators execute transactions. It only affects what bytes are signed. The full list of sign modes is defined in [`signing.proto`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.6/proto/cosmos/tx/signing/v1beta1/signing.proto#L17).
+The sign mode is negotiated at transaction construction time and does not affect how state is stored or how validators execute transactions. It only affects what bytes are signed. The full list of sign modes is defined in [`signing.proto`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/proto/cosmos/tx/signing/v1beta1/signing.proto#L17).
 
 <Note>
 **For module developers:** `SIGN_MODE_DIRECT` requires no extra work. If you want your module's messages to be signable on Ledger hardware wallets using `SIGN_MODE_LEGACY_AMINO_JSON`, register your message types with the Amino codec via `RegisterLegacyAminoCodec` in your module's `codec.go`.
 </Note>
+
+## Message signers
+
+Every transaction message must declare which addresses are authorized to sign it. In v0.50+, this is done via the `cosmos.msg.v1.signer` protobuf annotation — the SDK reads the annotation at startup and automatically extracts signer addresses from that field. See [Protobuf Annotations](/sdk/next/guides/reference/protobuf-annotations) for the full annotation reference.
+
+For messages that cannot use the annotation — for example, messages with non-standard signing logic such as EVM-compatible transactions — you can register a custom signer function using [`signing.CustomGetSigner`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/tx/signing/context.go#L127):
+
+```go
+signer := signing.CustomGetSigner{
+    MsgType: proto.MessageName(&MyMsg{}),
+    Fn: func(msg proto.Message) ([][]byte, error) {
+        m := msg.(*MyMsg)
+        // extract and return signer address bytes
+        return [][]byte{m.SignerBytes()}, nil
+    },
+}
+```
+
+To register it, call `signingOptions.DefineCustomGetSigners(msgType, fn)` on the `txsigning.Options` you pass to `authtx.NewTxConfigWithOptions` when building your app's `TxConfig`.
 
 ## How protobuf is used in modules
 
@@ -156,7 +175,7 @@ The codec (`k.cdc`) is the protobuf codec described in the next section.
 
 ## The codec and interface registry
 
-The Cosmos SDK wraps protobuf in a **codec** that modules use for marshaling and unmarshaling. The primary implementation is [`ProtoCodec`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/proto_codec.go), which calls protobuf's `Marshal` and `Unmarshal` under the hood.
+The Cosmos SDK wraps protobuf in a **codec** that modules use for marshaling and unmarshaling. The primary implementation is [`ProtoCodec`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/codec/proto_codec.go), which calls protobuf's `Marshal` and `Unmarshal` under the hood.
 
 ```go
 type ProtoCodec struct {
@@ -220,7 +239,7 @@ This lookup is handled by the **interface registry**.
 
 ### Interface registry
 
-The [`InterfaceRegistry`](https://github.com/cosmos/cosmos-sdk/blob/v0.53.0/codec/types/interface_registry.go) is a runtime map from type URLs to Go types. When the SDK encounters an `Any` value, it queries the registry with the type URL to find the concrete Go type, then uses protobuf to unmarshal the bytes.
+The [`InterfaceRegistry`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/codec/types/interface_registry.go) is a runtime map from type URLs to Go types. When the SDK encounters an `Any` value, it queries the registry with the type URL to find the concrete Go type, then uses protobuf to unmarshal the bytes.
 
 ```text
 Any { type_url, value_bytes }
@@ -324,7 +343,7 @@ service Msg {
 make proto-gen
 ```
 
-This runs `buf` (or `protoc` with plugins) against the `.proto` files and produces Go code under the module's `types/` directory:
+This runs [`buf`](https://buf.build/cosmos/cosmos-sdk/docs/main) (or `protoc` with plugins) against the `.proto` files and produces Go code under the module's `types/` directory. The full generated API reference for the Cosmos SDK is published at [buf.build/cosmos/cosmos-sdk/docs/main](https://buf.build/cosmos/cosmos-sdk/docs/main).
 
 ```
 x/mymodule/types/
