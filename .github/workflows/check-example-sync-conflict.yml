@@ -20,7 +20,6 @@ jobs:
       - name: Check for conflicting sync PR on cosmos/example
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXAMPLE_TOKEN: ${{ secrets.EXAMPLE_REPO_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # Get files changed in this PR that are in the tutorials folder
@@ -31,21 +30,22 @@ jobs:
 
           echo "Files changed in this PR: $THIS_PR_FILES"
 
-          # Get all open docs-sync PRs on cosmos/example (use cross-repo PAT)
-          SYNC_PRS=$(GH_TOKEN="$EXAMPLE_TOKEN" gh pr list \
-            --repo cosmos/example \
+          # Get all open docs-sync PRs on cosmos/docs (excluding this PR)
+          SYNC_PRS=$(gh pr list \
+            --repo cosmos/docs \
             --label "docs-sync" \
             --state open \
-            --json number,url)
+            --json number,url \
+            --jq "[.[] | select(.number != $PR_NUMBER)]")
 
           echo "Open sync PRs: $SYNC_PRS"
 
           if [ "$SYNC_PRS" = "[]" ] || [ -z "$SYNC_PRS" ]; then
-            echo "No open sync PRs on cosmos/example, all clear."
+            echo "No open sync PRs on cosmos/docs, all clear."
             exit 0
           fi
 
-          # Collect all files from all open sync PRs, mapped to docs site paths
+          # Collect all files from all open sync PRs
           ALL_SYNC_FILES="[]"
           SYNC_PR_URLS=""
 
@@ -54,13 +54,11 @@ jobs:
             SYNC_PR_URL=$(echo "$pr" | jq -r '.url')
             SYNC_PR_URLS="$SYNC_PR_URLS $SYNC_PR_URL"
 
-            SYNC_FILES=$(GH_TOKEN="$EXAMPLE_TOKEN" gh pr view "$SYNC_PR_NUMBER" \
-              --repo cosmos/example \
+            SYNC_FILES=$(gh pr view "$SYNC_PR_NUMBER" \
+              --repo cosmos/docs \
               --json files \
               --jq '[.files[].path
-                | select(startswith("docs/"))
-                | sub("^docs/"; "sdk/next/tutorials/example/")
-                | sub("\\.md$"; ".mdx")
+                | select(startswith("sdk/next/tutorials/example/"))
               ] | sort')
 
             ALL_SYNC_FILES=$(jq -n \
