@@ -106,17 +106,17 @@ When updating documentation:
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 
-## Internal Link Format
+## Example Tutorial Sync (cosmos/example ↔ this repo)
 
-All internal links in MDX files must use absolute root-relative paths **without** the `.mdx` extension:
+The Cosmos SDK example chain tutorials live in `sdk/next/tutorials/example/` (files `00-overview.mdx` through `05-run-and-test.mdx`) and are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change to these files, a PR is automatically opened on the other repo with the content transformed between formats (H1 ↔ frontmatter, absolute ↔ relative links).
 
-```text
-✅ /sdk/next/changelog/release-notes
-❌ ./release-notes.mdx
-❌ ../changelog/release-notes.mdx
-```
+The transform script exists in two places and must be kept in sync:
+- `scripts/docs-sync/transform.py` in **this repo** — used by `.github/workflows/docs-sync-to-example.yml` to transform `.mdx` → `.md` when syncing to `cosmos/example`
+- `scripts/docs-sync/transform.py` in **`cosmos/example`** — used for manual local syncs in both directions
 
-Mintlify resolves links by URL path, not filesystem path. Relative or extension-suffixed links will break in production.
+`scripts/docs-sync/` is explicitly unignored in `.gitignore` (the default `scripts/*` rule would otherwise hide it).
+
+When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
 
 ## File Operations Checklist
 
@@ -152,26 +152,31 @@ Wildcards are supported:
 
 **Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
 
-### Versioning in `docs.json` and `versions.json`
+## Internal Links
 
-**`docs.json`** controls the version *dropdown UI* shown in the sidebar. Each product is a `dropdown` entry inside `navigation`, with a `versions` array. Each version entry contains its own `tabs`, `groups`, and `pages`:
+Always use absolute Mintlify paths for internal links — never relative file paths or `.mdx` extensions:
 
-```json
-{
-  "dropdown": "IBC",
-  "versions": [
-    {
-      "version": "next",
-      "tabs": [ ... ]
-    },
-    {
-      "version": "v10.1.x",
-      "tabs": [ ... ]
-    }
-  ]
-}
+```md
+✅ [Build a Module](/sdk/next/tutorials/example/03-build-a-module)
+❌ [Build a Module](./03-build-a-module.mdx)
+❌ [Build a Module](03-build-a-module)
 ```
 
+The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
+
+### Anchor Links
+
+Mintlify preserves special characters in anchor IDs — do not drop them. Rules:
+
+- Spaces → `-`
+- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` → kept with surrounding hyphens (e.g. `Gas & Fees` → `#gas-&-fees`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` → dropped (surrounding spaces still become `-`)
+- `-` in heading → stays as `-`, spaces around it collapse (e.g. `A - B` → `#a-b`)
+- All characters lowercased
+
+## Work Log
+
+Agents should log meaningful changes as they complete them — not at the end of the session. Each branch gets its own file in `work-log/`. Read [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format and instructions.
 
 ## Important Notes
 
@@ -181,6 +186,7 @@ Wildcards are supported:
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
 - Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes to links may need to be applied across multiple version dirs
+- Do not use emdashes when creating documentation. 
 
 **Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 

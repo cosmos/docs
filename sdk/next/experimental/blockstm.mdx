@@ -11,9 +11,9 @@ Block-STM enables parallel execution of transactions during `FinalizeBlock`, usi
 <Note>
 **Prerequisite Readings**
 
-* [BaseApp](/sdk/next/learn/advanced/baseapp)
-* [Transactions](/sdk/next/learn/advanced/transactions)
-* [Store](/sdk/next/learn/advanced/store)
+* [BaseApp](/sdk/next/learn/concepts/baseapp)
+* [Transactions](/sdk/next/learn/concepts/transactions)
+* [Store](/sdk/next/learn/concepts/store)
 
 </Note>
 
@@ -28,6 +28,37 @@ This library was forked and directly integrated into the Cosmos SDK with accompa
 Block-STM implements a form of optimistic concurrency control to enable parallel execution of transactions. It does this by implementing read and write set tracking on top of the SDK's IAVL storage layer. This, combined with the absolute ordering of transactions provided by the block proposal, is used in a validation phase which determines if any two executed transactions have conflicting storage access. In the case of conflicting storage access, the algorithm provides a means for re-execution and re-validation of the conflicting transactions based on the ordering in the proposal.
 
 Block-STM is currently only integrated into the `FinalizeBlock` phase of execution, meaning the code path is never accessed until the block is agreed upon in consensus. It is possible that the algorithm may be extended in the future to support different execution models, but as of right now it expects a complete block and returns its result after the entire block has been executed. For this reason, Block-STM is expected to produce identical results to serial execution. In other words, the `AppHash` produced by Block-STM's parallel execution should be equal to the `AppHash` produced by the default serial transaction runner.
+
+## Safe Deployment Practices
+
+Given the Block-STM executor is a general purpose parallel execution engine, we recommend a phased rollout with
+extensive
+testing for each application individually.
+
+* _Phased Rollout_
+
+Since parallel execution is purely a performance optimization, applications should expect to calculate the same
+AppHash when using Block-STM as they would when serial execution is enabled via the default TxRunner. This allows teams
+to turn on parallel execution for a fraction of their nodes--API nodes instead of validators or on a portion of a
+distributed validator cluster for example.
+
+Running with a mixed fleet of parallel and serial execution for an extended time should minimize blast radius in the
+event that a failure occurs.
+
+* _Message Type Support_
+
+We have done testing on as many of the core SDK message types as possible, but given the Cosmos SDK allows arbitrary
+message creation it will be impossible to validate all message types that exist and all combinations of workflows.
+Each team integrating Block-STM in production should validate their own message types for both correctness and performance.
+
+NOTE: We specifically have __not__ validated support for CosmWasm message types run using Block-STM. Run independent
+validation before enabling if your chain uses CosmWasm.
+
+* _Caching Risks_
+
+Block-STM works via dependency tracking within the SDK's `MultiStore` interface. Any data which could cause stateful
+changes to execution that lives outside the store poses the biggest risk for indeterminism. We recommend in general
+avoiding the use of cached data, in memory stores, or persisting any state outside the scope of a `Store`.
 
 ## App Integration
 
@@ -145,14 +176,6 @@ bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
 Once Block-STM is wired in, you may initially notice that most blocks execute slower than with serial execution. This is due to the overhead of re-executing transactions when any two have conflicting reads or writes. To realize performance gains, you need to reduce storage access conflicts between transactions.
 
 Work has already been done within the SDK and Cosmos EVM for common transaction types such as bank sends and EVM gas sends. The following steps describe the additional configuration needed.
-
-### Disable the Block Gas Meter
-
-The block gas meter is difficult to support when executing transactions in parallel. Disabling it is safe if validators validate the total gas wanted in `ProcessProposal`, which is the case in the default handler.
-
-```go
-bApp.SetDisableBlockGasMeter(true)
-```
 
 ### Enable Virtual Fee Collection (EVM-specific)
 
