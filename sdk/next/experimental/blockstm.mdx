@@ -29,6 +29,37 @@ Block-STM implements a form of optimistic concurrency control to enable parallel
 
 Block-STM is currently only integrated into the `FinalizeBlock` phase of execution, meaning the code path is never accessed until the block is agreed upon in consensus. It is possible that the algorithm may be extended in the future to support different execution models, but as of right now it expects a complete block and returns its result after the entire block has been executed. For this reason, Block-STM is expected to produce identical results to serial execution. In other words, the `AppHash` produced by Block-STM's parallel execution should be equal to the `AppHash` produced by the default serial transaction runner.
 
+## Safe Deployment Practices
+
+Given the Block-STM executor is a general purpose parallel execution engine, we recommend a phased rollout with
+extensive
+testing for each application individually.
+
+* _Phased Rollout_
+
+Since parallel execution is purely a performance optimization, applications should expect to calculate the same
+AppHash when using Block-STM as they would when serial execution is enabled via the default TxRunner. This allows teams
+to turn on parallel execution for a fraction of their nodes--API nodes instead of validators or on a portion of a
+distributed validator cluster for example.
+
+Running with a mixed fleet of parallel and serial execution for an extended time should minimize blast radius in the
+event that a failure occurs.
+
+* _Message Type Support_
+
+We have done testing on as many of the core SDK message types as possible, but given the Cosmos SDK allows arbitrary
+message creation it will be impossible to validate all message types that exist and all combinations of workflows.
+Each team integrating Block-STM in production should validate their own message types for both correctness and performance.
+
+NOTE: We specifically have __not__ validated support for CosmWasm message types run using Block-STM. Run independent
+validation before enabling if your chain uses CosmWasm.
+
+* _Caching Risks_
+
+Block-STM works via dependency tracking within the SDK's `MultiStore` interface. Any data which could cause stateful
+changes to execution that lives outside the store poses the biggest risk for indeterminism. We recommend in general
+avoiding the use of cached data, in memory stores, or persisting any state outside the scope of a `Store`.
+
 ## App Integration
 
 Integration of parallel execution is abstracted into two interfaces: `DeliverTxFunc` and `TxRunner`.
