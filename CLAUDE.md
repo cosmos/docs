@@ -118,6 +118,40 @@ The transform script exists in two places and must be kept in sync:
 
 When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
 
+## File Operations Checklist
+
+When **adding**, **deleting**, **moving**, or **renaming** any `.mdx` file:
+
+1. **Update `docs.json`** — Add, remove, or update the page entry in the navigation structure. Every page must be registered to appear in the sidebar.
+2. **Add redirects** — For deleted, renamed, or moved pages, add a redirect in `docs.json` so existing links and search results don't 404.
+3. **Fix backlinks** — Search for all internal links pointing to the old path and update them to the new path.
+
+```bash
+# Find broken internal links
+npx mint broken-links
+```
+
+### Redirects in `docs.json`
+
+Redirects are defined as a top-level `"redirects"` array in `docs.json`. Each entry has a `source` and `destination`, both as root-relative paths without `.mdx` extensions:
+
+```json
+"redirects": [
+  {
+    "source": "/ibc/next/old-page-name",
+    "destination": "/ibc/next/new-page-name"
+  }
+]
+```
+
+Wildcards are supported:
+
+```json
+{ "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
+```
+
+**Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
+
 ## Internal Links
 
 Always use absolute Mintlify paths for internal links — never relative file paths or `.mdx` extensions:
