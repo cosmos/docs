@@ -1,0 +1,335 @@
+---
+noindex: true
+title: Writing CLI Commands
+---
+
+<Note>
+  For a conceptual overview of how CLI, gRPC, and REST fit together in a Cosmos SDK app, see [CLI, gRPC & REST](/sdk/next/learn/concepts/cli-grpc-rest).
+</Note>
+
+## Overview
+
+`autocli` generates CLI commands and flags for each method defined in your gRPC service. By default, it generates a command for each gRPC service method. The commands are named based on the name of the service method.
+
+For example, given the following protobuf definition for a service:
+
+```protobuf
+service MyService {
+  rpc MyMethod(MyRequest) returns (MyResponse) {}
+}
+```
+
+The `autocli` package will generate a command named `my-method` for the `MyMethod` method. The command will have flags for each field in the `MyRequest` message.
+
+It is possible to customize the generation of transactions and queries by defining options for each service.
+
+## Application Wiring
+
+Here are the steps to use AutoCLI:
+
+1. Ensure your app's modules implement the `appmodule.AppModule` interface.
+2. (optional) Configure how `autocli` behaves during command generation, by implementing the `func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions` method on the module.
+3. Call `app.AutoCliOpts()` to get an `autocli.AppOptions` populated from the module manager, then set `ClientCtx` on it to wire in the keyring.
+4. Call `EnhanceRootCommand()` to add the generated CLI commands to your root command.
+
+<Tip>
+AutoCLI is additive only, meaning *enhancing* the root command will only add subcommands that are not already registered. This means that you can use AutoCLI alongside other custom commands within your app.
+</Tip>
+
+In practice this looks like (from the [example chain](https://github.com/cosmos/example/blob/main/exampled/cmd/root.go)):
+
+```go
+autoCliOpts := app.AutoCliOpts()
+autoCliOpts.ClientCtx = initClientCtx  // wires keyring + node connection
+
+if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {
+    panic(err)
+}
+```
+
+### Keyring
+
+AutoCLI resolves key names and signs transactions using the keyring from `client.Context`. At runtime, it reads the keyring from the command's live context (set by `SetCmdClientContextHandler` in `PersistentPreRunE` — see [Root Command Setup](#root-command-setup)) and adapts it to the [`cosmossdk.io/client/v2/autocli/keyring`](https://pkg.go.dev/cosmossdk.io/client/v2/autocli/keyring) interface via `keyring.NewAutoCLIKeyring` internally.
+
+If no keyring is provided, AutoCLI-generated commands can still query the chain but cannot sign transactions.
+
+<Tip>
+Because AutoCLI resolves key names from the keyring, you can use account names directly instead of addresses:
+
+```sh
+<appd> q bank balances alice
+<appd> tx bank send alice bob 1000denom
+```
+
+</Tip>
+
+## Signing
+
+`autocli` supports signing transactions with the keyring.
+The [`cosmos.msg.v1.signer` protobuf annotation](/sdk/next/guides/reference/protobuf-annotations) defines the signer field of the message.
+This field is automatically filled when using the `--from` flag or defining the signer as a positional argument.
+
+<Warning>
+AutoCLI currently supports only one signer per transaction.
+</Warning>
+
+## Module wiring & Customization
+
+The `AutoCLIOptions()` method on your module allows to specify custom commands, sub-commands or flags for each service, as it was a `cobra.Command` instance, within the `RpcCommandOptions` struct. Defining such options will customize the behavior of the `autocli` command generation, which by default generates a command for each method in your gRPC service.
+
+```go
+autocliv1.RpcCommandOptions{
+    RpcMethod: "Params", // The name of the gRPC service
+  Use:       "params", // Command usage that is displayed in the help
+  Short:     "Query the parameters of the governance process", // Short description of the command
+  Long:      "Query the parameters of the governance process. Specify specific param types (voting|tallying|deposit)
+
+to filter results.", // Long description of the command
+  PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+    {
+    ProtoField: "params_type",
+    Optional: true
+}, // Transform a flag into a positional argument
+},
+}
+```
+
+<Tip>
+AutoCLI can create a gov proposal of any tx by simply setting the `GovProposal` field to `true` in the `autocliv1.RpcCommandOptions` struct.
+Users can however use the `--no-proposal` flag to disable the proposal creation (which is useful if the authority isn't the gov module on a chain).
+</Tip>
+
+### Specifying Subcommands
+
+By default, `autocli` generates a command for each method in your gRPC service. However, you can specify subcommands to group related commands together. To specify subcommands, use the `autocliv1.ServiceCommandDescriptor` struct.
+
+For a real-world example, see the `gov` module's [`autocli.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/gov/autocli.go) in the Cosmos SDK. It demonstrates `ServiceCommandDescriptor` with `RpcCommandOptions`, `PositionalArgs`, `SubCommands`, `EnhanceCustomCommand`, and `GovProposal` all in one file.
+
+### Positional Arguments
+
+By default `autocli` generates a flag for each field in your protobuf message. However, you can choose to use positional arguments instead of flags for certain fields.
+
+To add positional arguments to a command, use the `autocliv1.PositionalArgDescriptor` struct, as seen in the example below. Specify the `ProtoField` parameter, which is the name of the protobuf field that should be used as the positional argument. In addition, if the parameter is a variable-length argument, you can specify the `Varargs` parameter as `true`. This can only be applied to the last positional parameter, and the `ProtoField` must be a repeated field.
+
+For a real-world example, see the `auth` module's [`autocli.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/auth/autocli.go) in the Cosmos SDK. It shows positional args wired for every query method, with `address` as a positional argument on the `Account` method.
+
+After wiring positional args, the command can be used as follows, instead of having to specify the `--address` flag:
+
+```bash
+<appd> query auth account cosmos1abcd...xyz
+```
+
+#### Flattened Fields in Positional Arguments
+
+AutoCLI also supports flattening nested message fields as positional arguments. This means you can access nested fields
+using dot notation in the `ProtoField` parameter. This is particularly useful when you want to directly set nested
+message fields as positional arguments.
+
+For example, if you have a nested message structure like this:
+
+```protobuf
+message Permissions {
+    string level = 1;
+    repeated string limit_type_urls = 2;
+}
+
+message MsgAuthorizeCircuitBreaker {
+    string grantee = 1;
+    Permissions permissions = 2;
+}
+```
+
+You can flatten the fields in your AutoCLI configuration:
+
+```go
+{
+    RpcMethod: "AuthorizeCircuitBreaker",
+    Use:       "authorize [grantee] [level] [msg_type_urls]",
+    PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+        {ProtoField: "grantee"},
+        {ProtoField: "permissions.level"},
+        {ProtoField: "permissions.limit_type_urls", Varargs: true},
+    },
+}
+```
+
+This allows users to provide values for nested fields directly as positional arguments:
+
+```bash
+<appd> tx circuit authorize cosmos1... super-admin "/cosmos.bank.v1beta1.MsgSend" "/cosmos.bank.v1beta1.MsgMultiSend"
+```
+
+Instead of having to provide a complex JSON structure for nested fields, flattening makes the CLI more user-friendly by allowing direct access to nested fields.
+
+#### Customizing Flag Names
+
+By default, `autocli` generates flag names based on the names of the fields in your protobuf message. However, you can customize the flag names by providing a `FlagOptions`. This parameter allows you to specify custom names for flags based on the names of the message fields.
+
+For example, if you have a message with the fields `test` and `test1`, you can use the following naming options to customize the flags:
+
+```go
+autocliv1.RpcCommandOptions{
+    FlagOptions: map[string]*autocliv1.FlagOptions{ 
+        "test": {
+    Name: "custom_name",
+}, 
+        "test1": {
+    Name: "other_name",
+},
+},
+}
+```
+
+### Combining AutoCLI with Other Commands Within A Module
+
+AutoCLI can be used alongside other commands within a module. For example, the `gov` module uses AutoCLI for its query commands while also keeping hand-written tx commands for `submit-proposal`, `weighted-vote`, and similar.
+
+Set `EnhanceCustomCommand: true` on each `ServiceCommandDescriptor` where you want AutoCLI to add generated commands alongside existing ones:
+
+```go
+func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
+    return &autocliv1.ModuleOptions{
+        Query: &autocliv1.ServiceCommandDescriptor{
+            Service:              govv1.Query_ServiceDesc.ServiceName,
+            EnhanceCustomCommand: true, // keep hand-written gov query commands
+            RpcCommandOptions:    []*autocliv1.RpcCommandOptions{ /* ... */ },
+        },
+        Tx: &autocliv1.ServiceCommandDescriptor{
+            Service:              govv1.Msg_ServiceDesc.ServiceName,
+            EnhanceCustomCommand: true, // keep hand-written gov tx commands
+        },
+    }
+}
+```
+
+If `EnhanceCustomCommand` is not set to `true`, AutoCLI skips command generation for any service that already has commands registered via `GetTxCmd()` or `GetQueryCmd()`.
+
+### Skip a command
+
+AutoCLI checks the [`cosmos_proto.method_added_in` protobuf annotation](/sdk/next/guides/reference/protobuf-annotations) and skips commands that were introduced in a newer SDK version than the one currently running.
+
+Additionally, a command can be manually skipped using the `autocliv1.RpcCommandOptions`:
+
+```go
+autocliv1.RpcCommandOptions{
+    RpcMethod: "Params", // The name of the gRPC method
+    Skip: true,
+}
+```
+
+### Use AutoCLI for non module commands
+
+It is possible to use `AutoCLI` for non-module commands. The pattern is to add the options directly to `autoCliOpts.ModuleOptions` after calling `AutoCliOpts()`:
+
+```go
+nodeCmds := nodeservice.NewNodeCommands()
+autoCliOpts.ModuleOptions[nodeCmds.Name()] = nodeCmds.AutoCLIOptions()
+```
+
+`AutoCliOpts()` only picks up modules registered with the module manager — non-module commands always need to be added to `ModuleOptions` manually, as the example chain does with `nodeservice.NewNodeCommands()`.
+
+For a more complete example of this pattern, see [`client/grpc/cmtservice/autocli.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/client/grpc/cmtservice/autocli.go) and [`client/grpc/node/autocli.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/client/grpc/node/autocli.go) in the Cosmos SDK.
+
+## Root Command Setup
+
+For AutoCLI-generated commands (and hand-written commands) to work correctly — signing transactions, querying the chain, reading configuration — the root command must set up the `client.Context` and `server.Context` in a `PersistentPreRunE` function. This runs before every subcommand and makes both contexts available to all child commands. See [`simapp/simd/cmd/root.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/simapp/simd/cmd/root.go#L50-L93) for a complete example.
+
+The two key calls inside `PersistentPreRun` are:
+
+- `SetCmdClientContextHandler` reads persistent flags via `ReadPersistentCommandFlags`, creates a `client.Context`, and sets it on the command context. This is what AutoCLI and hand-written commands use to sign transactions and connect to a node.
+- `InterceptConfigsPreRunHandler` creates the `server.Context`, loads `app.toml` and `config.toml` from the node home directory, and binds them to the server context's viper instance. This is what makes application configuration available at startup.
+
+### Custom logger
+
+By default, `InterceptConfigsPreRunHandler` sets the default SDK logger. To use a custom logger, use `InterceptConfigsAndCreateContext` instead and set the logger manually:
+
+```diff expandable
+-return server.InterceptConfigsPreRunHandler(cmd, customAppTemplate, customAppConfig, customCMTConfig)
+
++serverCtx, err := server.InterceptConfigsAndCreateContext(cmd, customAppTemplate, customAppConfig, customCMTConfig)
++if err != nil {
++	return err
++}
+
++// overwrite default server logger
++logger, err := server.CreateSDKLogger(serverCtx, cmd.OutOrStdout())
++if err != nil {
++	return err
++}
++serverCtx.Logger = logger.With(log.ModuleKey, "server")
+
++// set server context
++return server.SetCmdServerContext(cmd, serverCtx)
+```
+
+## Environment Variables
+
+Every CLI flag is automatically bound to an environment variable. The variable name is the app's `basename` in uppercase followed by the flag name, with `-` replaced by `_`. For example, `--node` for an app with basename `GAIA` binds to `GAIA_NODE`.
+
+This lets you pre-configure common flags instead of passing them on every command:
+
+```shell
+# set once in .env or shell profile
+GAIA_HOME=<path to home>
+GAIA_NODE=<node address>
+GAIA_CHAIN_ID="cosmoshub-4"
+GAIA_KEYRING_BACKEND="test"
+
+# then just run
+gaiad tx bank send alice bob 1000uatom --fees 500uatom
+```
+
+## Hand-Written Commands
+
+AutoCLI covers the standard case: one protobuf RPC method maps to one CLI command. For commands that don't fit that model, you can write Cobra commands manually and combine them with AutoCLI using `EnhanceCustomCommand: true`.
+
+Common reasons to write a command manually:
+
+- **Complex argument parsing** — multiple positional args that require custom validation or coin parsing before the message is built
+- **Commands that span multiple RPC calls** — e.g., building a transaction from inputs that require a preceding query
+- **Non-standard UX** — interactive prompts, offline signing flows, or commands that generate output rather than broadcast
+
+### Pattern
+
+A manual transaction command uses `client.GetClientTxContext` to retrieve the signing context, constructs a message, and passes it to `tx.GenerateOrBroadcastTxCLI`:
+
+```go
+func NewSendTxCmd(ac address.Codec) *cobra.Command {
+    cmd := &cobra.Command{
+        Use:   "send [from_key_or_address] [to_address] [amount]",
+        Short: "Send tokens from one account to another",
+        Args:  cobra.ExactArgs(3),
+        RunE: func(cmd *cobra.Command, args []string) error {
+            // set --from from the first positional arg
+            if err := cmd.Flags().Set(flags.FlagFrom, args[0]); err != nil {
+                return err
+            }
+            clientCtx, err := client.GetClientTxContext(cmd)
+            if err != nil {
+                return err
+            }
+
+            toAddr, err := ac.StringToBytes(args[1])
+            if err != nil {
+                return err
+            }
+
+            coins, err := sdk.ParseCoinsNormalized(args[2])
+            if err != nil {
+                return err
+            }
+
+            msg := types.NewMsgSend(clientCtx.GetFromAddress(), toAddr, coins)
+            return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+        },
+    }
+
+    flags.AddTxFlagsToCmd(cmd)
+    return cmd
+}
+```
+
+Key elements:
+- `client.GetClientTxContext(cmd)` retrieves the client context (signer, node connection, codec)
+- `flags.AddTxFlagsToCmd(cmd)` adds standard transaction flags (`--from`, `--fees`, `--gas`, etc.)
+- `tx.GenerateOrBroadcastTxCLI` handles both `--generate-only` (offline) and live broadcast modes

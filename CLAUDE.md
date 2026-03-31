@@ -106,6 +106,78 @@ When updating documentation:
 - **Precompile Addresses**: Fixed addresses documented in tests/README.md
 - **Network Endpoints**: Configure in tests/config.js for testing
 
+## Example Tutorial Sync (cosmos/example ↔ this repo)
+
+The Cosmos SDK example chain tutorials live in `sdk/next/tutorials/example/` (files `00-overview.mdx` through `05-run-and-test.mdx`) and are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change to these files, a PR is automatically opened on the other repo with the content transformed between formats (H1 ↔ frontmatter, absolute ↔ relative links).
+
+The transform script exists in two places and must be kept in sync:
+- `scripts/docs-sync/transform.py` in **this repo** — used by `.github/workflows/docs-sync-to-example.yml` to transform `.mdx` → `.md` when syncing to `cosmos/example`
+- `scripts/docs-sync/transform.py` in **`cosmos/example`** — used for manual local syncs in both directions
+
+`scripts/docs-sync/` is explicitly unignored in `.gitignore` (the default `scripts/*` rule would otherwise hide it).
+
+When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
+
+## File Operations Checklist
+
+When **adding**, **deleting**, **moving**, or **renaming** any `.mdx` file:
+
+1. **Update `docs.json`** — Add, remove, or update the page entry in the navigation structure. Every page must be registered to appear in the sidebar.
+2. **Add redirects** — For deleted, renamed, or moved pages, add a redirect in `docs.json` so existing links and search results don't 404.
+3. **Fix backlinks** — Search for all internal links pointing to the old path and update them to the new path.
+
+```bash
+# Find broken internal links
+npx mint broken-links
+```
+
+### Redirects in `docs.json`
+
+Redirects are defined as a top-level `"redirects"` array in `docs.json`. Each entry has a `source` and `destination`, both as root-relative paths without `.mdx` extensions:
+
+```json
+"redirects": [
+  {
+    "source": "/ibc/next/old-page-name",
+    "destination": "/ibc/next/new-page-name"
+  }
+]
+```
+
+Wildcards are supported:
+
+```json
+{ "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
+```
+
+**Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
+
+## Internal Links
+
+Always use absolute Mintlify paths for internal links — never relative file paths or `.mdx` extensions:
+
+```md
+✅ [Build a Module](/sdk/next/tutorials/example/03-build-a-module)
+❌ [Build a Module](./03-build-a-module.mdx)
+❌ [Build a Module](03-build-a-module)
+```
+
+The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
+
+### Anchor Links
+
+Mintlify preserves special characters in anchor IDs — do not drop them. Rules:
+
+- Spaces → `-`
+- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` → kept with surrounding hyphens (e.g. `Gas & Fees` → `#gas-&-fees`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` → dropped (surrounding spaces still become `-`)
+- `-` in heading → stays as `-`, spaces around it collapse (e.g. `A - B` → `#a-b`)
+- All characters lowercased
+
+## Work Log
+
+Agents should log meaningful changes as they complete them — not at the end of the session. Each branch gets its own file in `work-log/`. Read [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format and instructions.
+
 ## Important Notes
 
 - All documentation files use MDX format with Mintlify-specific components
@@ -114,6 +186,7 @@ When updating documentation:
 - Test findings in `tests/README.md` track documentation accuracy against implementation
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
 - Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes to links may need to be applied across multiple version dirs
+- Do not use emdashes when creating documentation. 
 
 **Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
 - Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 
