@@ -153,7 +153,7 @@ export const MobileMenuDrawer = () => {
                   transition: 'opacity 0.4s ease-out 0.1s, transform 0.4s ease-out 0.1s'
                 }}>
                   <a
-                    href="/sdk/v0.53/learn"
+                    href="/sdk/latest/learn"
                     className="text-black dark:text-white hover:opacity-70"
                     style={{
                       textDecoration: 'none',
@@ -173,7 +173,7 @@ export const MobileMenuDrawer = () => {
                   transition: 'opacity 0.4s ease-out 0.2s, transform 0.4s ease-out 0.2s'
                 }}>
                   <a
-                    href="/evm/next/documentation/overview"
+                    href="/evm/latest/documentation/overview"
                     className="text-black dark:text-white hover:opacity-70"
                     style={{
                       textDecoration: 'none',
@@ -193,7 +193,7 @@ export const MobileMenuDrawer = () => {
                   transition: 'opacity 0.4s ease-out 0.3s, transform 0.4s ease-out 0.3s'
                 }}>
                   <a
-                    href="/ibc/next/intro"
+                    href="/ibc/latest/intro"
                     className="text-black dark:text-white hover:opacity-70"
                     style={{
                       textDecoration: 'none',
