@@ -13,7 +13,7 @@ The PoA module implements a custom fee distribution mechanism based on validator
 
 Fees flow through the PoA system differently than standard Cosmos SDK:
 
-1. **Block Fees**: Transaction fees collected in each block go to the standard `fee_collector` module account
+1. **Block Fees**: Transaction fees collected in each block go to the `fee_collector` module account by default, or to the PoA module account if configured (see [Fee Routing Setup](#fee-routing-setup))
 
 2. **Checkpoint System**: Allocated fees are updated for validators when:
    - Any validator power changes
@@ -43,7 +43,7 @@ $$
 
 Where:
 - $U_t$ = unallocated fees at checkpoint $t$
-- $B_{collector}(t)$ = current balance in the fee collector module account
+- $B_{collector}(t)$ = current balance in the PoA module account
 - $A_{total}(t) = \sum_{i=1}^{n} F_i(t)$ = sum of all previously- allocated fees across all validators (0 if no checkpoints have been done)
 
 **Proportional Share Allocation**:
@@ -85,7 +85,7 @@ After this checkpoint, $A_{total}(t+1) = B_{collector}(t)$ (all fees are now all
 ### Example Checkpoint Sequence
 
 **Initial State** (before checkpoint):
-- Fee collector balance: $B_{collector} = 1000$ tokens
+- PoA module account balance: $B_{collector} = 1000$ tokens
 - Total allocated: $A_{total} = 400$ tokens (from previous checkpoints)
 - Validator A: $P_A = 50$, $F_A = 200$ tokens allocated
 - Validator B: $P_B = 50$, $F_B = 200$ tokens allocated
@@ -126,7 +126,7 @@ Any validator operator can withdraw accumulated fees:
 1. **Submit Withdrawal**: Signed by operator address
 2. **Checkpoint**: System checkpoints all validators first (allocates any pending fees)
 3. **Truncate**: Decimal coins truncated to whole coins
-4. **Transfer**: Coins transferred from `fee_collector` to operator address
+4. **Transfer**: Coins transferred from the PoA module account to operator address
 5. **Update Tracking**: Total allocated decreases by withdrawn amount
 6. **Remainder**: Decimal remainder stays in validator's allocated balance
 
@@ -161,6 +161,58 @@ Where:
 - $F_i'$ = validator's allocated fees after withdrawal (decimal remainder)
 - $\lfloor F_i \rfloor$ = floor function (truncate decimals)
 - $A_{total}'$ = updated total allocated across all validators
+
+## Fee Routing Setup
+
+PoA has its own module account for collecting fees. Enabling the PoA module account is recommended to keep fee accounting isolated and accurate. If not enabled, fees are deposited into the standard `fee_collector` account by default. 
+
+To enable the PoA module account, two wiring changes are required:
+
+### 1. Register the PoA Module Account
+
+Register `poatypes.ModuleName` in the `maccPerms` map passed to `authkeeper.NewAccountKeeper`:
+
+```go
+app.AccountKeeper = authkeeper.NewAccountKeeper(
+    appCodec,
+    runtime.NewKVStoreService(storeKeys[authtypes.StoreKey]),
+    authtypes.ProtoBaseAccount,
+    map[string][]string{
+        authtypes.FeeCollectorName: nil,
+        govtypes.ModuleName:        {authtypes.Burner, authtypes.Staking},
+        poatypes.ModuleName:        nil, // register PoA module account
+    },
+    // ...
+)
+```
+
+**Source**: [`simapp/app.go`](https://github.com/cosmos/cosmos-sdk/blob/7bc1b146d437d834d971f415924104188203c96f/enterprise/poa/simapp/app.go#L191)
+
+### 2. Configure the Ante Handler
+
+Use `WithFeeRecipientModule` on `NewDeductFeeDecorator` to route fees to the PoA module account:
+
+```go {9}
+anteDecorators := []sdk.AnteDecorator{
+    ante.NewSetUpContextDecorator(),
+    ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
+    ante.NewValidateBasicDecorator(),
+    ante.NewTxTimeoutHeightDecorator(),
+    ante.NewValidateMemoDecorator(options.AccountKeeper),
+    ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+    ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, options.TxFeeChecker).
+        WithFeeRecipientModule(poatypes.ModuleName), // redirect fees to PoA module account
+    ante.NewSetPubKeyDecorator(options.AccountKeeper),
+    ante.NewValidateSigCountDecorator(options.AccountKeeper),
+    ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
+    ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler, options.SigVerifyOptions...),
+    ante.NewIncrementSequenceDecorator(options.AccountKeeper),
+}
+```
+
+**Source**: [`simapp/ante.go`](https://github.com/cosmos/cosmos-sdk/blob/7bc1b146d437d834d971f415924104188203c96f/enterprise/poa/simapp/ante.go#L49)
+
+`WithFeeRecipientModule` is backwards compatible — omitting it defaults to the standard `fee_collector` behavior.
 
 ## Security Considerations
 

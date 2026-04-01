@@ -1,0 +1,122 @@
+---
+noindex: true
+title: Block Sync
+order: 10
+---
+
+*Formerly known as Fast Sync*
+
+In a proof-of-work blockchain, syncing with the chain is the same
+process as staying up-to-date with the consensus: download blocks, and
+look for the one with the most total work. In proof-of-stake, the
+consensus process is more complex, as it involves rounds of
+communication between the nodes to determine what block should be
+committed next. Using this process to sync up with the blockchain from
+scratch can take a very long time. It's much faster to just download
+blocks and check the Merkle tree of validators than to run the real-time
+consensus gossip protocol.
+
+## Using Block Sync
+
+When starting from scratch, nodes will use Block Sync mode.
+In this mode, the CometBFT daemon
+will sync hundreds of times faster than if it used the real-time consensus
+process. Once caught up, the daemon will switch out of Block Sync and into
+normal consensus mode. After running for some time, the node is considered
+`caught up` if it has at least one peer and its height is at least as high as
+the max reported peer height. See [the IsCaughtUp
+method](https://github.com/cometbft/cometbft/blob/v0.38.x/blocksync/pool.go#L168).
+
+Note: While there have historically been multiple versions of blocksync (v0, v1, and v2), all versions
+other than v0 have been deprecated in favor of the simplest and most well-understood algorithm.
+
+```toml
+#######################################################
+###       Block Sync Configuration Options          ###
+#######################################################
+[blocksync]
+
+# Block Sync version to use:
+# 
+# In v0.37, v1 and v2 of the block sync protocols were deprecated.
+# Please use v0 instead.
+#
+#   1) "v0" - the default block sync implementation
+version = "v0"
+```
+
+## AdaptiveSync
+
+<Warning>
+  This is an experimental feature.
+  It has been tested under a range of network conditions and perturbations, but you should validate it
+  for your specific workload before enabling it on a production mainnet chain.
+</Warning>
+
+AdaptiveSync allows a node to run blocksync and consensus at the same time.
+
+In the default flow, a node starts in blocksync, catches up, then switches to consensus.
+Under sustained load (for example, busy RPC nodes), a node can remain behind and struggle to catch up.
+With short block times, this can hurt network liveness.
+
+With `adaptive_sync` enabled, consensus still works normally, but it can also ingest already available 
+blocks from blocksync. This acts as a fallback path when a node is behind, allowing it to recover 
+more quickly during traffic spikes and continue progressing with the network.
+
+AdaptiveSync does not change consensus safety or finality rules. It changes catch-up behavior, not block validity rules.
+
+### Scope and compatibility
+
+- AdaptiveSync is intended for nodes that can temporarily lag, especially RPC-heavy or high-throughput deployments.
+- It is experimental; enable it gradually and validate in your own network conditions before broad rollout.
+- If you run mixed node roles (validators, sentries, RPC nodes), test each role separately.
+
+### How it works
+
+1. The node continues running consensus as usual.
+2. If the node is behind, blocks obtained by blocksync can be handed to consensus ingestion.
+3. If a candidate block is already included by consensus, it is skipped.
+4. If not already included, it is ingested and applied through normal validation paths.
+5. The node converges faster during transient load spikes while preserving normal consensus behavior.
+
+### When to use it
+
+Enable `adaptive_sync` if your nodes can temporarily fall behind and need better recovery behavior:
+
+- **High-throughput or bursty traffic** where load spikes can delay vote processing.
+- **Short block times** where slow catch-up can impact liveness sooner.
+- **RPC-heavy nodes** that may lag during periods of high request volume.
+
+If your network is stable and nodes consistently keep up, the default mode may already be sufficient.
+
+**Notes**:
+
+- Running this fallback path may slightly increase CPU and I/O during catch-up windows
+- Constant blocksync message processing may increase network traffic.
+- Gains are most visible during temporary overload.
+
+### Configuration
+
+AdaptiveSync is disabled by default.
+To enable it, set `adaptive_sync = true` in the `[blocksync]` section of `config.toml`:
+
+```toml
+[blocksync]
+version = "v0"
+adaptive_sync = true
+```
+
+### Metrics
+
+```text
+# counter: blocksync block was already included by consensus --> skip
+cometbft_blocksync_already_included_blocks
+
+# counter: blocksync block was ingested by consensus --> ingest
+cometbft_blocksync_ingested_blocks
+
+# histogram: duration of ingesting a non-skipped block
+cometbft_blocksync_ingested_block_duration_bucket
+cometbft_blocksync_ingested_block_duration_count
+cometbft_blocksync_ingested_block_duration_sum
+```
