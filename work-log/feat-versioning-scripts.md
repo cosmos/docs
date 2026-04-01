@@ -12,3 +12,5 @@
 - Added `--current-only` flag to `manage-changelogs.js` to output only the most recent version entry
 - Updated `generateMintlifyContent` in `manage-changelogs.js`: simplified Info block to show current version and full changelog link, removed redundant footer
 - Generated sdk/next and sdk/latest changelogs for v0.54.0 from upstream tag `v0.54.0-rc.3`
+- Generated ibc/next and ibc/latest changelogs for v11.0.0 from `cosmos/ibc-go` main (Unreleased section, no RC tag exists yet)
+- Generated cometbft/next and cometbft/latest changelogs for v0.39.0 from `cometbft/cometbft` main (Unreleased section, no RC tag exists yet)
