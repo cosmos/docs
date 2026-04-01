@@ -34,6 +34,8 @@ function parseArgs() {
     freeze: false,
     source: 'main',
     staging: false,
+    unreleasedAs: null,
+    currentOnly: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -58,6 +60,12 @@ function parseArgs() {
         break;
       case '--staging':
         config.staging = true;
+        break;
+      case '--unreleased-as':
+        config.unreleasedAs = args[++i];
+        break;
+      case '--current-only':
+        config.currentOnly = true;
         break;
       case '--help':
         printHelp();
@@ -199,7 +207,7 @@ function sanitizeLine(line) {
 }
 
 // Parse changelog to extract version updates
-function parseChangelog(content, versionFilter = null) {
+function parseChangelog(content, versionFilter = null, unreleasedAs = null) {
   const lines = content.split('\n');
   const updates = [];
   let currentVersion = null;
@@ -212,9 +220,21 @@ function parseChangelog(content, versionFilter = null) {
     // Skip main changelog header
     if (line.match(/^#\s+Changelog/i)) continue;
 
-    // Skip unreleased section
+    // Handle unreleased section
     if (line.match(/^##\s*\[?Unreleased\]?(?:\([^)]*\))?/i)) {
-      skipUntilVersion = true;
+      if (unreleasedAs) {
+        // Treat as a named version entry
+        if (currentVersion && Object.keys(sections).length > 0) {
+          updates.push({ version: currentVersion, date: currentDate, sections });
+        }
+        currentVersion = unreleasedAs;
+        currentDate = '';
+        sections = {};
+        currentSection = null;
+        skipUntilVersion = false;
+      } else {
+        skipUntilVersion = true;
+      }
       continue;
     }
 
@@ -299,22 +319,8 @@ function parseChangelog(content, versionFilter = null) {
 // Generate Mintlify content
 function generateMintlifyContent(updates, repo, product, target) {
   const productLabel = product.toUpperCase();
-  const isNext = target === 'next';
-
-  // Extract version label for versioned pages (e.g., v0.5.0 -> "0.5.x", v0.4.x -> "0.4.x")
-  let versionLabel = '';
-  if (!isNext) {
-    const match = target.match(/v?(\d+\.\d+)/);
-    if (match) {
-      versionLabel = `${match[1]}.x`;
-    }
-  }
-
-  const infoMessage = isNext
-    ? `This page tracks all releases and changes from the [${repo}](https://github.com/${repo}) repository.
-  For the latest development updates, see the [UNRELEASED](https://github.com/${repo}/blob/main/CHANGELOG.md#unreleased) section.`
-    : `This page tracks releases and changes for version ${versionLabel} from the [${repo}](https://github.com/${repo}) repository.
-  For all releases, see the [next](/${product}/next/changelog/release-notes) version.`;
+  const versionLabel = updates[0]?.version || target;
+  const changelogUrl = `https://github.com/${repo}/blob/main/CHANGELOG.md`;
 
   const content = `---
 title: "Release Notes"
@@ -323,7 +329,7 @@ mode: "wide"
 ---
 
 <Info>
-  ${infoMessage}
+  This page tracks releases and changes for ${versionLabel}. For the full release history, see the [CHANGELOG](${changelogUrl}) on GitHub.
 </Info>
 
 ${updates.map(update => {
@@ -397,7 +403,9 @@ async function generateChangelog(config, productConfig, target) {
     productConfig.changelogPath
   );
 
-  const updates = parseChangelog(changelog, versionFilter);
+  let updates = parseChangelog(changelog, versionFilter, config.unreleasedAs);
+
+  if (config.currentOnly) updates = updates.slice(0, 1);
 
   if (updates.length === 0) {
     console.warn(`  ⚠ No versions found matching filter: ${versionFilter || 'none'}`);

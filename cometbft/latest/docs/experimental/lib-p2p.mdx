@@ -1,0 +1,226 @@
+---
+order: 1
+title: "Lib-P2P Networking"
+description: "Performant and scalable peer-to-peer networking for CometBFT"
+icon: "waypoints"
+---
+
+<Warning>
+  This is an experimental feature.
+  It has been tested under a range of network conditions and perturbations, but you should validate it
+  for your specific workload before enabling it on a production mainnet chain.
+</Warning>
+
+<Warning>
+  Use only alongside [AdaptiveSync](/cometbft/latest/docs/core/block-sync#adaptivesync)
+</Warning>
+
+This is an experimental networking layer based on [go-libp2p](https://libp2p.io/).
+It adds a new transport and connection-management layer for peer-to-peer communication,
+while keeping the reactor-facing CometBFT API unchanged.
+
+Actors still use the same core p2p concepts (`Switch`, `Peer`, `PeerSet`, `Reactor`, `Envelope`, ...).
+The transport implementation under those abstractions is `lib-p2p` instead of `comet-p2p`.
+
+lib-p2p is a widely used networking stack with production-ready peer-to-peer features,
+and implementations across many languages and transport protocols (TCP, QUIC, WebSockets, and more).
+
+You can refer to the implementation in the CometBFT codebase here:
+
+- [lp2p](https://github.com/cometbft/cometbft/tree/main/lp2p)
+- [internal/autopool](https://github.com/cometbft/cometbft/tree/main/internal/autopool)
+
+## Performance and Liveness
+
+In high-load conditions, legacy `comet-p2p` can become a networking bottleneck for modern blockchain workloads:
+
+- It is more prone to congestion under concurrent message pressure.
+- Stream/message handling is less effective at scaling with traffic spikes.
+- This limits end-to-end throughput when the rest of the stack is optimized.
+
+The `lib-p2p` integration addresses this with native stream-oriented transport, concurrent receive pipelines,
+and autoscaled worker pools per reactor, which helps reduce queue pressure and improve message flow under load.
+Beyond raw throughput, this also improves network liveness by making peer communication and block propagation
+more resilient under sustained congestion and sudden load spikes.
+
+In our benchmarks, together with additional performance improvements across the stack, we reached over 2000 TPS,
+and `lib-p2p` has been one of the key unblockers enabling that result.
+
+## Differences in Transport and Peer IDs
+
+`lib-p2p` uses its own [peer ID format](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md),
+which is different from `comet-p2p`. The two formats are not compatible.
+
+```text
+# comet-p2p peer ID format
+539ffc12a0ac78970dab31ae8cdcfdd4285b2162@10.186.73.3:26656
+
+# lib-p2p peer ID format
+{ host = "10.186.73.3:26656", id = "12D3KooWRuTppVZGE7qhanfsHfmzkWUZnnRbTxbgWYvKibij9niy" }
+```
+
+To print your node's lib-p2p peer ID from the CLI:
+
+```bash
+cometbft show-node-id --libp2p
+# e.g. 12D3KooWJwoqHMXukQGFg425582Jr2Cq9VLE6MtbRt21hRrudjqM
+```
+
+<Warning>
+  lib-p2p uses QUIC instead of TCP, ensure UDP communication is allowed in your firewall.
+</Warning>
+
+## Configuration
+
+Configure `lib-p2p` in the `p2p.libp2p` section of `config.toml`.
+All other p2p settings are ignored except `external_address` and `laddr`.
+
+By default, the node listens on UDP port `26656`.
+
+<Info>
+  To validate successful configuration, check logs for: <br/>
+  **"EXPERIMENTAL: go-libp2p transport is enabled."**
+</Info>
+
+
+```toml
+[p2p.libp2p]
+
+# Enabled set true to use go-libp2p for networking instead of CometBFT's p2p.
+enabled = true
+
+# Bootstrap peers to connect to
+# format: { host, id, private (opt), persistent (opt), unconditional (opt) }
+# DNS resolution is also supported (e.g. "example.com:26656")
+bootstrap_peers = [
+  { host = "10.186.73.3:26656", id = "12D3KooWRuTppVZGE7qhanfsHfmzkWUZnnRbTxbgWYvKibij9niy", persistent = true },
+  { host = "10.186.73.5:26656", id = "12D3KooWHjC8SJFVpAvY3qpM5PPeXSpQZvLxcZb7Tjr1kHMLEFtS", persistent = true },
+  { host = "10.186.73.6:26656", id = "12D3KooWJFbLcqdPpNP7E1EXC4tDiPtxEGDM6K7RXpDsdWmVnjSu", persistent = true },
+]
+
+# Options for scaling concurrent p2p message queues.
+[p2p.libp2p.scaler]
+min_workers = 4
+max_workers = 32
+
+# downscale concurrency if P90 latency of message processing
+# is longer than the threshold
+threshold_latency = "100ms"
+
+## Optional per-reactor override.
+# [[p2p.libp2p.scaler.overrides]]
+# reactor = "MEMPOOL"
+# min_workers = 8
+# max_workers = 512
+# threshold_latency = "500ms"
+
+# Resource limits mode:
+# - disabled: no limits (unsafe on untrusted/public networks)
+# - default: lib-p2p defaults
+# - custom: enforce explicit peer/stream caps
+[p2p.libp2p.limits]
+mode = "default"
+
+# Used only in custom mode.
+# max_peers = 200
+# max_peer_streams = 16
+```
+
+Each bootstrap peer supports these options:
+
+- `persistent`: ensures the peer is always (re)connected.
+- `unconditional`: not affected by the max number of peers limit.
+- `private`: peer is not gossiped to other peers.
+
+### Queue Scaler
+
+The queue scaler controls reactor receive concurrency using a throughput/latency feedback loop.
+
+- `min_workers`, `max_workers`: lower/upper worker bounds per reactor.
+- `threshold_latency`: target processing-latency threshold.
+- `overrides`: per-reactor values (case-insensitive reactor name).
+
+In most deployments, the defaults are enough and should be used first.
+Tune only when metrics show persistent queue growth, elevated receive latency, or poor throughput.
+
+### Resource Manager
+
+Resource manager mode determines connection and stream limits:
+
+- `default`: uses libp2p autoscaled limits and sane built-in protocol caps.
+- `custom`: disables most cometbft p2p limits but enforces explicit `max_peers` and `max_peer_streams` caps.
+- `disabled`: no limits, useful for controlled benchmarking and local testing.
+
+Recommended tuning flow if defaults are not enough:
+
+1. Start with `mode = "default"` and observe metrics under representative load.
+2. If limits are still unclear, run short, controlled tests with `mode = "disabled"` to discover required headroom.
+3. Move to `mode = "custom"` and set conservative `max_peers` / `max_peer_streams` caps based on measurements.
+4. Re-test and keep safety margin; avoid running public networks long-term in `disabled` mode.
+
+You can find more details about lib-p2p resource manager here:
+- [libp2p/go-libp2p: p2p/host/resource-manager/README.md](https://github.com/libp2p/go-libp2p/blob/master/p2p/host/resource-manager/README.md)
+- [libp2p/go-libp2p: p2p/host/resource-manager/limit_defaults.go](https://github.com/libp2p/go-libp2p/blob/062200be7aa1d18a0f54eefb17b0dbe2e96f0a79/p2p/host/resource-manager/limit_defaults.go#L663)
+
+## Implementation Details
+
+From the CometBFT actor-model perspective, the API stays the same:
+`Reactor`, `Peer`, `PeerSet`, `Switch`, and envelope flow remain compatible,
+so existing reactors can run without protocol-level rewrites.
+
+At the connection layer, lib-p2p replaces CometBFT secret connection with lib-p2p native
+identity and [secure handshake mechanisms](https://github.com/libp2p/specs/blob/master/tls/tls.md).
+This means peer session establishment, encryption negotiation, and remote identification are handled
+by the lib-p2p transport stack.
+
+CometBFT channel traffic is mapped to lib-p2p protocol handlers:
+
+- Each CometBFT channel is exposed under a lib-p2p `protocol.ID` namespace (for example `/p2p/cometbft/1.0.0/...`).
+- Messages are exchanged over lib-p2p streams bound to those protocol handlers.
+- Inbound handling is concurrent, with a priority FIFO queue and worker pool to process
+  reactor traffic in parallel under load.
+
+The worker pool is autoscaled by `autopool`:
+
+- It tracks per-message processing durations and computes decisions from throughput EWMA,
+  queue pressure, and latency percentile (P90).
+- High throughput growth or queue pressure scales workers up; high P90 latency above the
+  configured threshold triggers shrink to avoid overload.
+- Default limits are 4-32 workers per reactor; mempool uses a wider range (8-512) to
+  absorb bursty transaction traffic.
+- Priority ordering is preserved before dispatch (`Receive()` pushes by priority, then workers consume in parallel).
+
+## Comparison and Limitations
+
+<Warning>
+The current release does **not** include peer exchange (PEX).
+Nodes must use explicit bootstrap peers/static topology; PEX will be added in a future release.
+</Warning>
+
+
+| Area                 | comet-p2p                          | lib-p2p                               |
+| -------------------- | ---------------------------------- | ------------------------------------- |
+| Transport            | TCP                                | QUIC                                  |
+| Peer identity        | Comet peer IDs (`<hex>@host:port`) | lib-p2p peer IDs (`12D3Koo...`)       |
+| Connection handshake | Comet secret connection            | lib-p2p identity and secure handshake |
+| Peer exchange        | PEX + address book flow            | **No PEX in this release**            |
+
+Because peer identification formats differ, you cannot run a mixed `comet-p2p` / `lib-p2p` network.
+
+## Metrics
+
+Key metrics for `lib-p2p` queue-scaler and resource tuning:
+
+```text
+cometbft_p2p_message_reactor_queue_concurrency
+cometbft_p2p_messages_reactor_in_flight
+cometbft_p2p_messages_reactor_pending_duration
+cometbft_p2p_message_reactor_receive_duration
+cometbft_p2p_messages_received
+cometbft_p2p_peer_receive_bytes_total
+cometbft_p2p_peer_send_bytes_total
+cometbft_p2p_message_receive_bytes_total
+cometbft_p2p_message_send_bytes_total
+cometbft_p2p_peer_send_queue_size
+cometbft_p2p_peers
+```

@@ -1,192 +1,171 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
-## Project Overview
+## Work Log
 
-This is the unified documentation repository for the Cosmos ecosystem, built with Mintlify. It covers multiple products: **evm, sdk, hub, cometbft, ibc, skip-go**. The repo contains comprehensive documentation including API references, integration guides, smart contract/precompile specifications, and SDK module READMEs.
+ALWAYS log meaningful changes as they are completed — not at the end of the session. Each branch gets its own file in `work-log/`. See [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format.
 
-## Common Development Commands
+## Products
 
-### Local Development
-```bash
-# Start live-reload preview server
-npx mint dev
+Each product lives in its own top-level directory:
 
-# Check for broken internal links (run before committing)
-npx mint broken-links
+| Directory | Product |
+| --------- | ------- |
+| `evm/` | Cosmos EVM |
+| `sdk/` | Cosmos SDK |
+| `hub/` | Cosmos Hub |
+| `cometbft/` | CometBFT |
+| `ibc/` | IBC Protocol |
+| `skip-go/` | Skip Go |
+| `enterprise/` | Cosmos Enterprise (not versioned) |
 
-# Validate OpenAPI specifications
-npx mint openapi-check docs/api-reference/ethereum-json-rpc/openapi.yaml
+Each versioned product directory has:
 
-# Clean build artifacts
-npm run clean
+- `latest/` — current stable release, default for site visitors. Edit here for stable doc changes.
+- `next/` — active development. Default working directory for new content.
+- `v0.53/`, `v10.1.x/`, etc. — archived versions. Do not edit these.
 
-# Full reset (clean + reinstall)
-npm run reset
-```
+## Writing Style
 
-### Documentation Generation Scripts
-```bash
-# Generate interactive RPC documentation pages
-node scripts/generate-evm-rpc-docs.js
+- No bold or italic text in documentation content
+- No em-dashes — use a comma, period, or rewrite the sentence instead
 
-# Generate OpenAPI specification from methods documentation
-node scripts/generate-evm-rpc-openapi.js
+## Rules
 
-# Manage changelogs (unified script for all products)
-cd scripts/versioning && npm run changelogs -- --product evm --target next
-cd scripts/versioning && npm run changelogs -- --product evm --target v0.5.0
-cd scripts/versioning && npm run changelogs -- --product evm --all
+- Do not edit archived version directories (`v0.53/`, `v10.1.x/`, etc.)
+- Do not run versioning or freeze scripts without explicit instruction
+- Do not use emdashes in documentation
+- When adding a page to `latest/`, check whether `next/` needs the same addition
+- Do not manually add `noindex` or `canonical` front matter to archived pages — `tag-archived.js` handles that
+- Use absolute Mintlify paths for internal links, never relative paths or `.mdx` extensions:
+  - correct: `/sdk/next/tutorials/example/03-build-a-module`
+  - wrong: `./03-build-a-module.mdx`
+- Cosmos SDK GitHub links: use `release/v{X}.{Y}.x` branch format (e.g. `release/v0.50.x`). `blob/v0.50` and `blob/main` are wrong for stable-version links.
 
-# Version management (freeze versions, update navigation, etc.)
-cd scripts/versioning && npm run freeze
-```
+## docs.json
 
-### Testing Precompiles
-```bash
-# Run all precompile tests
-./tests/run-tests.sh
-
-# Test individual precompiles
-cd tests && npm test
-```
-
-## Architecture & Structure
-
-### Documentation Organization
-The documentation follows a hierarchical structure configured in `docs.json`:
-
-- **docs/documentation/** - Main documentation content
-  - `concepts/` - Core concepts (accounts, gas, transactions, IBC)
-  - `cosmos-sdk/` - SDK modules and protocol details
-  - `smart-contracts/` - Precompiles and predeployed contracts
-  - `integration/` - Integration guides and migration docs
-  - `getting-started/` - Quick start guides and tooling
-
-- **docs/api-reference/** - API documentation
-  - `ethereum-json-rpc/` - RPC methods, OpenAPI spec, and explorer
-
-- **docs/changelog/** - Release notes auto-synced from cosmos/evm
-
-### Key Technical Components
-
-1. **Mintlify Framework**: Documentation uses Mintlify v4.2.7 with custom MDX components and interactive features. Configuration in `docs.json` controls navigation, theming, and search.
-
-2. **Script Automation**: Scripts in `/scripts` and `/scripts/versioning` handle:
-   - Unified changelog management for all products (evm, sdk, ibc, hub) with version-specific filtering
-   - Version freezing and Google Sheets integration for EIP data snapshots
-   - Creating interactive RPC documentation from methods.mdx
-   - Generating OpenAPI specifications for API testing
-
-3. **Precompile Testing**: Comprehensive test suite in `/tests` validates all precompile contracts against documentation, tracking implementation completeness and gas costs.
-
-4. **Component Library**: Custom JSX components in `/snippets` provide:
-   - EIP compatibility tables
-   - RPC method viewers
-   - Icon libraries
-   - Reusable UI elements
-
-### Documentation Workflow
-
-When updating documentation:
-1. Edit MDX files in appropriate section under `docs/`
-2. Run `npx mint dev` to preview changes locally
-3. Validate with `npx mint broken-links` before committing
-4. For RPC changes: regenerate docs with `node scripts/generate-evm-rpc-docs.js`
-5. For release notes: use `cd scripts/versioning && npm run changelogs -- --product <product> --target <version>` to update changelogs
-6. For version freezing: use `cd scripts/versioning && npm run freeze` to create versioned snapshots
-
-### Integration Points
-
-- **GitHub Actions**: Automated changelog sync workflow triggers `manage-changelogs.js` on new releases
-- **Multi-Product Changelogs**: Release notes pulled from configured repositories (cosmos/evm, cosmos/cosmos-sdk, cosmos/ibc-go, cosmos/gaia)
-- **Version-Specific Filtering**: Automatically filters changelog versions based on target directory (e.g., v0.5.0 directory only shows v0.5.x releases)
-- **Google Sheets Integration**: EIP compatibility data versioned through Google Sheets tabs (EVM only)
-- **Precompile Addresses**: Fixed addresses documented in tests/README.md
-- **Network Endpoints**: Configure in tests/config.js for testing
-
-## Example Tutorial Sync (cosmos/example ↔ this repo)
-
-The Cosmos SDK example chain tutorials live in `sdk/next/tutorials/example/` (files `00-overview.mdx` through `05-run-and-test.mdx`) and are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change to these files, a PR is automatically opened on the other repo with the content transformed between formats (H1 ↔ frontmatter, absolute ↔ relative links).
-
-The transform script exists in two places and must be kept in sync:
-- `scripts/docs-sync/transform.py` in **this repo** — used by `.github/workflows/docs-sync-to-example.yml` to transform `.mdx` → `.md` when syncing to `cosmos/example`
-- `scripts/docs-sync/transform.py` in **`cosmos/example`** — used for manual local syncs in both directions
-
-`scripts/docs-sync/` is explicitly unignored in `.gitignore` (the default `scripts/*` rule would otherwise hide it).
-
-When editing these tutorial pages, `title:` is always owned by the sync (sourced from the H1 in the example repo) — but any other frontmatter you add here (e.g. `description:`) will be preserved across syncs.
-
-## File Operations Checklist
-
-When **adding**, **deleting**, **moving**, or **renaming** any `.mdx` file:
-
-1. **Update `docs.json`** — Add, remove, or update the page entry in the navigation structure. Every page must be registered to appear in the sidebar.
-2. **Add redirects** — For deleted, renamed, or moved pages, add a redirect in `docs.json` so existing links and search results don't 404.
-3. **Fix backlinks** — Search for all internal links pointing to the old path and update them to the new path.
-
-```bash
-# Find broken internal links
-npx mint broken-links
-```
-
-### Redirects in `docs.json`
-
-Redirects are defined as a top-level `"redirects"` array in `docs.json`. Each entry has a `source` and `destination`, both as root-relative paths without `.mdx` extensions:
+- All navigation is configured in `docs.json` — every `.mdx` file must be registered to appear in the sidebar
+- Navigation uses `navigation.dropdowns`, not `navigation.versions` — Mintlify docs show the latter but this repo uses the former
+- Each dropdown has a `versions` array. Version entries use:
+  - `tag: "Latest"` and `default: true` on the `latest/` entry
+  - `tag: "Unreleased"` on the `next/` entry
+  - No tag on archived entries
+- When adding, deleting, moving, or renaming any `.mdx` file:
+  1. Update the page entry in `docs.json`
+  2. Add a redirect for deleted, renamed, or moved pages so existing links don't 404
+  3. Fix all internal links pointing to the old path
+- Redirects go in the top-level `"redirects"` array. Each entry has a `source` and `destination` as root-relative paths without `.mdx` extensions. Wildcards are supported. No anchors (`#`) or query params (`?`) in redirects. No circular redirects.
 
 ```json
 "redirects": [
-  {
-    "source": "/ibc/next/old-page-name",
-    "destination": "/ibc/next/new-page-name"
-  }
+  { "source": "/ibc/next/old-page", "destination": "/ibc/next/new-page" },
+  { "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
 ]
 ```
 
-Wildcards are supported:
-
-```json
-{ "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
-```
-
-**Constraints:** Redirects cannot include URL anchors (`#anchor`) or query parameters (`?key=value`). Avoid circular redirects.
-
 ## Internal Links
 
-Always use absolute Mintlify paths for internal links — never relative file paths or `.mdx` extensions:
+Use absolute Mintlify paths. Never relative paths or `.mdx` extensions.
 
-```md
-✅ [Build a Module](/sdk/next/tutorials/example/03-build-a-module)
-❌ [Build a Module](./03-build-a-module.mdx)
-❌ [Build a Module](03-build-a-module)
+```text
+correct: /sdk/next/tutorials/example/03-build-a-module
+wrong:   ./03-build-a-module.mdx
+wrong:   03-build-a-module
 ```
 
 The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
 
 ### Anchor Links
 
-Mintlify preserves special characters in anchor IDs — do not drop them. Rules:
+Mintlify preserves special characters in anchor IDs. Rules:
 
-- Spaces → `-`
-- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` → kept with surrounding hyphens (e.g. `Gas & Fees` → `#gas-&-fees`)
-- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` → dropped (surrounding spaces still become `-`)
-- `-` in heading → stays as `-`, spaces around it collapse (e.g. `A - B` → `#a-b`)
+- Spaces become `-`
+- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` are kept with surrounding hyphens (e.g. `Gas & Fees` becomes `#gas-&-fees`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` are dropped (surrounding spaces still become `-`)
+- `-` in a heading stays as `-`, spaces around it collapse (e.g. `A - B` becomes `#a-b`)
 - All characters lowercased
 
-## Work Log
+## snippets/
 
-Agents should log meaningful changes as they complete them — not at the end of the session. Each branch gets its own file in `work-log/`. Read [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format and instructions.
+Reusable components — import with absolute paths (e.g. `/snippets/icons.mdx`), not relative paths.
 
-## Important Notes
+| File | Purpose |
+| ---- | ------- |
+| `icons.mdx` | Icon library |
+| `footnote.mdx` | Footnote component |
+| `eip-compatibility-table.jsx` | EIP compatibility matrix (EVM) |
+| `rpc-methods-viewer.jsx` | Interactive RPC method viewer |
+| `doc-card.jsx` | Card component |
+| `topic-card-component.jsx` | Topic card |
+| `cosmos-stack-diagram.jsx` | Cosmos stack diagram |
+| `cosmos-stack-learn.jsx` | Cosmos stack learn component |
+| `code-highlighter.jsx` | Code highlighting |
+| `blockchain-demo.jsx` | Blockchain demo |
+| `docs-navigation-drawer.jsx` | Navigation drawer |
+| `mobile-menu-drawer.jsx` | Mobile menu |
 
-- All documentation files use MDX format with Mintlify-specific components
-- Navigation structure must be updated in `docs.json` when adding new pages
-- Interactive RPC documentation is generated from the source `methods.mdx` file
-- Test findings in `tests/README.md` track documentation accuracy against implementation
-- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`)
-- Versioned content lives under per-product subdirectories: `sdk/v0.47/`, `sdk/v0.50/`, `sdk/v0.53/`, `cometbft/v0.37/`, `cometbft/v0.38/`, etc. — changes to links may need to be applied across multiple version dirs
-- Do not use emdashes when creating documentation. 
+## Releasing a New Version
 
-**Cosmos SDK branch naming**: Use `release/v{X}.{Y}.x` format (e.g., `release/v0.50.x`) for versioned links. `blob/v0.50` and `blob/main` are both wrong for stable-version docs.
-- Use relative imports for snippets and components (e.g., `/snippets/icons.mdx`) but not for markdown links. 
+When a product is ready to release, complete these steps in order.
+
+### 1. Update the Changelog
+
+Update the changelog in `next/` first, so it carries over when the freeze copies `next/` to `latest/`. If the new version is still listed as `## Unreleased` in the upstream `CHANGELOG.md`, use `--unreleased-as` to label it correctly.
+
+```bash
+# If the version is released in CHANGELOG.md
+cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --current-only
+
+# If the version is still listed as Unreleased in CHANGELOG.md
+cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --unreleased-as <version> --current-only
+```
+
+### 2. Freeze the Version
+
+Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.
+
+```bash
+cd scripts/versioning
+NON_INTERACTIVE=1 SUBDIR=<product> NEW_DISPLAY_VERSION=<version> npm run freeze
+```
+
+Then manually update `docs.json` for the product's dropdown:
+
+- Add a new version entry cloned from `next/`, with all paths rewritten from `<product>/next/` to `<product>/latest/`
+- Set `"tag": "Latest"` and `"default": true` on the `latest/` entry
+- Set `"tag": "Unreleased"` on the `next/` entry
+- Order: `latest` first, then `next`, then archived versions newest-first
+
+If the product has pre-existing archived version directories (e.g. `v0.53/`, `v10.1.x/`), tag them with `noindex` and `canonical`:
+
+```bash
+node tag-archived.js --product <product> --all
+```
+
+### 3. Check for Broken Links
+
+```bash
+npx mint broken-links
+```
+
+Fix any broken links before committing.
+
+## Scripts
+
+Versioning, changelog, and migration scripts live in `scripts/`. See [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for full documentation on the versioning scripts.
+
+## Development Commands
+
+```bash
+npx mint dev           # local preview with live reload
+npx mint broken-links  # check for broken internal links (run before committing)
+npm run clean          # remove build artifacts
+npm run reset          # clean + reinstall
+```
+
+## Example Tutorial Sync
+
+The Cosmos SDK example chain tutorials (`sdk/next/tutorials/example/`, files `00-overview.mdx` through `05-run-and-test.mdx`) are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change, a PR is opened on the other repo with content transformed between formats.
+
+The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other front matter (e.g. `description:`) is preserved.

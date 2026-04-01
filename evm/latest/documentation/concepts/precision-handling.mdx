@@ -1,0 +1,91 @@
+---
+title: "Precision Handling"
+description: "Understanding decimal precision bridging between Cosmos and EVM"
+icon: "calculator"
+---
+
+## The Precision Challenge
+
+Cosmos SDK and Ethereum use different decimal precisions for their native tokens:
+
+- **Cosmos SDK**: 6 decimals (1 ATOM = 10^6 uatom)
+- **Ethereum**: 18 decimals (1 ETH = 10^18 wei)
+
+This 12-decimal difference creates challenges when bridging the two ecosystems. Simply scaling values would lose precision or create rounding errors.
+
+## PreciseBank Solution
+
+The [PreciseBank module](/evm/latest/documentation/cosmos-sdk/modules/precisebank) solves this by decomposing balances into integer and fractional components:
+
+```
+Total Balance (18 decimals) = Integer Part (6 decimals) × 10^12 + Fractional Part
+```
+
+For any account with balance `a(n)` in smallest units:
+
+```
+a(n) = b(n) × 10^12 + f(n)
+```
+
+Where:
+- `a(n)` = Total balance in 18-decimal units (atest)
+- `b(n)` = Integer balance in 6-decimal units (uatom) - stored in x/bank
+- `f(n)` = Fractional balance (remainder) - stored in x/precisebank
+- Constraint: `0 ≤ f(n) < 10^12`
+
+### Example
+
+Balance of 1,234,567,890,123,456,789 atest decomposes to:
+
+```
+1,234,567,890,123,456,789 = 1,234,567 × 10^12 + 890,123,456,789
+
+Where:
+- b(n) = 1,234,567 uatom (stored in x/bank)
+- f(n) = 890,123,456,789 atest (stored in x/precisebank)
+- Total = 1.234567890123456789 ATOM
+```
+
+## Reserve Backing
+
+A module reserve account maintains supply consistency:
+
+```
+Reserve Balance × 10^12 = Sum of All Fractional Balances + Remainder
+```
+
+This ensures the fundamental invariant:
+```
+Total Supply (18-decimal) = Bank Supply (6-decimal) × 10^12
+```
+
+The reserve holds integer units to back all fractional amounts in circulation.
+
+## Implementation
+
+**Storage**:
+- 6-decimal amounts stored in existing bank module
+- Only fractional remainders stored separately in precisebank
+- Full 18-decimal precision reconstructed on query
+
+**Query Performance**:
+```go
+fullBalance = bankBalance × 10^12 + fractionalBalance
+```
+
+**Operations**: Transfer, mint, and burn operations automatically handle carry/borrow between integer and fractional parts.
+
+## Why This Approach
+
+**Backward Compatibility**: Existing bank module continues to work unchanged for non-EVM operations.
+
+**Storage Efficiency**: Only stores fractional amounts when needed, not full 18-decimal balances for every account.
+
+**Precision Guarantee**: No rounding or precision loss - every atest is tracked accurately.
+
+**Performance**: Single multiplication and addition reconstructs full precision without expensive arbitrary-precision math.
+
+## Related Documentation
+
+- [PreciseBank Module Reference](/evm/latest/documentation/cosmos-sdk/modules/precisebank) - Full implementation details
+- [VM Module Configuration](/evm/latest/documentation/cosmos-sdk/modules/vm) - Extended denomination setup

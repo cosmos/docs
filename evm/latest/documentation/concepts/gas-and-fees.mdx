@@ -1,0 +1,139 @@
+---
+title: "Gas and Fees"
+description: "Fee calculation and gas metering in Cosmos EVM"
+icon: "fuel"
+---
+
+Cosmos EVM implements Ethereum-type fee calculation compatible with the Cosmos SDK. This overview explains gas calculation, fee provision, and how the fee market (EIP-1559) prioritizes transactions.
+
+**References**: [Cosmos SDK Gas](/sdk/latest/learn/concepts/context-gas-events), [Ethereum Gas](https://ethereum.org/en/developers/docs/gas/)
+
+## Gas and Fees Fundamentals
+
+**Gas** is a unit measuring computational intensity of a transaction - the work required to execute it. Complex, multi-step transactions require more gas than simple transfers.
+
+**Fees** are the cost paid for gas:
+```
+Total Fees = Gas × Gas Price
+```
+
+## Fee Handling
+
+### Cosmos SDK Fees
+
+Users specify two fields:
+1. `GasLimit` - upper bound on execution gas (`GasWanted`)
+2. One of `Fees` or `GasPrice` to specify or calculate transaction fees
+
+The node consumes fees entirely, then executes the transaction. If `GasLimit` is insufficient, the transaction fails and rolls back without refunding fees.
+
+Validators specify their `min-gas-prices` for transaction selection. Transactions with insufficient fees encounter delays or fail.
+
+### Ethereum Fees (EIP-1559)
+
+With EIP-1559 (London Hard Fork), `GasPrice` split into two components:
+
+```
+Gas Price = Base Fee + Priority Fee
+```
+
+- **BaseFee**: Calculated automatically based on block size (burned on Ethereum, distributed on Cosmos EVM)
+- **PriorityFee**: Tip to proposer for transaction inclusion
+
+Users specify:
+- `max_fee_per_gas`: Total `GasPrice` maximum
+- `max_priority_fee_per_gas`: Maximum `PriorityFee`
+- `gas_limit`: Gas consumption limit
+
+Surplus gas not required for execution is refunded.
+
+**Reference**: [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md)
+
+## Cosmos EVM Implementation
+
+Fundamentally, Cosmos EVM is a Cosmos SDK chain enabling EVM compatibility via a module. All EVM transactions are encoded as Cosmos SDK transactions and update Cosmos SDK-managed state.
+
+### Fee Market Module
+
+Supports EIP-1559 gas calculation on the EVM layer:
+- Tracks gas supplied per block to calculate base fee for future transactions
+- For EVM transactions, bypasses local `min-gas-prices` and applies EIP-1559 fee logic
+- Gas price must exceed both global `min-gas-price` and block's `BaseFee`
+
+**Key differences from Ethereum**:
+- `BaseFee` is distributed to validators/delegators (not burned)
+- `BaseFee` is lower-bounded by global `min-gas-price` (currently zero, adjustable via governance)
+
+### EVM Gas Refunds
+
+Cosmos EVM refunds a fraction (at least 50% by default) of unused gas for EVM transactions to approximate Ethereum behavior. This is adjustable.
+
+## Block Processing Timeline
+
+1. **EndBlock**: FeeMarket module tracks total `TransientGasWanted` from block transactions for next block's `BaseFee`
+2. **Transaction Reception**: Nodes receive and gossip transactions, prioritized by fee price
+3. **BeginBlock**:
+   - FeeMarket calculates `BaseFee` ([code](https://github.com/cosmos/evm/blob/main/x/feemarket/keeper/abci.go)) using previous block's `GasWanted`
+   - Distribution module distributes previous block's fee rewards
+4. **Transaction Processing**:
+   - `AnteHandler` validates transaction, verifies fees > minimum values and `BaseFee`, deducts fees to `fee_collector` module
+   - For Cosmos transactions: Execute and consume gas
+   - For Ethereum transactions: Execute with gas isolation, calculate gas used, refund surplus
+5. **EndBlock**: Store block's `GasWanted` for next block
+
+## Gas Mechanics
+
+### Cosmos Gas Metering
+
+- `GasMeter`: Tracks gas consumed during state transitions (reset per transaction)
+- `BlockGasMeter`: Tracks gas consumed in block, enforces predefined limit (set via governance)
+
+Gas is priced per-byte. Since Cosmos uses [Big.Int](https://pkg.go.dev/math/big#Int) types (dynamically sized), larger parameter values are more gas-intensive than smaller ones.
+
+### Matching EVM Gas Consumption
+
+The EVM uses a [gas table](https://github.com/ethereum/go-ethereum/blob/master/params/protocol_params.go) for each OPCODE, whereas Cosmos uses a `GasConfig` with flat and per-byte costs for database operations.
+
+To match EVM gas consumption, Cosmos EVM:
+- Ignores SDK gas consumption logic
+- Calculates gas consumed by subtracting EVM leftover gas + refund from gas limit
+- Resets transaction `GasMeter` to 0 and manually sets it to `gasUsed` value from EVM execution
+
+**Implementation**: [`x/vm/keeper/state_transition.go`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go)
+
+### AnteHandler
+
+Performs basic checks before transaction execution:
+- Signature verification, transaction field validation, transaction fees
+- Verifies user has sufficient balance for tx cost (amount + fees)
+- Checks gas limit >= computed intrinsic gas
+
+### Gas Estimation
+
+Ethereum's `eth_estimateGas` is implemented via `EstimateGas` query API. It:
+- Applies transaction against current block/state
+- Performs binary search to find optimal gas value
+- Uses cache context to avoid persisting state changes
+
+**Implementation**: [`x/vm/keeper/grpc_query.go`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/grpc_query.go)
+
+For Cosmos transactions, use [transaction simulation](/sdk/latest/node/txs#simulating-a-transaction).
+
+### Zero-Fee Transactions
+
+In Cosmos, minimum gas price is not enforced by `AnteHandler` - validators specify their own `min-gas-prices`. This allows 0-fee transactions for non-EVM transactions if validators accept them.
+
+EVM transactions cannot have 0 fees as gas is inherently required by the EVM (validated in `ValidateBasic` and custom `AnteHandler`).
+
+### Cross-Chain Gas and Fees
+
+For cross-chain scenarios (e.g., IBC transfer from Chain A to Cosmos EVM without native tokens), Cosmos SDK `Tips` allow users to:
+- Sign transaction with tip and no fees
+- Send to fee relayer who covers fees in native currency
+- Receive tip in payment (intermediary exchange behavior)
+
+## Related Documentation
+
+- [EIP-1559 Fee Market](/evm/latest/documentation/concepts/eip-1559-feemarket) - Detailed fee market mechanics
+- [Performance Optimization](/evm/v0.5.0/documentation/concepts/performance) - Gas estimation optimizations
+- [x/feemarket Module](/evm/latest/documentation/cosmos-sdk/modules/feemarket) - Fee market implementation
