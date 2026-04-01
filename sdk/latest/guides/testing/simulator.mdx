@@ -1,0 +1,276 @@
+---
+title: Module Simulation
+---
+
+<Note>
+**Prerequisite Readings**
+
+* [Testing in the SDK](/sdk/latest/learn/concepts/testing)
+
+</Note>
+
+## Synopsis
+
+This document guides developers on integrating their custom modules with the Cosmos SDK `Simulations`.
+Simulations are useful for testing edge cases in module implementations.
+
+* [Simulation Package](#simulation-package)
+* [Simulation App Module](#simulation-app-module)
+* [SimsX](#simsx)
+  * [Example Implementations](#example-implementations)
+* [Store decoders](#store-decoders)
+* [Randomized genesis](#randomized-genesis)
+* [Random weighted operations](#random-weighted-operations)
+  * [Using Simsx](#using-simsx)
+* [App Simulator manager](#app-simulator-manager)
+* [Running Simulations](#running-simulations)
+
+## Simulation Package
+
+The Cosmos SDK suggests organizing your simulation related code in a `x/<module>/simulation` package.
+
+## Simulation App Module
+
+To integrate with the Cosmos SDK `SimulationManager`, app modules must implement the `AppModuleSimulation` interface.
+
+```go
+// AppModuleSimulation defines the standard functions that every module should expose
+// for the SDK blockchain simulator
+type AppModuleSimulation interface {
+	// randomized genesis states
+	GenerateGenesisState(input *SimulationState)
+
+	// register a func to decode the each module's defined types from their corresponding store key
+	RegisterStoreDecoder(simulation.StoreDecoderRegistry)
+
+	// simulation operations (i.e msgs) with their respective weight
+	WeightedOperations(simState SimulationState) []simulation.WeightedOperation
+}
+
+// HasProposalMsgs defines the messages that can be used to simulate governance (v1) proposals
+type HasProposalMsgs interface {
+	// msg functions used to simulate governance proposals
+	ProposalMsgs(simState SimulationState) []simulation.WeightedProposalMsg
+}
+```
+
+See the full source at [`types/module/simulation.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/types/module/simulation.go).
+
+See an example implementation of these methods from `x/distribution` [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/distribution/module.go#L170-L194).
+
+## SimsX
+
+Cosmos SDK v0.53.0 introduced a new package, `simsx`, providing improved DevX for writing simulation code.
+
+It exposes the following extension interfaces that modules may implement to integrate with the new `simsx` runner.
+
+```go
+type (
+	HasWeightedOperationsX interface {
+		WeightedOperationsX(weight WeightSource, reg Registry)
+	}
+	HasWeightedOperationsXWithProposals interface {
+		WeightedOperationsX(weights WeightSource, reg Registry, proposals WeightedProposalMsgIter,
+			legacyProposals []simtypes.WeightedProposalContent)
+	}
+	HasProposalMsgsX interface {
+		ProposalMsgsX(weights WeightSource, reg Registry)
+	}
+)
+```
+
+See the full source at [`testutil/simsx/runner.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/testutil/simsx/runner.go).
+
+`SimMsgFactoryFn` is the default factory for most cases. It does not create future operations but ensures successful message delivery:
+
+```go
+// SimMsgFactoryFn is the default factory for most cases. It does not create future operations but ensures successful message delivery.
+type SimMsgFactoryFn[T sdk.Msg] func(ctx context.Context, testData *ChainDataSource, reporter SimulationReporter) (signer []SimAccount, msg T)
+```
+
+See the full source at [`testutil/simsx/msg_factory.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/testutil/simsx/msg_factory.go).
+
+These methods allow constructing randomized messages and/or proposal messages.
+
+<Tip>
+Note that modules should **not** implement both `HasWeightedOperationsX` and `HasWeightedOperationsXWithProposals`.
+See the runner code [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/testutil/simsx/runner.go#L330-L339) for details
+
+If the module does **not** have message handlers or governance proposal handlers, these interface methods do **not** need to be implemented.
+</Tip>
+
+### Example Implementations
+
+* `HasWeightedOperationsXWithProposals`: [x/gov](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/gov/module.go#L242-L261)
+* `HasWeightedOperationsX`: [x/bank](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/module.go#L201-L205)
+* `HasProposalMsgsX`: [x/bank](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/module.go#L196-L199)
+
+## Store decoders
+
+Registering the store decoders is required for the `AppImportExport` simulation. This allows
+for the key-value pairs from the stores to be decoded to their corresponding types.
+In particular, it matches the key to a concrete type and then unmarshalls the value from the `KVPair` to the type provided.
+
+Modules using [collections](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/collections/README.md) can use the `NewStoreDecoderFuncFromCollectionsSchema` function that builds the decoder for you:
+
+```go
+// RegisterStoreDecoder registers a decoder for supply module's types
+func (am AppModule) RegisterStoreDecoder(sdr simtypes.StoreDecoderRegistry) {
+	sdr[types.StoreKey] = simtypes.NewStoreDecoderFuncFromCollectionsSchema(am.keeper.(keeper.BaseKeeper).Schema)
+}
+```
+
+See the full source at [`types/simulation/collections.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/types/simulation/collections.go) and the bank module example at [`x/bank/module.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/module.go#L183-L186).
+
+Modules not using collections must manually build the store decoder.
+See the implementation [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/distribution/simulation/decoder.go) from the distribution module for an example.
+
+## Randomized genesis
+
+The simulator tests different scenarios and values for genesis parameters.
+App modules must implement a `GenerateGenesisState` method to generate the initial random `GenesisState` from a given seed.
+
+See an example from `x/auth` [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/auth/module.go#L174-L177).
+
+Once the module's genesis parameters are generated randomly (or with the key and
+values defined in a `params` file), they are marshaled to JSON format and added
+to the app genesis JSON for the simulation.
+
+## Random weighted operations
+
+Operations are one of the crucial parts of the Cosmos SDK simulation. They are the transactions
+(`Msg`) that are simulated with random field values. The sender of the operation
+is also assigned randomly.
+
+Operations on the simulation are simulated using the full [transaction cycle](/sdk/latest/learn/concepts/lifecycle) of a
+`ABCI` application that exposes the `BaseApp`.
+
+### Using Simsx
+
+Simsx introduces the ability to define a `MsgFactory` for each of a module's messages.
+
+These factories are registered in `WeightedOperationsX` and/or `ProposalMsgsX`.
+
+```go
+// ProposalMsgsX registers governance proposal messages in the simulation registry.
+func (AppModule) ProposalMsgsX(weights simsx.WeightSource, reg simsx.Registry) {
+	reg.Add(weights.Get("msg_update_params", 100), simulation.MsgUpdateParamsFactory())
+}
+
+// WeightedOperationsX registers weighted distribution module operations for simulation.
+func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry) {
+	reg.Add(weights.Get("msg_set_withdraw_address", 50), simulation.MsgSetWithdrawAddressFactory(am.keeper))
+	reg.Add(weights.Get("msg_withdraw_delegation_reward", 50), simulation.MsgWithdrawDelegatorRewardFactory(am.keeper, am.stakingKeeper))
+	reg.Add(weights.Get("msg_withdraw_validator_commission", 50), simulation.MsgWithdrawValidatorCommissionFactory(am.keeper, am.stakingKeeper))
+}
+```
+
+Note that the name passed in to `weights.Get` must match the name of the operation set in the `WeightedOperations`.
+
+For example, if the module contains an operation `op_weight_msg_set_withdraw_address`, the name passed to `weights.Get` should be `msg_set_withdraw_address`.
+
+See the `x/distribution` for an example of implementing message factories [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/distribution/simulation/msg_factory.go)
+
+## App Simulator manager
+
+The following step is setting up the `SimulationManager` at the app level. This
+is required for the simulation test files in the next step.
+
+```go
+type CoolApp struct {
+	...
+	sm *module.SimulationManager
+}
+```
+
+Within the constructor of the application, construct the simulation manager using the modules from `ModuleManager` and call the `RegisterStoreDecoders` method.
+
+```go
+overrideModules := map[string]module.AppModuleSimulation{
+	authtypes.ModuleName: auth.NewAppModule(app.appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, nil),
+}
+
+app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
+
+app.sm.RegisterStoreDecoders()
+```
+
+Note that you may override some modules.
+This is useful if the existing module configuration in the `ModuleManager` should be different in the `SimulationManager`.
+
+Finally, the application should expose the `SimulationManager` via the following method defined in the `AppI` interface:
+
+```go
+// SimulationManager implements the SimulationApp interface
+func (app *SimApp) SimulationManager() *module.SimulationManager {
+	return app.sm
+}
+```
+
+See the full simapp setup at [`simapp/app.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/simapp/app.go).
+
+## Running Simulations
+
+To run the simulation, use the `simsx` runner.
+
+Call `simsx.Run` to begin simulating with the default seeds, or `simsx.RunWithSeeds` to provide specific seeds:
+
+```go
+func TestFullAppSimulation(t *testing.T) {
+	sims.Run(t, NewSimApp, setupStateFactory)
+}
+
+func TestAppImportExport(t *testing.T) {
+	sims.Run(t, NewSimApp, setupStateFactory, func(tb testing.TB, ti sims.TestInstance[*SimApp], accs []simtypes.Account) {
+		// post-run assertions: export and compare stores
+	})
+}
+```
+
+These functions should be called in tests (i.e., `app_test.go`, `app_sim_test.go`, etc.).
+
+See the full simapp test file at [`simapp/sim_test.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/simapp/sim_test.go).
+
+### Simulation test types
+
+The simulation framework provides four test functions, each testing a different failure scenario:
+
+* `TestFullAppSimulation`: General simulation mode. Runs the chain and specified operations for a given number of blocks, checking for panics.
+* `TestAppImportExport`: Exports the initial app state and creates a new app with the exported `genesis.json` as input, checking for store inconsistencies between the two.
+* `TestAppSimulationAfterImport`: Chains two simulations -- the first provides its app state to the second. Useful for testing software upgrades or hard-forks from a live chain.
+* `TestAppStateDeterminism`: Checks that all nodes return the same values in the same order.
+
+### Simulator modes
+
+Simulations run in three modes:
+
+1. **Fully random** -- initial state, module parameters, and simulation parameters are all pseudo-randomly generated.
+2. **From a `genesis.json` file** -- initial state and module parameters are defined by the file. Useful for testing against a known state such as a live network export.
+3. **From a `params.json` file** -- initial state is pseudo-randomly generated but module and simulation parameters are set manually. Available parameters are listed [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/simulation/client/cli/flags.go#L43-L70).
+
+<Tip>
+These modes are not mutually exclusive. For example, you can combine a randomly generated genesis state (mode 1) with manually defined simulation params (mode 3).
+</Tip>
+
+### Running via go test
+
+Simulations can be run directly with `go test`:
+
+```bash
+go test -mod=readonly github.com/cosmos/cosmos-sdk/simapp \
+  -run=TestApp<simulation_command> \
+  ...<flags> \
+  -v -timeout 24h
+```
+
+The full list of available flags is defined [here](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/simulation/client/cli/flags.go#L43-L70). For Makefile examples, see the Cosmos SDK [`Makefile`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/Makefile#L280-L340).
+
+### Debugging tips
+
+When encountering a simulation failure:
+
+* **Export app state** at the failure height using the `-ExportStatePath` flag.
+* **Use `-Verbose` logs** for a fuller picture of all operations involved.
+* **Try a different `-Seed`**. If the same error reproduces sooner, you will spend less time on each run.
+* **Reduce `-NumBlocks`** to isolate what the app state looks like at the block before failure.
+* **Add a [`Logger`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/staking/keeper/keeper.go#L78-L82)** to operations that are not being logged.

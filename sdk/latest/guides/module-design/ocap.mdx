@@ -1,0 +1,98 @@
+---
+title: Object-Capability Model
+description: How the Cosmos SDK uses object capabilities to isolate modules and limit the blast radius of faulty or malicious code.
+---
+
+The Cosmos SDK is built around the **object-capability model** (ocap) — a security model designed for systems that compose untrusted components.
+
+The threat model is explicit: a thriving ecosystem of Cosmos SDK modules will eventually include faulty or malicious ones. Ocap limits the damage any single module can do.
+
+## How it works
+
+The model has two rules:
+
+1. An object can send a message to another object only if it holds a reference to it.
+2. An object can obtain a reference to another object only by receiving it through a message.
+
+In practice: a module can only affect the state it has been explicitly handed access to. If the bank keeper was not passed to your module, your module cannot touch balances — full stop. There is no global registry to reach into.
+
+This makes security analysis local. You can audit what a module can do by looking at what references it was given at wiring time, without reading its implementation.
+
+## Pointer vs. value
+
+Only pass what a module needs. If you pass a pointer, you grant write access. If you pass a value, you grant read access.
+
+This code violates the principle — passing a pointer to an external module grants it the ability to mutate the account:
+
+```go
+account := &AppAccount{
+    Address: pub.Address(),
+    Coins:   sdk.Coins{sdk.NewInt64Coin("ATM", 100)},
+}
+sumValue := externalModule.ComputeSumValue(account) // can modify account
+```
+
+Pass a copy instead:
+
+```go
+sumValue := externalModule.ComputeSumValue(*account) // read-only
+```
+
+## Keeper interfaces
+
+The most common place to apply ocap in SDK modules is at keeper boundaries. Instead of accepting a concrete keeper type from another module, define a narrow interface containing only the methods your module actually calls.
+
+For example, `x/distribution` needs to query balances and send coins, but it does not need the full bank keeper. It defines its own interface:
+
+```go
+// x/distribution/types/expected_keepers.go
+type BankKeeper interface {
+    GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+    SpendableCoins(ctx context.Context, addr sdk.AccAddress) sdk.Coins
+    SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
+    SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipientAddr sdk.AccAddress, amt sdk.Coins) error
+    SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
+    BlockedAddr(addr sdk.AccAddress) bool
+}
+```
+
+By convention these live in `types/expected_keepers.go`. The benefit is twofold: the interface documents exactly what cross-module access your module requires, and it makes the dependency easy to mock in tests.
+
+## Store isolation
+
+Modules do not receive direct access to the global multistore. Instead, each module gets a `store.KVStoreService` scoped to its own prefix — it can only read and write within that namespace.
+
+```go
+type Keeper struct {
+    storeService store.KVStoreService
+    // ...
+}
+```
+
+This means a bug or malicious call in one module's keeper cannot read or corrupt another module's state. The scoping is enforced at the store layer, not by convention.
+
+## Authority
+
+Some operations — updating parameters, pausing a module, triggering emergency actions — should only be callable by governance or another trusted account. The SDK handles this with an explicit `authority` string stored in the keeper.
+
+```go
+type Keeper struct {
+    // the address capable of executing privileged messages,
+    // typically the x/gov module account
+    authority string
+}
+```
+
+Message handlers check the caller against this address before proceeding:
+
+```go
+if msg.Authority != k.authority {
+    return nil, errors.Wrapf(sdkerrors.ErrUnauthorized, "expected %s, got %s", k.authority, msg.Authority)
+}
+```
+
+The authority address is set at wiring time in `app.go` and cannot be changed at runtime. This is ocap applied to governance: privileged capability is a reference, and only the holder of that reference can exercise it.
+
+See [`simapp/app.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/simapp/app.go) for how keeper dependencies and authorities are wired in a complete application.
+
+For background, see the [Wikipedia article on object-capability model](https://en.wikipedia.org/wiki/Object-capability_model).
