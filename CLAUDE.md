@@ -2,6 +2,10 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Work Log
+
+ALWAYS log meaningful changes as they are completed — not at the end of the session. Each branch gets its own file in `work-log/`. See [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format.
+
 ## Products
 
 Each product lives in its own top-level directory:
@@ -101,13 +105,55 @@ Reusable components — import with absolute paths (e.g. `/snippets/icons.mdx`),
 | `docs-navigation-drawer.jsx` | Navigation drawer |
 | `mobile-menu-drawer.jsx` | Mobile menu |
 
+## Releasing a New Version
+
+When a product is ready to release, complete these steps in order.
+
+### 1. Update the Changelog
+
+Update the changelog in `next/` first, so it carries over when the freeze copies `next/` to `latest/`. If the new version is still listed as `## Unreleased` in the upstream `CHANGELOG.md`, use `--unreleased-as` to label it correctly.
+
+```bash
+# If the version is released in CHANGELOG.md
+cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --current-only
+
+# If the version is still listed as Unreleased in CHANGELOG.md
+cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --unreleased-as <version> --current-only
+```
+
+### 2. Freeze the Version
+
+Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.
+
+```bash
+cd scripts/versioning
+NON_INTERACTIVE=1 SUBDIR=<product> NEW_DISPLAY_VERSION=<version> npm run freeze
+```
+
+Then manually update `docs.json` for the product's dropdown:
+
+- Add a new version entry cloned from `next/`, with all paths rewritten from `<product>/next/` to `<product>/latest/`
+- Set `"tag": "Latest"` and `"default": true` on the `latest/` entry
+- Set `"tag": "Unreleased"` on the `next/` entry
+- Order: `latest` first, then `next`, then archived versions newest-first
+
+If the product has pre-existing archived version directories (e.g. `v0.53/`, `v10.1.x/`), tag them with `noindex` and `canonical`:
+
+```bash
+node tag-archived.js --product <product> --all
+```
+
+### 3. Check for Broken Links
+
+```bash
+npx mint broken-links
+```
+
+Fix any broken links before committing.
+
 ## Scripts
 
 Versioning, changelog, and migration scripts live in `scripts/`. See [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for full documentation on the versioning scripts.
-
-## Work Log
-
-ALWAYS Log meaningful changes as they are completed. Each branch gets its own file in `work-log/`. See [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format.
 
 ## Development Commands
 
@@ -122,4 +168,4 @@ npm run reset          # clean + reinstall
 
 The Cosmos SDK example chain tutorials (`sdk/next/tutorials/example/`, files `00-overview.mdx` through `05-run-and-test.mdx`) are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change, a PR is opened on the other repo with content transformed between formats.
 
-The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other frontmatter (e.g. `description:`) is preserved.
+The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other front matter (e.g. `description:`) is preserved.
