@@ -1,0 +1,675 @@
+---
+title: "Command Line Interface (CLI)"
+description: "The CLI tool ('evmd') provides a full-feature interface for interacting with the blockchain. This includes commands for node operations, key management, querying blockchain state, submitting transactions, and more."
+---
+
+import { footnote } from '/snippets/footnote.mdx'
+
+<Info>
+**Node Requirements**
+
+To use the `query` and `tx` commands, your `evmd` node must either:
+
+- Be fully synced with the network you're interacting with, OR
+- Be configured to use an external RPC endpoint in `~/.evmd/config/client.toml`
+
+Example client.toml configuration:
+
+```toml
+# The network chain ID
+chain-id = "myapp-1"
+# The keyring's backend
+keyring-backend = "os"
+# CLI output format
+output = "text"
+# <host>:<port> to CometBFT RPC interface for this chain
+node = "tcp://localhost:26657"
+# Transaction broadcasting mode (sync|async)
+broadcast-mode = "sync"
+```
+
+To use an external RPC, update the `node` field to point to a public or private RPC endpoint.
+</Info>
+
+## Global Flags
+
+These flags are available for all commands:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-b, --broadcast-mode` | Transaction broadcasting mode (sync\|async) | `sync` |
+| `--chain-id` | Specify Chain ID for sending Tx | |
+| `--fees` | Fees to pay along with transaction (e.g., 10atest) | |
+| `--from` | Name or address of private key with which to sign | |
+| `--gas-adjustment` | Adjustment factor to multiply against the estimate returned by tx simulation | `1` |
+| `--gas-prices` | Gas prices to determine the transaction fee (e.g., 10atest) | |
+| `--home` | Directory for config and data | `~/.evmd` |
+| `--keyring-backend` | Select keyring's backend | `os` |
+| `--log_format` | The logging format (json\|plain) | `plain` |
+| `--log_level` | The logging level | `info` |
+| `--log_no_color` | Disable colored logs | |
+| `--node` | \<host\>:\<port\> to CometBFT RPC interface | `tcp://localhost:26657` |
+| `--trace` | Print out full stack trace on errors | |
+
+## Commands
+
+<Tabs>
+  <Tab title="Node Operations">
+
+### Starting the Node
+
+<CodeGroup>
+```bash Basic
+evmd start
+```
+
+```bash "With JSON-RPC"
+evmd start \
+  --json-rpc.enable \
+  --json-rpc.api eth,net,web3,txpool
+```
+
+```bash "Full Configuration"
+evmd start \
+  --json-rpc.enable \
+  --json-rpc.address 0.0.0.0:8545 \
+  --json-rpc.ws-address 0.0.0.0:8546 \
+  --json-rpc.api eth,net,web3,txpool,debug \
+  --json-rpc.enable-indexer \
+  --json-rpc.gas-cap 50000000
+```
+</CodeGroup>
+
+### Node Initialization
+
+<CodeGroup>
+```bash "Basic Init"
+evmd init my-node --chain-id cosmos-evm-1
+```
+
+```bash "Custom Settings"
+evmd init my-validator \
+  --chain-id cosmos-evm-1 \
+  --default-denom atest \
+  --initial-height 1
+```
+
+```bash "Overwrite Existing"
+evmd init my-node \
+  --chain-id cosmos-evm-1 \
+  --overwrite
+```
+</CodeGroup>
+
+### Node Status
+
+```bash
+evmd status
+```
+
+### Transaction Indexing
+
+<CodeGroup>
+```bash "Index Forward"
+evmd index-eth-tx forward
+```
+
+```bash "Index Backward"
+evmd index-eth-tx backward
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Key Management">
+
+### Account Management
+
+<CodeGroup>
+```bash "Create New Key"
+evmd keys add my-account
+```
+
+```bash "Recover from Mnemonic"
+evmd keys add my-account --recover
+```
+
+```bash "Create ETH Key"
+evmd keys add my-eth-account \
+  --algo eth_secp256k1 \
+  --coin-type 60
+```
+</CodeGroup>
+
+### Key Operations
+
+<CodeGroup>
+```bash "List All Keys"
+evmd keys list
+```
+
+```bash "Show Key Info"
+evmd keys show my-account
+```
+
+```bash "Show Address Only"
+evmd keys show my-account --address
+```
+
+```bash "Export Key"
+evmd keys export my-account
+```
+
+```bash "Import Key"
+evmd keys import new-account keyfile.json
+```
+</CodeGroup>
+
+### Ethereum Key Import/Export
+
+<CodeGroup>
+```bash "Export ETH Key"
+evmd keys unsafe-export-eth-key my-eth-account
+```
+
+```bash "Import ETH Key"
+evmd keys unsafe-import-eth-key imported-account 0x...
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="EVM Queries">
+
+### Account & Balance Queries
+
+<CodeGroup>
+```bash "Account Info"
+evmd query evm account 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81
+```
+
+```bash "Bank Balance"
+evmd query evm balance-bank 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 atest
+```
+
+```bash "ERC20 Balance"
+evmd query evm balance-erc20 \
+  0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+  0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+```
+</CodeGroup>
+
+### Contract Queries
+
+<CodeGroup>
+```bash "Get Contract Code"
+evmd query evm code 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+```
+
+```bash "Get Storage Value"
+evmd query evm storage \
+  0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  0x0000000000000000000000000000000000000000000000000000000000000001
+```
+</CodeGroup>
+
+### Configuration & Parameters
+
+<CodeGroup>
+```bash "EVM Config"
+evmd query evm config
+```
+
+```bash "EVM Params"
+evmd query evm params
+```
+</CodeGroup>
+
+### Address Conversion
+
+<CodeGroup>
+```bash "0x to Bech32"
+evmd query evm 0x-to-bech32 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81
+```
+
+```bash "Bech32 to 0x"
+evmd query evm bech32-to-0x cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="ERC20 Queries">
+
+### Token Pair Queries
+
+<CodeGroup>
+```bash "All Token Pairs"
+evmd query erc20 token-pairs
+```
+
+```bash "Specific Token Pair"
+evmd query erc20 token-pair 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+```
+
+```bash "Query by Denom"
+evmd query erc20 token-pair usdc
+```
+
+```bash "Module Parameters"
+evmd query erc20 params
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Feemarket Queries">
+
+### Fee Market Information
+
+<CodeGroup>
+```bash "Current Base Fee"
+evmd query feemarket base-fee
+```
+
+```bash "Block Gas Usage"
+evmd query feemarket block-gas
+```
+
+```bash "Module Parameters"
+evmd query feemarket params
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Precisebank Queries">
+
+### Precision Banking
+
+<CodeGroup>
+```bash "Module Remainder"
+evmd query precisebank remainder
+```
+
+```bash "Fractional Balance"
+evmd query precisebank fractional-balance cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Cosmos SDK Queries">
+
+### Bank Module
+
+<CodeGroup>
+```bash "All Balances"
+evmd query bank balances cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+```
+
+```bash "Specific Denom"
+evmd query bank balance cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s atest
+```
+
+```bash "Total Supply"
+evmd query bank total
+```
+</CodeGroup>
+
+### Staking Module
+
+<CodeGroup>
+```bash "All Validators"
+evmd query staking validators
+```
+
+```bash "Delegations"
+evmd query staking delegations cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+```
+
+```bash "Unbonding"
+evmd query staking unbonding-delegations cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+```
+</CodeGroup>
+
+### Distribution Module
+
+<CodeGroup>
+```bash "Delegation Rewards"
+evmd query distribution rewards \
+  cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s \
+  cosmosvaloper1xyz...
+```
+
+```bash "Validator Commission"
+evmd query distribution commission cosmosvaloper1xyz...
+```
+</CodeGroup>
+
+### Governance Module
+
+<CodeGroup>
+```bash "All Proposals"
+evmd query gov proposals
+```
+
+```bash "Specific Proposal"
+evmd query gov proposal 1
+```
+
+```bash "Proposal Votes"
+evmd query gov votes 1
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="EVM Transactions">
+
+### EVM Transfers
+
+<CodeGroup>
+```bash "Send Transaction"
+evmd tx evm send \
+  my-account \
+  0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+  1000000atest \
+  --gas-prices 10atest
+```
+
+```bash "Raw Transaction"
+evmd tx evm raw \
+  0xf86c0485... \
+  --from my-account
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="ERC20 Transactions">
+
+### Token Conversions
+
+<CodeGroup>
+```bash "Coin to ERC20"
+evmd tx erc20 convert-coin \
+  1000000atest \
+  0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+  --from my-account \
+  --gas-prices 10atest
+```
+
+```bash "ERC20 to Coin"
+evmd tx erc20 convert-erc20 \
+  0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  1000000 \
+  cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s \
+  --from my-account
+```
+</CodeGroup>
+
+### Governance Operations
+
+<CodeGroup>
+```bash "Register ERC20"
+evmd tx erc20 register-erc20 \
+  0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  --from validator
+```
+
+```bash "Toggle Conversion"
+evmd tx erc20 toggle-conversion \
+  0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  --from validator
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Cosmos SDK Transactions">
+
+### Bank Transactions
+
+<CodeGroup>
+```bash "Send Tokens"
+evmd tx bank send \
+  my-account \
+  cosmos1abc... \
+  1000000atest \
+  --gas-prices 10atest
+```
+
+```bash "Multi-Send"
+evmd tx bank multi-send \
+  my-account \
+  cosmos1abc... 500000atest \
+  cosmos1xyz... 500000atest \
+  --gas-prices 10atest
+```
+</CodeGroup>
+
+### Staking Transactions
+
+<CodeGroup>
+```bash "Delegate"
+evmd tx staking delegate \
+  cosmosvaloper1abc... \
+  1000000atest \
+  --from my-account \
+  --gas-prices 10atest
+```
+
+```bash "Unbond"
+evmd tx staking unbond \
+  cosmosvaloper1abc... \
+  1000000atest \
+  --from my-account
+```
+
+```bash "Redelegate"
+evmd tx staking redelegate \
+  cosmosvaloper1abc... \
+  cosmosvaloper1xyz... \
+  1000000atest \
+  --from my-account
+```
+</CodeGroup>
+
+### Governance Transactions
+
+<CodeGroup>
+```bash "Submit Proposal"
+evmd tx gov submit-proposal \
+  --title="Upgrade Proposal" \
+  --description="Upgrade to v2.0.0" \
+  --type="Text" \
+  --deposit="1000000atest" \
+  --from my-account
+```
+
+```bash "Vote"
+evmd tx gov vote 1 yes \
+  --from my-account \
+  --gas-prices 10atest
+```
+
+```bash "Deposit"
+evmd tx gov deposit 1 1000000atest \
+  --from my-account
+```
+</CodeGroup>
+
+  </Tab>
+  <Tab title="Advanced Commands">
+
+### Genesis Operations
+
+<CodeGroup>
+```bash "Add Account"
+evmd genesis add-genesis-account \
+  cosmos1abc... \
+  1000000000atest
+```
+
+```bash "Create GenTx"
+evmd genesis gentx \
+  my-validator \
+  1000000atest \
+  --chain-id cosmos-evm-1
+```
+
+```bash "Collect GenTxs"
+evmd genesis collect-gentxs
+```
+</CodeGroup>
+
+### CometBFT Commands
+
+<CodeGroup>
+```bash "Show Node ID"
+evmd comet show-node-id
+```
+
+```bash "Show Validator"
+evmd comet show-validator
+```
+
+```bash "Reset State"
+evmd comet unsafe-reset-all
+```
+</CodeGroup>
+
+### Debug Utilities
+
+<CodeGroup>
+```bash "Address Info"
+evmd debug addr cosmos1abc...
+```
+
+```bash "Decode Hex"
+evmd debug raw-bytes 0xdeadbeef
+```
+
+```bash "Public Key"
+evmd debug pubkey '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"...."}'
+```
+</CodeGroup>
+
+  </Tab>
+</Tabs>
+
+## Examples
+
+### Complete Workflows
+
+<Tabs>
+  <Tab title="Account Setup">
+    <CodeGroup>
+    ```bash "Create Account"
+    # Create new Cosmos account
+    evmd keys add my-account
+    
+    # Save mnemonic safely!
+    # Address will be shown as cosmos1...
+    ```
+    
+    ```bash "Import ETH Key"
+    # Import existing Ethereum private key
+    evmd keys unsafe-import-eth-key \
+      eth-account \
+      0x1234567890abcdef...
+    
+    # Show the imported account
+    evmd keys show eth-account
+    ```
+    
+    ```bash "List & Export"
+    # List all accounts
+    evmd keys list
+    
+    # Export account (encrypted)
+    evmd keys export my-account > account.backup
+    
+    # Show account address only
+    evmd keys show my-account --address
+    ```
+    </CodeGroup>
+  </Tab>
+
+  <Tab title="Query Examples">
+    <CodeGroup>
+    ```bash "Account Info"
+    # Query Cosmos account
+    evmd query bank balances \
+      cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s
+    
+    # Query EVM account
+    evmd query evm account \
+      0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81
+    ```
+    
+    ```bash "Token Balances"
+    # Native token balance
+    evmd query bank balance \
+      cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s \
+      atest
+    
+    # ERC20 token balance
+    evmd query evm balance-erc20 \
+      0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+      0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    ```
+    
+    ```bash "Network State"
+    # Current base fee
+    evmd query feemarket base-fee
+    
+    # Node sync status
+    evmd status | jq .sync_info
+    
+    # Latest block height
+    evmd status | jq .sync_info.latest_block_height
+    ```
+    </CodeGroup>
+  </Tab>
+
+  <Tab title="Transactions">
+    <CodeGroup>
+    ```bash "Native Transfer"
+    # Send tokens via bank module
+    evmd tx bank send \
+      my-account \
+      cosmos1abc... \
+      1000000atest \
+      --gas-prices 10atest \
+      --gas-adjustment 1.5
+    ```
+    
+    ```bash "EVM Transfer"
+    # Send via EVM module
+    evmd tx evm send \
+      my-account \
+      0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+      1000000atest \
+      --gas-prices 10atest
+    ```
+    
+    ```bash "Token Conversion"
+    # Convert native to ERC20
+    evmd tx erc20 convert-coin \
+      1000000atest \
+      0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb81 \
+      --from my-account \
+      --gas-prices 10atest
+    
+    # Convert ERC20 to native
+    evmd tx erc20 convert-erc20 \
+      0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+      1000000 \
+      cosmos1wsk4trnzfszs55jlt5ugz76lwl2hp04slh5s5s \
+      --from my-account
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+## Configuration
+
+- Configuration directory: `~/.evmd/`
+- Key storage: Managed by the keyring backend (os, file, test)
+- Node configuration: `~/.evmd/config/config.toml`
+- App configuration: `~/.evmd/config/app.toml`
+
+<Info>If you use the `--home` flag upon initializing the light client, the root/config directory will be generated there</Info>

@@ -1,0 +1,150 @@
+---
+title: "Transactions"
+description: "Transaction types and lifecycle in Cosmos EVM"
+icon: "arrow-up-down"
+---
+
+A transaction refers to an action initiated by an account that changes blockchain state. Transactions are broadcasted to the network where validators validate, execute, and propagate the resulting state change.
+
+Transactions consume computational resources (gas) requiring associated fees. Additionally, transactions must be signed using the sender's private key to prove authenticity.
+
+## Transaction Lifecycle
+
+The transaction lifecycle involves a dual-phase process through CometBFT consensus:
+
+### CheckTx Phase
+- **Transaction routing**: Ante handler identifies transaction type ([`ante/ante.go:18-71`](https://github.com/cosmos/evm/blob/main/ante/ante.go#L18-L71))
+- **EVM validation**: MonoDecorator consolidates validation using go-ethereum's `txpool.ValidateTransaction()` ([`ante/evm/mono_decorator.go:99+`](https://github.com/cosmos/evm/blob/main/ante/evm/mono_decorator.go#L99))
+- **Transaction filtering**: Uses `PendingFilter` with configurable `MinTip`, base fee, and transaction type filters ([`mempool/mempool.go:455-461`](https://github.com/cosmos/evm/blob/main/mempool/mempool.go#L455-L461))
+- **Nonce gap handling**: Transactions with future nonces queued locally via `InsertInvalidNonce()` ([`mempool/check_tx.go:21-23`](https://github.com/cosmos/evm/blob/main/mempool/check_tx.go#L21-L23))
+- **Mempool addition**: Valid transactions added to CometBFT mempool for P2P broadcast
+
+### DeliverTx Phase
+- **Message unwrapping**: `msg.AsTransaction()` extracts Ethereum transaction from `MsgEthereumTx` ([`x/vm/keeper/msg_server.go:32`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/msg_server.go#L32))
+- **State transition**: `ApplyTransaction()` executes EVM logic with gas isolation ([`x/vm/keeper/state_transition.go:165-199`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L165-L199))
+- **Cache contexts**: Isolated execution with rollback capability
+- **State commitment**: Successful transactions committed to Cosmos SDK store
+
+<Note>
+For detailed transaction flow and mempool behavior, see [Mempool documentation](/evm/latest/documentation/concepts/mempool#transaction-flow) and [Cosmos SDK lifecycle](/sdk/v0.53/learn/beginner/tx-lifecycle).
+</Note>
+
+## Transaction Types
+
+Cosmos EVM supports two transaction types:
+
+### 1. Cosmos Transactions
+
+Transactions comprised of metadata held in contexts and `sdk.Msg`s that trigger state changes through Protobuf [Msg services](/sdk/v0.53/build/building-modules/msg-services).
+
+Cosmos transactions can have **multiple `sdk.Msg`s** and include:
+- `Msgs`: Array of messages
+- `GasLimit`: Gas calculation option
+- `FeeAmount`: Maximum fee willing to pay
+- `TimeoutHeight`: Block height validity
+- `Signatures`: Array of signer signatures
+- `Memo`: Note or comment
+
+### 2. Ethereum Transactions
+
+Actions initiated by EOAs (externally-owned accounts) that transform EVM state. Must be broadcasted to the entire network.
+
+Ethereum transaction categories:
+- **Regular transactions**: Account to account
+- **Contract deployment**: No `to` address, contract code in `data` field
+- **Contract execution**: Interact with deployed smart contract
+
+Ethereum transaction fields:
+- `recipient`, `signature`, `nonce`, `value`
+- `data`: Arbitrary data for contract deployment/calls
+- `gasLimit`, `maxPriorityFeePerGas`, `maxFeePerGas`
+
+**Reference**: [Ethereum transactions](https://ethereum.org/en/developers/docs/transactions/)
+
+### Supported Ethereum Transaction Types
+
+Cosmos EVM supports types defined in `AcceptedTxType` ([`ante/evm/mono_decorator.go:23-27`](https://github.com/cosmos/evm/blob/main/ante/evm/mono_decorator.go#L23-L27)):
+
+- **Legacy Transactions** (EIP-155): Chain ID protection
+- **Access List Transactions** (EIP-2930): Pre-declared storage access
+- **Dynamic Fee Transactions** (EIP-1559): Base fee + priority fee model
+- **Set Code Transactions** (EIP-7702): Account code assignment with authorization list
+
+<Check>
+**Note**: Unprotected legacy transactions are not supported by default.
+</Check>
+
+### MsgEthereumTx Wrapper
+
+Cosmos EVM wraps Ethereum transactions in `MsgEthereumTx` ([`x/vm/types/tx.pb.go:36-43`](https://github.com/cosmos/evm/blob/main/x/vm/types/tx.pb.go#L36-L43)):
+- `From`: Ethereum signer address bytes for signature verification
+- `Raw`: Complete Ethereum transaction data
+
+This wrapper implements both `sdk.Msg` and `sdk.Tx` interfaces, enabling:
+- **Direct go-ethereum integration**: Uses `txpool.ValidateTransaction()` instead of SDK ante handlers
+- **Gas isolation**: EVM execution uses infinite gas meter, bypassing SDK gas consumption ([`x/vm/keeper/state_transition.go:153-164`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L153-L164))
+- **Economic validation**: `CheckSenderBalance()` compares account balance with transaction cost ([`x/vm/keeper/fees.go:24-39`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/fees.go#L24-L39))
+- **Single message constraint**: Only one EVM message per transaction ([`ante/evm/mono_decorator.go:88-91`](https://github.com/cosmos/evm/blob/main/ante/evm/mono_decorator.go#L88-L91))
+
+## EVM Execution Integration
+
+Cosmos EVM creates an execution environment bridging Ethereum and Cosmos SDK state management:
+
+**Block Context Mapping** ([`x/vm/keeper/state_transition.go:46-57`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L46-L57)):
+- CometBFT block proposer → EVM coinbase address
+- Block height → EVM block number
+- Block timestamp → EVM timestamp opcode
+- Historical block access via EIP-2935 contract
+
+**Access Control Hooks** ([`x/vm/keeper/state_transition.go:67-78`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L67-L78)):
+- Restrict contract creation and execution via EVM opcode interceptors
+- Policy-based permissions for `CREATE`, `CREATE2`, and `CALL` operations
+
+**Receipt Generation** ([`x/vm/keeper/state_transition.go:125`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L125)):
+- Ethereum-compatible bloom filters for log filtering
+- Dual transaction hash emission for cross-ecosystem compatibility
+- Contract address generation via `crypto.CreateAddress()`
+
+## Transaction Ordering and Prioritization
+
+Transactions are ordered by effective tips:
+- **Ethereum**: `gas_tip_cap` or `min(gas_tip_cap, gas_fee_cap - base_fee)`
+- **Cosmos**: `(fee_amount / gas_limit) - base_fee`
+
+Higher tips = higher priority, regardless of transaction type.
+
+**Nonce Handling**:
+- **Ethereum transactions**: Support nonce gaps with local queuing and automatic promotion
+- **Cosmos transactions**: Require sequential nonces
+
+<Info>
+For detailed mempool behavior, see [Mempool Architecture](/evm/latest/documentation/concepts/mempool#architecture).
+</Info>
+
+## Transaction Receipts
+
+Cosmos EVM generates Ethereum-compatible receipts with Cosmos SDK event integration ([`x/vm/keeper/state_transition.go:125-146`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/state_transition.go#L125-L146)):
+
+- **Bloom Filter Computation**: Creates transaction and block-level bloom filters
+- **Gas Reconciliation**: Reconciles EVM gas usage with SDK gas meter state
+- **Dual Event Emission**: Contains both Ethereum transaction hash and CometBFT transaction hash ([`x/vm/keeper/msg_server.go:77-80`](https://github.com/cosmos/evm/blob/main/x/vm/keeper/msg_server.go#L77-L80))
+
+Receipt fields include:
+- `transactionHash`, `transactionIndex`, `blockHash`, `blockNumber`
+- `from`, `to`, `cumulativeGasUsed`, `effectiveGasPrice`, `gasUsed`
+- `contractAddress`, `logs`, `logsBloom`
+- `type`, `status`
+
+## IBC Integration
+
+Cosmos EVM enables cross-chain functionality through IBC accessible from EVM smart contracts:
+
+- **ICS20 Precompile**: Direct interface for cross-chain token transfers
+- **Cosmos SDK Module Access**: Smart contracts interact with bank, staking, distribution, and governance modules through precompiled contracts
+
+## Related Documentation
+
+- [Mempool](/evm/latest/documentation/concepts/mempool) - Transaction flow and mempool architecture
+- [Gas and Fees](/evm/latest/documentation/concepts/gas-and-fees) - Fee calculation and gas metering
+- [Accounts](/evm/latest/documentation/concepts/accounts) - Account structure and addressing
+- [x/vm Module](/evm/latest/documentation/cosmos-sdk/modules/vm) - EVM implementation details

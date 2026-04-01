@@ -1,0 +1,118 @@
+---
+title: "Accounts"
+description: "Cosmos EVM accounts are implemented to be compatible with Ethereum type addresses"
+icon: "wallet"
+---
+
+Accounts in Cosmos EVM are designed for compatibility with both Ethereum and Cosmos SDK tooling. For developers interfacing with account types (e.g., during wallet integration), understanding the dual representation is essential.
+
+**References**: [Cosmos SDK Accounts](/sdk/v0.53/learn/beginner/accounts), [Ethereum Accounts](https://ethereum.org/en/whitepaper/#ethereum-accounts)
+
+## Account Structure
+
+In the Cosmos SDK, an account designates a pair of public key (PubKey) and private key (PrivKey). The derivation path defines what the private key, public key, and address would be.
+
+Cosmos blockchains support creating accounts with mnemonic phrases using [hierarchical deterministic key generation](https://github.com/confio/cosmos-hd-key-derivation-spec) (HD keys). HD keys generate addresses by combining the mnemonic phrase with a [derivation path](https://learnmeabitcoin.com/technical/derivation-paths).
+
+## EVM Accounts
+
+Cosmos EVM defines a custom `Account` type implementing an HD wallet compatible with Ethereum addresses using:
+- Ethereum's ECDSA secp256k1 curve (`eth_secp265k1`)
+- [EIP84](https://github.com/ethereum/EIPs/issues/84) for full [BIP44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki) paths
+- Root HD path: `m/44'/60'/0'/0` (Coin type `60` for Ethereum compatibility)
+
+The custom EthAccount satisfies the Cosmos SDK `AccountI` interface with additional Ethereum-specific fields (see [x/vm/types interfaces](https://github.com/cosmos/evm/blob/main/x/vm/types/interfaces.go) for the account keeper implementation):
+
+```go
+// EthAccountI represents the interface of an EVM compatible account
+type EthAccountI interface {
+    authtypes.AccountI
+
+    // EthAddress returns the ethereum Address representation of the AccAddress
+    EthAddress() common.Address
+
+    // CodeHash is the keccak256 hash of the contract code (if any)
+    GetCodeHash() common.Hash
+
+    // SetCodeHash sets the code hash to the account fields
+    SetCodeHash(code common.Hash) error
+
+    // Type returns the type of Ethereum Account (EOA or Contract)
+    Type() int8
+}
+```
+
+**EIP-7702 Support**: Cosmos EVM supports [EIP-7702 code delegation](/evm/latest/documentation/evm-compatibility), allowing EOAs to temporarily delegate code execution to smart contracts through the `SetCodeHash` functionality.
+
+## Address Formats
+
+### Bech32 and Hex Representations
+
+`EthAccount` can be represented in both [Bech32](https://en.bitcoin.it/wiki/Bech32) (`cosmos1...`) and hex (`0x...`) formats for compatibility with both ecosystems.
+
+**Bech32** (default for Cosmos SDK):
+```text
+cosmos1z3t55m0l9h0eupuz3dp5t5cypyv674jj7mz2jw
+```
+
+**EIP-55 Hex** (Ethereum compatibility):
+```text
+0x91defC7fE5603DFA8CC9B655cF5772459BF10c6f
+```
+
+**Public Key**:
+```json
+{
+  "@type": "/ethermint.crypto.v1.ethsecp256k1.PubKey",
+  "key": "AsV5oddeB+hkByIJo/4lZiVUgXTzNfBPKC73cZ4K1YD2"
+}
+```
+
+### Address Types
+
+[BIP-0173](https://github.com/satoshilabs/slips/blob/master/slip-0173.md) defines Bech32 format with human-readable prefixes:
+
+**User Accounts** (`eth_secp256k1`):
+- Address: `cosmos` prefix, 20 bytes
+- Pubkey: `cosmospub` prefix, 33 bytes (compressed)
+
+**Validator Operators** (`eth_secp256k1`):
+- Address: `cosmosvaloper` prefix, 20 bytes
+- Pubkey: `cosmosvaloperpub` prefix, 33 bytes (compressed)
+
+**Consensus Nodes** (`ed25519`):
+- Address: `cosmosvalcons` prefix, 20 bytes
+- Pubkey: `cosmosvalconspub` prefix, 32 bytes
+
+### Address Conversion
+
+Convert between formats using the CLI:
+
+```bash
+# Bech32 to Hex
+$ evmd debug addr cosmos1z3t55m0l9h0eupuz3dp5t5cypyv674jj7mz2jw
+
+Address (hex): 14574A6DFF2DDF9E07828B4345D3040919AF5652
+Bech32 Acc: cosmos1z3t55m0l9h0eupuz3dp5t5cypyv674jj7mz2jw
+Bech32 Val: cosmosvaloper1z3t55m0l9h0eupuz3dp5t5cypyv674jjn4d6nn
+```
+
+## Querying Accounts
+
+Query accounts via CLI, REST, or JSON-RPC:
+
+**CLI**:
+```bash
+evmd q auth account $(evmd keys show dev0 -a) -o json
+```
+
+**REST API**:
+```bash
+curl -X GET "http://localhost:10337/cosmos/auth/v1beta1/accounts/{address}"
+```
+
+**JSON-RPC**: [`eth_accounts`](/evm/latest/api-reference/ethereum-json-rpc/methods#eth-accounts), [`personal_listAccounts`](/evm/latest/api-reference/ethereum-json-rpc/methods#personal-listAccounts)
+
+## Related Documentation
+
+- [x/vm Module](/evm/latest/documentation/cosmos-sdk/modules/vm) - Ethereum account implementation details

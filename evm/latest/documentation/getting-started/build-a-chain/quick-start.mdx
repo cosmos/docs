@@ -1,0 +1,164 @@
+---
+title: "Run an EVM Chain"
+description: "Create your own blockchain by forking and customizing the Cosmos EVM reference chain (evmd). This guide covers the example chain configuration, running the chain locally, and understanding the foundation for building your custom network."
+---
+
+The `evmd` [directory in the Cosmos EVM repository](https://github.com/cosmos/evm/tree/main/evmd) contains an example chain that demonstrates the integration of Cosmos EVM modules. This reference implementation is based on the simapp implementation from the Cosmos SDK repository, which provides a simplified yet complete blockchain foundation.
+
+## Prerequisites
+
+Make sure you have the following prerequisites:
+
+- **Go 1.23.8+** - [Installation guide](https://go.dev/doc/install)
+- **Git** - [Installation guide](https://git-scm.com/downloads)
+- **Make** - [Installation guide](https://www.gnu.org/software/make/)
+- **GCC/Build Tools** - [Installation guide](https://gcc.gnu.org/install/)
+
+<Note>
+If you're new to Go development, ensure your `$GOPATH/bin` is in your system PATH. Most package managers (Homebrew, apt, pacman) handle this automatically. See the [Go environment setup guide](https://go.dev/doc/gopath_code) for details.
+</Note>
+
+## Building `evmd`
+
+The `evmd` implementation serves as the foundation for building your own custom blockchain. To create your chain:
+
+1. **Fork the repository** — Clone the Cosmos EVM repository:
+
+```bash
+git clone https://github.com/cosmos/evm.git
+cd evm
+```
+
+2. **Run the chain** — Run the local node script to start the chain:
+
+```bash
+./local_node.sh -y
+```
+The script runs `make install` before starting, so the `evmd` binary will be available in your `$GOPATH/bin` once it completes. The JSON-RPC server will be available at `http://localhost:8545`.
+
+```bash
+evmd status
+evmd keys list
+evmd query bank balances <address>
+evmd --help  # full list of commands
+```
+
+## `local_node.sh` Flags
+
+The following are the available flags for the local node script:
+
+```bash
+./local_node.sh -y   # fresh start (overwrite previous database)
+./local_node.sh -n   # resume from previous state
+./local_node.sh --no-install # skip rebuild, use the existing binary
+```
+
+## Connect a Wallet
+
+Once the chain is running, you can connect using any Ethereum-compatible wallet. The example below uses MetaMask:
+
+### MetaMask Setup
+
+**1. Import the test account** — Add a new wallet in MetaMask using this seed phrase:
+
+```
+gesture inject test cycle original hollow east ridge hen combine
+junk child bacon zero hope comfort vacuum milk pitch cage oppose
+unhappy lunar seat
+```
+
+<Warning>
+This is a well-known test seed phrase. **Never** use it for mainnet or with real funds.
+</Warning>
+
+**2. Add the network** — Go to **Networks → Add custom network** and enter:
+
+| Setting | Value |
+|---------|-------|
+| **Network Name** | Cosmos EVM Local |
+| **RPC URL** | `http://localhost:8545` |
+| **Chain ID** | `262144` |
+| **Currency Symbol** | `TEST` |
+| **Block Explorer URL** | (leave empty) |
+
+**3. Verify** — Switch to "Cosmos EVM Local" in MetaMask. You should see your account balance and can now send transactions.
+
+**4. Send a test transaction** — Send 1 TEST to `0x742d35cc6644c068532fddb11B4C36A58D6D3eAb` to confirm end-to-end transaction flow is working.
+
+## Deploy a Solidity Contract with Forge
+
+With the chain running, you can deploy Solidity contracts using [Forge](https://book.getfoundry.sh/forge/). Install it with `curl -L https://foundry.paradigm.xyz | bash && foundryup` if you haven't already.
+
+1. **Create a contract** — Save the following as `Counter.sol`:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Counter {
+    uint256 public count;
+    function increment() public { count++; }
+}
+```
+
+2. **Deploy it** — Use the dev0 test account private key to deploy:
+
+```bash
+forge create Counter.sol:Counter \
+  --rpc-url http://localhost:8545 \
+  --private-key 0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305 \
+  --broadcast
+```
+
+<Warning>
+This private key is for local development only. Never use it with real funds.
+</Warning>
+
+3. **Interact with the contract** — Read the current count, send a transaction to increment it, then read again to confirm the state change:
+
+```bash
+# Read current count (returns 0)
+cast call <deployed-address> "count()(uint256)" --rpc-url http://localhost:8545
+
+# Increment the counter
+cast send <deployed-address> "increment()" \
+  --rpc-url http://localhost:8545 \
+  --private-key 0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305
+
+# Read again (returns 1)
+cast call <deployed-address> "count()(uint256)" --rpc-url http://localhost:8545
+```
+
+## Configuration
+
+### Basic Chain Configuration
+
+The following are some examples of basic configuration options for the `evmd` chain.
+
+| Setting | Default | How to change | Reference |
+|---------|---------|---------------|-----------|
+| **Cosmos Chain ID** | `cosmos_262144-1` | Pass `--chain-id` at node start | — |
+| **EVM Chain ID** | `262144` | Pass `--evm-chain-id` at node start | [`x/vm/types/params.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go) |
+| **Bech32 Prefix** | `cosmos` | Change `Bech32Prefix` constant | [`evmd/config/bech32.go`](https://github.com/cosmos/evm/blob/main/evmd/config/bech32.go) |
+| **Token Denomination** | `aatom` | Update `ExampleAttoDenom`, used by `NewMintGenesisState()` | [`testutil/constants/constants.go`](https://github.com/cosmos/evm/blob/main/testutil/constants/constants.go) |
+| **EVM Permissioning** | Permissionless | Set `AccessType` in `DefaultAccessControl` | [`x/vm/types/params.go`](https://github.com/cosmos/evm/blob/main/x/vm/types/params.go) |
+| **Precompiles** | All (9 enabled) | Replace `AvailableStaticPrecompiles` in `NewEVMGenesisState()` | [`evmd/genesis.go`](https://github.com/cosmos/evm/blob/main/evmd/genesis.go) |
+| **Modules** | Standard SDK set | Register, set the pre-begin-, begin-, and endblockers, genesis module order, and keeper initialization | [`evmd/app.go`](https://github.com/cosmos/evm/blob/main/evmd/app.go) |
+| **Binary name** | `evmd` | Rename directory and run `find . -type f -name "*.go" -exec sed -i 's/evmd/yourchain/g' {} \;`, then update `go.mod` | — |
+
+
+### Advanced Configuration
+
+`evmd` works out of the box with sensible defaults. The following are optional configurations for chains that need to go further.
+
+| Configuration | Description | Reference |
+|---------------|-------------|-----------|
+| **Mempool** | Custom transaction prioritization, nonce gap handling, pool size limits | [Mempool Configuration](/evm/latest/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration) |
+| **Fee Market** | Disable base fee, set min gas price, tune base fee adjustment rate | [Fee Market Module](/evm/latest/documentation/cosmos-sdk/modules/feemarket) |
+| **EVM Access Control** | Restrict contract deployment/calls to whitelisted addresses | [VM Module](/evm/latest/documentation/cosmos-sdk/modules/vm) |
+| **JSON-RPC** | Enable/disable namespaces, set resource caps, configure WebSocket origins | [Node Configuration](/evm/latest/documentation/getting-started/network-operators/node-configuration) |
+| **Predeployed Contracts** | Deploy Create2, Multicall3, Permit2, Safe at genesis | [Predeployed Contracts](/evm/latest/documentation/getting-started/build-a-chain/additional-configuration/predeployed-contracts) |
+| **Precompiles** | Enable built-in precompiles or add custom ones | [Precompile Configuration](/evm/latest/documentation/getting-started/build-a-chain/additional-configuration/precompiles) |
+
+
+For additional support and community resources, visit the [Cosmos EVM GitHub repository](https://github.com/cosmos/evm) or join the Cosmos developer community.

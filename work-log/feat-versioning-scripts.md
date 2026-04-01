@@ -14,3 +14,9 @@
 - Generated sdk/next and sdk/latest changelogs for v0.54.0 from upstream tag `v0.54.0-rc.3`
 - Generated ibc/next and ibc/latest changelogs for v11.0.0 from `cosmos/ibc-go` main (Unreleased section, no RC tag exists yet)
 - Generated cometbft/next and cometbft/latest changelogs for v0.39.0 from `cometbft/cometbft` main (Unreleased section, no RC tag exists yet)
+- Updated `index.mdx` homepage links to point at `latest/` for sdk, ibc, and cometbft (was v0.53, next, and v0.38 respectively)
+- Ran first-time freeze for evm: promoted `next/` → `latest/`, tagged 60 next/ files with noindex, updated versions.json
+- Added `latest` nav entry to EVM dropdown in docs.json (`version: "Latest"`, `tag: "Latest"`, `default: true`); set `next` to `tag: "Unreleased"`; order: latest → next → v0.5.0 → v0.4.x
+- Generated evm/next and evm/latest changelogs for v0.6.0 from cosmos/evm main
+- Updated evm index.mdx links to point at `evm/latest/`
+- Fixed versions.json: corrected `latest` before `next` ordering for sdk, ibc, cometbft, hub; re-added `v25` to hub versions; set evm `latestDisplayVersion` to `"Latest"`
