@@ -1,0 +1,89 @@
+---
+title: Signing & Wallet Errors
+description: Errors from key management, mnemonic handling, HD derivation, and signing operations.
+---
+
+These errors occur during key management, mnemonic handling, HD derivation, wallet encryption, and signing operations. They help diagnose issues with wallet setup and transaction signing.
+
+## Address Not Found in Wallet
+
+Every wallet implementation throws this error when asked to sign for an address
+it does not hold:
+
+```
+"Address cosmos1abc... not found in wallet"
+```
+
+This applies to `Secp256k1HdWallet`, `DirectSecp256k1HdWallet`,
+`Secp256k1Wallet`, `DirectSecp256k1Wallet`, and the Ledger signer.
+
+Fix: only sign for addresses returned by `wallet.getAccounts()`.
+
+## Invalid Mnemonic
+
+Thrown by `EnglishMnemonic` (and by extension all `fromMnemonic` factory methods)
+when the BIP-39 mnemonic is invalid — wrong word count, unknown words, or bad
+checksum:
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+try {
+  const wallet = await DirectSecp256k1HdWallet.fromMnemonic("invalid words here");
+} catch (error) {
+  // Error from @scure/bip39: "invalid mnemonic"
+}
+```
+
+## HD Derivation Path Errors
+
+Thrown by `Slip10` when the derivation path is malformed:
+
+| Error | Cause |
+| --- | --- |
+| `"Path string must start with 'm'"` | Missing `m` prefix |
+| `"Syntax error while reading path component"` | Malformed path segment |
+| `"Component value too high. Must not exceed 2**31-1."` | Index out of BIP-32 range |
+| `"Normal keys are not allowed with ed25519"` | Ed25519 requires hardened indices |
+
+## Invalid Key Errors
+
+```
+"input data is not a valid secp256k1 private key"   // Wrong length or invalid key bytes
+"Invalid pubkey length"                               // Expected 33 (compressed) or 65 (uncompressed)
+"Signature must be 64 bytes long."                    // r + s must be exactly 64 bytes
+```
+
+## Account Sequence Mismatch
+
+Not a CosmJS-specific error, but a common chain-level rejection. When the
+sequence number in the signed transaction does not match the account's current
+sequence on-chain, the node rejects it during CheckTx:
+
+```
+BroadcastTxError: Broadcasting transaction failed with code 32 (codespace: sdk).
+Log: account sequence mismatch, expected 42, got 41
+```
+
+Fix: re-query the account sequence before signing, or avoid concurrent
+transactions from the same account.
+
+## Encryption / Decryption Errors
+
+Wallet serialization uses XChaCha20-Poly1305 encryption. Deserialization throws
+when the password is wrong or the data is corrupted:
+
+```typescript
+try {
+  const wallet = await DirectSecp256k1HdWallet.deserialize(serialized, "wrong-password");
+} catch (error) {
+  // Decryption failure from @noble/ciphers
+}
+```
+
+The only supported algorithm is `xchacha20poly1305-ietf`. Using anything else
+throws:
+
+```
+"Unsupported encryption algorithm: '...'"
+```

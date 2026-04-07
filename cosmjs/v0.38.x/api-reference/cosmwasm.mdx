@@ -1,0 +1,312 @@
+---
+title: "@cosmjs/cosmwasm"
+description: "Client for CosmWasm smart contract chains"
+---
+
+Extends `@cosmjs/stargate` with CosmWasm-specific functionality for interacting with smart contracts on CosmWasm-enabled chains.
+
+```bash
+npm install @cosmjs/cosmwasm
+```
+
+<Warning>
+  The previous package name `@cosmjs/cosmwasm-stargate` is deprecated. Update your imports to use `@cosmjs/cosmwasm`.
+</Warning>
+
+## CosmWasmClient
+
+Read-only client for querying blockchain state and smart contracts. Provides common query methods plus contract-specific operations.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connect` | `endpoint: string \| HttpEndpoint`, `options?: CosmWasmClientOptions` | `Promise<CosmWasmClient>` |
+| `create` | `cometClient: CometClient`, `options?: CosmWasmClientOptions` | `CosmWasmClient` |
+
+### Instance Methods — Chain Queries
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getChainId` | — | `Promise<string>` |
+| `getHeight` | — | `Promise<number>` |
+| `getAccount` | `searchAddress: string` | `Promise<Account \| null>` |
+| `getSequence` | `address: string` | `Promise<SequenceResponse>` |
+| `getBlock` | `height?: number` | `Promise<Block>` |
+| `getBalance` | `address: string`, `searchDenom: string` | `Promise<Coin>` |
+| `getTx` | `id: string` | `Promise<IndexedTx \| null>` |
+| `searchTx` | `query: SearchTxQuery` | `Promise<IndexedTx[]>` |
+| `broadcastTx` | `tx: Uint8Array`, `timeoutMs?: number`, `pollIntervalMs?: number` | `Promise<DeliverTxResponse>` |
+| `broadcastTxSync` | `tx: Uint8Array` | `Promise<string>` |
+| `disconnect` | — | `void` |
+
+### Instance Methods — Contract Queries
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `getCodes` | — | `Promise<readonly Code[]>` |
+| `getCodeDetails` | `codeId: number` | `Promise<CodeDetails>` |
+| `getContracts` | `codeId: number` | `Promise<readonly string[]>` |
+| `getContractsByCreator` | `creator: string` | `Promise<string[]>` |
+| `getContract` | `address: string` | `Promise<Contract>` |
+| `getContractCodeHistory` | `address: string` | `Promise<readonly ContractCodeHistoryEntry[]>` |
+| `queryContractRaw` | `address: string`, `key: Uint8Array` | `Promise<Uint8Array \| null>` |
+| `queryContractSmart` | `address: string`, `queryMsg: JsonObject` | `Promise<JsonObject>` |
+
+### Usage
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await CosmWasmClient.connect("https://rpc.my-chain.network");
+
+const info = await client.getContract("osmo1contractaddr...");
+const state = await client.queryContractSmart("osmo1contractaddr...", {
+  get_count: {},
+});
+const codes = await client.getCodes();
+const contracts = await client.getContracts(1);
+
+client.disconnect();
+```
+
+## SigningCosmWasmClient
+
+Extends `CosmWasmClient` with transaction signing and smart contract management. Inherits all read-only methods above.
+
+### Static Methods
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connectWithSigner` | `endpoint: string \| HttpEndpoint`, `signer: OfflineSigner`, `options?: SigningCosmWasmClientOptions` | `Promise<SigningCosmWasmClient>` |
+| `createWithSigner` | `cometClient: CometClient`, `signer: OfflineSigner`, `options?: SigningCosmWasmClientOptions` | `SigningCosmWasmClient` |
+| `offline` | `signer: OfflineSigner`, `options?: SigningCosmWasmClientOptions` | `Promise<SigningCosmWasmClient>` |
+
+### Instance Methods — Contract Operations
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `upload` | `senderAddress: string`, `wasmCode: Uint8Array`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `instantiatePermission?: AccessConfig` | `Promise<UploadResult>` |
+| `instantiate` | `senderAddress: string`, `codeId: number`, `msg: JsonObject`, `label: string`, `fee: StdFee \| "auto" \| number`, `options?: InstantiateOptions` | `Promise<InstantiateResult>` |
+| `instantiate2` | `senderAddress: string`, `codeId: number`, `salt: Uint8Array`, `msg: JsonObject`, `label: string`, `fee: StdFee \| "auto" \| number`, `options?: InstantiateOptions` | `Promise<InstantiateResult>` |
+| `execute` | `senderAddress: string`, `contractAddress: string`, `msg: JsonObject`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `funds?: readonly Coin[]` | `Promise<ExecuteResult>` |
+| `executeMultiple` | `senderAddress: string`, `instructions: readonly ExecuteInstruction[]`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<ExecuteResult>` |
+| `migrate` | `senderAddress: string`, `contractAddress: string`, `codeId: number`, `migrateMsg: JsonObject`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<MigrateResult>` |
+| `updateAdmin` | `senderAddress: string`, `contractAddress: string`, `newAdmin: string`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<ChangeAdminResult>` |
+| `clearAdmin` | `senderAddress: string`, `contractAddress: string`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<ChangeAdminResult>` |
+
+### Instance Methods — Token Operations
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `sendTokens` | `senderAddress: string`, `recipientAddress: string`, `amount: readonly Coin[]`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `delegateTokens` | `delegatorAddress: string`, `validatorAddress: string`, `amount: Coin`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `undelegateTokens` | `delegatorAddress: string`, `validatorAddress: string`, `amount: Coin`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+| `withdrawRewards` | `delegatorAddress: string`, `validatorAddress: string`, `fee: StdFee \| "auto" \| number`, `memo?: string` | `Promise<DeliverTxResponse>` |
+
+### Instance Methods — Signing
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `simulate` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `memo: string \| undefined` | `Promise<number>` |
+| `signAndBroadcast` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `timeoutHeight?: bigint` | `Promise<DeliverTxResponse>` |
+| `signAndBroadcastSync` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee \| "auto" \| number`, `memo?: string`, `timeoutHeight?: bigint` | `Promise<string>` |
+| `sign` | `signerAddress: string`, `messages: readonly EncodeObject[]`, `fee: StdFee`, `memo: string`, `explicitSignerData?: SignerData`, `timeoutHeight?: bigint` | `Promise<TxRaw>` |
+
+### Usage
+
+```typescript
+import { SigningCosmWasmClient } from "@cosmjs/cosmwasm";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { GasPrice } from "@cosmjs/stargate";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "osmo",
+});
+const [{ address }] = await wallet.getAccounts();
+
+const client = await SigningCosmWasmClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uosmo") },
+);
+
+// Upload
+const wasmCode = fs.readFileSync("contract.wasm");
+const { codeId } = await client.upload(address, wasmCode, "auto");
+
+// Instantiate
+const { contractAddress } = await client.instantiate(
+  address, codeId, { count: 0 }, "My Contract", "auto",
+);
+
+// Execute
+const result = await client.execute(
+  address, contractAddress, { increment: {} }, "auto",
+);
+
+// Query
+const state = await client.queryContractSmart(contractAddress, { get_count: {} });
+```
+
+## Key Types
+
+### Code
+
+```typescript
+interface Code {
+  readonly id: number;
+  readonly creator: string;
+  readonly checksum: string;
+}
+```
+
+### CodeDetails
+
+```typescript
+interface CodeDetails extends Code {
+  readonly data: Uint8Array;
+}
+```
+
+### Contract
+
+```typescript
+interface Contract {
+  readonly address: string;
+  readonly codeId: number;
+  readonly creator: string;
+  readonly admin: string | undefined;
+  readonly label: string;
+  readonly ibcPortId: string | undefined;
+}
+```
+
+### ContractCodeHistoryEntry
+
+```typescript
+interface ContractCodeHistoryEntry {
+  readonly operation: "Genesis" | "Init" | "Migrate";
+  readonly codeId: number;
+  readonly msg: JsonObject;
+}
+```
+
+### UploadResult
+
+```typescript
+interface UploadResult {
+  readonly checksum: string;
+  readonly originalSize: number;
+  readonly compressedSize: number;
+  readonly codeId: number;
+  readonly height: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly gasWanted: bigint;
+  readonly gasUsed: bigint;
+}
+```
+
+### InstantiateResult
+
+```typescript
+interface InstantiateResult {
+  readonly contractAddress: string;
+  readonly height: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly gasWanted: bigint;
+  readonly gasUsed: bigint;
+}
+```
+
+### InstantiateOptions
+
+```typescript
+interface InstantiateOptions {
+  readonly memo?: string;
+  readonly funds?: readonly Coin[];
+  readonly admin?: string;
+}
+```
+
+### ExecuteResult
+
+```typescript
+interface ExecuteResult {
+  readonly height: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly gasWanted: bigint;
+  readonly gasUsed: bigint;
+}
+```
+
+### ExecuteInstruction
+
+```typescript
+interface ExecuteInstruction {
+  contractAddress: string;
+  msg: JsonObject;
+  funds?: readonly Coin[];
+}
+```
+
+### MigrateResult
+
+```typescript
+interface MigrateResult {
+  readonly height: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly gasWanted: bigint;
+  readonly gasUsed: bigint;
+}
+```
+
+### ChangeAdminResult
+
+```typescript
+interface ChangeAdminResult {
+  readonly height: number;
+  readonly transactionHash: string;
+  readonly events: readonly Event[];
+  readonly gasWanted: bigint;
+  readonly gasUsed: bigint;
+}
+```
+
+### SigningCosmWasmClientOptions
+
+```typescript
+interface SigningCosmWasmClientOptions extends CosmWasmClientOptions {
+  readonly registry?: Registry;
+  readonly aminoTypes?: AminoTypes;
+  readonly broadcastTimeoutMs?: number;
+  readonly broadcastPollIntervalMs?: number;
+  readonly gasPrice?: GasPrice | DynamicGasPriceConfig;
+}
+```
+
+## Helper Functions
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `setupWasmExtension` | `base: QueryClient` | `WasmExtension` |
+| `createWasmAminoConverters` | — | `AminoConverters` |
+| `instantiate2Address` | `checksum: Uint8Array`, `creator: string`, `salt: Uint8Array`, `prefix: string` | `string` |
+| `toBinary` | `obj: JsonObject` | `string` |
+| `fromBinary` | `binary: string` | `JsonObject` |
+
+## Encode Objects
+
+| Type | `typeUrl` |
+|------|-----------|
+| `MsgStoreCodeEncodeObject` | `/cosmwasm.wasm.v1.MsgStoreCode` |
+| `MsgInstantiateContractEncodeObject` | `/cosmwasm.wasm.v1.MsgInstantiateContract` |
+| `MsgInstantiateContract2EncodeObject` | `/cosmwasm.wasm.v1.MsgInstantiateContract2` |
+| `MsgExecuteContractEncodeObject` | `/cosmwasm.wasm.v1.MsgExecuteContract` |
+| `MsgMigrateContractEncodeObject` | `/cosmwasm.wasm.v1.MsgMigrateContract` |
+| `MsgUpdateAdminEncodeObject` | `/cosmwasm.wasm.v1.MsgUpdateAdmin` |
+| `MsgClearAdminEncodeObject` | `/cosmwasm.wasm.v1.MsgClearAdmin` |

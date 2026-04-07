@@ -1,0 +1,185 @@
+---
+title: Gas & Fees
+description: How gas and fees work in Cosmos SDK transactions and how CosmJS represents them
+---
+
+Every Cosmos SDK transaction requires a **fee** to compensate validators for
+executing it. This guide explains how gas and fees work, how CosmJS calculates
+them, and how to configure gas pricing.
+
+## Gas vs Fees
+
+These two terms are related but distinct:
+
+- **Gas** is a unit of computational work. Every operation in a transaction
+  (reading state, writing state, signature verification, etc.) costs a certain
+  amount of gas. The total gas consumed by a transaction is its **gas used**.
+- **Gas limit** is the maximum gas a transaction is allowed to consume. If
+  execution exceeds this limit, the transaction fails (and the fee is still
+  charged).
+- **Gas price** is the price per unit of gas, denominated in a token (e.g.
+  `0.025uatom`). It determines how much you pay per unit of work.
+- **Fee** is the total cost: `gas limit × gas price`. It is what the signer
+  actually pays.
+
+In CosmJS, a fee is represented as `StdFee`:
+
+```typescript
+interface StdFee {
+  readonly amount: readonly Coin[];
+  readonly gas: string;
+  readonly granter?: string;
+  readonly payer?: string;
+}
+```
+
+The `gas` field is the gas limit (as a string), and `amount` is the total fee in
+coins. A fee of 200,000 gas at 0.025 uatom/gas costs 5,000 uatom:
+
+```typescript
+{
+  amount: [{ denom: "uatom", amount: "5000" }],
+  gas: "200000",
+}
+```
+
+## Setting Gas Price
+
+`GasPrice` represents the cost per unit of gas. Set it once when creating the
+signing client and use `"auto"` fees everywhere:
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "cosmos",
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+```
+
+You can also construct a `GasPrice` from its parts:
+
+```typescript
+import { Decimal } from "@cosmjs/math";
+import { GasPrice } from "@cosmjs/stargate";
+
+const gasPrice = new GasPrice(Decimal.fromUserInput("0.025", 18), "uatom");
+```
+
+`GasPrice.fromString` parses a `<amount><denom>` string and validates the denom
+against Cosmos SDK rules (3–128 characters, must start with a letter, followed
+by alphanumeric characters or `/`, `:`, `.`, `_`, `-`).
+
+## Three Ways to Specify Fees
+
+Every transaction method (`signAndBroadcast`, `sendTokens`, `delegateTokens`,
+etc.) accepts a `fee` parameter in one of three forms:
+
+### 1. `"auto"` — Simulate and Calculate
+
+The simplest option. CosmJS simulates the transaction to estimate gas, applies a
+safety multiplier (default 1.4x), and calculates the fee from the configured gas
+price:
+
+```typescript
+const result = await client.signAndBroadcast(address, messages, "auto");
+```
+
+This requires `gasPrice` to be set in the client options. If it is not set, an
+error is thrown.
+
+### 2. A Number — Custom Gas Multiplier
+
+Pass a number to override the default 1.4x safety buffer. The simulation still
+runs, but your multiplier is used instead:
+
+```typescript
+const result = await client.signAndBroadcast(address, messages, 1.2);
+
+const result = await client.signAndBroadcast(address, messages, 2.0);
+```
+
+### 3. `StdFee` — Explicit Fee
+
+For full control, pass a `StdFee` object directly. No simulation runs:
+
+```typescript
+import { calculateFee, GasPrice } from "@cosmjs/stargate";
+
+const fee = calculateFee(200_000, GasPrice.fromString("0.025uatom"));
+
+const result = await client.signAndBroadcast(address, messages, fee);
+```
+
+## Calculating Fees Manually
+
+`calculateFee` multiplies a gas limit by a gas price and returns a `StdFee`:
+
+```typescript
+import { calculateFee, GasPrice } from "@cosmjs/stargate";
+
+const fee = calculateFee(200_000, GasPrice.fromString("0.025uatom"));
+// { amount: [{ denom: "uatom", amount: "5000" }], gas: "200000" }
+```
+
+`calculateFee` also accepts a gas price string directly:
+
+```typescript
+const fee = calculateFee(200_000, "0.025uatom");
+```
+
+The multiplication uses `Decimal` arithmetic internally, so it handles gas
+prices that would overflow JavaScript's safe integer range (e.g. chains with
+18-decimal tokens):
+
+```typescript
+const fee = calculateFee(500_000, GasPrice.fromString("5000000000000tiny"));
+// { amount: [{ denom: "tiny", amount: "2500000000000000000" }], gas: "500000" }
+```
+
+## Common Gas Limits
+
+These are rough estimates for common transactions. Actual gas varies by chain
+version, state, and message complexity:
+
+| Transaction | Typical Gas |
+|-------------|-------------|
+| `MsgSend` (token transfer) | 80,000 – 120,000 |
+| `MsgDelegate` | 200,000 – 300,000 |
+| `MsgUndelegate` | 200,000 – 300,000 |
+| `MsgWithdrawDelegatorReward` | 150,000 – 250,000 |
+| `MsgVote` | 80,000 – 120,000 |
+| IBC `MsgTransfer` | 150,000 – 250,000 |
+| CosmWasm `MsgExecuteContract` | 200,000 – 1,000,000+ |
+| CosmWasm `MsgStoreCode` | 1,000,000 – 5,000,000+ |
+
+Use `"auto"` unless you have a specific reason to set gas manually. The
+simulation-based approach adapts to the actual cost of your transaction.
+
+## Choosing the Right Approach
+
+| Situation | Recommendation |
+|-----------|---------------|
+| Standard app with known chain | Set `gasPrice` in client options, use `"auto"` everywhere |
+| Multi-chain app | Fetch gas prices from the chain registry at startup |
+| Chain with fee market (Osmosis, Cosmos Hub) | Use `DynamicGasPriceConfig` |
+| Fee-sensitive application | Simulate first, apply a conservative multiplier (1.5–2.0x) |
+| Offline or air-gapped signing | Calculate fees manually with `calculateFee` |
+| Sponsored transactions | Use fee grants with the `granter` field |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gas Simulation" icon="arrow-right" href="/cosmjs/v0.38.x/concepts/fees-gas/simulation">
+    Simulate transactions to estimate gas.
+  </Card>
+  <Card title="Dynamic Gas Pricing" icon="arrow-right" href="/cosmjs/v0.38.x/concepts/fees-gas/dynamic-gas-pricing">
+    Use fee market pricing for chains like Osmosis.
+  </Card>
+</CardGroup>

@@ -1,0 +1,73 @@
+---
+title: Custom Message Types
+description: Registering custom Protobuf and Amino message types in CosmJS
+---
+
+CosmJS registers all standard Cosmos SDK message types by default. If your chain
+has custom modules with their own message types, you need to register them.
+
+## Registering Custom Types
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes, SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { MsgCreatePost } from "./generated/blog/tx";
+
+const registry = new Registry(defaultRegistryTypes);
+registry.register("/blog.v1.MsgCreatePost", MsgCreatePost);
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { registry, gasPrice: GasPrice.fromString("0.025utoken") },
+);
+
+const msg = {
+  typeUrl: "/blog.v1.MsgCreatePost",
+  value: MsgCreatePost.fromPartial({
+    author: address,
+    title: "Hello from CosmJS",
+    body: "This is a custom message type.",
+  }),
+};
+
+const result = await client.signAndBroadcast(address, [msg], "auto");
+```
+
+## Amino Support for Custom Types
+
+If your custom messages also need Amino signing (e.g. for Ledger support), you
+need to register Amino converters alongside the Protobuf registry:
+
+```typescript
+import {
+  AminoTypes,
+  createDefaultAminoConverters,
+  SigningStargateClient,
+  GasPrice,
+} from "@cosmjs/stargate";
+import { Registry } from "@cosmjs/proto-signing";
+
+const aminoTypes = new AminoTypes({
+  ...createDefaultAminoConverters(),
+  "/blog.v1.MsgCreatePost": {
+    aminoType: "blog/MsgCreatePost",
+    toAmino: (value) => ({
+      author: value.author,
+      title: value.title,
+      body: value.body,
+    }),
+    fromAmino: (value) => ({
+      author: value.author,
+      title: value.title,
+      body: value.body,
+    }),
+  },
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { registry, aminoTypes, gasPrice: GasPrice.fromString("0.025utoken") },
+);
+```

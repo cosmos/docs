@@ -1,0 +1,100 @@
+---
+title: "CosmWasm Smart Contracts"
+description: "Interact with CosmWasm smart contracts using the @cosmjs/cosmwasm package"
+---
+
+The `@cosmjs/cosmwasm` package provides a full-featured client for interacting with CosmWasm smart contracts. It covers the complete contract lifecycle: connecting to a chain, querying contract state, uploading code, instantiating contracts, executing messages, and managing contract administration.
+
+## Prerequisites
+
+Install the required packages:
+
+<CodeGroup>
+
+```bash npm
+npm install @cosmjs/cosmwasm @cosmjs/proto-signing @cosmjs/stargate @cosmjs/encoding
+```
+
+```bash yarn
+yarn add @cosmjs/cosmwasm @cosmjs/proto-signing @cosmjs/stargate @cosmjs/encoding
+```
+
+</CodeGroup>
+
+## Connecting
+
+`CosmWasmClient` is the read-only client for querying CosmWasm chains. It extends the core Cosmos SDK query functionality with smart contract methods.
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await CosmWasmClient.connect("https://rpc.my-chain.network");
+
+const chainId = await client.getChainId();
+const height = await client.getHeight();
+```
+
+CosmJS auto-detects the CometBFT version (0.37, 0.38, or 1.x) at the endpoint. If you need to bypass auto-detection, use the `create` factory method with a specific CometBFT client:
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+import { Comet38Client } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await Comet38Client.connect("https://rpc.my-chain.network");
+const client = CosmWasmClient.create(cometClient);
+```
+
+Always disconnect when you're done, especially with WebSocket connections:
+
+```typescript
+try {
+  const balance = await client.getBalance("osmo1abc...", "uosmo");
+} finally {
+  client.disconnect();
+}
+```
+
+For signing transactions, `SigningCosmWasmClient` extends `CosmWasmClient` with upload, instantiate, execute, migrate, and all standard Cosmos SDK transaction capabilities:
+
+```typescript
+import { SigningCosmWasmClient } from "@cosmjs/cosmwasm";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { GasPrice } from "@cosmjs/stargate";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+  "your mnemonic words here ...",
+  { prefix: "osmo" },
+);
+const [{ address }] = await wallet.getAccounts();
+
+const client = await SigningCosmWasmClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uosmo") },
+);
+```
+
+Setting `gasPrice` enables `"auto"` fee estimation for all transactions. Without it, you must provide an explicit `StdFee` for every call.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Querying Contracts" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/cosmwasm/querying">
+    Smart queries, raw state access, and contract discovery.
+  </Card>
+  <Card title="Uploading Code" icon="upload" href="/cosmjs/v0.38.x/guides/cosmwasm/uploading">
+    Deploy Wasm binaries to chain with access restrictions.
+  </Card>
+  <Card title="Instantiating Contracts" icon="plus" href="/cosmjs/v0.38.x/guides/cosmwasm/instantiating">
+    Create contract instances with admin, funds, and predictable addresses.
+  </Card>
+  <Card title="Executing Contracts" icon="play" href="/cosmjs/v0.38.x/guides/cosmwasm/executing">
+    Execute single or batched contract calls with funds and events.
+  </Card>
+  <Card title="Contract Administration" icon="shield" href="/cosmjs/v0.38.x/guides/cosmwasm/administration">
+    Migrate contracts, update admin, and manage the contract lifecycle.
+  </Card>
+  <Card title="Gas and Advanced Usage" icon="gauge-high" href="/cosmjs/v0.38.x/guides/cosmwasm/gas-and-advanced">
+    Gas estimation, custom messages, binary helpers, and the wasm query extension.
+  </Card>
+</CardGroup>

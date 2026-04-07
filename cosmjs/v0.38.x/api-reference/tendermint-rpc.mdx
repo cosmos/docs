@@ -1,0 +1,172 @@
+---
+title: "@cosmjs/tendermint-rpc"
+description: "Tendermint/CometBFT RPC client for HTTP and WebSocket"
+---
+
+Low-level RPC client for communicating with Tendermint/CometBFT nodes. Supports HTTP and WebSocket transports, and auto-detects the node version.
+
+```bash
+npm install @cosmjs/tendermint-rpc
+```
+
+## connectComet
+
+Auto-detects the CometBFT/Tendermint version and returns the appropriate client.
+
+```typescript
+function connectComet(endpoint: string | HttpEndpoint): Promise<CometClient>
+```
+
+```typescript
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const client = await connectComet("https://rpc.my-chain.network");
+const status = await client.status();
+```
+
+## CometClient Interface
+
+All version-specific clients (`Tendermint37Client`, `Comet38Client`, `Comet1Client`) implement this interface.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `status` | — | `Promise<StatusResponse>` |
+| `block` | `height?: number` | `Promise<BlockResponse>` |
+| `blockResults` | `height?: number` | `Promise<BlockResultsResponse>` |
+| `blockchain` | `minHeight?: number`, `maxHeight?: number` | `Promise<BlockchainResponse>` |
+| `tx` | `params: TxParams` | `Promise<TxResponse>` |
+| `txSearch` | `params: TxSearchParams` | `Promise<TxSearchResponse>` |
+| `validators` | `params: ValidatorsParams` | `Promise<ValidatorsResponse>` |
+| `broadcastTxSync` | `params: BroadcastTxParams` | `Promise<BroadcastTxSyncResponse>` |
+| `broadcastTxAsync` | `params: BroadcastTxParams` | `Promise<BroadcastTxAsyncResponse>` |
+| `broadcastTxCommit` | `params: BroadcastTxParams` | `Promise<BroadcastTxCommitResponse>` |
+| `abciQuery` | `params: AbciQueryParams` | `Promise<AbciQueryResponse>` |
+| `disconnect` | — | `void` |
+
+## Version-Specific Clients
+
+### Tendermint37Client
+
+For Tendermint 0.37 nodes.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connect` (static) | `endpoint: string \| HttpEndpoint` | `Promise<Tendermint37Client>` |
+| `create` (static) | `rpcClient: RpcClient` | `Tendermint37Client` |
+
+### Comet38Client
+
+For CometBFT 0.38 nodes.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connect` (static) | `endpoint: string \| HttpEndpoint` | `Promise<Comet38Client>` |
+| `create` (static) | `rpcClient: RpcClient` | `Comet38Client` |
+
+### Comet1Client
+
+For CometBFT 1.x nodes.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `connect` (static) | `endpoint: string \| HttpEndpoint` | `Promise<Comet1Client>` |
+| `create` (static) | `rpcClient: RpcClient` | `Comet1Client` |
+
+## Type Guards
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `isTendermint37Client` | `client: CometClient` | `boolean` |
+| `isComet38Client` | `client: CometClient` | `boolean` |
+| `isComet1Client` | `client: CometClient` | `boolean` |
+
+## RPC Clients
+
+Low-level HTTP and WebSocket implementations.
+
+### HttpClient
+
+Standard HTTP client for request/response RPC.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `endpoint: string \| HttpEndpoint` | `HttpClient` |
+| `execute` | `request: JsonRpcRequest` | `Promise<JsonRpcSuccessResponse>` |
+| `disconnect` | — | `void` |
+
+### HttpBatchClient
+
+Batches multiple RPC requests into a single HTTP call.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `endpoint: string \| HttpEndpoint`, `options?: HttpBatchClientOptions` | `HttpBatchClient` |
+| `execute` | `request: JsonRpcRequest` | `Promise<JsonRpcSuccessResponse>` |
+| `disconnect` | — | `void` |
+
+```typescript
+interface HttpBatchClientOptions {
+  readonly dispatchInterval: number;
+  readonly batchSizeLimit: number;
+}
+```
+
+### WebsocketClient
+
+WebSocket client for streaming subscriptions.
+
+| Method | Parameters | Returns |
+|--------|------------|---------|
+| `constructor` | `endpoint: string`, `onError?: (err: any) => void` | `WebsocketClient` |
+| `execute` | `request: JsonRpcRequest` | `Promise<JsonRpcSuccessResponse>` |
+| `listen` | `request: JsonRpcRequest` | `Stream<JsonRpcEvent>` |
+| `disconnect` | — | `void` |
+
+## Key Types
+
+### HttpEndpoint
+
+```typescript
+interface HttpEndpoint {
+  readonly url: string;
+  readonly headers: Record<string, string>;
+}
+```
+
+### RpcClient
+
+```typescript
+interface RpcClient {
+  readonly execute: (request: JsonRpcRequest) => Promise<JsonRpcSuccessResponse>;
+  readonly disconnect: () => void;
+}
+```
+
+### BlockIdFlag
+
+```typescript
+enum BlockIdFlag {
+  Unknown = 0,
+  Absent = 1,
+  Commit = 2,
+  Nil = 3,
+}
+```
+
+## Date Utilities
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `fromRfc3339WithNanoseconds` | `str: string` | `ReadonlyDateWithNanoseconds` |
+| `toRfc3339WithNanoseconds` | `date: ReadonlyDateWithNanoseconds` | `string` |
+| `fromSeconds` | `seconds: number`, `nanos?: number` | `ReadonlyDateWithNanoseconds` |
+| `toSeconds` | `date: ReadonlyDateWithNanoseconds` | `{ seconds: number; nanos: number }` |
+
+## Address Utilities
+
+| Function | Parameters | Returns |
+|----------|------------|---------|
+| `pubkeyToAddress` | `type: "ed25519" \| "secp256k1"`, `data: Uint8Array` | `string` |
+| `pubkeyToRawAddress` | `type: "ed25519" \| "secp256k1"`, `data: Uint8Array` | `Uint8Array` |
+| `rawSecp256k1PubkeyToRawAddress` | `pubkeyRaw: Uint8Array` | `Uint8Array` |
+| `rawEd25519PubkeyToRawAddress` | `pubkeyRaw: Uint8Array` | `Uint8Array` |

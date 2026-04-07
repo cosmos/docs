@@ -1,0 +1,59 @@
+---
+title: Transaction Execution Errors
+description: Handling transaction execution failures from DeliverTx responses.
+---
+
+When a transaction is included in a block but execution fails (e.g. out of gas,
+insufficient funds, contract panic), `broadcastTx` does **not** throw. Instead
+it returns a `DeliverTxResponse` with a non-zero `code`.
+
+## Checking Success or Failure
+
+```typescript
+import {
+  isDeliverTxSuccess,
+  isDeliverTxFailure,
+  assertIsDeliverTxSuccess,
+} from "@cosmjs/stargate";
+
+const result = await client.signAndBroadcast(address, messages, fee);
+
+if (isDeliverTxSuccess(result)) {
+  console.info("Success:", result.transactionHash);
+} else {
+  console.error(`Failed with code ${result.code}: ${result.rawLog}`);
+}
+
+// Or throw on failure:
+assertIsDeliverTxSuccess(result);
+// Throws: "Error when broadcasting tx <hash> at height <height>. Code: <code>; Raw log: <rawLog>"
+```
+
+## Common Execution Failures
+
+| Failure | Where it appears | Typical cause |
+| --- | --- | --- |
+| Out of gas | `result.rawLog` contains "out of gas" | Gas limit too low; increase fee or use `"auto"` |
+| Insufficient funds | `result.rawLog` contains "insufficient funds" | Sender balance too low for amount + fee |
+| Invalid message | `result.rawLog` describes the validation error | Wrong field values or missing required fields |
+| Contract error | `result.rawLog` contains the contract error | CosmWasm contract returned an error |
+
+CosmJS does not define constants for Cosmos SDK error codes. The `code` and
+`codespace` fields are passed through from the node. Inspect `rawLog` (SDK <
+0.50) or `events` (SDK 0.50+) for human-readable details.
+
+## CosmWasm Convenience Methods
+
+Methods like `upload`, `instantiate`, `execute`, and `migrate` on
+`SigningCosmWasmClient` throw a plain `Error` when `isDeliverTxFailure` is true,
+instead of returning the `DeliverTxResponse`:
+
+```typescript
+try {
+  const { contractAddress } = await client.instantiate(
+    sender, codeId, msg, label, "auto",
+  );
+} catch (error) {
+  // "Error when broadcasting tx <hash> at height <height>. Code: <code>; Raw log: <rawLog>"
+}
+```
