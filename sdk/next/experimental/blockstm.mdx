@@ -116,9 +116,9 @@ NewSTMRunner(
 
 `NewSTMRunner` constructs a runner which uses parallel execution. Its parameters are:
 
-* **`txDecoder`** — A standard `sdk.TxDecoder`, readily available in any SDK application.
+* __`txDecoder`__ — A standard `sdk.TxDecoder`, readily available in any SDK application.
 
-* **`stores`** — A list of every store key used in your application. Since Block-STM needs to track store usage across transactions, it must be passed all module-level store keys. Here is an example taken from the Cosmos EVM:
+* __`stores`__ — A list of every store key used in your application. Since Block-STM needs to track store usage across transactions, it must be passed all module-level store keys. Here is an example taken from the Cosmos EVM:
 
 ```go
 keys := storetypes.NewKVStoreKeys(
@@ -145,7 +145,7 @@ for _, k := range oKeys {
 }
 ```
 
-* **`workers`** — The number of parallel workers. Experimentation has shown diminishing returns above your system's hardware parallelism. The recommended value is:
+* __`workers`__ — The number of parallel workers. Experimentation has shown diminishing returns above your system's hardware parallelism. The recommended value is:
 
 ```go
 import "runtime"
@@ -153,9 +153,9 @@ import "runtime"
 workers := min(runtime.GOMAXPROCS(0), runtime.NumCPU())
 ```
 
-* **`estimate`** — Controls whether the system should proactively determine transaction read/write conflicts before execution. Set this to `true` in all cases.
+* __`estimate`__ — Controls whether the system should proactively determine transaction read/write conflicts before execution. Set this to `true` in all cases.
 
-* **`coinDenom`** — A function that returns the staking coin denom at runtime. This is used during estimation to reason about which keys in the `bank` module will be modified when fees are collected. A hard-coded value is acceptable; the value should be your chain's bond denom.
+* __`coinDenom`__ — A function that returns the staking coin denom at runtime. This is used during estimation to reason about which keys in the `bank` module will be modified when fees are collected. A hard-coded value is acceptable; the value should be your chain's bond denom.
 
 ### Full Wiring Example
 
@@ -174,6 +174,8 @@ bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
 ## Parallel Transaction Optimization
 
 Once Block-STM is wired in, you may initially notice that most blocks execute slower than with serial execution. This is due to the overhead of re-executing transactions when any two have conflicting reads or writes. To realize performance gains, you need to reduce storage access conflicts between transactions.
+
+An example of this can be seen in [PR #26005](https://github.com/cosmos/cosmos-sdk/pull/26005) where new account creation involved assigning an ID whose value was retrieved and incremented via a single key in the `x/auth` module. The linked PR converts account ID generation to use deterministic UUID generation instead of relying on a conflicting storage location. The result is that multiple transactions in the same block which each create new accounts no longer access this key and can be run in parallel without re-executions.
 
 Work has already been done within the SDK and Cosmos EVM for common transaction types such as bank sends and EVM gas sends. The following steps describe the additional configuration needed.
 
