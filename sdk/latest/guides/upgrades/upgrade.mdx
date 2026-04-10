@@ -1,11 +1,19 @@
 ---
-title: Upgrading Modules
+title: Upgrades and Store Migrations
 ---
+
+<Warning>
+Read and understand all of this page before running a migration on a live chain.
+</Warning>
 
 <Note>
 **Synopsis**
 In-place store migrations allow modules to upgrade to new versions that include breaking changes. This document covers both the module-side (writing migrations) and the app-side (running migrations during an upgrade).
 </Note>
+
+The Cosmos SDK supports two approaches to chain upgrades: exporting the entire application state to JSON and starting fresh with a modified genesis file, or performing in-place store migrations that update state directly. In-place migrations are significantly faster for chains with large state and are the standard approach for live networks.
+
+This page covers how to write module migrations and how to run them inside an upgrade handler in your app.
 
 ## Consensus Version
 
@@ -49,53 +57,36 @@ Since these migrations are functions that need access to a Keeper's store, use a
 package keeper
 
 import (
-    
-	sdk "github.com/cosmos/cosmos-sdk/types"
+    sdk "github.com/cosmos/cosmos-sdk/types"
     "github.com/cosmos/cosmos-sdk/x/bank/exported"
-	v2 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v2"
-	v3 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v3"
-	v4 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v4"
+    v2 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v2"
+    v3 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v3"
+    v4 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v4"
 )
 
 // Migrator is a struct for handling in-place store migrations.
 type Migrator struct {
     keeper         BaseKeeper
-	legacySubspace exported.Subspace
+    legacySubspace exported.Subspace
 }
 
 // NewMigrator returns a new Migrator.
-func NewMigrator(keeper BaseKeeper, legacySubspace exported.Subspace)
-
-Migrator {
-    return Migrator{
-    keeper: keeper, legacySubspace: legacySubspace
-}
+func NewMigrator(keeper BaseKeeper, legacySubspace exported.Subspace) Migrator {
+    return Migrator{keeper: keeper, legacySubspace: legacySubspace}
 }
 
 // Migrate1to2 migrates from version 1 to 2.
-func (m Migrator)
-
-Migrate1to2(ctx sdk.Context)
-
-error {
+func (m Migrator) Migrate1to2(ctx sdk.Context) error {
     return v2.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc)
 }
 
 // Migrate2to3 migrates x/bank storage from version 2 to 3.
-func (m Migrator)
-
-Migrate2to3(ctx sdk.Context)
-
-error {
+func (m Migrator) Migrate2to3(ctx sdk.Context) error {
     return v3.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc)
 }
 
 // Migrate3to4 migrates x/bank storage from version 3 to 4.
-func (m Migrator)
-
-Migrate3to4(ctx sdk.Context)
-
-error {
+func (m Migrator) Migrate3to4(ctx sdk.Context) error {
     m.MigrateSendEnabledParams(ctx)
     return v4.MigrateStore(ctx, m.keeper.storeService, m.legacySubspace, m.keeper.cdc)
 }
@@ -116,7 +107,13 @@ To see example code of changes that were implemented in a migration of balance k
 
 ## Running Migrations in the App
 
-Once modules have registered their migrations, the app runs them inside an `UpgradeHandler` using `RunMigrations`. The handler is registered in `app.go`:
+Once modules have registered their migrations, the app runs them inside an `UpgradeHandler`. The upgrade handler type is:
+
+```go
+type UpgradeHandler func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error)
+```
+
+The handler receives the `VersionMap` stored by `x/upgrade` (reflecting the consensus versions from the previous binary), performs any additional upgrade logic, and must return the updated `VersionMap` from `RunMigrations`. Register the handler in `app.go`:
 
 ```go
 app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
@@ -170,3 +167,31 @@ func (app *MyApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abc
 ```
 
 This lets the Cosmos SDK detect when modules with newer consensus versions are introduced in a future upgrade.
+
+### Overwriting genesis functions
+
+The SDK provides modules that app developers can import, and those modules often already have an `InitGenesis` function. If you want to run a custom genesis function for one of those modules during an upgrade instead of the default one, you must both call your custom function in the handler AND manually set that module's consensus version in `fromVM`. Without the second step, `RunMigrations` will run the module's existing `InitGenesis` even though you already initialized it.
+
+<Warning>
+You must manually set the consensus version in `fromVM` for any module whose `InitGenesis` you are overriding. If you don't, the SDK will call the module's default `InitGenesis` in addition to your custom one.
+</Warning>
+
+```go
+import foo "github.com/my/module/foo"
+
+app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+    // Prevent RunMigrations from calling foo's default InitGenesis.
+    fromVM["foo"] = foo.AppModule{}.ConsensusVersion()
+
+    // Run your custom genesis initialization for foo.
+    app.ModuleManager.Modules["foo"].(module.HasGenesis).InitGenesis(ctx, app.appCodec, myCustomGenesisState)
+
+    return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+})
+```
+
+## Syncing a Full Node to an Upgraded Blockchain
+
+A full node joining an already-upgraded chain must start from the initial binary that the chain used at genesis and replay all historical upgrades. If all upgrade plans include binary download instructions, Cosmovisor's auto-download mode handles this automatically. Otherwise, you must provide each historical binary manually.
+
+See the [Cosmovisor](/sdk/latest/guides/upgrades/cosmovisor) guide for setup and configuration.
