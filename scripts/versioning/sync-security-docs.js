@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SECURITY_REPO = 'cosmos/security';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'v0.53', 'security');
+const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'latest', 'security');
 
 // Fetch content from GitHub
 async function fetchFromGitHub(filePath) {
@@ -369,8 +369,8 @@ ${auditsContent}
 
 ## Additional Resources
 
-- [Security and Maintenance Policy](./security-policy) - Release and maintenance policy
-- [Bug Bounty Program](./bug-bounty) - Report vulnerabilities and earn rewards
+- [Security and Maintenance Policy](/sdk/latest/security/security-policy) - Release and maintenance policy
+- [Bug Bounty Program](/sdk/latest/security/bug-bounty) - Report vulnerabilities and earn rewards
 - [cosmos/security Repository](https://github.com/${SECURITY_REPO}) - Complete security documentation
 `;
 
