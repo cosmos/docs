@@ -2,9 +2,12 @@
 
 Guidance for Claude Code when working in this repository.
 
-## Work Log
+## Notes and sync
 
-ALWAYS log meaningful changes as they are completed — not at the end of the session. Each branch gets its own file in `work-log/`. See [`work-log/CLAUDE.md`](work-log/CLAUDE.md) for format.
+You must do the following every time you work on something:
+
+1. ALWAYS log meaningful changes as they are completed. Each branch gets its own file in `work-log/`. See [`work-log/CLAUDE.md`](work-log/CLAUDE.md).
+2. After editing any files in `latest/`, run `node scripts/sync-latest-to-next.js <file-or-dir>` to apply the same changes to `next/`.
 
 ## Products
 
@@ -25,6 +28,8 @@ Each versioned product directory has:
 - `latest/` — current stable release, default for site visitors. Edit here for stable doc changes.
 - `next/` — active development. Default working directory for new content.
 - `v0.53/`, `v10.1.x/`, etc. — archived versions. Do not edit these.
+
+After editing files in `latest/`, run `node scripts/sync-latest-to-next.js <file-or-dir>` to apply the same changes to `next/`.
 
 ## Writing Style
 
