@@ -1,6 +1,6 @@
 'use client'
 
-export const DocCard = ({ title, description, docsLink, githubLink, isHighlighted, primaryLink, primaryLinkText, secondaryLink, secondaryLinkText }) => {
+export const DocCard = ({ title, description, docsLink, docsLinkText, githubLink, githubLinkText, isHighlighted }) => {
   return (
       <div
         className={`
@@ -34,46 +34,6 @@ export const DocCard = ({ title, description, docsLink, githubLink, isHighlighte
       </div>
 
       <div className="relative z-10 flex gap-3 md:gap-4 items-center flex-wrap">
-        {primaryLink && (
-          <a
-            href={primaryLink}
-            className="
-              bg-[#323536]
-              text-white px-4 py-2.5 md:py-3 rounded-full
-              text-sm md:text-md
-              flex items-center gap-2 md:gap-3
-              hover:bg-[#404243]
-              transition-all duration-300
-            "
-          >
-            {primaryLinkText}
-            <svg width="10" height="14" viewBox="0 0 10 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="fill-white shrink-0">
-              <path d="M4.67999 8.91512L4.67999 4.45715L9.36087 4.45715V8.91513L4.67999 8.91512Z" fill="currentColor"/>
-              <path d="M0 13.3743L6.13823e-07 8.91633L4.68087 8.91633L4.68087 13.3743L0 13.3743Z" fill="currentColor"/>
-              <path d="M0 4.45798L6.13823e-07 0L4.68087 5.84593e-07L4.68087 4.45798L0 4.45798Z" fill="currentColor"/>
-            </svg>
-          </a>
-        )}
-        {secondaryLink && (
-          <a
-            href={secondaryLink}
-            className="
-              bg-[#323536]
-              text-white px-4 py-2.5 md:py-3 rounded-full
-              text-sm md:text-md
-              flex items-center gap-2 md:gap-3
-              hover:bg-[#404243]
-              transition-all duration-300
-            "
-          >
-            {secondaryLinkText}
-            <svg width="10" height="14" viewBox="0 0 10 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="fill-white shrink-0">
-              <path d="M4.67999 8.91512L4.67999 4.45715L9.36087 4.45715V8.91513L4.67999 8.91512Z" fill="currentColor"/>
-              <path d="M0 13.3743L6.13823e-07 8.91633L4.68087 8.91633L4.68087 13.3743L0 13.3743Z" fill="currentColor"/>
-              <path d="M0 4.45798L6.13823e-07 0L4.68087 5.84593e-07L4.68087 4.45798L0 4.45798Z" fill="currentColor"/>
-            </svg>
-          </a>
-        )}
         {docsLink && (
           <a
             href={docsLink}
@@ -86,7 +46,7 @@ export const DocCard = ({ title, description, docsLink, githubLink, isHighlighte
               transition-all duration-300
             "
           >
-            Read the docs
+            {docsLinkText || 'Read the docs'}
             <svg width="10" height="14" viewBox="0 0 10 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="fill-white shrink-0">
               <path d="M4.67999 8.91512L4.67999 4.45715L9.36087 4.45715V8.91513L4.67999 8.91512Z" fill="currentColor"/>
               <path d="M0 13.3743L6.13823e-07 8.91633L4.68087 8.91633L4.68087 13.3743L0 13.3743Z" fill="currentColor"/>
@@ -97,8 +57,7 @@ export const DocCard = ({ title, description, docsLink, githubLink, isHighlighte
         {githubLink && !isHighlighted && (
           <a
             href={githubLink}
-            target="_blank"
-            rel="noopener noreferrer"
+            {...(githubLink.startsWith('http') ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             className="
               bg-[#323536]
               text-white px-4 py-2.5 md:py-3 rounded-full
@@ -108,7 +67,7 @@ export const DocCard = ({ title, description, docsLink, githubLink, isHighlighte
               transition-all duration-300
             "
           >
-            Github
+            {githubLinkText || 'Github'}
             <svg width="10" height="14" viewBox="0 0 10 14" fill="none" xmlns="http://www.w3.org/2000/svg" className="fill-white shrink-0">
               <path d="M4.67999 8.91512L4.67999 4.45715L9.36087 4.45715V8.91513L4.67999 8.91512Z" fill="currentColor"/>
               <path d="M0 13.3743L6.13823e-07 8.91633L4.68087 8.91633L4.68087 13.3743L0 13.3743Z" fill="currentColor"/>
