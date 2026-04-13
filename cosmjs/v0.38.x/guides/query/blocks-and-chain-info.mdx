@@ -1,0 +1,98 @@
+---
+title: "Blocks & Chain Info"
+description: "Query block data, chain status, validator sets, and historical state"
+---
+
+Beyond module-specific queries, the CometBFT RPC layer provides block-level and chain-level information. You can access basic block data through `StargateClient` or use the CometBFT client directly for advanced queries.
+
+## Chain Status
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const chainId = await client.getChainId();
+const height = await client.getHeight();
+```
+
+## Block Data
+
+```typescript
+const latestBlock = await client.getBlock();
+console.info(latestBlock.header.height);
+console.info(latestBlock.header.time);
+console.info(latestBlock.header.chainId);
+console.info(latestBlock.txs.length);
+
+const block100 = await client.getBlock(100);
+```
+
+## Using the CometBFT Client Directly
+
+For advanced block queries (block results, validator sets, block search), use the CometBFT client directly:
+
+```typescript
+import { Comet38Client } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await Comet38Client.connect("https://rpc.my-chain.network");
+
+const status = await cometClient.status();
+console.info(status.nodeInfo.network);
+console.info(status.syncInfo.latestBlockHeight);
+console.info(status.syncInfo.catchingUp);
+
+const validators = await cometClient.validatorsAll(100);
+console.info(validators.validators);
+
+const blockResults = await cometClient.blockResults(100);
+console.info(blockResults.results);
+
+const genesis = await cometClient.genesis();
+console.info(genesis.chainId);
+```
+
+### Available CometBFT Methods
+
+| Method | Description |
+|--------|-------------|
+| `status()` | Node info, sync status, latest block |
+| `block(height?)` | Full block at height |
+| `blockResults(height?)` | Tx results and events at height |
+| `blockSearch(params)` | Search blocks by event query |
+| `blockchain(min?, max?)` | Block headers in a height range |
+| `validators(params)` | Validator set (paginated) |
+| `validatorsAll(height?)` | Full validator set at height |
+| `genesis()` | Genesis document |
+| `health()` | Node health check |
+| `numUnconfirmedTxs()` | Mempool summary |
+| `tx(params)` | Single transaction by hash |
+| `txSearch(params)` | Search transactions |
+| `commit(height?)` | Signed block header |
+| `abciInfo()` | ABCI application info |
+| `abciQuery(params)` | Raw ABCI query |
+
+## Historical Queries
+
+`QueryClient.queryAbci` accepts an optional `desiredHeight` parameter, allowing you to query chain state as it existed at a specific block height:
+
+```typescript
+import { QueryClient, setupBankExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupBankExtension);
+```
+
+The built-in extensions do not expose height parameters directly. For historical queries, use the lower-level `queryAbci` method or construct an RPC client that targets a specific height. This is primarily useful for building block explorers or auditing state changes.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Transaction Queries" icon="receipt" href="/cosmjs/v0.38.x/guides/query/transactions">
+    Search and decode transactions.
+  </Card>
+  <Card title="Querying Overview" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/query/querying">
+    All available query methods.
+  </Card>
+</CardGroup>

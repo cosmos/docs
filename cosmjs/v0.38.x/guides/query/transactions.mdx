@@ -1,0 +1,223 @@
+---
+title: "Transaction Queries"
+description: "Search transactions by hash or events, decode raw bytes, parse events, and simulate gas"
+---
+
+You can look up transactions by hash, search by events, decode raw transaction bytes, and simulate gas usage — all without broadcasting anything on-chain.
+
+## Lookup by Hash
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const tx = await client.getTx("A1B2C3D4...");
+if (tx) {
+  console.info(tx.height);
+  console.info(tx.code); // 0 = success
+  console.info(tx.events);
+  console.info(tx.gasUsed);
+}
+```
+
+## Search by Events
+
+```typescript
+const txs = await client.searchTx("message.sender='cosmos1...'");
+
+const txs = await client.searchTx([
+  { key: "message.sender", value: "cosmos1..." },
+  { key: "message.action", value: "/cosmos.bank.v1beta1.MsgSend" },
+]);
+```
+
+Event queries use Tendermint's query syntax. Multiple conditions are combined with `AND`.
+
+### Structured Query Syntax
+
+`searchTx` accepts either a raw query string or a structured `SearchPair[]`. Structured queries are safer — string values are automatically quoted and numeric values are left unquoted (required by Tendermint):
+
+```typescript
+import { SearchPair } from "@cosmjs/stargate";
+
+const query: SearchPair[] = [
+  { key: "transfer.sender", value: "cosmos1..." },
+  { key: "tx.height", value: 12345 },
+];
+
+const txs = await client.searchTx(query);
+```
+
+## Decoding Raw Transaction Bytes
+
+`IndexedTx.tx` contains the raw transaction bytes. Use `decodeTxRaw` to inspect the messages, memo, fee, and signer info:
+
+```typescript
+import { decodeTxRaw } from "@cosmjs/proto-signing";
+
+const result = await client.getTx("A1B2C3D4...");
+if (result) {
+  const decoded = decodeTxRaw(result.tx);
+
+  console.info(decoded.body.messages);
+  console.info(decoded.body.memo);
+  console.info(decoded.authInfo.fee);
+  console.info(decoded.signatures);
+}
+```
+
+## Working with IndexedTx Fields
+
+The `IndexedTx` response provides several useful fields beyond the raw bytes:
+
+```typescript
+const result = await client.getTx("A1B2C3D4...");
+if (result) {
+  console.info(result.height);
+  console.info(result.txIndex);
+  console.info(result.code);          // 0 = success
+  console.info(result.gasUsed);       // bigint
+  console.info(result.gasWanted);     // bigint
+  console.info(result.events);        // Event[]
+  console.info(result.msgResponses);  // { typeUrl, value }[] (Cosmos SDK 0.46+)
+}
+```
+
+<Note>
+`rawLog` is deprecated and empty on Cosmos SDK 0.50+. Use `events` instead.
+</Note>
+
+## Parsing Transaction Events
+
+Transaction results include events emitted by Cosmos SDK modules. You can extract specific attributes from these events.
+
+### From DeliverTxResponse
+
+After broadcasting, use events directly from the response:
+
+```typescript
+import { assertIsDeliverTxSuccess } from "@cosmjs/stargate";
+
+const result = await client.signAndBroadcast(sender, messages, "auto");
+assertIsDeliverTxSuccess(result);
+
+for (const event of result.events) {
+  if (event.type === "transfer") {
+    for (const attr of event.attributes) {
+      console.info(`${attr.key} = ${attr.value}`);
+    }
+  }
+}
+```
+
+### From IndexedTx
+
+Events from searched transactions follow the same structure:
+
+```typescript
+const tx = await client.getTx("A1B2C3D4...");
+if (tx) {
+  const transferEvents = tx.events.filter((e) => e.type === "transfer");
+  for (const event of transferEvents) {
+    const recipient = event.attributes.find((a) => a.key === "recipient");
+    const amount = event.attributes.find((a) => a.key === "amount");
+    console.info(`${recipient?.value} received ${amount?.value}`);
+  }
+}
+```
+
+### Extracting Contract Addresses (CosmWasm)
+
+After uploading or instantiating a CosmWasm contract, the contract address is in the events. Use the same filtering pattern to extract it:
+
+```typescript
+const result = await client.signAndBroadcast(sender, [instantiateMsg], "auto");
+
+const instantiateEvent = result.events.find((e) => e.type === "instantiate");
+const contractAddress = instantiateEvent?.attributes.find(
+  (a) => a.key === "_contract_address",
+);
+console.info(contractAddress?.value);
+```
+
+<Tip>
+`SigningCosmWasmClient.instantiate` returns the contract address directly in its result, so you typically don't need to parse events manually for instantiation.
+</Tip>
+
+### Using parseRawLog (Legacy)
+
+For chains running Cosmos SDK < 0.50, you can parse the `rawLog` field through the `logs` namespace:
+
+```typescript
+import { logs } from "@cosmjs/stargate";
+
+const parsed = logs.parseRawLog(result.rawLog);
+const attr = logs.findAttribute(parsed, "transfer", "amount");
+```
+
+<Warning>
+`rawLog` is empty on Cosmos SDK 0.50+. Prefer working with `events` directly.
+</Warning>
+
+## Using the Tx Extension
+
+The tx extension provides a lower-level `getTx` and a `simulate` method for gas estimation:
+
+```typescript
+import { QueryClient, setupTxExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupTxExtension);
+
+const txResponse = await queryClient.tx.getTx("A1B2C3D4...");
+console.info(txResponse.tx);
+console.info(txResponse.txResponse);
+```
+
+## Gas Simulation
+
+Signing clients can simulate a transaction against the chain to estimate gas usage before broadcasting. Nothing is committed on-chain.
+
+```typescript
+import { SigningStargateClient, GasPrice, calculateFee } from "@cosmjs/stargate";
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const messages = [
+  {
+    typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+    value: {
+      fromAddress: "cosmos1sender...",
+      toAddress: "cosmos1recipient...",
+      amount: [{ denom: "uatom", amount: "1000000" }],
+    },
+  },
+];
+
+const gasEstimate = await client.simulate("cosmos1sender...", messages, "memo");
+console.info(gasEstimate); // e.g. 85432
+
+const fee = calculateFee(Math.round(gasEstimate * 1.3), GasPrice.fromString("0.025uatom"));
+console.info(fee); // { amount: [...], gas: "111062" }
+```
+
+<Tip>
+When you use `"auto"` as the fee in `signAndBroadcast`, the client calls `simulate` internally and applies a 1.4x multiplier to the result.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/query/error-handling">
+    Handle broadcast errors and timeouts.
+  </Card>
+  <Card title="Blocks & Chain Info" icon="cubes" href="/cosmjs/v0.38.x/guides/query/blocks-and-chain-info">
+    Block data and chain status.
+  </Card>
+</CardGroup>

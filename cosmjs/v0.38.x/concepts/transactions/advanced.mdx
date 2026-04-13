@@ -1,0 +1,85 @@
+---
+title: Advanced Patterns
+description: Offline signing, IBC transfers, and other advanced transaction patterns
+---
+
+## Offline Signing
+
+You can sign transactions without an RPC connection. This is useful for
+air-gapped signing or pre-signing transactions:
+
+```typescript
+const client = await SigningStargateClient.offline(wallet);
+
+const txRaw = await client.sign(
+  signerAddress,
+  messages,
+  fee,
+  "memo",
+  {
+    accountNumber: 42,
+    sequence: 7,
+    chainId: "cosmoshub-4",
+  },
+);
+```
+
+When signing offline, you must provide `explicitSignerData` since the client
+cannot query the chain for account number, sequence, and chain ID.
+
+## Inspecting a Signed Transaction
+
+You can decode a signed transaction to inspect its contents:
+
+```typescript
+import { decodeTxRaw } from "@cosmjs/proto-signing";
+
+const txRaw = await client.sign(address, messages, fee, "memo");
+const txBytes = TxRaw.encode(txRaw).finish();
+const decoded = decodeTxRaw(txBytes);
+
+// decoded.body.messages — the encoded messages
+// decoded.authInfo — fee and signer info
+// decoded.signatures — the raw signatures
+```
+
+## IBC Transfer
+
+Send tokens across chains using IBC:
+
+```typescript
+import { MsgTransfer } from "cosmjs-types/ibc/applications/transfer/v1/tx";
+import { Height } from "cosmjs-types/ibc/core/client/v1/client";
+
+const msg = {
+  typeUrl: "/ibc.applications.transfer.v1.MsgTransfer",
+  value: MsgTransfer.fromPartial({
+    sourcePort: "transfer",
+    sourceChannel: "channel-0",
+    token: { denom: "uatom", amount: "1000000" },
+    sender: senderAddress,
+    receiver: "osmo1recipient...",
+    timeoutHeight: Height.fromPartial({
+      revisionNumber: BigInt(1),
+      revisionHeight: BigInt(currentHeight + 100),
+    }),
+  }),
+};
+
+const result = await client.signAndBroadcast(senderAddress, [msg], "auto");
+```
+
+## Checking Transaction Results
+
+```typescript
+import { isDeliverTxFailure, isDeliverTxSuccess } from "@cosmjs/stargate";
+
+const result = await client.signAndBroadcast(address, messages, "auto");
+
+if (isDeliverTxSuccess(result)) {
+  console.info("Success:", result.transactionHash);
+} else if (isDeliverTxFailure(result)) {
+  const errorLog = result.events.map((e) => `${e.type}: ${JSON.stringify(e.attributes)}`).join("\n");
+  console.error("Failed with code", result.code, ":", errorLog);
+}
+```
