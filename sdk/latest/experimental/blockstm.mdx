@@ -174,6 +174,8 @@ bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
 
 Once Block-STM is wired in, you may initially notice that most blocks execute slower than with serial execution. This is due to the overhead of re-executing transactions when any two have conflicting reads or writes. To realize performance gains, you need to reduce storage access conflicts between transactions.
 
+An example of this can be seen in [PR #26005](https://github.com/cosmos/cosmos-sdk/pull/26005) where new account creation involved assigning an ID whose value was retrieved and incremented via a single key in the `x/auth` module. The linked PR converts account ID generation to use deterministic UUID generation instead of relying on a conflicting storage location. The result is that multiple transactions in the same block which each create new accounts no longer access this key and can be run in parallel without re-executions.
+
 Work has already been done within the SDK and Cosmos EVM for common transaction types such as bank sends and EVM gas sends. The following steps describe the additional configuration needed.
 
 ### Enable Virtual Fee Collection (EVM-specific)
@@ -197,3 +199,67 @@ app.BankKeeper = app.BankKeeper.WithObjStoreKey(oKeys[banktypes.ObjectStoreKey])
 All other changes to parallelize common transactions were done in a way that does not require configuration.
 
 For custom transaction types or custom modules, additional changes to KV store access patterns may be required. There is no generalized approach for this yet. The common pattern for functionality that requires access to the same storage key is to write intermediate values to transient or object storage and use an `EndBlocker` to collect the values after all transaction execution completes.
+
+## Benchmarks
+
+### Environment
+
+- **Machine:** Apple M3 Pro, 11 cores
+- **OS:** macOS (Darwin 25.3.0)
+- **Package:** `github.com/cosmos/cosmos-sdk/internal/blockstm`
+
+---
+
+### Random Workload (10k txs, 100 keys)
+
+| Workers | ns/op | B/op | allocs/op | Speedup |
+|---------|-------|------|-----------|---------|
+| sequential | 1,169M | 9.9M | 220K | 1.0x |
+| 1 | 1,208M | 36.3M | 544K | 0.97x |
+| 5 | 324M | 37.1M | 552K | **3.6x** |
+| 10 | 218M | 43.7M | 621K | **5.4x** |
+| 15 | 211M | 77.4M | 975K | **5.5x** |
+| 20 | 226M | 78.0M | 982K | **5.2x** |
+
+### No-Conflict Workload (10k txs)
+
+| Workers | ns/op | B/op | allocs/op | Speedup |
+|---------|-------|------|-----------|---------|
+| sequential | 1,381M | 11.7M | 221K | 1.0x |
+| 1 | 1,358M | 80.3M | 1,095K | 1.0x |
+| 5 | 291M | 81.1M | 1,103K | **4.8x** |
+| 10 | 209M | 83.5M | 1,131K | **6.6x** |
+| 15 | 200M | 83.7M | 1,135K | **6.9x** |
+| 20 | 204M | 83.8M | 1,136K | **6.8x** |
+
+### Worst-Case Workload (full conflict, 10k txs)
+
+| Workers | ns/op | B/op | allocs/op | Speedup |
+|---------|-------|------|-----------|---------|
+| sequential | 1,239M | 9.6M | 220K | 1.0x |
+| 1 | 1,280M | 34.5M | 520K | 0.97x |
+| 5 | 295M | 42.8M | 607K | **4.2x** |
+| 10 | 224M | 70.1M | 899K | **5.5x** |
+| 15 | 246M | 77.3M | 980K | **5.0x** |
+| 20 | 262M | 77.4M | 980K | **4.7x** |
+
+### Iterate Workload (10k txs, 100 keys)
+
+| Workers | ns/op | B/op | allocs/op | Speedup |
+|---------|-------|------|-----------|---------|
+| sequential | 1,286M | 16.5M | 290K | 1.0x |
+| 1 | 1,332M | 75.2M | 843K | 0.97x |
+| 5 | 288M | 76.5M | 855K | **4.5x** |
+| 10 | 252M | 123.1M | 1,280K | **5.1x** |
+| 15 | 317M | 359.5M | 3,405K | **4.1x** |
+| 20 | 319M | 363.5M | 3,419K | **4.0x** |
+
+---
+
+### Key Takeaways
+
+- Peak speedup is **6.9x** at 15 workers on the no-conflict workload
+- Diminishing returns beyond 10–15 workers, with memory usage increasing significantly
+- Even the worst-case (full conflict) scenario achieves ~5x speedup at 10 workers
+- The iterate workload shows performance degradation beyond 10 workers, likely due to increased contention on range reads (memory usage jumps ~3x at 15+ workers)
+
