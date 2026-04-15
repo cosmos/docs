@@ -323,7 +323,7 @@ function generateMintlifyContent(updates, repo, product, target) {
   const changelogUrl = `https://github.com/${repo}/blob/main/CHANGELOG.md`;
 
   const content = `---
-title: "Release Notes"
+title: "Changelog"
 description: "Release history and changelog for Cosmos ${productLabel}"
 mode: "wide"
 ---
