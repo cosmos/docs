@@ -396,7 +396,7 @@ function getVersionFilter(target) {
 async function generateChangelog(config, productConfig, target) {
   console.log(`\nGenerating changelog for ${config.product}/${target}...`);
 
-  const versionFilter = getVersionFilter(target);
+  const versionFilter = config.filter || getVersionFilter(target);
   const changelog = await fetchChangelog(
     productConfig.repository,
     config.source,
