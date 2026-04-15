@@ -86,7 +86,8 @@ The path is the file's location relative to the `docs/` root, without the `.mdx`
 Mintlify preserves special characters in anchor IDs. Rules:
 
 - Spaces become `-`
-- `&`, `+`, `/`, `=`, `@`, `#`, `$`, `%` are kept with surrounding hyphens (e.g. `Gas & Fees` becomes `#gas-&-fees`)
+- `&`, `+`, `=`, `@`, `#`, `$`, `%` are kept with surrounding hyphens (e.g. `Gas & Fees` becomes `#gas-&-fees`)
+- `/` is kept as-is, no surrounding hyphens (e.g. `x/gov` becomes `#x/gov`)
 - `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` are dropped (surrounding spaces still become `-`)
 - `-` in a heading stays as `-`, spaces around it collapse (e.g. `A - B` becomes `#a-b`)
 - All characters lowercased
