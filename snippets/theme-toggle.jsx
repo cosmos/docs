@@ -1,21 +1,21 @@
 export const ThemeToggle = () => {
-  const [mode, setMode] = useState('system');
+  const [mode, setMode] = useState('');
 
   useEffect(() => {
     // Try to read active mode from Mintlify's hidden buttons
-    for (const m of ['system', 'light', 'dark']) {
+    for (const m of ['light', 'dark']) {
       const btn = document.querySelector(`[data-testid="mode-switch-${m}"]`);
       if (btn && btn.classList.contains('bg-gray-200')) {
         setMode(m);
         return;
       }
     }
-    // Fall back to localStorage / DOM class
+    // Fall back to localStorage / OS preference
     const stored = localStorage.getItem('theme');
     if (stored === 'dark' || stored === 'light') {
       setMode(stored);
     } else {
-      setMode('system');
+      setMode(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     }
   }, []);
 
@@ -33,10 +33,6 @@ export const ThemeToggle = () => {
       } else if (newMode === 'light') {
         root.classList.remove('dark');
         localStorage.setItem('theme', 'light');
-      } else {
-        localStorage.removeItem('theme');
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        prefersDark ? root.classList.add('dark') : root.classList.remove('dark');
       }
     }
     setMode(newMode);
@@ -48,22 +44,6 @@ export const ThemeToggle = () => {
 
   return (
     <div className="flex items-center gap-2">
-      {/* System */}
-      <button
-        aria-label="Switch to system theme"
-        onClick={() => handleSwitch('system')}
-        className={mode === 'system' ? active : inactive}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className="size-4">
-          <g clipPath="url(#clip0_theme_system)">
-            <path d="M5.11133 14.4444C5.78511 14.232 6.78066 14 8.00022 14C8.70688 14 9.72555 14.0782 10.8891 14.4444" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M8 11.7778V14.0001" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M12.6668 2.44434H3.33344C2.3516 2.44434 1.55566 3.24027 1.55566 4.22211V9.99989C1.55566 10.9817 2.3516 11.7777 3.33344 11.7777H12.6668C13.6486 11.7777 14.4446 10.9817 14.4446 9.99989V4.22211C14.4446 3.24027 13.6486 2.44434 12.6668 2.44434Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </g>
-          <defs><clipPath id="clip0_theme_system"><rect width="16" height="16" fill="white"/></clipPath></defs>
-        </svg>
-      </button>
-
       {/* Light */}
       <button
         aria-label="Switch to light theme"
