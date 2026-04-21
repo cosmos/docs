@@ -1,4 +1,4 @@
-export function ThemeToggle() {
+export const ThemeToggle = () => {
   const [mode, setMode] = useState('system');
 
   useEffect(() => {
