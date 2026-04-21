@@ -11,7 +11,7 @@ export const ThemeToggle = () => {
       }
     }
     // Fall back to localStorage / OS preference
-    const stored = localStorage.getItem('theme');
+    const stored = localStorage.getItem('isDarkMode');
     if (stored === 'dark' || stored === 'light') {
       setMode(stored);
     } else {
@@ -29,10 +29,10 @@ export const ThemeToggle = () => {
       const root = document.documentElement;
       if (newMode === 'dark') {
         root.classList.add('dark');
-        localStorage.setItem('theme', 'dark');
+        localStorage.setItem('isDarkMode', 'dark');
       } else if (newMode === 'light') {
         root.classList.remove('dark');
-        localStorage.setItem('theme', 'light');
+        localStorage.setItem('isDarkMode', 'light');
       }
     }
     setMode(newMode);
