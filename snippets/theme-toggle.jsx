@@ -1,10 +1,8 @@
-import { useState, useEffect } from 'react';
-
 export function ThemeToggle() {
-  const [mode, setMode] = useState(null);
+  const [mode, setMode] = useState('system');
 
   useEffect(() => {
-    // Read active mode from whichever Mintlify button has the active class
+    // Try to read active mode from Mintlify's hidden buttons
     for (const m of ['system', 'light', 'dark']) {
       const btn = document.querySelector(`[data-testid="mode-switch-${m}"]`);
       if (btn && btn.classList.contains('bg-gray-200')) {
@@ -12,11 +10,35 @@ export function ThemeToggle() {
         return;
       }
     }
-    setMode('system');
+    // Fall back to localStorage / DOM class
+    const stored = localStorage.getItem('theme');
+    if (stored === 'dark' || stored === 'light') {
+      setMode(stored);
+    } else {
+      setMode('system');
+    }
   }, []);
 
   const handleSwitch = (newMode) => {
-    document.querySelector(`[data-testid="mode-switch-${newMode}"]`)?.click();
+    // Delegate to Mintlify's hidden button if present
+    const mintBtn = document.querySelector(`[data-testid="mode-switch-${newMode}"]`);
+    if (mintBtn) {
+      mintBtn.click();
+    } else {
+      // Direct fallback: manage dark class and localStorage ourselves
+      const root = document.documentElement;
+      if (newMode === 'dark') {
+        root.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+      } else if (newMode === 'light') {
+        root.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+      } else {
+        localStorage.removeItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        prefersDark ? root.classList.add('dark') : root.classList.remove('dark');
+      }
+    }
     setMode(newMode);
   };
 
