@@ -175,3 +175,21 @@ npm run reset          # clean + reinstall
 The Cosmos SDK example chain tutorials (`sdk/next/tutorials/example/`, files `00-overview.mdx` through `05-run-and-test.mdx`) are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change, a PR is opened on the other repo with content transformed between formats.
 
 The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other front matter (e.g. `description:`) is preserved.
+
+## CosmJS Documentation
+
+CosmJS docs live in `docs/cosmjs/` with versioned subdirectories (e.g. `v0.38.x/`). The source repo is **`cosmos/cosmjs`** (not `cosmjs-team/cosmjs` — wrong org that makes all citations unresolvable).
+
+### Source citation format
+
+Factual claims in docs can be backed by inline MDX comments:
+
+```mdx
+Some claim. {/* cosmos/cosmjs packages/stargate/src/stargateclient.ts:42 */}
+```
+
+**Critical MDX gotcha**: A blank line inside a Markdown table **terminates the table**. Never place a `{/* citation */}` comment after a blank line mid-table — it will cause all remaining rows to render as raw pipe-separated text. Place table citations after the last row of the table, or on the same line as a row.
+
+**TypeScript generics in MDX table cells**: Don't embed generic type constraints inside a type argument slot (e.g. `ArrayLike<T extends string | number | boolean>` is invalid TypeScript syntax). Use `ArrayLike<unknown>` in the parameter column and describe the constraint in prose below the table.
+
+**Output/summary files**: When writing `changes.md` or other output files that reference source code, use repo slugs (`cosmos/cosmjs`) not local absolute paths (`/Users/evan/...`) — local paths are meaningless outside this machine.
