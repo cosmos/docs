@@ -71,14 +71,17 @@ Elliptic curve operations for Cosmos, Bitcoin, and Ethereum signing.
 | `uncompressPubkey` (static) | `pubkey: Uint8Array` | `Uint8Array` |
 | `trimRecoveryByte` (static) | `signature: Uint8Array` | `Uint8Array` |
 
+
 ### Types
 
 ```typescript
 interface Secp256k1Keypair {
-  readonly pubkey: Uint8Array;  // 33 bytes (compressed) or 65 bytes
-  readonly privkey: Uint8Array; // 32 bytes
+  readonly pubkey: Uint8Array;
+  readonly privkey: Uint8Array;
 }
 ```
+
+The interface itself does not constrain the byte length of `pubkey`. When produced by `makeKeypair`, the key is always 65 bytes (uncompressed). Use `compressPubkey()` before passing it to Cosmos nodes, which expect 33-byte compressed keys.
 
 ```typescript
 import { Secp256k1, sha256 } from "@cosmjs/crypto";
@@ -93,16 +96,17 @@ const valid = Secp256k1.verifySignature(signature, hash, keypair.pubkey);
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `r` | `Uint8Array` | 32 bytes |
-| `s` | `Uint8Array` | 32 bytes |
-| `recovery` | `number` | 0 or 1 (extended only) |
+| `recovery` | `number` | 0–3 (extended only) |
 
-| Method | Returns |
-|--------|---------|
-| `toFixedLength()` | `Uint8Array` (64 bytes) |
-| `toDer()` | `Uint8Array` |
-| `fromFixedLength(data)` (static) | `Secp256k1Signature` / `ExtendedSecp256k1Signature` |
-| `fromDer(data)` (static) | `Secp256k1Signature` |
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `r(length?)` | `length?: number` | `Uint8Array` | r component, optionally zero-padded to `length` bytes |
+| `s(length?)` | `length?: number` | `Uint8Array` | s component, optionally zero-padded to `length` bytes |
+| `toFixedLength()` | — | `Uint8Array` | 64 bytes for `Secp256k1Signature`, 65 bytes for `ExtendedSecp256k1Signature` |
+| `toDer()` | — | `Uint8Array` | DER-encoded signature |
+| `fromFixedLength(data)` (static) | `data: Uint8Array` | `Secp256k1Signature` / `ExtendedSecp256k1Signature` | 64-byte input for base class, 65-byte for extended |
+| `fromDer(data)` (static) | `data: Uint8Array` | `Secp256k1Signature` | Parse DER-encoded signature |
+
 
 ## Ed25519
 
@@ -117,6 +121,7 @@ Edwards-curve digital signature algorithm for fast, deterministic signing.
 <Info>
   Ed25519 hashes the message internally. Do not pre-hash the message before signing.
 </Info>
+
 
 ```typescript
 import { Ed25519 } from "@cosmjs/crypto";
@@ -182,6 +187,7 @@ enum Slip10Curve {
 }
 ```
 
+
 ```typescript
 import { Slip10, Slip10Curve, stringToPath, Bip39, EnglishMnemonic } from "@cosmjs/crypto";
 
@@ -199,8 +205,9 @@ Authenticated encryption using XChaCha20-Poly1305.
 
 | Method | Parameters | Returns |
 |--------|------------|---------|
-| `encrypt` (static) | `plaintext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Uint8Array` |
-| `decrypt` (static) | `ciphertext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Uint8Array` |
+| `encrypt` (static) | `plaintext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Promise<Uint8Array>` |
+| `decrypt` (static) | `ciphertext: Uint8Array`, `key: Uint8Array`, `nonce: Uint8Array` | `Promise<Uint8Array>` |
+
 
 The constant `xchacha20NonceLength` is `24`.
 
