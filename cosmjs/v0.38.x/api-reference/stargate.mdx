@@ -92,6 +92,7 @@ Extends `StargateClient` with transaction signing and broadcasting. Inherits all
 ```typescript
 import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
 
 const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...");
 const [{ address }] = await wallet.getAccounts();
@@ -109,7 +110,16 @@ const result = await client.sendTokens(
   "auto",
 );
 
-await client.signAndBroadcast(address, [msg], "auto", "memo");
+const sendMsg = {
+  typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+  value: MsgSend.fromPartial({
+    fromAddress: address,
+    toAddress: "cosmos1recipient...",
+    amount: [{ denom: "uatom", amount: "1000000" }],
+  }),
+};
+
+await client.signAndBroadcast(address, [sendMsg], "auto", "memo");
 ```
 
 ## GasPrice
@@ -166,7 +176,7 @@ Setup functions to add module-specific query methods:
 | `setupAuthExtension` | `auth` | `account` |
 | `setupIbcExtension` | `ibc` | `channel.channel`, `channel.channels`, `transfer.denomTrace` |
 | `setupTxExtension` | `tx` | `getTx`, `simulate` |
-| `setupSlashingExtension` | `slashing` | `signingInfos`, `params` |
+| `setupSlashingExtension` | `slashing` | `signingInfo`, `signingInfos`, `params` |
 | `setupFeegrantExtension` | `feegrant` | `allowance`, `allowances` |
 | `setupAuthzExtension` | `authz` | `grants` |
 
@@ -206,7 +216,10 @@ interface DeliverTxResponse {
   readonly code: number;
   readonly transactionHash: string;
   readonly events: readonly Event[];
+  /** @deprecated Not filled in Cosmos SDK 0.50+. Use `events` instead. */
   readonly rawLog?: string;
+  /** @deprecated Use `msgResponses` instead. */
+  readonly data?: readonly MsgData[];
   readonly msgResponses: Array<{ readonly typeUrl: string; readonly value: Uint8Array }>;
   readonly gasUsed: bigint;
   readonly gasWanted: bigint;
