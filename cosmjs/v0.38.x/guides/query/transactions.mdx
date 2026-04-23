@@ -24,9 +24,11 @@ if (tx) {
 ## Search by Events
 
 ```typescript
-const txs = await client.searchTx("message.sender='cosmos1...'");
+// Raw Tendermint query string
+const stringResults = await client.searchTx("message.sender='cosmos1...'");
 
-const txs = await client.searchTx([
+// Or use the structured SearchPair[] form (see below)
+const structuredResults = await client.searchTx([
   { key: "message.sender", value: "cosmos1..." },
   { key: "message.action", value: "/cosmos.bank.v1beta1.MsgSend" },
 ]);
@@ -94,12 +96,18 @@ Transaction results include events emitted by Cosmos SDK modules. You can extrac
 
 ### From DeliverTxResponse
 
-After broadcasting, use events directly from the response:
+After broadcasting with a `SigningStargateClient`, use events directly from the response:
 
 ```typescript
-import { assertIsDeliverTxSuccess } from "@cosmjs/stargate";
+import { SigningStargateClient, GasPrice, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
 
-const result = await client.signAndBroadcast(sender, messages, "auto");
+const signingClient = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+
+const result = await signingClient.signAndBroadcast(sender, messages, "auto");
 assertIsDeliverTxSuccess(result);
 
 for (const event of result.events) {
@@ -129,10 +137,19 @@ if (tx) {
 
 ### Extracting Contract Addresses (CosmWasm)
 
-After uploading or instantiating a CosmWasm contract, the contract address is in the events. Use the same filtering pattern to extract it:
+After uploading or instantiating a CosmWasm contract, the contract address is in the events. Use the same filtering pattern to extract it (broadcast through `SigningCosmWasmClient`):
 
 ```typescript
-const result = await client.signAndBroadcast(sender, [instantiateMsg], "auto");
+import { SigningCosmWasmClient } from "@cosmjs/cosmwasm";
+import { GasPrice } from "@cosmjs/stargate";
+
+const wasmClient = await SigningCosmWasmClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uosmo") },
+);
+
+const result = await wasmClient.signAndBroadcast(sender, [instantiateMsg], "auto");
 
 const instantiateEvent = result.events.find((e) => e.type === "instantiate");
 const contractAddress = instantiateEvent?.attributes.find(
