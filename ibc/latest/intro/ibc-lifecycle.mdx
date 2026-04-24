@@ -1,0 +1,224 @@
+# IBC Lifecycle
+
+This page covers how IBC packets are structured, how they move through the protocol from send to acknowledgement or timeout, and a reference for the messages and callbacks involved at each stage.
+
+## Setup
+
+Before packets can flow between two chains, a one-time setup is required on each side. IBC Core must be running on both chains. On Cosmos chains it is a native module; on other chains it may be deployed as smart contracts.
+
+Each chain creates a light client of the other using `MsgCreateClient`. The light client type depends on the chains involved: a consensus light client for Cosmos-to-Cosmos connections, or an attestation light client for connections to chains where full consensus verification is not practical.
+
+Finally, each chain registers the other's light client ID as its counterparty using `MsgRegisterCounterparty`. This links the two clients so IBC Core knows which remote client to verify proofs against. Once both sides have registered each other, packets can flow.
+
+## Packets
+
+A packet is the unit of communication in IBC. It is how one chain sends a message to another. Every cross-chain action, whether it is a token transfer, a contract call, or any other application message, is wrapped in a packet and sent through the IBC protocol.
+
+A packet contains routing information (which clients are involved, what sequence number it has, when it expires) and one or more **payloads**. Each payload carries the actual application data: which ports are involved, what version and encoding the data uses, and the raw bytes of the message itself. Multiple payloads in a single packet execute atomically, which makes it possible to bundle cross-chain operations together.
+
+### Packet and payload structure
+
+The following is the basic structure of a packet. These fields are what IBC Core reads when routing, verifying, and tracking a packet through its lifecycle.
+
+```
+Packet {
+  sequence            uint64     // assigned by protocol
+  source_client       string     // light client ID on sending chain
+  destination_client  string     // light client ID on receiving chain
+  timeout_timestamp   uint64     // unix seconds; must be > now and <= now + 24h
+  payloads            []Payload  // one or more application messages
+}
+
+Payload {
+  source_port       string   // sending application's port ID
+  destination_port  string   // receiving application's port ID
+  version           string   // app protocol version (per-payload)
+  encoding          string   // e.g. "application/json", "application/x-protobuf"
+  value             []byte   // raw application data
+}
+```
+
+The `timeout_timestamp` is a Unix timestamp in seconds. If the packet is not received before that time, it can be timed out and the sending application can roll back. It must be set in the future but not more than 24 hours out.
+
+`version` and `encoding` are per-payload, not per-packet. This means two different applications can share a single packet while using completely different protocol versions and data formats.
+
+`value` is the actual content of the message. It is an encoded byte slice whose structure is entirely defined by the application. IBC Core treats it as opaque and passes it through untouched. The receiving application uses `encoding` to decode it and `version` to know which schema to expect. 
+
+Each application defines its own `value` format. Here are two examples of what a real payload's `value` contains:
+
+- An ICS-20 transfer payload encodes a struct containing the sender address, receiver address, token denomination, amount, and an optional memo. The receiver's transfer module decodes this and mints or unlocks the corresponding tokens.
+- A GMP payload encodes a struct containing a sender, a receiver address on the destination chain, a salt for replay protection, an inner payload (arbitrary contract call data), and a memo. The GMP module on the destination routes the inner payload to the target contract.
+
+Because `value` is just bytes, any application can define its own message format and encoding. The supported encodings across the codebase are JSON (`application/json`), Protobuf (`application/x-protobuf`), and Solidity ABI (`application/x-solidity-abi`).
+
+Multiple payloads in a single packet execute atomically: all succeed or all fail. If any payload's `OnRecvPacket` returns a failure, the state changes from all payloads are discarded.
+
+### Packet identifiers
+
+The main information used to identify a packet are two client IDs and a sequence number.
+
+- `source_client` is the light client ID on the sending chain. `destination_client` is the light client ID on the receiving chain. Together they identify which two chains are communicating.
+
+- `sequence` is a monotonically increasing integer per source client, starting at 1. The protocol assigns it when `sendPacket()` is called and returns it to the calling application. A packet is uniquely located on the source chain by `(source_client, sequence)` and on the destination chain by `(destination_client, sequence)`. To ask a relayer to relay a specific packet, you give it the source client ID and sequence number so it can find the commitment in the IBC store.
+
+
+## Packet lifecycle
+
+Every packet follows the same lifecycle regardless of the application that sent it. There are validation steps at each stage that assert the packet is well-formed and proofs are valid. The steps below describe what happens when all validations pass.
+
+```
+Source chain                                   Destination chain
+    |                                                  |
+    |---- MsgSendPacket ------------------------------>|
+    |     (write commitment)                           |
+    |                                                  |
+    |          +---- relayer: MsgUpdateClient -------->|
+    |          |     (advance light client)            |
+    |          |                                       |
+    |          +---- relayer: MsgRecvPacket ---------->|
+    |                         (verify + write receipt + write ack)
+    |                                                  |
+    |<---- relayer: MsgUpdateClient ----------+        |
+    |      (advance light client)             |        |
+    |                                         |        |
+    |<---- relayer: MsgAcknowledgement -------+        |
+    |     (verify ack + delete commitment)             |
+    |                                                  |
+    |- - - - - - OR if never received - - - - - - - - -|
+    |                                                  |
+    |<---- relayer: MsgUpdateClient ----------+        |
+    |      (advance light client)             |        |
+    |                                         |        |
+    |<---- relayer: MsgTimeout ---------------+        |
+    |     (prove absence + delete commitment)          |
+```
+
+Each IBC message triggers a callback on the application. `MsgSendPacket` calls `OnSendPacket` on the source chain so the application can validate and lock state. `MsgRecvPacket` calls `OnRecvPacket` on the destination chain so the application can execute and return an acknowledgement. `MsgAcknowledgement` calls `OnAcknowledgementPacket` on the source chain so the application can handle success or roll back on failure. `MsgTimeout` calls `OnTimeoutPacket` on the source chain so the application can roll back if the packet was never delivered.
+
+### Send packet (source chain)
+
+This is where a cross-chain message begins. The user triggers an IBC application, which constructs a packet, commits it on the source chain, and gets back a sequence number.
+
+```
+User -> IBCApp -> sendPacket() -> CommitPacket() -> OnSendPacket() -> return sequence number to IBCApp -> return sequence number to User
+```
+
+1. The user interacts with an IBC application, for example initiating a token transfer.
+2. The application calls `MsgSendPacket` with the source client ID, timeout timestamp, and one or more payloads.
+3. IBC Core looks up the `CounterpartyInfo` for the source client to get the destination client ID.
+4. The timeout is validated: it must be after the current block time, and the latest timestamp the light client has seen on the destination chain must not already be past it.
+5. The next sequence number for this source client is read and incremented.
+6. The packet is constructed and hashed with `CommitPacket()`. That commitment hash is written to the IBC store.
+7. `OnSendPacket()` is called on each payload's source port application. If any app returns an error, the entire transaction reverts.
+8. The sequence number is returned to the caller in `MsgSendPacketResponse`.
+
+### Receive packet (destination chain)
+
+The relayer delivers the packet to the destination chain. The destination chain verifies the packet was actually sent, executes the application logic, and writes the result.
+
+```
+Relayer -> MsgUpdateClient()     (separate tx, advances light client to proof height)
+Relayer -> MsgRecvPacket()
+  -> verifyMembership()          (proves packet commitment exists on source chain)
+  -> setPacketReceipt()
+  -> onRecvPacket()              (routes each payload to the correct app)
+  -> CommitAcknowledgement()     (writes ack hash to store)
+```
+
+1. The relayer first submits `MsgUpdateClient` to advance Chain B's light client of Chain A to the block height where the packet commitment exists. This is a separate transaction that must land before `MsgRecvPacket`.
+2. The relayer submits `MsgRecvPacket` with the packet, a Merkle proof of the commitment, and the proof height.
+3. If the destination client has an allowed-relayers config set, IBC Core checks the relayer is authorized.
+4. IBC Core verifies the packet's `source_client` matches the counterparty registered for the `destination_client`, confirming the packet came from the expected chain.
+5. If the current block time is already past `timeout_timestamp`, the receive fails.
+6. If a receipt already exists at `(destinationClient, sequence)`, the message returns `NOOP` rather than an error, allowing relayers to retry safely.
+7. IBC Core calls `VerifyMembership()` on the light client, proving that `CommitPacket(packet)` exists at the expected key in Chain A's IBC store.
+8. A receipt is written to prevent future replay.
+9. The port router calls `OnRecvPacket()` on each payload's destination port application. Each app returns a `RecvPacketResult` with a status (`PacketStatus_Success`, `PacketStatus_Failure`, or `PacketStatus_Async`) and an acknowledgement.
+10. If all payloads succeed, the app acknowledgements are collected into one `Acknowledgement` struct and committed to the store via `CommitAcknowledgement()`. If any payload fails, all state changes are discarded and the entire acknowledgement is replaced with the sentinel error acknowledgement.
+
+### Acknowledgement (source chain)
+
+Once the packet is processed on the destination chain, the relayer brings the result back to the source chain so the application can confirm success or handle a failure.
+
+```
+Relayer -> MsgUpdateClient()         (advance source chain's light client of destination)
+Relayer -> MsgAcknowledgement()
+  -> verifyMembership()              (proves ack was written on destination)
+  -> deletePacketCommitment()
+  -> onAcknowledgementPacket()       (routes each payload's ack to the correct app)
+```
+
+1. The relayer submits `MsgAcknowledgement` with the packet, the acknowledgement, and a Merkle proof that the ack was written to Chain B's store.
+2. If the packet commitment on Chain A has already been deleted, the message returns `NOOP`.
+3. IBC Core calls `VerifyMembership()` to prove the acknowledgement hash exists in Chain B's IBC store.
+4. The packet commitment is deleted from Chain A's store.
+5. For each payload, the port router calls `OnAcknowledgementPacket()` on the source port application. If the receive succeeded, each app gets its own per-payload ack bytes. If the receive failed, every app gets the sentinel error ack bytes and is responsible for any refund or rollback logic.
+
+An error acknowledgement means the packet reached the destination chain but could not be processed there. The application handles it the same way it handles a timeout.
+
+### Timeout (source chain)
+
+If a packet is never delivered before its deadline, the source chain can prove it was never received and roll back the send as if it never happened.
+
+```
+Relayer -> MsgUpdateClient()     (advance source chain's light client past the timeout)
+Relayer -> MsgTimeout()
+  -> verifyNonMembership()       (proves receipt is absent on destination)
+  -> deletePacketCommitment()
+  -> onTimeoutPacket()           (routes each payload to the correct app for rollback)
+```
+
+Timeouts happen on the source chain when a packet was not delivered before its `timeout_timestamp`.
+
+1. The relayer submits `MsgTimeout` with the packet and a proof that the receipt key is absent from Chain B's store at a height after the timeout deadline.
+2. IBC Core verifies the proof height's timestamp is at or past the `timeout_timestamp`.
+3. If the packet commitment has already been deleted, the message returns `NOOP`.
+4. IBC Core calls `VerifyNonMembership()`, proving the receipt key does not exist in Chain B's store. If a receipt exists (meaning the packet was actually delivered), the timeout is rejected.
+5. The packet commitment is deleted.
+6. For each payload, the port router calls `OnTimeoutPacket()` on the source port application so it can execute rollback logic, for example releasing escrowed tokens.
+
+## IBC Messages Reference
+
+The following is a reference for the messages and callbacks involved in the IBC packet lifecycle.
+
+### Setup Messages
+
+Done once by chain operators or governance before packets can flow.
+
+| Message | Description |
+| --- | --- |
+| `MsgCreateClient` | Creates a light client on a chain |
+| `MsgRegisterCounterparty` | Links two light client IDs so they can exchange packets |
+| `MsgUpgradeClient` | Upgrades a light client after a chain upgrade |
+
+### Packet messages
+
+Sent per packet during normal operation.
+
+| Message | Who | Description | Triggers |
+| --- | --- | --- | --- |
+| `MsgSendPacket` | User/App | Sends a packet from the source chain | `OnSendPacket` |
+| `MsgUpdateClient` | Relayer | Submits a new block header to advance the light client | |
+| `MsgRecvPacket` | Relayer | Delivers packet + proof to the destination | `OnRecvPacket` |
+| `MsgAcknowledgement` | Relayer | Delivers ack + proof back to source | `OnAcknowledgementPacket` |
+| `MsgTimeout` | Relayer | Proves non-receipt to source | `OnTimeoutPacket` |
+
+### Callbacks
+
+| Callback | Chain | Description |
+| --- | --- | --- |
+| `OnSendPacket` | Source | App validates and locks state when a packet is being sent |
+| `OnRecvPacket` | Destination | App executes and returns an ack when a verified packet arrives |
+| `OnAcknowledgementPacket` | Source | App handles success or failure when the ack is delivered |
+| `OnTimeoutPacket` | Source | App rolls back if the packet was never delivered |
+
+### Full flow
+
+Setup once: `MsgCreateClient` + `MsgRegisterCounterparty`
+
+Per packet:
+
+1. User: `MsgSendPacket` triggers `OnSendPacket`
+2. Relayer: `MsgUpdateClient` + `MsgRecvPacket` triggers `OnRecvPacket`
+3a. Relayer: `MsgUpdateClient` + `MsgAcknowledgement` triggers `OnAcknowledgementPacket`
+3b. Relayer (if there is a timeout): `MsgTimeout` triggers `OnTimeoutPacket`
