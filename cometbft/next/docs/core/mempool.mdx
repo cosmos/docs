@@ -8,7 +8,7 @@ A mempool (a contraction of memory and pool) is a node's data structure for
 storing information on uncommitted transactions. It acts as a sort of waiting
 room for transactions that have not yet been committed.
 
-CometBFT currently supports two types of mempools: `flood` and `nop`.
+CometBFT currently supports three types of mempools: [`flood`](#1-flood), [`nop`](#2-nop), and [`app`](#3-app).
 
 ## 1. Flood
 
@@ -104,8 +104,12 @@ to the ABCI application developers.
 
 ## 3. App
 
-The `app` mempool is used when the ABCI application wants a middle ground
-between the `flood` and `nop` mempool. 
+<Note>
+The CometBFT `app` mempool is distinct from the [Cosmos SDK's application mempool](/sdk/latest/guides/abci/app-mempool). The SDK's application mempool controls transaction ordering at block proposal time. The CometBFT `app` mempool delegates the entire transaction lifecycle (storage, gossip, and rechecking) from CometBFT to the application. The CometBFT `app` mempool is currently implemented in [Cosmos EVM](/evm/latest/documentation/concepts/mempool).
+</Note>
+
+The `app` mempool (also known as the Krakatoa mempool) is used when the ABCI application wants a middle ground
+between the `flood` and `nop` mempool.
 
 The `app` mempool delegates transaction storage, validation, and rechecking
 entirely to the ABCI application. CometBFT acts as a thin proxy — receiving
@@ -136,7 +140,7 @@ synchronization overhead.
 
 The `app` mempool eliminates these issues by making the application the single
 source of truth for mempool state. CometBFT no longer holds the ABCI lock for
-mempool operations — `InsertTx` and `ReapTxs` are called concurrently and the
+mempool operations: `InsertTx` and `ReapTxs` are called concurrently and the
 application is responsible for its own synchronization.
 
 ### Quick Start
@@ -322,13 +326,13 @@ With the `app` mempool, the transaction lifecycle changes significantly:
 
 1. Transaction arrives to application via application side RPC
 2. Application validates and inserts the tx into its `app` mempool
-   implementation. Note that validating can happen after insert, its up to the
+   implementation. Note that validating can happen after insert, it's up to the
    application!
 3. The application provides the tx to CometBFT once validated by returning its
    bytes via the `ReapTxs` ABCI method.
 4. CometBFT gossips the validated transaction to peers. 
 5. At block proposal time, `PrepareProposal` receives no transactions from
-   CometBFT — the application builds the block from its own mempool
+   CometBFT: the application builds the block from its own mempool
 6. After block commit, the application runs its own recheck logic on its own
    schedule
 
@@ -412,7 +416,7 @@ These options only apply when `type = "app"`:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `seen_cache_size` | Size of the LRU cache for deduplicating seen transactions. Prevents re-inserting transactions already forwarded to the application. | `100000` |
-| `check_tx_retry_delay` | Delay after which a tx is removed from the seen cache for after forwarding to the application via `CheckTx`. If a non retryable error code is returned, the fully delay is used before removing from the cache allowing (thus allowing a retry). If a retryable error code is returned, 1/10th of the delay is used. | `"500ms"` |
+| `check_tx_retry_delay` | Delay after which a tx is removed from the seen cache after forwarding to the application via `CheckTx`. If a non-retryable error code is returned, the full delay is used before removing from the cache (allowing a retry). If a retryable error code is returned, 1/10th of the delay is used. | `"500ms"` |
 | `reap_max_bytes` | Informs the application the maximum amount of bytes it should return from each call to `ReapTxs`. `0` means no limit. | `0` |
 | `reap_max_gas` | Informs the application the maximum amount of gas it should return from each call to `ReapTxs`. `0` means no limit. | `0` |
 | `reap_interval` | Interval between `ReapTxs` calls. | `"500ms"` |
@@ -436,5 +440,5 @@ Options specific to the `flood` mempool (`size`, `max_txs_bytes`, `cache_size`,
 `recheck`, etc.) have no effect when using the `app` mempool.
 
 ### Related Documentation
-- [Cosmos EVM Krakatoa Mempool](/evm/next/documentation/concepts/mempool) - Cosmos EVM's mempool is an implementation of an `app` mempool
+- [Cosmos EVM Krakatoa Mempool](/evm/latest/documentation/concepts/mempool) - Cosmos EVM's mempool is an implementation of an `app` mempool
 - [ABCI Methods](/cometbft/next/spec/abci/Methods) - ABCI method specification
