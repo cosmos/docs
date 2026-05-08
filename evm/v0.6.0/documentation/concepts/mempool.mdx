@@ -1,0 +1,248 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/evm/latest/documentation/concepts/mempool'
+title: "Mempool"
+description: "Design and Rationale"
+icon: "layers"
+tags: ["mempool"]
+---
+
+## Overview
+
+The EVM mempool manages both EVM and Cosmos transactions in a unified pool, enabling Ethereum-compatible transaction flows including out-of-order transactions and nonce gap handling. It replaces the default CometBFT FIFO mempool to support Ethereum tooling expectations while maintaining Cosmos SDK compatibility.
+
+## Purpose and Design
+
+The EVM mempool serves as a bridge between Ethereum's transaction management model and Cosmos SDK's consensus layer.
+
+**Design Goals**:
+- **Ethereum Compatibility**: Out-of-order transaction submission, nonce gap handling, transaction replacement with higher fees, standard txpool RPC methods
+- **Cosmos Integration**: Unified mempool for both EVM and Cosmos transactions, fee-based prioritization, integration with ante handlers, preservation of consensus finality
+  **Transaction Validation**: The EVM mempool is an implementation of CometBFT's application mempool type. This means that the application is fully responsible for transaction validation, transaction rechecking, and block building. Please see [CometBFT's mempool docs](https://docs.cosmos.network/cometbft/latest/docs/core/mempool) (section 3) for more info on this architecture. 
+
+**Use Cases**: Complex contract deployments (DeFi protocols), batch transaction workflows (development scripts), transaction replacement (fee bumping)
+
+## Architecture
+
+Below is a general architecture diagram of how the mempool works, specifically
+for EVM transactions. There are other components within the mempool to
+facilitate Cosmos transactions, however the EVM mempool is mostly concerned
+with the performance of EVM transactions, so this focuses on them. There is
+largely a mirror of each of these components for Cosmos transactions, with the
+exception of allowing nonce gapped transactions.
+
+![Mempool Architecture](/assets/public/krakatoa_mempool_architecture.png)
+
+## Transaction Flow
+
+Given this architecture, we will now describe a transaction steps from
+ingestion, either via JSON-RPC, P2P, or BroadcastTx to being validated and
+included in a block.
+
+### Transaction Submission
+
+#### JSON-RPC
+
+Transactions submitted via the `eth` JSON-RPC are directly added to the EVM
+mempool without going through CometBFT or any `CheckTx` validation (however
+__some__ [EVM mempool validation ported from
+geth](https://github.com/cosmos/evm/blob/release/v0.7.x/mempool/txpool/legacypool/legacypool.go#L895)
+is done at insert time).
+
+#### P2P 
+
+Transactions submitted via P2P are received by CometBFT and passed to the
+application via the `InsertTx` ABCI method. This method signals to the
+application that it should insert the transaction into its mempool and should
+validate it on its own terms, it does not have to happen synchronously at
+insertion time.
+
+Both EVM & Cosmos transactions that are ingested via P2P are added to the
+mempool's
+[`InsertQueue`](https://github.com/cosmos/evm/blob/release/v0.7.x/mempool/internal/queue/queue.go#L57)
+before immediately returning (RPC/local transactions also use this
+`InsertQueue` path, however the callers wait for the transaction to leave the
+`InsertQueue` before returning, so it is less noticeable). The application does
+not wait on any validation to happen. This ensures the P2P flow is extremely
+fast since this sees the highest amount of traffic during high TPS periods.
+
+#### BroadcastTx
+
+> Using CometBFT's `BroadcastTx...` methods is not recommended for the best
+performance however it fully supported since many Cosmos/EVM chains still
+require non EVM transactions that cannot be submitted via the application side
+JSON-RPC.
+
+The EVM mempool provides a `CheckTx` handler that calls a synchronous `Insert`
+function. This will run `anteHanlder`'s in the insert hot path and provide the
+typical `BroadcastTx...` response clients are used to.
+
+See [CometBFT's app mempool documentation on
+`BroadcastTx...`](https://docs.cosmos.network/cometbft/latest/docs/core/mempool#updated-broadcast_tx_-rpc-lifecycle-app-mempool)
+for more details.
+
+### Transaction Validation
+
+Nonce gapped EVM transactions are fully supported and are queued locally until
+they are available for execution.
+
+To determine if a transaction is valid and ready for execution (either after
+being enqueued locally due to a nonce gap, or asynchronously after insertion),
+the applications `anteHandler` is run the tx in order to determine validity.
+This ensures that all txs that are marked as executable (also called 'pending'
+within the EVM mempool) have passed `anteHandler`'s (this is the same
+validation that would typically be done via `CheckTx` when using a non `app`
+mempool).
+
+Since the `anteHandler` execution is happening asynchronously from transaction
+insertion, users will only see errors from the EVM mempools validation ported
+from geth at insert time. Users will not see errors that stem only from
+`anteHandler` validation and if the `anteHandler` fails, the transaction is
+silently dropped after a successful insert, however this should be rare.
+
+### Transaction Revalidation
+
+One of the key aspects of implementing an `app` mempool is that CometBFT does
+not drive revalidation of txs after block inclusion.
+
+The EVM mempool ensures that after every block, each transaction (both queued
+and pending execution) is either revalidated or removed from the mempool if it
+has become invalid, and demoting (moving from pending execution -> queued) EVM
+transactions that have now become nonce gapped due to the drop (Cosmos
+transactions cannot have nonce gaps, so they are dropped if an earlier nonce tx
+is dropped).
+
+This revalidation is driven asynchronously either via CometBFT's event bus
+system, or via the `PrepareCheckStater` hook in the CosmosSDK.
+`PrepareCheckStater` runs just after block commit. CometBFT's event bus is the
+preferred method (`PrepareCheckStater` is largely used to drive integration
+tests running without a CometBFT instance under the hood).
+
+### Transaction gossip
+
+Upon successful `anteHandler` validation, transactions are pushed onto a
+[`ReapList`](https://github.com/cosmos/evm/blob/release/v0.7.x/mempool/internal/reaplist/reaplist.go#L26)
+that will pass the transaction to CometBFT the next time CometBFT calls the
+`ReapTxs` ABCI method. CometBFT will then gossip the tx to the rest of the
+network. 
+
+Note that reaping a transaction only happens the **first** time a transaction
+is successfully validated. This means that if a transaction is nonce gapped, it
+is not gossiped (it has not yet been validated via `anteHandler`'s). If a
+transaction is validated, invalidated, and revalidated, it is only gossiped
+upon the **first** validation, it is not re-gossipped upon the second
+validation.
+
+> See the [CometBFT app mempool
+> documentation](https://docs.cosmos.network/cometbft/latest/docs/core/mempool)
+> for more details on gossip once the transaction has passed the ABCI boundary. 
+
+### Block Building
+
+`app` mempools receive no transactions from CometBFT when creating a new block
+(it stores none, so it has none to give), thus all transactions that are going
+to be included in a proposal must be provided and validated via the EVM
+mempool. These transactions are provided as a CosmosSDK `Iterator` via the
+`SelectBy` function, that the CosmosSDK will call during the `PrepareProposal`
+ABCI method.
+
+The EVM mempool takes special care to be fair to both EVM and Cosmos
+transactions. It orders both sets of transactions by the same rules, nonce and
+effective tip. Effective tip is calculated as:
+- **EVM**: `min(gas_tip_cap, gas_fee_cap - base_fee)`
+- **Cosmos**: `fee_amount / gas_limit`
+Preference is given to EVM transactions in the case of ties.
+
+## Application Requirements and Considerations
+
+Given that the EVM mempool is an `app` side mempool, there are special
+considerations that must be taken by the application to ensure the correctness
+of the transactions being validated.
+
+### Address reservations
+
+The EVM mempool uses an address reservation system to ensure that no
+transaction signer can have a transaction in both the EVM subpool and the
+Cosmos subpool at the same time. That means, if signer A submits an EVM tx
+through the `eth_SubmitRawTransaction` JSON-RPC, user A cannot submit a Cosmos
+transaction via the `BroadcastTxSync` RPC method until their first EVM
+transaction has left the EVM mempool (either because it was included on chain,
+or dropped due to a validation error). 
+
+This requirement is because of how the rechecking of transactions works
+internally between the two (EVM & Cosmos) pools works within the mempool. The
+rechecking runs asynchronously within each distinct pool, with no communicating
+between the two. Having the same signer in both pools would require
+synchronization between the two to ensure that the transactions are checked in
+the correct nonce ordering. 
+
+### Ante Handlers
+
+`AnteHandler` sequences must ensure that they do not have any cross-account
+state changes. This is due to the same reasoning as above, if validating a
+transaction in the EVM pool from signer A, can suddenly effect the outcome of
+validating signer B in the Cosmos pool, this is undefined behavior and the
+validation would depend on the ordering and timing of the rechecks across
+asynchronous loops.
+
+## API Reference
+
+The mempool exposes Ethereum-compatible RPC methods. See [JSON-RPC Methods documentation](/evm/v0.6.0/api-reference/ethereum-json-rpc/methods#txpool-methods) for detailed reference:
+
+- `txpool_status`, `txpool_content`, `txpool_contentFrom`, `txpool_inspect`
+
+Explore interactively: [RPC Explorer](/evm/v0.6.0/api-reference/ethereum-json-rpc/rpc-explorer)
+
+## Configuration
+
+### Basic Configuration & Wiring
+
+The helper function:
+
+```go
+import (
+	"github.com/cosmos/evm/server"
+	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+)
+
+var appOpts servertypes.AppOptions
+config := server.ResolveMempoolConfig(app.GetAnteHandler(), appOpts, logger)
+```
+
+is provided in order to load a mempool configuration from the app options.
+
+Then wire up the mempools dependencies to construct it:
+
+```go
+import (
+	evmmempool "github.com/cosmos/evm/mempool"
+	"github.com/cosmos/evm/server"
+)
+
+var (
+    txEncoder       = evmmempool.NewTxEncoder(app.txConfig)
+    evmRechecker    = evmmempool.NewTxRechecker(mpConfig.AnteHandler, txEncoder)
+    cosmosRechecker = evmmempool.NewTxRechecker(mpConfig.AnteHandler, txEncoder)
+    cosmosPoolMaxTx = server.GetCosmosPoolMaxTx(appOpts, logger)
+)
+
+mempool := evmmempool.NewMempool(
+    app.CreateQueryContext,
+    logger,
+    app.EVMKeeper,
+    app.FeeMarketKeeper,
+    app.txConfig,
+    evmRechecker,
+    cosmosRechecker,
+    config,
+    cosmosPoolMaxTx,
+)
+```
+
+## Integration
+
+For chain developers integrating the mempool and looking for full configuration details, see the [EVM Mempool Integration Guide](/evm/v0.6.0/documentation/getting-started/build-a-chain/additional-configuration/mempool-integration).
+
+## Testing
+
+Verify mempool behavior using test scripts in [cosmos/evm](https://github.com/cosmos/evm). The [`tests/systemtests/Counter/script/SimpleSends.s.sol`](https://github.com/cosmos/evm/blob/main/tests/systemtests/Counter/script/SimpleSends.s.sol) script demonstrates typical Ethereum tooling behavior with 10 sequential transactions arriving out of order.
