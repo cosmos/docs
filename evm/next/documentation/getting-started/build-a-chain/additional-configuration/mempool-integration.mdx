@@ -9,23 +9,33 @@ The mempool holds submitted transactions before they are included in a block, ha
 
 The mempool setup is split across two locations:
 
-- [`evmd/mempool.go`](https://github.com/cosmos/evm/blob/main/evmd/mempool.go) — `configureEVMMempool` and `createMempoolConfig`, which must be called from your `app.go` after `setAnteHandler`
-- [`mempool/`](https://github.com/cosmos/evm/tree/main/mempool) — the mempool implementation (`ExperimentalEVMMempool`, `CheckTxHandler`, `TxPool`)
+- [`evmd/mempool.go`](https://github.com/cosmos/evm/blob/main/evmd/mempool.go) — `configureEVMMempool` must be called from your `app.go` after `setAnteHandler`
+- [`mempool/`](https://github.com/cosmos/evm/tree/main/mempool) — the mempool implementation (`EVMMempool`,`TxPool`, `Rechecker`, `ReapList`, `RecheckPool`, etc)
 
-The most common [Legacy pool](/evm/next/documentation/concepts/mempool#core-components) parameters and `MinTip` are exposed [via `app.toml`](#app.toml-configuration) and require no code changes. The legacy pool (`legacypool.LegacyPool`) is a port of go-ethereum's transaction pool and handles all EVM transaction ordering and fee enforcement. Advanced legacy pool settings not covered by `app.toml`, along with `CosmosPoolConfig` and `BroadCastTxFn`, require modifying `createMempoolConfig` in `evmd/mempool.go`. `BlockGasLimit` is read from `consensus_params.block.max_gas` in `genesis.json`.
+The most common EVM Mempool, Legacy pool parameters, `MinTip` are exposed [via
+`app.toml`](#app.toml-configuration) and require no code changes. The legacy
+pool (`legacypool.LegacyPool`) is a port of go-ethereum's transaction pool and
+handles all EVM transaction ordering and fee enforcement. Some advanced
+settings are not covered by `app.toml`, and require modifying
+`createMempoolConfig` in `evmd/mempool.go`. `BlockGasLimit` is read from
+`consensus_params.block.max_gas` in `genesis.json`.
 
 ## Configuration Options
 
-The `EVMMempoolConfig` struct controls mempool behavior:
+The `Config` struct controls mempool behavior:
 
 ```go title="mempool/mempool.go"
-type EVMMempoolConfig struct {
+type Config struct {
     LegacyPoolConfig *legacypool.Config                                // Optional: port of Geth's txpool — see Custom Legacy Pool below
-    CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int] // Optional: Cosmos pool tuning — see Custom Cosmos Mempool below
+    CosmosPoolConfig *sdkmempool.PriorityNonceMempoolConfig[math.Int]  // Optional: Cosmos pool tuning — see Custom Cosmos Mempool below
     AnteHandler      sdk.AnteHandler                                   // Required: transaction validation
-    BroadCastTxFn    func(txs []*ethtypes.Transaction) error           // Optional: custom promotion broadcast — see Custom Broadcast below
+
     BlockGasLimit    uint64                                            // Required: gas limit for block selection
     MinTip           *uint256.Int                                      // Optional: minimum tip for EVM txs
+
+	PendingTxProposalTimeout time.Duration                             // Optional but recommended: max amount of time to allocate to fetching pending execution txs
+	InsertQueueSize int                                                // Optional: how many txs can be pending insertion at once
+	EnableTxTracker bool                                               // Optional: if tracking transaction inclusion metrics is enabled
 }
 ```
 
@@ -37,8 +47,12 @@ type EVMMempoolConfig struct {
   - Priority = `(fee_amount / gas_limit)` in the EVM coin denom
   - Comparator = big-int comparison (higher is selected first)
   - `MinValue = 0`
-- If `BroadCastTxFn` is not provided, a default is created that uses the app `clientCtx`/`txConfig` to broadcast EVM transactions when they are promoted from queued → pending.
 - `MinTip` is optional. If unset, selection uses the effective tip from each tx (`min(gas_tip_cap, gas_fee_cap - base_fee)`).
+- If `PendingTxProposalTimeout` is not provided, 0 is used. This means
+  unlimited timeout and always wait for all tx rechecking to finish before
+  creating a proposal.
+- If `InsertQueueSize` is 0, the mempool uses a fallback of 5000. 
+- If `EnableTxTracker` is not provided, it is kept false. 
 
 ### Custom Legacy Pool Configuration
 
@@ -47,13 +61,14 @@ Customize EVM transaction pool parameters:
 ```go title="evmd/mempool.go"
 // EVM legacy txpool tuning
 legacyCfg := legacypool.DefaultConfig
-legacyCfg.PriceLimit = 2              // Minimum gas price (wei)
-legacyCfg.PriceBump = 15              // 15% price bump to replace
-legacyCfg.AccountSlots = 32           // Slots per account
-legacyCfg.GlobalSlots = 10240         // Total executable slots
-legacyCfg.AccountQueue = 128          // Non-executable per account
-legacyCfg.GlobalQueue = 2048          // Total non-executable
-legacyCfg.Lifetime = 6 * time.Hour    // Max queue time
+legacyCfg.PriceLimit = 2                // Minimum gas price (wei)
+legacyCfg.PriceBump = 15                // 15% price bump to replace
+legacyCfg.AccountSlots = 32             // Slots per account
+legacyCfg.GlobalSlots = 10240           // Total executable slots
+legacyCfg.AccountQueue = 128            // Non-executable per account
+legacyCfg.GlobalQueue = 2048            // Total non-executable
+legacyCfg.Lifetime = 6 * time.Hour      // Max queue time
+legacyCfg.IncludedNonceCacheSize = 5000 // Max cache size for tracking account nonces
 
 mempoolConfig.LegacyPoolConfig = &legacyCfg
 ```
@@ -93,37 +108,24 @@ cosmosCfg.TxPriority = sdkmempool.TxPriority[math.Int]{
 mempoolConfig.CosmosPoolConfig = &cosmosCfg
 ```
 
-### Custom Broadcast Function
-
-Override the default broadcast behavior for promoted EVM transactions:
-
-```go title="evmd/mempool.go"
-// Custom EVM broadcast (optional)
-mempoolConfig.BroadCastTxFn = func(txs []*ethtypes.Transaction) error {
-    // Custom logic for broadcasting promoted transactions
-    return nil
-}
-```
-
 ### Custom Block Gas Limit
 
 `BlockGasLimit` is read automatically from `consensus_params.block.max_gas` in `genesis.json` — it is not an `app.toml` setting. To change it, update the genesis file before chain start. The value can also be overridden in code:
 
 ```go title="evmd/mempool.go"
 // Example: 50M gas limit for lower capacity chains
-mempoolConfig := &evmmempool.EVMMempoolConfig{
-    AnteHandler:   app.GetAnteHandler(),
+mempoolConfig := &evmmempool.Config{
     BlockGasLimit: 50_000_000,
 }
 ```
 
 ### Event Bus Integration
 
-For best results, connect the mempool to CometBFT's EventBus so it can react to finalized blocks:
+Users must connect the mempool to CometBFT's EventBus so it can react to finalized blocks:
 
 ```go title="evmd/app.go"
 // After starting the CometBFT node
-if m, ok := app.GetMempool().(*evmmempool.ExperimentalEVMMempool); ok {
+if m, ok := app.GetMempool().(*evmmempool.EVMMempool); ok {
     m.SetEventBus(bftNode.EventBus())
 }
 ```
@@ -143,8 +145,11 @@ The following settings can be configured in `app.toml` and take effect at node s
 | `evm.mempool.account-queue` | `64` | Max queued (non-executable) transactions per account |
 | `evm.mempool.global-queue` | `1024` | Max total queued transactions across all accounts |
 | `evm.mempool.lifetime` | `3h` | Max time a transaction can remain queued before eviction |
-
-`CosmosPoolConfig` and `BroadCastTxFn` have no `app.toml` equivalent and require code changes in `createMempoolConfig`.
+| `evm.mempool.included-nonce-cache-size` | `4096` | Max amount of nonces to track for eviction. Should be set to the maximum number of accounts you expect to see in a single block, given your chains block gas limit. |
+| `evm.mempool.pending-tx-proposal-timeout` | `0ms` | Max time to wait for fetching pending execution transaction when creating a proposal. 0 means wait for all transactions to be validated before creating a proposal. Note that this may take a significant amount of time under high load and can degrade performance. We've found setting this to ~250ms strikes the right balance between performance and rechecking a sufficient amount of transactions per block. |
+| `evm.mempool.check-tx-timeout` | `5s` | Timeout to wait for `CheckTx` on Cosmos txs insertion. |
+| `evm.mempool.insert-queue-size` | `5000` | Max amount of transactions that can be pending insertion before returning an error. Note that EVM & Cosmos transaction use separate queues. So you may have `insert-queue-size` EVM transactions pending insertion, and `insert-queue-size` Cosmos transactions pending insertion.|
+| `evm.mempool.enable-tx-tracker` | `false` | If metrics for tracking EVM transaction inclusion latencies should be enabled. |
 
 ## Monitoring and Debugging
 
