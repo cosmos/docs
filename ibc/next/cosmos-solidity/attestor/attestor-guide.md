@@ -124,6 +124,16 @@ ibc_attestor key generate [--keystore <PATH>]
 ibc_attestor key show [--keystore <PATH>] [--show-private]
 ```
 
+The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses the following commands:
+
+```bash
+# EVM-watching attestor
+ibc_attestor server --config /config/attestor-config.toml --chain-type evm --signer-type local
+
+# Cosmos-watching attestor
+ibc_attestor server --config /config/attestor-cosmos-config.toml --chain-type cosmos --signer-type local
+```
+
 ## Key Management
 
 Before running the attestor with a local signer, generate a keypair:
