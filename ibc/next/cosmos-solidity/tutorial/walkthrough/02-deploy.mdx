@@ -2,7 +2,7 @@
 
 The IBC stack on the EVM side is a set of Solidity contracts deployed to the Besu chain in the demo. This step deploys the core contracts (the IBC router, the GMP application, and the IFT token) and registers the GMP port on the router so it can route packets.
 
-Two additional contracts are deployed in later steps: `AttestationLightClient` in `create-clients` once the attestor address is known, and `CosmosIFTSendCallConstructor` in `wire` once the client-derived account address is derived.
+Two additional contracts are deployed in later steps: `AttestationLightClient` in the [`create-clients` step](/ibc/next/cosmos-solidity/tutorial/walkthrough/05-clients) once the attestor address is known, and `CosmosIFTSendCallConstructor` in `wire` once the client-derived account address is derived.
 
 This command runs the deployment:
 
@@ -11,6 +11,12 @@ This command runs the deployment:
 ```
 
 The logic for this command is in [`lib/ibc.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/lib/ibc.sh).
+
+<Tip>
+The chain used in this demo illustrates how to use IBC modules on the Cosmos side, but you can also use the Solidity deployment on Cosmos chains with EVM capabilities.
+
+If you are operating a Cosmos EVM chain and need to access IBC through the EVM, you can deploy the same solidity contracts in this guide to your Cosmos EVM chain. This is useful if you need to access IBC through the EVM on a Cosmos EVM chain.
+</Tip>
 
 ## What it does
 
@@ -41,6 +47,8 @@ The following steps are run by [`MinimalDeploy.s.sol`](https://github.com/cosmos
 | 5. `ICS26Router.addIBCApp` | - | Registers `ICS27GMP` as the handler for `gmpport` | Must be called before any packets can be routed to GMP |
 | 6. `IFTOwnable` (ERC-20, ERC1967 proxy) | [`cosmos/solidity-ibc-eureka`](https://github.com/cosmos/solidity-ibc-eureka) | IFT token: `iftTransfer` burns tokens and emits an IBC packet; `iftMint` mints on packet receive | Initialized with the deployer address, token name/symbol, and the `ICS27GMP` address |
 
+{/* dennis serdar todo: Please verify that this list and the one below are complete and add any more commentary on contract deployment. */}
+
 Two more contracts are deployed in later steps:
 
 | Contract | Source | Deployed in | Role |
@@ -62,22 +70,38 @@ The three core addresses produced by this step are used throughout the rest of t
 
 ## Applying this to your own chain
 
+### IBC Solidity Contracts
+
+A complete list of the IBC Solidity contracts, see the [cosmos/solidity-ibc-eureka](https://github.com/cosmos/solidity-ibc-eureka) repository.
+
+
+### EVM Deployments
+
+The chain used in this demo illustrates how to use IBC modules on the Cosmos side, but you can also use the Solidity deployment on Cosmos chains with EVM capabilities.
+
+
+{/* dennis serdar todo: Please fill in this section with considerations on deploying solditiy contracts on a cosmos EVM chain. What is different? what should be considered? how does it make the other steps after this different?  */}
+
 ### Deploy order
 
-The order is fixed because each contract's initializer takes addresses from contracts deployed before it. The table above lists the required sequence. The key constraints are:
+The order is fixed because each contract's initializer takes addresses from contracts deployed before it. The main constraints are:
 
 - `AccessManager` first: both `ICS26Router` and `ICS27GMP` take its address in `initialize`
 - `ICS27Account` before `ICS27GMP`: GMP's initializer takes the account implementation address
 - `addIBCApp` before `IFTOwnable`: packets cannot be routed to GMP until the port is registered
 - `IFTOwnable` last: initialized with the `ICS27GMP` address
 
+{/* dennis serdar todo: Please verify and add any more commentary on contract deployment. Can the deploy scripts in this demo be reused? */}
+
 ### Access control
 
-The demo uses the deployer address as both the AccessManager admin and the relayer EOA. For production, grant roles explicitly:
+The demo uses the deployer address as both the AccessManager admin and the relayer EOA. For production, you may want to grant roles explicitly:
 
-- The relayer address should hold a role that covers only `recvPacket`, `ackPacket`, and `timeoutPacket` on `ICS26Router`.
+- For permissioned relayers, the relayer address should hold a role that covers only `recvPacket`, `ackPacket`, and `timeoutPacket` on `ICS26Router`.
 - The admin should be a multisig or governance contract, not a deployer EOA.
 - Use `setTargetFunctionRole` and `setRoles` on the `AccessManager` to configure this before transferring ownership.
+
+{/* dennis serdar todo: I know there are more options here. Please provide a set of recommendations for the permission levels of the various restricted functions for production use. */}
 
 ### IFT contract
 
@@ -85,8 +109,10 @@ The demo deploys `IFTOwnable`, which uses `OwnableUpgradeable` for access contro
 
 The ERC-20 name and symbol should match your Cosmos denom for consistency. The demo uses `"Test uift"` / `"UIFT"` to match the Cosmos-side `uift` denom.
 
+{/* dennis serdar todo: Please add in recommendations here for running the IFT contract in production/which implementation to use.  */}
+
 ## Next steps
 
 With the contracts deployed, the next step generates the attestor signing key and starts the attestor services that will sign packet state for both chains.
 
-<!-- todo: link above -->
+{/* todo: link above */}

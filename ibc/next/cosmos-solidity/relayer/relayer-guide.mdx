@@ -1,0 +1,204 @@
+---
+title: "IBC v2 Relayer"
+description: "Configure and run the IBC v2 relayer"
+---
+
+## Overview
+
+The relayer delivers IBC packets between connected chains. See the [ibc-relayer repository](https://github.com/cosmos/ibc-relayer) for source and design details.
+
+The relayer is request-driven: it does not watch for new packets automatically. A client submits a source transaction hash; the relayer reads IBC events from that transaction, fetches attestation proofs from the Proof API, and submits the relay transaction to the destination chain.
+
+The relayer has three components:
+
+- **gRPC API server** — accepts relay requests and status queries; also serves `GET /health` on the same port
+- **Postgres database** — persists packet state; migrations must be applied before the relayer starts
+- **Relay dispatcher** — polls the database and submits RecvPacket / Ack / Timeout transactions
+
+## Prerequisites
+
+- Running [Proof API](https://github.com/cosmos/solidity-ibc-eureka/tree/main/programs/proof-api)
+- Postgres with migrations applied (see [Database migrations](#database-migrations))
+- RPC endpoints for both chains
+- A funded signing key on each chain
+
+## Configuration
+
+The relayer is configured via a YAML file. Below is the config used in the IBC e2e demo, derived from [`ibc/relayer-config.yml.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/relayer-config.yml.tmpl). It shows the relayer configuration between a Cosmos and Besu chain:
+
+```yaml
+postgres:
+  hostname: postgres
+  port: "5432"
+  database: relayer
+
+signing:
+  keys_path: "/home/nonroot/config/local/keys.json"
+
+relayer_api:
+  address: "0.0.0.0:3000"     # gRPC + HTTP health on same port
+
+metrics:
+  prometheus_address: "0.0.0.0:9100"
+
+ibcv2_proof_api:
+  grpc_address: "proof-api:9090"
+  grpc_tls_enabled: false
+
+chains:
+  cosmos:
+    chain_name: cosmos
+    chain_id: "cosmos-1"
+    type: cosmos
+    environment: testnet
+    cosmos:
+      rpc: "http://cosmos:26657"
+      grpc: "cosmos:9090"
+      address_prefix: "cosmos"
+      ibcv2_tx_fee_denom: "uatom"
+      ibcv2_tx_fee_amount: 20000   # fixed fee per relay tx; use gas_price instead for dynamic
+    supported_bridges:
+      - ibcv2
+    ibcv2:
+      counterparty_chains:
+        "attestations-0": "32382"   # client ID on cosmos-1 → besu chain ID
+
+  besu:
+    chain_name: besu
+    chain_id: "32382"
+    type: evm
+    environment: testnet
+    evm:
+      rpc: "http://besu:8545"
+      contracts:
+        ics_26_router_address: "<ICS26_ROUTER_ADDR>"
+        ics_20_transfer_address: "0x0000000000000000000000000000000000000000"
+    supported_bridges:
+      - ibcv2
+    ibcv2:
+      finality_offset: 0
+      counterparty_chains:
+        "client-0": "cosmos-1"   # client ID on besu → cosmos chain ID
+```
+
+- `counterparty_chains`: It is important to note this field. It maps each IBC client ID on a chain to the chain ID it tracks. The relayer only relays packets for clients listed here, and any unlisted client ID is ignored.
+
+For advanced configuration options including batch sizing, concurrency, gas alert thresholds, and EVM gas multipliers, see the [Configuration Reference](https://github.com/cosmos/ibc-relayer#configuration-reference) in the relayer README.
+
+## Signing keys
+
+Set `signing.keys_path` to a JSON file keyed by chain ID (see [`config/local/ibcv2keys.json.example`](https://github.com/cosmos/ibc-relayer/blob/main/config/local/ibcv2keys.json.example) for more details):
+
+```json
+{
+  "32382": {
+    "name": "Besu",
+    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "private_key": "0xac0974bec..."
+  },
+  "cosmos-1": {
+    "name": "Cosmos",
+    "address": "cosmos1...",
+    "private_key": "3b4f8a..."
+  }
+}
+```
+
+- **EVM**: hex-encoded ECDSA private key — use any standard wallet or key generation tool
+- **Cosmos**: hex-encoded secp256k1 private key — create with your chain binary, then export:
+
+```bash
+<chain-binary> keys add relayer --keyring-backend test
+<chain-binary> keys export relayer --keyring-backend test --unarmored-hex --unsafe
+```
+
+The exported hex is what goes in `keys.json`. The address on each chain must be funded with enough balance to pay transaction fees.
+
+For production key management, see [Remote Signing](https://github.com/cosmos/ibc-relayer#remote-signing) in the relayer README.
+
+## Database migrations
+
+Migrations must be applied before starting the relayer. The relayer does not apply them itself. From the [ibc-relayer repo](https://github.com/cosmos/ibc-relayer), running `docker compose up -d` starts Postgres and applies migrations automatically via the [`go-migrate` service](https://github.com/cosmos/ibc-relayer/blob/4cb031af9ab700dbe702c396f203a4c195bfea33/docker-compose.yml#L23).
+
+## Starting the relayer
+
+The following command is used in the [ibc-relayer repo](https://github.com/cosmos/ibc-relayer) to start the relayer:
+
+```bash
+make relayer-local
+```
+
+This sets the Postgres credentials (defined in the [`Makefile`](https://github.com/cosmos/ibc-relayer/blob/4cb031af9ab700dbe702c396f203a4c195bfea33/Makefile#L11)) and starts the relayer against `./config/local/config.yml`. It expands to:
+
+```bash
+POSTGRES_USER=relayer POSTGRES_PASSWORD=relayer go run ./cmd/relayer/main.go --config ./config/local/config.yml
+```
+
+To check the health of the relayer:
+
+```bash
+curl http://localhost:3000/health
+```
+
+## Triggering a relay
+
+These commands require both chains to be connected (IBC clients created) and the relayer running.
+
+Example command to submit a transaction for relaying:
+
+```bash
+grpcurl -plaintext \
+  -d '{"tx_hash":"<SOURCE_TX_HASH>","chain_id":"<SOURCE_CHAIN_ID>"}' \
+  localhost:3000 skip.relayer.RelayerApiService/Relay
+```
+
+Example command to check relay status:
+
+```bash
+grpcurl -plaintext \
+  -d '{"tx_hash":"<SOURCE_TX_HASH>","chain_id":"<SOURCE_CHAIN_ID>"}' \
+  localhost:3000 skip.relayer.RelayerApiService/Status
+```
+
+The response contains a `packetStatuses` array:
+
+```json
+{
+  "packetStatuses": [
+    {
+      "state": "TRANSFER_STATE_COMPLETE",
+      "sequenceNumber": "1",
+      "sourceClientId": "attestations-0",
+      "sendTx": {
+        "txHash": "<SOURCE_TX_HASH>",
+        "chainId": "cosmos-1"
+      },
+      "recvTx": {
+        "txHash": "0x81d004...",
+        "chainId": "32382"
+      }
+    }
+  ]
+}
+```
+
+`state` will be `TRANSFER_STATE_PENDING`, `TRANSFER_STATE_COMPLETE`, or `TRANSFER_STATE_FAILED`. `ackTx` and `timeoutTx` are also present once those legs complete.
+
+## Ports
+
+| Port | Protocol          | Config key                    | Purpose                        |
+|------|-------------------|-------------------------------|--------------------------------|
+| 3000 | gRPC + HTTP       | `relayer_api.address`         | Relay/Status API and `/health` |
+| 9100 | HTTP (Prometheus) | `metrics.prometheus_address`  | Metrics scrape endpoint        |
+
+Both ports are configurable in the YAML config. The gRPC API and HTTP health endpoint share a single port via multiplexing.
+
+## Observability
+
+The relayer exposes Prometheus metrics at the address set in `metrics.prometheus_address`. Scrape it with any standard Prometheus-compatible collector:
+
+```bash
+curl http://localhost:9100/metrics
+```
+
+For the full list of exposed metrics, see the [Observability](https://github.com/cosmos/ibc-relayer#observability) section of the relayer README.

@@ -2,25 +2,17 @@
 
 ## Overview
 
-The IBC Attestor is a lightweight, blockchain-agnostic attestation service that provides cryptographically signed attestations of blockchain state for IBC cross-chain communication. IBC Attestors publish attestations on demand and are stateless: consumers of the service must send requests to the service's gRPC server to receive attestations.
-
-### Key features
-
-- Multi-chain support via pluggable adapter pattern (EVM, Solana, Cosmos)
-- Flexible signing (local keystore or remote HSM/KMS)
-- gRPC API for attestation requests
-- Concurrent packet validation
+The IBC Attestor is a lightweight, blockchain-agnostic attestation service that provides cryptographically signed attestations of blockchain state for IBC cross-chain communication. IBC Attestors publish attestations on demand and are stateless: consumers of the service must send requests to the service's gRPC server to receive attestations. Finality thresholds are configurable per deployment.
 
 ### Attestation structure
 
 IBC attestors support two kinds of attestations:
-- State attestations: A given chain has a block of height `x` where the block was produced at time `y`
-- Packet attestations: A given chain's state explicitly does or does not contain Packet commitment `z`
-    - **Note**: Receipt packets should _not_ exist in the context of attestors as receipt packets are used for timeouts and non-membership proofs
 
-The attestation gRPC server does differentiate between these two types even though under the hood they both use the same proto type: [Attestation](https://github.com/cosmos/ibc-attestor/blob/main/proto/ibc_attestor/attestation.proto). The reason we differentiate is because the `attested_data` field for each of these attestation kinds contains different data:
-- State attestations hold the height and timestamp of a block
-- Packet attestations contain the packets which were provided in initial request and the height at which the commitments were found.
+- **State attestations**: Attest that a given chain produced a block at height `x` at time `y`
+- **Packet attestations**: Attest to the membership or non-membership of a commitment at a given height, based on the [requested `CommitmentType`](https://github.com/cosmos/ibc-attestor/blob/3dfb789b7d15ce13de0cc519b97cb22c433d55fa/proto/ibc_attestor/ibc_attestor.proto#L34-L40):
+  - `COMMITMENT_TYPE_PACKET` — asserts presence of a send packet commitment (emitted on `SendPacket`)
+  - `COMMITMENT_TYPE_ACK` — asserts presence of an acknowledgment commitment (emitted on `WriteAcknowledgement`)
+  - `COMMITMENT_TYPE_RECEIPT` — asserts absence of a receipt commitment (non-membership proof, used for timeouts)
 
 ### Security model and trust assumptions
 

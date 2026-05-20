@@ -5,7 +5,7 @@ description: "How to deploy and operate the IBC Attestor service"
 
 ## Overview
 
-The IBC Attestor is a stateless gRPC service that produces cryptographic attestations of blockchain state for use in IBC v2 cross-chain communication. It connects to a chain via an adapter (EVM, Cosmos, or Solana) and signs state at requested heights using either a local keystore or a remote signing service.
+The IBC Attestor is a stateless gRPC service that produces cryptographic attestations of blockchain state for use in IBC v2 cross-chain communication. It connects to a chain (EVM, Cosmos, or Solana) and signs state at requested heights using either a local keystore or a remote signing service.
 
 Each attestor instance handles a single chain type. In production, multiple instances per chain are typical (each with a distinct signing key) to support m-of-n quorum verification by the light client.
 
@@ -23,9 +23,9 @@ The core attestation service. Exposes a gRPC API on port `8090` (configurable) a
 The attestor requires a secp256k1 signing key. Two deployment modes are supported:
 
 - **Local signer** — key is stored in an encrypted keystore file on disk, read directly by the attestor process
-- **Remote signer** — the attestor delegates signing to an external gRPC signer service (e.g. `platform-signer`) over the network
+- **Remote signer** — the attestor delegates signing to an external gRPC signer service over the network
 
-For production deployments, the remote signer with KMS-backed keys is recommended. For simple or development deployments, a local keystore is sufficient.
+For production deployments, operators can rely on their own signing infrastructure. Otherwise, a local keystore is sufficient.
 
 ### 3. Chain RPC Endpoint (external dependency)
 
@@ -33,9 +33,9 @@ Each attestor instance requires a live RPC endpoint for the chain it is attestin
 
 | Chain Type | Required Endpoint |
 |------------|------------------|
-| EVM | JSON-RPC HTTP endpoint (e.g. Alchemy, Infura, or self-hosted `geth`) |
-| Cosmos | Tendermint RPC HTTP endpoint |
-| Solana | Solana JSON-RPC HTTP endpoint |
+| EVM | JSON-RPC HTTP(S) endpoint (e.g. Alchemy, Infura, or self-hosted `geth`) |
+| Cosmos | Tendermint RPC HTTP(S) endpoint |
+| Solana | Solana JSON-RPC HTTP(S) endpoint |
 
 ## Configuration
 
@@ -190,13 +190,15 @@ Returns `200 OK` when the gRPC server is accepting connections, `503 Service Una
 
 ## Multi-Chain Deployments
 
-Each attestor instance handles one chain type. For multiple chains, deploy one instance per chain. For m-of-n quorum on a single chain, deploy multiple instances with distinct signing keys. All of their addresses must be registered with the light client. The quorum threshold set on the light client determines how many must sign for a packet to be accepted.
+Each attestor instance handles one chain type. For m-of-n quorum, multiple instances per chain can be deployed with distinct signing keys. All of their addresses must be registered with the light client. The quorum threshold set on the light client determines how many must sign for a packet to be accepted.
+
+{/* todo: link above to light client docs */}
 
 Multiple instances can share a single remote signer service using distinct `wallet_id` values.
 
 ## On-Chain Registration
 
-The Ethereum address derived from the attestor's signing key must be provided when the IBC light client is created — it is baked into the light client at creation time and cannot be updated afterwards.
+The Ethereum address derived from the attestor's signing key must be provided when the IBC light client is created. On the Cosmos side, the signer set is fixed at creation time. On the EVM side, the signer set can technically be updated after the light client is created.
 
 Retrieve the address before creating the light client:
 
@@ -204,4 +206,4 @@ Retrieve the address before creating the light client:
 ibc_attestor key show
 ```
 
-For remote signers, retrieve the wallet's Ethereum address from the signer service's `GetWallet` RPC before creating the light client.
+For remote signers, retrieve the signing key's Ethereum address from your signer service before creating the light client. The remote signer must implement the [gRPC interface the attestor expects](https://github.com/cosmos/ibc-relayer#remote-signing).
