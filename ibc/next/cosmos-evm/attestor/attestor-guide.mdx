@@ -188,11 +188,35 @@ curl http://localhost:9000/healthz
 Returns `200 OK` when the gRPC server is accepting connections, `503 Service Unavailable` when it is not ready. Allow up to 30 seconds for startup.
 
 
-## Multi-Chain Deployments
+## Multi-Attestor Deployments
 
-Each attestor instance handles one chain type. For m-of-n quorum, multiple instances per chain can be deployed with distinct signing keys. All of their addresses must be registered with the light client. The quorum threshold set on the light client determines how many must sign for a packet to be accepted.
+Each attestor instance handles one chain type. For m-of-n quorum, deploy multiple instances per chain, each with a distinct signing key. 
 
-{/* todo: link above to light client docs */}
+Two places need to be updated when adding attestors. The following are examples of the templates used in the [IBC demo](/ibc/next/cosmos-evm/tutorial/introduction).
+
+- **Light client** ([`client-state.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/client-state.json.tmpl)) — at creation time, provide all attestor Ethereum addresses and set the quorum threshold:
+
+```json
+{
+  "attestor_addresses": ["0xAAA...", "0xBBB...", "0xCCC..."],
+  "min_required_sigs": 2
+}
+```
+
+- **Proof API** ([`proof-api.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/proof-api.json.tmpl)) — add all attestor gRPC endpoints to `attestor_endpoints` and set `quorum_threshold` to match `min_required_sigs`:
+
+```json
+"attestor": {
+  "quorum_threshold": 2,
+  "attestor_endpoints": [
+    "http://attestor-1:9101",
+    "http://attestor-2:9101",
+    "http://attestor-3:9101"
+  ]
+}
+```
+
+The Proof API queries all listed endpoints, collects signatures, and verifies the quorum threshold is met before building the relay transaction.
 
 Multiple instances can share a single remote signer service using distinct `wallet_id` values.
 
