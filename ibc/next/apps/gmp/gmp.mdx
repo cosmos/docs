@@ -131,7 +131,7 @@ message MsgSendCall {
   string receiver          = 3; // target address on the destination chain (may be empty)
   bytes  salt              = 4; // up to 32 bytes
   bytes  payload           = 5; // up to 32768 bytes
-  uint64 timeout_timestamp = 6; // absolute timeout in Unix seconds
+  uint64 timeout_timestamp = 6; // absolute timeout in nanoseconds since Unix epoch
   string memo              = 7; // up to 32768 bytes
   string encoding          = 8; // one of application/x-protobuf, application/json, application/x-solidity-abi
                                  // defaults to application/x-solidity-abi if empty
@@ -160,7 +160,7 @@ The account is a [BeaconProxy](https://docs.openzeppelin.com/contracts/5.x/api/p
 
 ```solidity
 bytes32 accountIdHash = keccak256(abi.encode(accountId)); // AccountIdentifier{clientId, sender, salt}
-address accountAddress = Create2.deploy(0, accountIdHash, beaconProxyBytecode);
+address accountAddress = Create2.deploy(0, accountIdHash, bytecode);
 ```
 
 To compute the address without deploying:
@@ -175,14 +175,7 @@ The `clientId` used here is the destination client ID set in `onRecvPacket`.
 
 ### Cosmos
 
-The account address is a deterministic 32-byte module address ([`account.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/types/account.go)):
-
-```go
-func BuildAddressPredictable(accountID *AccountIdentifier) (sdk.AccAddress, error) {
-    key := len(clientId) || clientId || len(sender) || sender || len(salt) || salt
-    return address.Module("gmp-accounts", key)[:32]
-}
-```
+The account address is derived deterministically from the `AccountIdentifier` fields using a length-prefixed key built from `clientId`, `sender`, and `salt`, then passed to `address.Module("gmp-accounts", key)`. The implementation is in [`account.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/types/account.go).
 
 To query the derived address on a running chain:
 
@@ -243,12 +236,13 @@ On timeout or error, a universal error acknowledgement is returned. The sender c
 
 ```solidity
 (bool success, address receiver) = Strings.tryParseAddress(packetData.receiver);
+require(success, ICS27InvalidReceiver(packetData.receiver));
 bytes memory result = account.functionCall(receiver, packetData.payload);
 ```
 
 ## Demo: IFT transfers using GMP
 
-The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses GMP for both directions of IFT token transfers. 
+The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses GMP for both directions of IFT token transfers. The demo runs in Docker and uses shell helpers (`cast_in_net`, `run_in`) to execute commands inside containers. The commands below show the underlying operations for illustration.
 
 ### EVM → Cosmos
 
