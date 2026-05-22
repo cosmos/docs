@@ -1,0 +1,374 @@
+---
+title: "General Message Passing (GMP)"
+description: "How ICS27-GMP works and how to use it"
+---
+
+## Overview
+
+ICS27-GMP (also called `ics27-2`) is the IBC v2 protocol for general cross-chain contract execution. A sender on one chain can trigger a function call on a destination chain. The destination chain executes the call through a deterministically derived account.
+
+Specification: [ICS-027-GMP](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2/app/ics-027-gmp)
+
+Implementations:
+- Cosmos side (Go): [`ibc-go/modules/apps/27-gmp`](https://github.com/cosmos/ibc-go/tree/main/modules/apps/27-gmp)
+- EVM side (Solidity): [`solidity-ibc-eureka/contracts/ICS27GMP.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS27GMP.sol)
+
+The port used by GMP is `gmpport`.
+
+## How it works
+
+1. A sender calls `sendCall` (EVM) or submits `MsgSendCall` (Cosmos) with a `receiver` address, a `payload`, and a `salt`.
+2. GMP constructs a `GMPPacketData` packet with the sender's address, the receiver, the salt, and the payload, then submits it via the IBC router.
+3. On the destination chain, `onRecvPacket` derives or creates a GMP account for `(destinationClientId, sender, salt)`. This account is the on-chain identity that executes the call.
+4. The GMP account calls `receiver` with `payload`.
+5. The return value is returned to the sender as an IBC acknowledgement.
+
+The GMP account is created on first use. For the same `(clientId, sender, salt)`, the account address is always the same and can be computed before the packet is sent.
+
+## Data structures
+
+### `GMPPacketData`
+
+This is the IBC packet payload. It is constructed by GMP and carried over IBC.
+
+In the Solidity implementation ([`IICS27GMPMsgs.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/msgs/IICS27GMPMsgs.sol)):
+
+```solidity
+struct GMPPacketData {
+    string sender;   // EIP-55 checksummed EVM address of the caller
+    string receiver; // target contract address on the destination chain
+    bytes  salt;     // differentiates multiple GMP accounts for the same sender
+    bytes  payload;  // opaque call data interpreted by the destination
+    string memo;     // optional metadata
+}
+```
+
+In the Go implementation ([`packet.proto`](https://github.com/cosmos/ibc-go/blob/main/proto/ibc/applications/gmp/v1/packet.proto)):
+
+```proto
+message GMPPacketData {
+  string sender   = 1;
+  string receiver = 2;
+  bytes  salt     = 3;
+  bytes  payload  = 4;
+  string memo     = 5;
+}
+```
+
+### `AccountIdentifier`
+
+Uniquely identifies a GMP account on the destination chain. The derived account address is a deterministic function of these three values.
+
+**Solidity** ([`IICS27GMPMsgs.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/msgs/IICS27GMPMsgs.sol)):
+
+```solidity
+struct AccountIdentifier {
+    string clientId; // the destination client ID (set by onRecvPacket, not the caller)
+    string sender;   // the sender address from the packet
+    bytes  salt;     // the salt from the packet
+}
+```
+
+**Go** ([`account.proto`](https://github.com/cosmos/ibc-go/blob/main/proto/ibc/applications/gmp/v1/account.proto)):
+
+```proto
+message AccountIdentifier {
+  string client_id = 1;
+  string sender    = 2;
+  bytes  salt      = 3;
+}
+```
+
+## Sending a GMP packet
+
+### EVM: `sendCall`
+
+The primary entry point on the EVM side is [`ICS27GMP.sendCall`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS27GMP.sol):
+
+```solidity
+function sendCall(IICS27GMPMsgs.SendCallMsg calldata msg_) external returns (uint64 sequence);
+```
+
+Where `SendCallMsg` is ([`IICS27GMPMsgs.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/msgs/IICS27GMPMsgs.sol)):
+
+```solidity
+struct SendCallMsg {
+    string sourceClient;      // IBC client ID on the source chain
+    string receiver;          // target contract address on the destination chain
+    bytes  salt;              // up to 32 bytes; differentiates GMP accounts for the same sender
+    bytes  payload;           // call data for the destination contract
+    uint64 timeoutTimestamp;  // absolute timeout in Unix seconds
+    string memo;              // optional metadata (up to 32768 bytes)
+}
+```
+
+`sendCall` captures `msg.sender` as an EIP-55 checksummed string and builds the packet:
+
+```solidity
+// From ICS27GMP.sol
+IICS27GMPMsgs.GMPPacketData memory packetData = IICS27GMPMsgs.GMPPacketData({
+    sender:   Strings.toChecksumHexString(_msgSender()),
+    receiver: msg_.receiver,
+    salt:     msg_.salt,
+    payload:  msg_.payload,
+    memo:     msg_.memo
+});
+```
+
+The packet is then sent via `ICS26Router.sendPacket` with:
+- `sourcePort = destPort = "gmpport"`
+- `version = "ics27-2"`
+- `encoding = "application/x-solidity-abi"`
+
+### Cosmos: `MsgSendCall`
+
+The Cosmos SDK message ([`tx.proto`](https://github.com/cosmos/ibc-go/blob/main/proto/ibc/applications/gmp/v1/tx.proto)):
+
+```proto
+message MsgSendCall {
+  string source_client     = 1; // IBC client ID on the source chain
+  string sender            = 2; // bech32 sender address
+  string receiver          = 3; // target address on the destination chain (may be empty)
+  bytes  salt              = 4; // up to 32 bytes
+  bytes  payload           = 5; // up to 32768 bytes
+  uint64 timeout_timestamp = 6; // absolute timeout in Unix seconds
+  string memo              = 7; // up to 32768 bytes
+  string encoding          = 8; // one of application/x-protobuf, application/json, application/x-solidity-abi
+                                 // defaults to application/x-solidity-abi if empty
+}
+```
+
+If `encoding` is empty, it defaults to `application/x-solidity-abi` ([`msg_server.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/keeper/msg_server.go)).
+
+Validation limits ([`msgs.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/types/msgs.go)):
+
+| Field | Max bytes |
+| --- | --- |
+| `sender` | 2048 |
+| `receiver` | 2048 |
+| `salt` | 32 |
+| `payload` | 32768 |
+| `memo` | 32768 |
+
+## GMP account derivation
+
+Each `(clientId, sender, salt)` maps to a single account on the destination chain. The account is created on first packet receive, however its address can be computed before any packet is sent.
+
+### EVM
+
+The account is a [BeaconProxy](https://docs.openzeppelin.com/contracts/5.x/api/proxy#BeaconProxy) deployed with Create2 ([`ICS27GMP.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS27GMP.sol)):
+
+```solidity
+bytes32 accountIdHash = keccak256(abi.encode(accountId)); // AccountIdentifier{clientId, sender, salt}
+address accountAddress = Create2.deploy(0, accountIdHash, beaconProxyBytecode);
+```
+
+To compute the address without deploying:
+
+```solidity
+function getOrComputeAccountAddress(
+    IICS27GMPMsgs.AccountIdentifier calldata accountId
+) external view returns (address);
+```
+
+The `clientId` used here is the destination client ID set in `onRecvPacket`.
+
+### Cosmos
+
+The account address is a deterministic 32-byte module address ([`account.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/types/account.go)):
+
+```go
+func BuildAddressPredictable(accountID *AccountIdentifier) (sdk.AccAddress, error) {
+    key := len(clientId) || clientId || len(sender) || sender || len(salt) || salt
+    return address.Module("gmp-accounts", key)[:32]
+}
+```
+
+To query the derived address on a running chain:
+
+```bash
+sandboxd query gmp get-address <clientId> <sender> <salt>
+```
+
+## Payload encoding
+
+The `payload` field is opaque bytes interpreted by the destination chain runtime.
+
+| Destination | Payload format |
+| --- | --- |
+| EVM | ABI-encoded function call data (standard `abi.encodeWithSelector(...)`) |
+| Cosmos | Protobuf or JSON-encoded `CosmosTx` containing one or more `sdk.Msg`s |
+
+For EVM → Cosmos IFT transfers, `CosmosIFTSendCallConstructor` builds the payload as a protojson-encoded `CosmosTx` containing a `MsgIFTMint` ([`CosmosIFTSendCallConstructor.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/CosmosIFTSendCallConstructor.sol)):
+
+```json
+{
+  "messages": [{
+    "@type": "/ibc.applications.prototypes.ift.v1.MsgIFTMint",
+    "signer": "<icaAddress>",
+    "denom": "<denom>",
+    "receiver": "<receiver>",
+    "amount": "<amount>"
+  }]
+}
+```
+
+The `signer` field is the GMP account address (ICA) on the Cosmos chain, which must match the account that `onRecvPacket` will derive. The EVM sender must be EIP-55 checksummed when querying the ICA.
+
+## Supported encodings
+
+Defined in [`ICS27Lib.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/ICS27Lib.sol) and [`packet.go`](https://github.com/cosmos/ibc-go/blob/main/modules/apps/27-gmp/types/packet.go):
+
+| Encoding string | Used for |
+| --- | --- |
+| `application/x-solidity-abi` | EVM ↔ EVM or Cosmos → EVM; default on both sides when `encoding` is empty |
+| `application/x-protobuf` | Cosmos ↔ Cosmos |
+| `application/json` | Cosmos ↔ Cosmos (protojson) |
+
+## Acknowledgements
+
+`onRecvPacket` returns the raw return value of the destination call wrapped in a `GMPAcknowledgement`:
+
+```solidity
+struct GMPAcknowledgement {
+    bytes result; // return data from the destination call
+}
+```
+
+On timeout or error, a universal error acknowledgement is returned. The sender can implement `onAcknowledgementPacket` and `onTimeoutPacket` callbacks via the ICS-30 callbacks middleware.
+
+## `receiver` field
+
+`receiver` is the address of the contract to call on the destination chain. On EVM, `onRecvPacket` parses it as a Solidity address and calls it via the GMP account:
+
+```solidity
+(bool success, address receiver) = Strings.tryParseAddress(packetData.receiver);
+bytes memory result = account.functionCall(receiver, packetData.payload);
+```
+
+## Demo: IFT transfers using GMP
+
+The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses GMP for both directions of IFT token transfers. 
+
+### EVM → Cosmos
+
+In the demo, `IFTOwnable.iftTransfer` burns tokens on the EVM side and sends a GMP packet to mint them on Cosmos. The call chain is:
+
+1. [`iftTransfer(clientId, receiver, amount, timeoutTimestamp)`](https://github.com/cosmos/solidity-ibc-eureka/blob/76b21994d72bbcf1935e253dabaa86872d2630c0/contracts/utils/IFTBaseUpgradeable.sol#L115-L125) calls the internal `_iftTransfer`
+2. [`_iftTransfer`](https://github.com/cosmos/solidity-ibc-eureka/blob/76b21994d72bbcf1935e253dabaa86872d2630c0/contracts/utils/IFTBaseUpgradeable.sol#L139-L175) burns the tokens, then calls `CosmosIFTSendCallConstructor.constructMintCall` to build the payload, then calls `ICS27GMP.sendCall` with:
+   - `sourceClient`: the EVM client ID
+   - `receiver`: the Cosmos IFT module account address (the `counterpartyIFTAddress` registered in `registerIFTBridge`)
+   - `salt`: empty for this demo
+   - `payload`: protojson-encoded `CosmosTx` containing `MsgIFTMint`
+3. On the Cosmos side, GMP derives the account for `(destClientId, iftContractAddress, "")`, executes the `MsgIFTMint` message in the payload, and mints tokens to the receiver.
+
+The demo triggers this with ([`lib/demo.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/41a9c5931e36d32b6354e431309f55ddf958845d/demo/cosmos-evm/lib/demo.sh#L292-L299)):
+
+```bash
+cast send "$IFT_CONTRACT_ADDR" \
+  "iftTransfer(string,string,uint256,uint64)" \
+  "$EVM_CLIENT_ID" "$receiver" "$amount" "$timeout_ts" \
+  --rpc-url "http://besu:8545" --private-key "$ETH_VALIDATOR_PRIVKEY"
+```
+
+### Cosmos → EVM
+
+`tx ift transfer` sends a `MsgSendCall` with an ABI-encoded `iftMint(address, uint256)` payload. The `MsgSendCall.sender` is the IFT module account address. On the EVM side, GMP derives the account for `(destClientId, iftModuleAddress, "")` and calls `IFTOwnable.iftMint` through it. `iftMint` verifies that the calling GMP account's `sender` field matches the registered counterparty IFT address before minting.
+
+The demo triggers this with ([`lib/demo.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/41a9c5931e36d32b6354e431309f55ddf958845d/demo/cosmos-evm/lib/demo.sh#L73-L79)):
+
+```bash
+sandboxd tx ift transfer \
+  "$amt_denom" "$source_client" "$recipient" "$amt_num" "$timeout_ts" \
+  --from validator --keyring-backend test
+```
+
+## Integrating GMP
+
+### Cosmos
+
+An example of the full wiring of the GMP module is in [sandbox-ledger PR #1](https://github.com/cosmos/sandbox-ledger/pull/1/files), which adds GMP to an existing Cosmos SDK chain. The steps are:
+
+1. Add module account permissions in `maccPerms`:
+
+```go
+gmptypes.ModuleName: nil,
+```
+
+2. Register the store key:
+
+```go
+gmptypes.StoreKey,
+```
+
+3. Add the keeper to your app struct and initialize it:
+
+```go
+app.GMPKeeper = gmpkeeper.NewKeeper(
+    appCodec,
+    runtime.NewKVStoreService(keys[gmptypes.StoreKey]),
+    app.AccountKeeper,
+    app.MsgServiceRouter(),
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+```
+
+4. Register the IBC v2 route:
+
+```go
+ibcRouterV2.AddRoute(gmptypes.PortID, gmp.NewIBCModule(app.GMPKeeper))
+```
+
+To receive acknowledgement and timeout callbacks (required if you're building an app like IFT on top of GMP), wrap with the callbacks v2 middleware before registering. In the sandbox-ledger, the IFT keeper implements the callback interface and is passed as the third argument:
+
+```go
+cbGMPModule := ibccallbacksv2.NewIBCMiddleware(
+    gmp.NewIBCModule(app.GMPKeeper),
+    app.IBCKeeper.ChannelKeeperV2,
+    &app.IFTKeeper,
+    app.IBCKeeper.ChannelKeeperV2,
+    maxCallbackGas,
+)
+ibcRouterV2.AddRoute(gmptypes.PortID, cbGMPModule)
+```
+
+5. Register in the module manager, genesis order, and begin/end blockers:
+
+```go
+gmp.NewAppModule(app.GMPKeeper)
+```
+
+### EVM chain
+
+This deployment is taken from the [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example). GMP on the EVM side is three deployment steps. The full script is [`MinimalDeploy.s.sol`](https://github.com/cosmos/ibc-e2e-docs-example/blob/41a9c5931e36d32b6354e431309f55ddf958845d/demo/cosmos-evm/ibc/forge/scripts/MinimalDeploy.s.sol).
+
+1. The `ICS27Account` and `ICS27GMP` logic contracts are deployed, then GMP is wrapped in an ERC1967 proxy:
+
+```solidity
+address account  = _deployArtifact(ARTIFACT_ACCOUNT);
+address gmpLogic = _deployArtifact(ARTIFACT_GMP);
+d.ics27Gmp = address(
+    new ERC1967Proxy(
+        gmpLogic,
+        abi.encodeWithSignature(
+            "initialize(address,address,address)",
+            d.ics26Router, account, address(am)
+        )
+    )
+);
+```
+
+`ICS27Account` is the logic contract for GMP's beacon proxy accounts. In the demo, `ICS27GMP` is wrapped in an ERC1967 proxy and initialized with the router, account logic, and access manager.
+
+2. The `ICS26Router` is registered with the GMP contract:
+
+```solidity
+(bool ok, bytes memory ret) = d.ics26Router.call(
+    abi.encodeWithSignature(
+        "addIBCApp(string,address)", DEFAULT_PORT_ID, d.ics27Gmp
+    )
+);
+require(ok, _revertMessage("addIBCApp failed", ret));
+```
+
+After this call, the router forwards all packets on port `gmpport` to `ICS27GMP.onRecvPacket`.

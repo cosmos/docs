@@ -15,7 +15,7 @@ The logic for this command is in [`lib/ibc.sh`](https://github.com/cosmos/ibc-e2
 <Tip>
 The chain used in this demo illustrates how to use IBC modules on the Cosmos side, but you can also use the Solidity deployment on Cosmos chains with EVM capabilities.
 
-If you are operating a Cosmos EVM chain and need to access IBC through the EVM, you can deploy the same solidity contracts in this guide to your Cosmos EVM chain. This is useful if you need to access IBC through the EVM on a Cosmos EVM chain.
+If you are operating a Cosmos EVM chain and need to access IBC through the EVM, you can deploy the same solidity contracts in this guide to your Cosmos EVM chain. 
 </Tip>
 
 ## What it does
@@ -76,9 +76,9 @@ For a complete list of the IBC Solidity contracts, see the [cosmos/solidity-ibc-
 
 ### EVM Deployments
 
-The chain used in this demo illustrates how to use IBC modules on the Cosmos side, but you can also use the Solidity deployment on Cosmos chains with EVM capabilities.
+The chain used in this demo illustrates how to use IBC modules on the Cosmos side, but you can also use the Solidity deployment on Cosmos chains with EVM capabilities. Deploying IBC Solidity contracts to a Cosmos EVM chain is no different than deploying to any other EVM chain.
 
-{/* dennis serdar todo: Please fill in this section with considerations on deploying solditiy contracts on a cosmos EVM chain. What is different? what should be considered? does it make the other steps after this different? What do devs need to know about a connection between 2 chains using only ibc solidity contracts? */}
+If you are connecting two Solidity deployments (EVM on both sides), use `EVMIFTSendCallConstructor` instead of `CosmosIFTSendCallConstructor` when constructing IFT send calls.
 
 ### Deploy order
 
@@ -86,28 +86,21 @@ The order is fixed because each contract's initializer takes addresses from cont
 
 - `AccessManager` first: both `ICS26Router` and `ICS27GMP` take its address in `initialize`
 - `ICS27Account` before `ICS27GMP`: GMP's initializer takes the account implementation address
-- `addIBCApp` before `IFTOwnable`: packets cannot be routed to GMP until the port is registered
 - `IFTOwnable` last: initialized with the `ICS27GMP` address
-
-{/* dennis serdar todo: Please verify and add any more commentary on contract deployment. Can the deploy scripts in this demo be reused? */}
 
 ### Access control
 
-The demo uses the deployer address as both the AccessManager admin and the relayer EOA. For production, you may want to grant roles explicitly:
+The `AccessManager` is initialized with the deployer address as admin. The admin can grant and revoke roles and configure which addresses are permitted to call restricted functions on `ICS26Router` and `ICS27GMP`. Use a secure address for this role. See the [OpenZeppelin Access Control documentation](https://docs.openzeppelin.com/contracts/5.x/access-control) for guidance on managing roles and permissions. 
 
-- For permissioned relayers, the relayer address should hold a role that covers only `recvPacket`, `ackPacket`, and `timeoutPacket` on `ICS26Router`.
-- The admin should be a multisig or governance contract, not a deployer EOA.
-- Use `setTargetFunctionRole` and `setRoles` on the `AccessManager` to configure this before transferring ownership.
 
-{/* dennis serdar todo: I know there are more options here. Please provide a set of recommendations for the permission levels of the various restricted functions for production use. */}
+For permissioned relayers, the relayer address should hold a role that covers only `recvPacket`, `ackPacket`, and `timeoutPacket` on `ICS26Router`.
+
+
 
 ### IFT contract
 
-The demo deploys `IFTOwnable`, which uses `OwnableUpgradeable` for access control. For `AccessManager`-based access control, use `IFTAccessManaged` instead. For a fully custom implementation, extend [`IFTBaseUpgradeable`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol) and implement `_onlyAuthority()` with your own logic. The full interface is defined in [`IIFT.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/interfaces/IIFT.sol).
+The demo deploys `IFTOwnable`, which uses `OwnableUpgradeable` for access control: a single owner address controls all privileged functions. `IFTAccessManaged` provides more fine-grained control, allowing each function to be restricted to a different role. For a fully custom implementation, extend [`IFTBaseUpgradeable`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol) and implement `_onlyAuthority()` with your own logic. The full interface is defined in [`IIFT.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/interfaces/IIFT.sol).
 
-The ERC-20 name and symbol should match your Cosmos denom for consistency. The demo uses `"Test uift"` / `"UIFT"` to match the Cosmos-side `uift` denom.
-
-{/* dennis serdar todo: Please add in recommendations here for running the IFT contract in production/which implementation to use.  */}
 
 ## Next steps
 
