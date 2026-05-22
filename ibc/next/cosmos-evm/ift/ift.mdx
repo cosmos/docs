@@ -1,0 +1,188 @@
+---
+title: "Interchain Fungible Token (IFT)"
+description: "What IFT is, how it works, and how to integrate it on EVM"
+---
+
+## Overview
+
+IFT (Interchain Fungible Token) is a standard for tokens that can move between chains over IBC v2. Tokens are burned on the source chain and minted on the destination chain. This differs from other escrow-based token standards, which locks tokens in escrow and issues a wrapped representation on the destination chain. IFT enables fungible transfers across chains: the same token exists natively on every chain it is bridged to.
+
+IFT is built on [ICS-27 GMP](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2/app/ics-027-gmp). Each transfer is a GMP packet whose payload instructs the destination IFT contract to mint tokens to the receiver.
+
+EVM implementation: [`solidity-ibc-eureka/contracts/utils/IFTBaseUpgradeable.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol)
+
+
+## How it works
+
+### Connecting a bridge
+
+Before any tokens can move, each IFT contract must be told which chain it can talk to and who to trust on that chain. Two chains deploy IFT and register each other as counterparties. This is done by calling `registerIFTBridge`, which stores an `IFTBridge` record keyed by IBC client ID:
+
+```solidity
+struct IFTBridge {
+    string clientId;                            // IBC light client on the local chain
+    string counterpartyIFTAddress;              // IFT contract on the remote chain
+    IIFTSendCallConstructor iftSendCallConstructor; // encodes the mint payload
+}
+```
+
+`clientId` identifies an IBC light client that lives on the chain. A light client tracks the state of a specific remote chain. It receives and verifies state attestations so the local chain can trust that events (like a burn) actually happened on the other side. `iftTransfer` sends the GMP packet over the IBC client identified by that `clientId`.
+
+Every bridge can be scoped to a chain pair: a light client and a counterparty IFT contract. To bridge to a second chain, register a second bridge with a different `clientId`.
+
+### Mutual registration
+
+Registration must happen on both sides before transfers succeed. The `counterpartyIFTAddress` field is used by `iftMint` as an authorization check. When a GMP packet arrives, the IFT contract verifies that the GMP account's `sender` matches the registered `counterpartyIFTAddress`. If the remote chain registers a different address, or hasn't registered at all, the mint reverts.
+
+In practice, both IFT contracts are deployed and each is registered on the other chain, then transfers can flow in both directions.
+
+### Sending (`iftTransfer`)
+
+1. Caller calls `iftTransfer(clientId, receiver, amount, timeoutTimestamp)` on the source IFT contract.
+2. The IFT contract burns `amount` tokens from the caller.
+3. It calls `ICS27GMP.sendCall` with a mint payload for the counterparty chain, sending a GMP packet over IBC.
+4. On the destination chain, the GMP module routes the packet to the IFT contract via a derived GMP account.
+5. The IFT contract mints `amount` tokens to `receiver`.
+
+### Receiving (`iftMint`)
+
+`iftMint` is called by the GMP account, which is an address on the destination chain derived deterministically from `(destinationClientId, senderAddress, salt)`. Before minting, the IFT contract checks:
+
+- The caller is a known GMP account (via `ICS27GMP.getAccountIdentifier`).
+- The GMP account's `sender` field matches the `counterpartyIFTAddress` registered for the bridge.
+- The account's `salt` is empty (IFT only trusts unsalted accounts).
+
+No external caller can trigger a mint, only the registered counterparty IFT contract can, through the GMP account it controls.
+
+### Failure and refunds
+
+Every in-flight transfer is stored as a `PendingTransfer`. If the packet times out or the destination call returns an error, the IBC callbacks mechanism calls back into the IFT contract, which re-mints the burned tokens to the original sender.
+
+From the sender's perspective: either tokens arrive on the destination, or they are returned. There is no case where tokens are permanently lost.
+
+## Transferring tokens
+
+### `iftTransfer`
+
+[`IFTBaseUpgradeable.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol) exposes two overloads:
+
+```solidity
+// Explicit timeout
+function iftTransfer(
+    string calldata clientId,       // IBC client ID for the destination chain
+    string calldata receiver,       // address on the destination chain
+    uint256 amount,                 // token amount in the ERC20's base unit
+    uint64 timeoutTimestamp         // absolute Unix timestamp in seconds
+) external;
+
+// Default timeout (15 minutes from block.timestamp)
+function iftTransfer(
+    string calldata clientId,
+    string calldata receiver,
+    uint256 amount
+) external;
+```
+
+- `clientId`: the IBC client ID on the local chain that represents the destination chain. Call `getIFTBridge(clientId)` to confirm a bridge is registered for that client.
+- `receiver`: the address on the destination chain as a string. For EVM counterparties, pass an EIP-55 checksummed hex address — the `EVMIFTSendCallConstructor` parses this string into a Solidity `address` type when encoding the mint call.
+- `amount`: in the ERC20's smallest unit (equivalent to wei for 18-decimal tokens).
+- `timeoutTimestamp`: absolute Unix timestamp in seconds. If the packet is not relayed before this time, it will time out and the sender is refunded.
+
+### Events
+
+| Event | Emitted when |
+| --- | --- |
+| `IFTTransferInitiated(clientId, sequence, sender, receiver, amount)` | Burn succeeded, GMP packet sent |
+| `IFTTransferCompleted(clientId, sequence, sender, amount)` | Destination confirmed success |
+| `IFTTransferRefunded(clientId, sequence, sender, amount)` | Timeout or destination error — tokens returned to sender |
+
+### Checking in-flight transfers
+
+```solidity
+function getPendingTransfer(
+    string calldata clientId,
+    uint64 sequence
+) external view returns (IIFTMsgs.PendingTransfer memory);
+```
+
+Returns `PendingTransfer{sender, amount}` if the transfer is still in-flight. Reverts with `IFTPendingTransferNotFound` if the sequence has no pending transfer (already completed, refunded, or never existed). The `sequence` is included in the `IFTTransferInitiated` event.
+
+## EVM integration
+
+The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) shows a reference implementation of IFT integration between an EVM and a Cosmos chain. Note that this is a demo and not a production-ready implementation, and the Cosmos IFT module is provided as reference-only.
+
+The steps below use the demo as a reference.
+
+### Contracts
+
+| Contract | Role |
+| --- | --- |
+| [`ICS26Router`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS26Router.sol) | IBC packet router: the entry point for all IBC traffic on EVM |
+| [`ICS27GMP`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS27GMP.sol) | GMP module: sends and receives cross-chain calls; manages GMP accounts |
+| [`IFTBaseUpgradeable`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol) | Abstract base: implements burn/mint, bridge registry, pending transfers, and IBC callbacks |
+| [`IFTOwnable`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTOwnable.sol) | Reference implementation: UUPS upgradeable logic contract extending `IFTBaseUpgradeable`, with `OwnableUpgradeable` as the authority; deployed behind an `ERC1967Proxy` |
+| [`EVMIFTSendCallConstructor`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/EVMIFTSendCallConstructor.sol) | Encodes the `iftMint` call payload for EVM counterparties |
+
+### Prerequisites
+
+- `ICS26Router` and `ICS27GMP` must already be deployed and wired (see [EVM deployment](../gmp/gmp.mdx#evm-chain)).
+- An IBC client must be created on the local chain representing the counterparty chain.
+- The account performing bridge registration must hold the `authority` role on the IFT contract (`owner` for `IFTOwnable`).
+
+### 1. Deploy `IFTOwnable`
+
+`IFTOwnable` is the reference EVM implementation: a UUPS upgradeable logic contract extending `IFTBaseUpgradeable`, with the deployer as owner. It is deployed behind an `ERC1967Proxy`. From [`MinimalDeploy.s.sol`](https://github.com/cosmos/ibc-e2e-docs-example/blob/41a9c5931e36d32b6354e431309f55ddf958845d/demo/cosmos-evm/ibc/forge/scripts/MinimalDeploy.s.sol):
+
+```solidity
+address iftLogic = _deployArtifact(ARTIFACT_IFT);
+d.ift = address(
+    new ERC1967Proxy(
+        iftLogic,
+        abi.encodeWithSignature(
+            "initialize(address,string,string,address)",
+            msg.sender, IFT_TOKEN_NAME, IFT_TOKEN_SYMBOL, d.ics27Gmp
+        )
+    )
+);
+```
+
+`ics27Gmp` is the address of the already-deployed `ICS27GMP` proxy.
+
+### 2. Deploy a `SendCall` constructor
+
+The SendCall constructor encodes the mint payload for the counterparty chain. For an EVM counterparty, deploy `EVMIFTSendCallConstructor`:
+
+```solidity
+new EVMIFTSendCallConstructor()
+```
+
+### 3. Register the bridge
+
+Call `registerIFTBridge` on the IFT contract ([`lib/ibc.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/lib/ibc.sh)):
+
+```bash
+cast send "$IFT_CONTRACT_ADDR" \
+  "registerIFTBridge(string,string,address)" \
+  "$CLIENT_ID" "$COUNTERPARTY_IFT_ADDR" "$CTOR_ADDR" \
+  --rpc-url "http://besu:8545" --private-key "$ETH_VALIDATOR_PRIVKEY"
+```
+
+The three arguments are:
+- `clientId`: the IBC client ID on the local EVM chain representing the counterparty chain.
+- `counterpartyIFTAddress`: the address that will appear as the GMP packet's `sender` from the counterparty chain. For an EVM counterparty, this is the EIP-55 checksummed address of the counterparty IFT contract — `ICS27GMP.sendCall` records the caller using EIP-55 checksum casing, and `iftMint` does an exact string match against this value.
+- `iftSendCallConstructor`: the address of the constructor deployed in step 2.
+
+### 4. Send a transfer
+
+The following command illustrates sending an IFT transfer:
+
+```bash
+timeout_ts=$(( $(date +%s) + 1200 ))  # 20 minutes from now
+
+cast send "$IFT_CONTRACT_ADDR" \
+  "iftTransfer(string,string,uint256,uint64)" \
+  "$CLIENT_ID" "$RECEIVER_ADDR" "$AMOUNT" "$timeout_ts" \
+  --rpc-url "http://besu:8545" --private-key "$ETH_VALIDATOR_PRIVKEY"
+```
+
+From the demo ([`lib/demo.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/41a9c5931e36d32b6354e431309f55ddf958845d/demo/cosmos-evm/lib/demo.sh#L292-L299)), `$AMOUNT` is in the ERC20's base unit.
