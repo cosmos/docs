@@ -17,13 +17,6 @@ The relayer has three components:
 - **Postgres database** — persists packet state; migrations must be applied before the relayer starts
 - **Relay dispatcher** — polls the database and submits RecvPacket / Ack / Timeout transactions
 
-## Prerequisites
-
-- Running [Proof API](https://github.com/cosmos/solidity-ibc-eureka/tree/main/programs/proof-api)
-- Postgres with migrations applied (see [Database migrations](#database-migrations))
-- RPC endpoints for both chains
-- A funded signing key on each chain
-
 ## Configuration
 
 The relayer is configured via a YAML file. Below is the config used in the IBC e2e demo, derived from [`ibc/relayer-config.yml.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/relayer-config.yml.tmpl). It shows the relayer configuration between a Cosmos and Besu chain:
@@ -87,9 +80,9 @@ chains:
 
 For advanced configuration options including batch sizing, concurrency, gas alert thresholds, and EVM gas multipliers, see the [Configuration Reference](https://github.com/cosmos/ibc-relayer#configuration-reference) in the relayer README.
 
-## Signing keys
+## Local signing keys
 
-Set `signing.keys_path` to a JSON file keyed by chain ID (see [`config/local/ibcv2keys.json.example`](https://github.com/cosmos/ibc-relayer/blob/main/config/local/ibcv2keys.json.example) for more details):
+Set `signing.keys_path` to a JSON file keyed by chain ID. This example is from the ibc-relayer repository: [`config/local/ibcv2keys.json.example`](https://github.com/cosmos/ibc-relayer/blob/main/config/local/ibcv2keys.json.example).
 
 ```json
 {
@@ -118,29 +111,101 @@ The exported hex is what goes in `keys.json`. The address on each chain must be 
 
 For production key management, see [Remote Signing](https://github.com/cosmos/ibc-relayer#remote-signing) in the relayer README.
 
-## Database migrations
+## Getting started
 
-Migrations must be applied before starting the relayer. The relayer does not apply them itself. From the [ibc-relayer repo](https://github.com/cosmos/ibc-relayer), running `docker compose up -d` starts Postgres and applies migrations automatically via the [`go-migrate` service](https://github.com/cosmos/ibc-relayer/blob/4cb031af9ab700dbe702c396f203a4c195bfea33/docker-compose.yml#L23).
+To start the relayer, visit the [ibc-relayer repository](https://github.com/cosmos/ibc-relayer) and follow the instructions below for local development. Refer to the [relayer README](https://github.com/cosmos/ibc-relayer#local-development) for full setup details.
 
-## Starting the relayer
+### Prerequisites
 
-The following command is used in the [ibc-relayer repo](https://github.com/cosmos/ibc-relayer) to start the relayer:
+- Running [Proof API](https://github.com/cosmos/solidity-ibc-eureka/tree/main/programs/proof-api)
+- Postgres with migrations applied (see [Database migrations](#database-migrations))
+- RPC endpoints for both chains
+- A funded signing key on each chain
+
+### Starting the relayer
+
+For local development, the full startup sequence from the [ibc-relayer repo](https://github.com/cosmos/ibc-relayer) is:
+
+
+1. Start Postgres
+
+```bash
+docker compose up -d --wait
+```
+
+2. Build the binary and apply [database](#database-migrations) migrations
+
+```bash
+make build
+./bin/relayer migrate --config ./config/local/config.yml
+```
+
+3. Create a local config file (see the [Configuration](#configuration) section).
+
+4. Create a local keys file (see the [Local Signing](#local-signing-keys) section).
+
+5. Start the relayer
 
 ```bash
 make relayer-local
 ```
 
-This sets the Postgres credentials (defined in the [`Makefile`](https://github.com/cosmos/ibc-relayer/blob/4cb031af9ab700dbe702c396f203a4c195bfea33/Makefile#L11)) and starts the relayer against `./config/local/config.yml`. It expands to:
+The relayer will start:
 
-```bash
-POSTGRES_USER=relayer POSTGRES_PASSWORD=relayer go run ./cmd/relayer/main.go --config ./config/local/config.yml
-```
+- gRPC API server on the address configured in `relayer_api.address`
+- Prometheus metrics server on the configured address
+- Relay dispatcher polling for new transfers
 
 To check the health of the relayer:
 
 ```bash
 curl http://localhost:3000/health
 ```
+
+## CLI flags and subcommands
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `./config/local/config.yml` | Path to relayer config file |
+| `--ibcv2-relaying` | `true` | Enable or disable the relay dispatcher |
+| `--db-migrate` | `false` | Apply pending database migrations before starting the relayer |
+
+| Subcommand | Description |
+|------------|-------------|
+| `migrate` | Apply pending database migrations and exit (does not start the relayer) |
+
+
+## Database migrations
+
+Migrations are compiled into the relayer binary and applied by the relayer itself. There are two modes:
+
+**One-shot** (recommended for production — apply migrations and exit, then start the relayer separately):
+
+```bash
+./bin/relayer migrate --config /path/to/config.yml
+```
+
+**Combined startup** (convenient for local development — apply migrations then continue into normal startup):
+
+```bash
+./bin/relayer --db-migrate --config /path/to/config.yml
+```
+
+Each migration runs in its own transaction. If a migration fails, the relayer aborts startup rather than serve against an unverified schema.
+
+<Warning>
+The standalone `ghcr.io/cosmos/ibc-relayer-migrate` Docker image is no longer published. Deployments that previously used it must switch to invoking `migrate` on the main `ibc-relayer` image:
+
+```bash
+# before
+docker run --rm ghcr.io/cosmos/ibc-relayer-migrate:<version> up
+
+# after
+docker run --rm ghcr.io/cosmos/ibc-relayer:<version> migrate --config /path/to/config.yml
+```
+</Warning>
+
+For full details on database migrations, see the [Database Migrations](https://github.com/cosmos/ibc-relayer#database-migrations) section of the relayer README.
 
 ## Triggering a relay
 
@@ -184,7 +249,7 @@ The response contains a `packetStatuses` array:
 }
 ```
 
-`state` will be `TRANSFER_STATE_PENDING`, `TRANSFER_STATE_COMPLETE`, or `TRANSFER_STATE_FAILED`. `ackTx` and `timeoutTx` are also present once those legs complete.
+`state` will be one of `TRANSFER_STATE_UNKNOWN`, `TRANSFER_STATE_PENDING`, `TRANSFER_STATE_COMPLETE`, or `TRANSFER_STATE_FAILED`. `ackTx` and `timeoutTx` are also present once those legs complete.
 
 ## Ports
 

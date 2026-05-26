@@ -9,6 +9,10 @@ The IBC Attestor is a stateless gRPC service that produces cryptographic attesta
 
 Each attestor instance handles a single chain type. In production, multiple instances per chain are typical (each with a distinct signing key) to support m-of-n quorum verification by the light client.
 
+## Getting started
+
+To start the attestor, visit the [ibc-attestor repository](https://github.com/cosmos/ibc-attestor) and follow the [quickstart guide](https://github.com/cosmos/ibc-attestor#quickstart). 
+
 ## Components
 
 ### 1. IBC Attestor
@@ -23,7 +27,7 @@ The core attestation service. Exposes a gRPC API on port `8090` (configurable) a
 The attestor requires a secp256k1 signing key. Two deployment modes are supported:
 
 - **Local signer** — key is stored in an encrypted keystore file on disk, read directly by the attestor process
-- **Remote signer** — the attestor delegates signing to an external gRPC signer service over the network
+- **Remote signer** — the attestor delegates signing to an external gRPC signer service over the network. See [Remote Signing](https://github.com/cosmos/ibc-attestor/blob/main/docs/remote-signing.md) for configuration details.
 
 For production deployments, operators can rely on their own signing infrastructure. Otherwise, a local keystore is sufficient.
 
@@ -74,9 +78,17 @@ keystore_path = "~/.ibc-attestor/ibc-attestor-keystore"
 endpoint = "http://signer-service:9006"
 # Wallet ID to request from the signer. Leave empty for singleton signers.
 wallet_id = ""
+
+# --- Tracing (optional, omit entire section to disable OTLP export) ---
+[tracing]
+otlp_endpoint = "http://localhost:4317"
+service_name  = "ibc-attestor"
+sample_rate   = 1.0                      # 0.0–1.0; 1.0 = sample all traces
 ```
 
-> **Note:** Only the fields relevant to the chosen `--signer-type` need to be present. The `[adapter]` fields that apply depend on the `--chain-type`.
+<Note>
+Only the fields relevant to the chosen `--signer-type` need to be present. The `[adapter]` fields that apply depend on the `--chain-type`.
+</Note>
 
 ### EVM example
 
@@ -121,7 +133,7 @@ ibc_attestor server
   --signer-type <local|remote>       Signing backend (default: local)
 
 ibc_attestor key generate [--keystore <PATH>]
-ibc_attestor key show [--keystore <PATH>] [--show-private]
+ibc_attestor key show [--keystore <PATH>] [--show-private] [--show-public]
 ```
 
 The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses the following commands:
@@ -153,7 +165,7 @@ ibc_attestor key show
 ibc_attestor key show --show-private
 ```
 
-The **public key / Ethereum address** derived from this keypair must be registered with the IBC light client when the light client is created. Registration happens at creation time and cannot be updated after the fact.
+The **public key / Ethereum address** derived from this keypair must be registered with the IBC light client when the light client is created. On Cosmos chains, registration is fixed at creation time. On EVM chains, the signer set can be updated after creation.
 
 ## Ports
 
@@ -175,7 +187,7 @@ RUST_LOG=debug  # verbose, includes per-request details
 RUST_LOG=warn   # only warnings and errors
 ```
 
-OpenTelemetry tracing is built in. Configure an OTEL exporter via the standard `OTEL_EXPORTER_*` environment variables if you want distributed traces.
+OpenTelemetry tracing is built in. Enable it by adding a `[tracing]` section to your config file with `otlp_endpoint`, `service_name`, and `sample_rate` fields (see the [full configuration reference](#full-configuration-reference) above).
 
 Prometheus metrics are exposed on the `health_addr` port at `GET /metrics`.
 
@@ -230,4 +242,4 @@ Retrieve the address before creating the light client:
 ibc_attestor key show
 ```
 
-For remote signers, retrieve the signing key's Ethereum address from your signer service before creating the light client. The remote signer must implement the [gRPC interface the attestor expects](https://github.com/cosmos/ibc-relayer#remote-signing).
+For remote signers, retrieve the signing key's Ethereum address from your signer service before creating the light client. The remote signer must implement the [gRPC interface the attestor expects](https://github.com/cosmos/ibc-attestor/blob/main/docs/remote-signing.md).
