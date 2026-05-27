@@ -1,0 +1,255 @@
+---
+title: "Attestor Guide"
+description: "How to deploy and operate the IBC Attestor service"
+---
+
+## Overview
+
+The IBC Attestor is a stateless gRPC service that produces cryptographic attestations of blockchain state for use in IBC v2 cross-chain communication. It connects to a chain (EVM, Cosmos, or Solana) and signs state at requested heights using either a local keystore or a remote signing service.
+
+Each attestor instance handles a single chain type. In production, multiple instances per chain are typical (each with a distinct signing key) to support m-of-n quorum verification by the light client.
+
+<Tip>
+To see an attestor running as part of a full IBC setup, follow the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
+</Tip>
+
+## Getting started
+
+To start the attestor, visit the [ibc-attestor repository](https://github.com/cosmos/ibc-attestor) and follow the [quickstart guide](https://github.com/cosmos/ibc-attestor#quickstart). 
+
+## Components
+
+### 1. IBC Attestor
+
+The core attestation service. Exposes a gRPC API on port `8080` (configurable) and a metrics endpoint on port `8081`.
+
+**Image**: `ghcr.io/cosmos/ibc-attestor:<version>` — see [releases](https://github.com/cosmos/ibc-attestor/releases) for available tags
+**Binary**: `ibc_attestor`
+
+### 2. Signer Service (external dependency)
+
+The attestor requires a secp256k1 signing key. Two deployment modes are supported:
+
+- **Local signer** — key is stored in an encrypted keystore file on disk, read directly by the attestor process
+- **Remote signer** — the attestor delegates signing to an external gRPC signer service over the network. See [Remote Signing](https://github.com/cosmos/ibc-attestor/blob/main/docs/remote-signing.md) for configuration details.
+
+For production deployments, operators can rely on their own signing infrastructure. Otherwise, a local keystore is sufficient.
+
+### 3. Chain RPC Endpoint (external dependency)
+
+Each attestor instance requires a live RPC endpoint for the chain it is attesting:
+
+| Chain Type | Required Endpoint |
+|------------|------------------|
+| EVM | JSON-RPC HTTP(S) endpoint (e.g. Alchemy, Infura, or self-hosted `geth`) |
+| Cosmos | Tendermint RPC HTTP(S) endpoint |
+| Solana | Solana JSON-RPC HTTP(S) endpoint |
+
+## Configuration
+
+The attestor is configured via a TOML file passed with `--config`. The chain type and signer mode are passed as CLI flags.
+
+### Full configuration reference
+
+```toml
+[server]
+listen_addr = "0.0.0.0:8080"   # gRPC — queried by the Proof API
+health_addr = "0.0.0.0:8081"   # HTTP health check (GET /healthz) and metrics (GET /metrics)
+
+[adapter]
+# RPC endpoint of the chain being attested.
+# EVM: HTTP or HTTPS JSON-RPC URL
+# Cosmos: Tendermint RPC URL (http or https)
+# Solana: Solana RPC URL
+url = "https://your-rpc-endpoint"
+
+# EVM only: address of the deployed ICS-26 router contract on the chain.
+router_address = "0x..."
+
+# EVM only (optional): number of blocks to subtract from `latest` to
+# determine the finalized height. If omitted, the `finalized` block tag
+# is used directly (requires the RPC to support it).
+# Use 0 for local/test networks where `finalized` may lag indefinitely.
+finality_offset = 12
+
+[signer]
+# --- Local signer (--signer-type local) ---
+# Path to the keystore file or directory. Supports ~ expansion.
+keystore_path = "~/.ibc-attestor/ibc-attestor-keystore"
+
+# --- Remote signer (--signer-type remote) ---
+# gRPC endpoint of the remote signer service.
+endpoint = "http://remote-signer.example:50051"
+# Wallet ID to request from the signer (required).
+wallet_id = "my-wallet-id"
+
+# --- Tracing (optional, omit entire section to disable OTLP export) ---
+[tracing]
+otlp_endpoint = "http://localhost:4317"
+service_name  = "ibc-attestor"
+sample_rate   = 1.0                      # 0.0–1.0; 1.0 = sample all traces
+```
+
+<Note>
+Only the fields relevant to the chosen `--signer-type` need to be present. The `[adapter]` fields that apply depend on the `--chain-type`.
+</Note>
+
+### EVM example
+
+This example is from the [`attestor-config.toml.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/attestor-config.toml.tmpl) file of the IBC demo repo.
+
+```toml
+[server]
+listen_addr = "0.0.0.0:9101"
+health_addr = "0.0.0.0:9102"
+
+[adapter]
+url = "<EVM_JSON_RPC_ENDPOINT>"
+router_address = "${ICS26_ROUTER_ADDR}"
+finality_offset = 0
+
+[signer]
+keystore_path = "/config/.ibc-attestor/ibc-attestor-keystore"
+```
+
+### Cosmos example
+
+This example is from the [`attestor-cosmos-config.toml.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/attestor-cosmos-config.toml.tmpl) file of the IBC demo repo.
+
+```toml
+[server]
+listen_addr = "0.0.0.0:9101"
+health_addr = "0.0.0.0:9102"
+
+[adapter]
+url = "<COMETBFT_RPC_ENDPOINT>"
+
+[signer]
+keystore_path = "/config/.ibc-attestor/ibc-attestor-keystore"
+```
+
+## CLI Reference
+
+```
+ibc_attestor server
+  --config <PATH>                    Path to TOML config file (required)
+  --chain-type <evm|cosmos|solana>   Chain adapter to use (required)
+  --signer-type <local|remote>       Signing backend (default: local)
+
+ibc_attestor key generate [--keystore <PATH>]
+ibc_attestor key show [--keystore <PATH>] [--show-private] [--show-public]
+```
+
+The [IBC demo](https://github.com/cosmos/ibc-e2e-docs-example) uses the following commands:
+
+```bash
+# EVM-watching attestor
+ibc_attestor server --config /config/attestor-config.toml --chain-type evm --signer-type local
+
+# Cosmos-watching attestor
+ibc_attestor server --config /config/attestor-cosmos-config.toml --chain-type cosmos --signer-type local
+```
+
+## Key Management
+
+Before running the attestor with a local signer, generate a keypair:
+
+```bash
+ibc_attestor key generate
+# Writes to ~/.ibc-attestor/ibc-attestor-keystore by default
+
+# Or specify a custom keystore directory:
+ibc_attestor key generate --keystore /etc/ibc-attestor/
+# Writes to /etc/ibc-attestor/ibc-attestor-keystore
+```
+
+Inspect the Ethereum address (and optionally the private key):
+
+```bash
+ibc_attestor key show
+ibc_attestor key show --show-private
+```
+
+The **Ethereum address** derived from this keypair must be registered with the IBC light client when the light client is created. On Cosmos chains, registration is fixed at creation time. On EVM chains, the signer set can be updated after creation.
+
+## Ports
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| `8080` | gRPC (HTTP/2) | Attestation API — used by relayers and the fleet backend |
+| `8081` | HTTP | Metrics (Prometheus) and observability |
+
+> The `listen_addr` in your TOML config controls the gRPC port. These are the defaults from the example config; adjust to match your deployment. Note: the Dockerfile `EXPOSE`s `8090` and `9000` — if running in a container, set your TOML to match.
+
+
+## Observability
+
+The attestor emits structured JSON logs via `tracing`. Log level is controlled by the `RUST_LOG` environment variable:
+
+```bash
+RUST_LOG=info   # default recommended level
+RUST_LOG=debug  # verbose, includes per-request details
+RUST_LOG=warn   # only warnings and errors
+```
+
+OpenTelemetry tracing is built in. Enable it by adding a `[tracing]` section to your config file with `otlp_endpoint`, `service_name`, and `sample_rate` fields (see the [full configuration reference](#full-configuration-reference) above).
+
+Prometheus metrics are exposed on the `health_addr` port at `GET /metrics`.
+
+## Health Checking
+
+```bash
+curl http://localhost:8081/healthz
+```
+
+Returns `200 OK` when the gRPC server is accepting connections, `503 Service Unavailable` when it is not ready. Allow up to 30 seconds for startup.
+
+
+## Multi-Attestor Deployments
+
+Each attestor instance handles one chain type. For m-of-n quorum, deploy multiple instances per chain, each with a distinct signing key. 
+
+Two places need to be updated when adding attestors. The following are examples of the templates used in the [IBC demo](/ibc/next/cosmos-evm/tutorial/introduction).
+
+- **Light client** ([`client-state.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/client-state.json.tmpl)) — at creation time, provide all attestor Ethereum addresses and set the quorum threshold:
+
+```json
+{
+  "attestor_addresses": ["0xAAA...", "0xBBB...", "0xCCC..."],
+  "min_required_sigs": 2
+}
+```
+
+- **Proof API** ([`proof-api.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/proof-api.json.tmpl)) — add all attestor gRPC endpoints to `attestor_endpoints` and set `quorum_threshold` to match `min_required_sigs`:
+
+```json
+"mode": {
+  "attested": {
+    "attestor": {
+      "quorum_threshold": 2,
+      "attestor_endpoints": [
+        "http://attestor-1:9101",
+        "http://attestor-2:9101",
+        "http://attestor-3:9101"
+      ],
+      "attestor_query_timeout_ms": 10000
+    }
+  }
+}
+```
+
+The Proof API queries all listed endpoints, collects signatures, and verifies the quorum threshold is met before building the relay transaction.
+
+Multiple instances can share a single remote signer service using distinct `wallet_id` values.
+
+## On-Chain Registration
+
+The Ethereum address derived from the attestor's signing key must be provided when the IBC light client is created. On the Cosmos side, the signer set is fixed at creation time. On the EVM side, the signer set can technically be updated after the light client is created.
+
+Retrieve the address before creating the light client:
+
+```bash
+ibc_attestor key show
+```
+
+For remote signers, retrieve the signing key's Ethereum address from your signer service before creating the light client. The remote signer must implement the [gRPC interface the attestor expects](https://github.com/cosmos/ibc-attestor/blob/main/docs/remote-signing.md).

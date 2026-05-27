@@ -1,0 +1,244 @@
+---
+title: "Attestation Light Client"
+description: "Learn how the attestation-based IBC light client works and how to integrate it"
+---
+
+## Overview
+
+The attestation light client is an IBC v2 light client that verifies packets using quorum-signed ECDSA attestations from a trusted set of off-chain signers, rather than cryptographic verification of block headers. Instead of tracking a chain's consensus state through header proofs, it trusts a fixed set of known attestors to sign statements about packet state on demand. In production, the light client is designed to be used in a multi-attestor deployment, where multiple attestors are used to sign attestations for the same packet.
+
+There are two implementations:
+
+- **Cosmos (Go)**: [`ibc-go/modules/light-clients/attestations`](https://github.com/cosmos/ibc-go/tree/main/modules/light-clients/attestations)
+- **EVM (Solidity)**: [`solidity-ibc-eureka/contracts/light-clients/attestation/AttestationLightClient.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/light-clients/attestation/AttestationLightClient.sol)
+
+Both implementations use the same ABI encoding for the signed attestation payloads, so the same attestor infrastructure generates proofs that work on both sides.
+
+## Trust Model
+
+The client trusts a fixed set of Ethereum-style ECDSA addresses (secp256k1 EOAs) configured at creation time. Proof verification requires at least `minRequiredSigs` unique valid signatures from that set.
+
+Key properties:
+- Each signer can only sign once per proof — duplicates are rejected
+- Only addresses in the registered attestor set are accepted
+- Signatures are domain-separated by attestation type to prevent cross-protocol replay
+- Conflicting attestations at the same height (different timestamps) trigger misbehaviour and freeze the client.
+
+## State
+
+### Client State
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `attestorAddresses` | `[]string` (Go) / `address[]` (Solidity) | Fixed set of trusted attestor EOA addresses |
+| `minRequiredSigs` | `uint32` (Go) / `uint8` (Solidity) | Minimum unique signatures required to accept a proof |
+| `latestHeight` | `uint64` | Highest trusted height |
+| `isFrozen` | `bool` | When `true`, the client rejects all proofs — set on misbehaviour detection |
+
+### Consensus State
+
+A consensus state is stored per height. It contains one field:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `timestamp` | `uint64` | Trusted block timestamp at this height. Stored in nanoseconds (Go) / seconds (Solidity). |
+
+The consensus state at a given height is written once — either during client creation (the initial trusted height) or when a state attestation is submitted for that height. Once written, it is immutable. Attempts to submit a conflicting timestamp for the same height freeze the client.
+
+The initial height is significant: proof verification at any `proofHeight` requires a consensus state to exist at that exact height. Until state attestations are submitted for additional heights, only the initial height is trusted. If the relayer attempts to verify a proof at a height for which no state attestation has been submitted, verification fails.
+
+## Runtime Flow
+
+The light client is never called directly by users. It is invoked by the IBC core layer as part of processing a relay transaction. Here is the full flow for a packet relay:
+
+1. **Packet sent**: a user submits a send transaction on the source chain. The IBC core module writes a packet commitment to chain state.
+
+2. **Relayer detects the packet**: the relayer monitors source chain events, sees the packet, and calls the Proof API's `RelayByTx` RPC with the source transaction hash.
+
+3. **Proof API queries attestors**: the Proof API calls each attestor's gRPC endpoint. Each attestor reads the source chain state at the relevant height and returns a signed `PacketAttestation` (containing the packet path and commitment) and a signed `StateAttestation` (containing the block height and timestamp).
+
+4. **Proof API assembles the relay transaction**: it wraps the collected signatures into an `AttestationProof` and builds two messages:
+   - `updateClient`: submits the `StateAttestation` proof to write a consensus state at the packet's height
+   - `RecvPacket` (Cosmos) or `recvPacket` (EVM): submits the `PacketAttestation` proof to deliver the packet
+
+5. **IBC core calls the light client**: when processing `RecvPacket`/`recvPacket`, the IBC core layer computes the packet commitment path and value, then calls `VerifyMembership` on the light client, passing the `AttestationProof` as the `proof` argument:
+   - **Cosmos** (`packet.go`): `k.ClientKeeper.VerifyMembership(ctx, clientID, proofHeight, 0, 0, proof, merklePath, commitment)`
+   - **EVM** (`ICS26Router.sol`): `getClient(msg_.packet.destClient).verifyMembership(membershipMsg)`
+
+6. **Light client verifies the proof**: checks that a consensus state exists at `proofHeight`, verifies the quorum of signatures, and confirms the packet commitment is present in the attested packets array. If all checks pass, the packet is accepted.
+
+The `updateClient` step must succeed before `RecvPacket` can be verified, because `VerifyMembership` requires a consensus state at `proofHeight`. In practice, the Proof API bundles both into a single relay submission.
+
+
+## Wire Format
+
+This is the proof format the attestor must produce and the light client expects to receive. All attestation data is ABI-encoded. The proof envelope is the same for both client updates and packet membership proofs:
+
+```solidity
+struct AttestationProof {
+    bytes attestationData;  // ABI-encoded StateAttestation or PacketAttestation
+    bytes[] signatures;     // 65-byte (r||s||v) ECDSA signatures over sha256(typeTag || sha256(attestationData))
+}
+```
+
+The `attestationData` payload depends on the operation:
+
+**State attestation** — used for client updates (`updateClient`):
+
+```solidity
+struct StateAttestation {
+    uint64 height;     // the height being attested
+    uint64 timestamp;  // Unix timestamp in seconds
+}
+// ABI-encoded: abi.encode(height, timestamp) — 64 bytes
+```
+
+**Packet attestation** — used for membership and non-membership proof verification:
+
+```solidity
+struct PacketCompact {
+    bytes32 path;        // keccak256(commitment path bytes)
+    bytes32 commitment;  // raw 32-byte packet commitment; bytes32(0) for non-membership
+}
+
+struct PacketAttestation {
+    uint64 height;
+    PacketCompact[] packets;
+}
+// ABI-encoded: abi.encode(height, packets)
+```
+
+## Signature Verification
+
+Signatures are domain-separated by attestation type to prevent a packet attestation from being replayed as a state attestation or vice versa:
+
+```
+digest = sha256(typeTag || sha256(attestationData))
+```
+
+Where `typeTag` is:
+- `0x01` — state attestation (client update)
+- `0x02` — packet attestation (membership / non-membership proof)
+
+Each signature is a standard 65-byte secp256k1 ECDSA signature (`r || s || v`). The signer address is recovered from the signature and checked against the registered attestor set. The Cosmos implementation normalizes `v` from Ethereum format (27/28) to raw format (0/1) before recovery.
+
+## Client Updates
+
+To advance the client's view of the counterparty chain, an `AttestationProof` is submitted containing an ABI-encoded `StateAttestation` over a new height and timestamp. The client:
+
+1. Verifies signatures meet quorum against the `0x01`-tagged digest
+2. Checks whether a consensus state already exists at that height:
+   - If yes and the timestamp matches: no-op (idempotent)
+   - If yes and the timestamp differs: freeze the client (misbehaviour). On the Solidity side, this happens inline; on the Go side, the IBC framework detects it via `CheckForMisbehaviour` and calls `UpdateStateOnMisbehaviour` to set the frozen flag.
+   - If no: stores the new consensus state and updates `latestHeight` if the new height is greater
+
+## Proof Verification
+
+Both membership and non-membership use an `AttestationProof` containing an ABI-encoded `PacketAttestation`.
+
+The `path` field must have exactly one element — both implementations reject proofs where `path.length != 1`.
+
+### Membership
+
+Verifies that a packet commitment exists at a given path and height:
+
+1. Checks `path.length == 1` and `value` is non-empty
+2. Checks a consensus state exists at the claimed `proofHeight`
+3. Verifies signatures against the `0x02`-tagged digest
+4. Confirms `packetAttestation.height == proofHeight`
+5. Computes `keccak256(path[0])` and scans the attested `packets` array for a matching `path` and `commitment`
+
+### Non-Membership
+
+Verifies that a path has no commitment (was deleted or never existed):
+
+1. Checks `path.length == 1`
+2. Checks a consensus state exists at the claimed `proofHeight`
+3. Verifies signatures against the `0x02`-tagged digest
+4. Confirms `packetAttestation.height == proofHeight`
+5. Computes `keccak256(path[0])` and finds a matching entry in the `packets` array with `commitment == bytes32(0)`
+
+A path that is absent from the attested list entirely does not satisfy non-membership — the attestors must explicitly include the path with a zero commitment.
+
+## Integration
+
+For a working end-to-end example of how the light client is deployed and configured, see the [Create Attestation Light Clients](/ibc/next/cosmos-evm/tutorial/walkthrough/03-clients) page in the walkthrough of the IBC demo tutorial.
+
+### Cosmos Side
+
+Register the light client module in your app. The following example is from [`app/app.go`](https://github.com/cosmos/sandbox-ledger/blob/6ad4fd009a5138ed0fb6bb8121a3615afeb0d0ac/app/app.go#L512-L515) in the sandbox-ledger example repo:
+
+```go
+import ibcattestations "github.com/cosmos/ibc-go/v11/modules/light-clients/attestations"
+
+clientKeeper := app.IBCKeeper.ClientKeeper
+storeProvider := app.IBCKeeper.ClientKeeper.GetStoreProvider()
+attestationsLightClientModule := ibcattestations.NewLightClientModule(appCodec, storeProvider)
+clientKeeper.AddRoute(ibcattestations.ModuleName, &attestationsLightClientModule)
+```
+
+Register the codec types:
+
+```go
+ibcattestations.RegisterInterfaces(registry)
+```
+
+Create a client by submitting `MsgCreateClient` with a serialized `ClientState` and `ConsensusState`:
+
+```json
+// ClientState
+{
+  "@type": "/ibc.lightclients.attestations.v1.ClientState",
+  "attestor_addresses": ["0xYourAttestorEthAddress"],
+  "min_required_sigs": 1,
+  "latest_height": 12345,
+  "is_frozen": false
+}
+
+// ConsensusState
+{
+  "@type": "/ibc.lightclients.attestations.v1.ConsensusState",
+  "timestamp": "1700000000000000000"  // nanoseconds
+}
+```
+
+The resulting client ID has the format `attestations-N`.
+
+Attestor addresses must be in [EIP-55 checksummed](https://eips.ethereum.org/EIPS/eip-55) format.
+
+### EVM Side
+
+Deploy `AttestationLightClient.sol` and register it with the `ICS26Router`:
+
+```solidity
+AttestationLightClient lc = new AttestationLightClient(
+    attestorAddresses,       // address[] — registered attestor EOAs
+    minRequiredSigs,         // uint8 — quorum threshold
+    initialHeight,           // uint64 — initial trusted height
+    initialTimestampSeconds, // uint64 — Unix timestamp at initialHeight
+    roleManager              // address — admin for PROOF_SUBMITTER_ROLE; pass address(0) to allow anyone
+);
+
+bytes[] memory merklePrefix = new bytes[](1);
+merklePrefix[0] = bytes("");  // single empty-bytes prefix ([0x])
+
+IICS02ClientMsgs.CounterpartyInfo memory counterpartyInfo = IICS02ClientMsgs.CounterpartyInfo({
+    clientId: counterpartyClientId,  // client ID on the counterparty chain, e.g. "attestations-0"
+    merklePrefix: merklePrefix
+});
+
+// addClient auto-generates the client ID from getNextClientSeq() and returns it.
+// The 3-argument overload accepts a custom clientId but requires ID_CUSTOMIZER_ROLE.
+string memory clientId = ics26Router.addClient(counterpartyInfo, address(lc));
+```
+
+The resulting client ID has the format `client-N`, where `N` is the next client sequence from `ICS26Router.getNextClientSeq()`.
+
+#### Access Control
+
+`AttestationLightClient` uses OpenZeppelin `AccessControl` with a `PROOF_SUBMITTER_ROLE`:
+
+- If `roleManager == address(0)` at construction: anyone can submit proofs (suitable for demos and permissionless setups)
+- Otherwise: grant `PROOF_SUBMITTER_ROLE` to the `ICS26Router` address so the router can call `updateClient`, `verifyMembership`, and `verifyNonMembership`
+
+For production, pass the `ICS26Router` proxy address as `roleManager` (or grant it the role after deployment).

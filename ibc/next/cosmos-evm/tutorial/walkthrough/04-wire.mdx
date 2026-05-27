@@ -1,0 +1,88 @@
+---
+title: "Step 4: Wire the IFT Bridge"
+description: "Register IFT token contracts on each chain to enable cross-chain burn and mint"
+---
+
+After the previous step, both light clients exist and their counterparties are registered. This step wires the IFT application layer: it tells each chain's IFT module and contract which addresses and denoms correspond across chains, and what to mint or burn when a packet arrives.
+
+Run [`setup.sh`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/setup.sh):
+
+```bash
+./setup.sh wire
+```
+
+## What the script does
+
+### 1. Register the IFT bridge (Cosmos side)
+
+The following transactions are submitted on the Cosmos chain.
+
+First, if the tokenfactory denom does not yet exist, it is created:
+
+```bash
+sandboxd tx tokenfactory create-denom $subdenom
+```
+
+The denom takes the form `factory/{creator_addr}/{subdenom}`.
+
+Then the IFT bridge is registered:
+
+```bash
+sandboxd tx ift register-bridge $COSMOS_IFT_DENOM $COSMOS_CLIENT_ID $IFT_CONTRACT_ADDR_CHECKSUM evm
+```
+
+Note that the IFT contract address must be EIP-55 checksummed.
+
+This tells the Cosmos IFT module: EVM packets verified by `COSMOS_CLIENT_ID` (the attestation light client on Cosmos) that originate from `$IFT_CONTRACT_ADDR_CHECKSUM` should mint `$COSMOS_IFT_DENOM`. When tokens are sent in the other direction, the module burns them and sends a packet to that contract.
+
+Output: `COSMOS_IFT_DENOM` in the format `factory/{creator_addr}/{subdenom}`.
+
+### 2. Register the IFT bridge (EVM side)
+
+The EVM side requires a constructor contract and a bridge registration on the IFT contract.
+
+1. Compute the ICA address
+
+The GMP module derives a Cosmos account deterministically from the source client ID, the EIP-55 checksummed sender contract address, and a salt. This is the account the GMP module uses on Cosmos to execute the embedded `MsgIFTMint` when a packet arrives from the EVM:
+
+```bash
+sandboxd query gmp get-address $COSMOS_CLIENT_ID $IFT_CONTRACT_ADDR_CHECKSUM ""
+```
+
+This address is baked into the `CosmosIFTSendCallConstructor` at deploy time. The sender address must be EIP-55 checksummed. Querying with a lowercase address produces a different ICA.
+
+2. Query the Cosmos IFT module account
+
+The `counterpartyIFTAddress` registered on the EVM side must be the Cosmos IFT module account — the sender address that appears in GMP packets originating from Cosmos. This is distinct from the ICA above:
+
+```bash
+sandboxd query auth module-account ift
+```
+
+3. Deploy [`CosmosIFTSendCallConstructor`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/CosmosIFTSendCallConstructor.sol)
+
+This contract encodes the `MsgIFTMint` message for EVM-to-Cosmos transfers. It is initialized with:
+
+- `bridgeReceiveTypeUrl`: `/ibc.applications.prototypes.ift.v1.MsgIFTMint`
+- `denom`: `COSMOS_IFT_DENOM`
+- `icaAddress`: the ICA address computed in step 1
+
+4. Register the bridge on the IFT contract
+
+```
+IFTOwnable.registerIFTBridge(
+  clientId,                  // EVM_CLIENT_ID
+  counterpartyIFTAddress,    // Cosmos IFT module account (from step 2)
+  iftSendCallConstructor     // CTOR_ADDR
+)
+```
+
+## Applying to your own setup
+
+### GMP account address
+
+The GMP account address is deterministically derived from `(client_id, contract_addr, salt)`. If the client ID or IFT contract address changes, the GMP account address changes and `CosmosIFTSendCallConstructor` must be redeployed and re-registered.
+
+## Next steps
+
+With the IFT bridge registered, the next step is to [configure and start the attestors](/ibc/next/cosmos-evm/tutorial/walkthrough/05-attestors).

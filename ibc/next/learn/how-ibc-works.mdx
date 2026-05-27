@@ -1,0 +1,101 @@
+---
+title: "How IBC Works"
+description: "A conceptual overview of IBC's components: packets, light clients, relayers, and IBC Core"
+---
+
+# How IBC works
+
+This page explains how IBC works at a conceptual level, from the problem it solves to the components that make cross-chain communication possible.
+
+## IBC Overview
+
+In [the IBC overview](/ibc/next/learn/overview), you learned that IBC solves the chain isolation problem by letting blockchains exchange messages with cryptographic verification instead of solely relying on a centralized bridge or oracle. 
+
+IBC is flexible in how that verification works: each chain runs a light client to verify the other chain's state, and different light client types support different verification approaches. For example, a consensus light client tracks block headers and validates them against the counterparty's consensus rules. An attestation light client relies on a set of attestors to attest to the counterparty's state. In each case, both chains perform their own verification independently rather than solely depending on a shared bridge operator.
+
+Every cross-chain IBC message is wrapped in a packet. A packet contains routing information (which chains are involved, when it expires) and one or more payloads, where each payload is the actual application data: a token transfer, a contract call, or an arbitrary message. IBC itself is agnostic to the payload; it moves packets reliably and lets applications decide what to do with them.
+
+Packets are ferried between chains by a relayer, which is an off-chain process whose only job is to ensure that packets are flowing. Relayers carry no special trust: each chain independently verifies everything the relayer submits using its own local copy of the other chain's state (the light client). 
+
+Below is a high-level diagram of an IBC cross-chain token transfer:
+
+![](/ibc/images/diagrams/ibc-lifecycle.png)
+
+Every step requires cryptographic proof. If a proof is missing or invalid, that step is rejected and the packet remains pending. If valid delivery never arrives before the deadline, the packet times out and the send rolls back on Chain A. Packets are never dropped. They either finish end-to-end with valid proofs, or they are rolled back.
+
+The entire protocol is built around four events: a packet is sent, received, acknowledged, or timed out. Light clients, relayers, and IBC Core all exist to make those four events happen reliably between chains.
+
+The diagram above is a simplified version of how IBC works. The rest of this document goes deeper on each piece: the key components, how packets are structured, and how applications plug in. For a detailed look at the complete packet flow, see the [IBC Lifecycle](/ibc/next/learn/ibc-lifecycle) page.
+
+<Tip>
+For a hands-on demo of IBC in action, see the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
+</Tip>
+
+## Packets
+
+A packet is the unit of communication in IBC. Every cross-chain action (a token transfer, a contract call, an arbitrary message) is wrapped in a packet and sent through the protocol.
+
+A packet contains two things: routing information and one or more payloads.
+
+The routing information tells the protocol which chains are involved, which sequence number this packet is, and when it expires. This is what IBC Core (the on-chain IBC logic) uses to track the packet, verify proofs against it, and prevent replay.
+
+The payloads carry the actual message data, which ports are involved, and the raw bytes of the message itself. IBC Core treats those bytes as opaque and passes them through untouched. A single packet can carry multiple payloads, which execute atomically (all succeed or all fail).
+
+Every packet has a timeout. If it is not delivered before the deadline, the sender can prove it was never received and the application rolls back. Packets are never silently lost, and every packet either completes or times out.
+
+## Light Clients
+
+Unlike a traditional bridge, IBC does not depend on a single trusted operator. Instead, each chain maintains a light client: an on-chain program that verifies the counterparty chain's state. Light clients come in different forms depending on the chains and information involved.
+
+A consensus light client tracks the counterparty's block headers and validates them against its consensus rules, using validator signatures or ZK proofs. Because each block header commits to a cryptographic root of the chain's state, any specific fact about that state can be proven with a Merkle proof. When a packet arrives on Chain B, Chain B's consensus light client of Chain A verifies that the packet was actually committed on Chain A, without replaying Chain A's transactions or trusting anyone to report it honestly. For a detailed overview of the Tendermint consensus light client, see the [Tendermint Light Client](/ibc/next/light-clients/tendermint/overview) page.
+
+An attestation light client does not track block headers directly. Instead, it relies on a configured set of registered attestors to attest to the state of the counterparty chain using ECDSA signatures. This makes IBC usable in contexts where full consensus verification is not practical. In this model, attestors query the state of the source chain at a specific block height, locate the relevant packet commitment, and produce a signed hash of that commitment. These signatures are collected and bundled before being relayed to the destination chain. The attestation light client then verifies that the bundle contains enough valid signatures from registered attestors to meet the quorum threshold, and that all signatures attest to the same commitment. If quorum is met, the packet is accepted. Attestation clients can be used to connect to different chains ([like Cosmos and EVM chains](/ibc/next/cosmos-evm/overview)). For a detailed overview of attestation light clients, see the [Attestation Light Client](/ibc/next/light-clients/attestation/attestation-light-client) page.
+
+To connect two chains, Chain A creates a light client of Chain B, and Chain B creates a light client of Chain A. Each chain then registers the other's light client ID as its counterparty. Once both sides are registered, the two chains can exchange packets.
+
+## Relayers
+
+A relayer is an off-chain process that watches for events on one chain and submits the corresponding transactions on the other.
+
+With a Tendermint (consensus) light client, when a packet is committed on Chain A:
+
+1. The relayer fetches a Merkle proof of that commitment from Chain A.
+2. It submits the packet data and proof to Chain B.
+3. Chain B verifies the proof against its light client of Chain A.
+4. The packet is processed and an acknowledgement is written on Chain B.
+5. The relayer relays the acknowledgement back to Chain A the same way.
+6. If the packet is not delivered before its timeout, the relayer proves non-receipt to Chain A instead and the send is rolled back.
+
+Relayers also keep light clients current. Before submitting a packet, a relayer first submits a new block header from the source chain so the light client has a recent enough state root to prove against. If a light client is not updated within its trusting period, it expires and can no longer verify proofs.
+
+Relayers carry no trust. They cannot forge or alter packets, because every proof they submit is verified by the receiving chain's light client. A malicious or faulty relayer can delay delivery, but it cannot cause Chain B to process a packet that was never sent, or change the contents of one that was. Because relayers do not need any special trust, there is no permissioning or registration required for them.
+
+For a detailed overview of the IBC v2 relayer, see the [Relayer overview](/ibc/next/infra/relayer/overview) page.
+
+## IBC Core
+
+IBC Core is the shared protocol layer that runs on each chain. It exists so that applications never have to deal with proof verification, packet sequencing, replay prevention, or timeout enforcement directly. Applications hand off payloads to IBC Core when sending and receive verified payloads from IBC Core when packets arrive. IBC Core handles everything in between. For a detailed overview of IBC Core, see the [IBC Core overview](/ibc/next/ibc/overview) page.
+
+It is implemented as a native module on Cosmos chains or as smart contracts on other chains. It has three main components: the IBC store, the client router, and the port router.
+
+The IBC store records three things for every packet: a commitment written when a packet is sent, a receipt written when it is received, and an acknowledgement written after it is processed. This committed state is what light clients on the counterparty chain prove against. The store does not hold the packet payload; only a hash of the packet is committed. The full packet data is emitted as an event on the source chain, which the relayer reads and submits to the destination alongside the proof.
+
+The receipt is what prevents replay attacks: if a relayer submits the same packet twice, the receiving chain checks its store, finds the receipt, and rejects it. When Chain A receives the acknowledgement, it deletes the original commitment, preventing the same send from being acknowledged twice. Each packet also carries a sequence number so gaps or reordering can be detected.
+
+The client router maps each incoming proof to the correct light client for verification. When a relayer submits a packet from Chain A to Chain B, the client router looks up Chain B's light client of Chain A and uses it to verify the proof.
+
+The port router delivers verified payloads to the correct application. Each application registers under a port ID, and the port router matches the destination port in the payload to the registered application.
+
+For a detailed walkthrough of how a packet moves through these components from send to acknowledgement, see [IBC Lifecycle](/ibc/next/learn/ibc-lifecycle).
+
+## IBC Applications
+
+An IBC application is the on-chain logic that users actually interact with when doing something cross-chain. When a user bridges tokens from Chain A to Chain B, they are invoking an IBC application such as ICS-20 or IFT.
+
+IBC applications are typically deployed on both chains. Each side implements the same interface but plays a different role: one sends, the other receives and executes.
+
+Each IBC application defines what to do at each stage of the packet lifecycle. It specifies what to lock or validate when sending, what to execute when a packet arrives, what to do with the result, and how to roll back on timeout. The application never deals with packets, proofs, or headers directly. It only handles its own logic, and IBC Core handles the rest.
+
+Each application registers under a port ID. When IBC Core's port router receives a verified payload, it dispatches it to the application registered at the destination port. The sending application specifies both the source port and the destination port in the payload, so IBC Core can route it end-to-end without knowing anything about the payload's contents.
+
+Applications can also be layered: [middleware](/ibc/next/ibc/middleware/overview) wraps an existing application to add behavior such as fee handling or packet forwarding, without modifying the underlying application. One example of an IBC application is the GMP (General Message Passing) module, which enables arbitrary cross-chain message execution. Visit the [GMP module](/ibc/next/apps/gmp/gmp) page for a detailed overview, or try the [tutorial](/ibc/next/cosmos-evm/tutorial/introduction) for a hands-on demo. To learn how to build your own IBC application, see the [IBC v2 Applications](/ibc/next/ibc/apps/ibcv2apps) page.

@@ -1,0 +1,183 @@
+---
+title: "Proof API"
+description: "How the Proof API works and how to configure it"
+---
+
+## Overview
+
+The Proof API is a gRPC service that sits between the relayer and the attestors. The relayer does not build relay transactions itself; it calls the Proof API with a source transaction hash, and the Proof API returns a fully constructed, ready-to-submit transaction for the destination chain.
+
+Image: `ghcr.io/cosmos/proof-api`, see [releases](https://github.com/cosmos/solidity-ibc-eureka/releases) for available tags
+
+<Tip>
+To see the Proof API running as part of a full IBC setup, follow the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
+</Tip>
+
+## What it does
+
+When the relayer identifies a packet that needs relaying, it calls the Proof API's `RelayByTx` RPC with the source transaction hash, source and destination chain IDs, and the relevant IBC client IDs. The following example illustrates the flow for attestor-based light clients, but the proof API also constructs transactions for the relayer for transfers involving other light client types. The Proof API:
+
+1. Queries the source chain RPC for the transaction and parses its IBC events
+2. Calls each configured attestor's gRPC endpoint to collect cryptographic attestations of the source chain state
+3. Aggregates attestor signatures until the quorum threshold is met
+4. Constructs the full relay transaction: `updateClient` + `RecvPacket` (or `AckPacket` / `Timeout`) with proofs embedded
+5. Returns the serialized transaction bytes to the relayer, which signs and submits them
+
+The Proof API constructs but does not sign or submit transactions. The relayer handles submission.
+
+## Module system
+
+The Proof API is configured with a list of modules. Each module handles one transfer direction as a single `(src_chain, dst_chain)` pair. When `RelayByTx` is called, the Proof API routes the request to the module whose `src_chain` and `dst_chain` match.
+
+Each module needs access to both chain RPC endpoints regardless of direction, because it reads source chain state and submits to the destination chain.
+
+## Configuration
+
+The Proof API is configured via a JSON file (conventionally named `relayer.json`), passed via `--config`.
+
+### Full configuration reference
+
+The following is the example config template used in the IBC demo ([`ibc/proof-api.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/proof-api.json.tmpl)):
+
+```json
+{
+  "server": {"log_level": "info", "address": "0.0.0.0", "port": 9090},
+  "modules": [
+    {
+      "name": "cosmos_to_eth",
+      "src_chain": "cosmos-1",
+      "dst_chain": "32382",
+      "config": {
+        "tm_rpc_url": "http://cosmos:26657",
+        "ics26_address": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "eth_rpc_url": "http://besu:8545",
+        "signer_address": "cosmos1zj8jljx8rwyhfp36cmp0u5jqa98af8ehnv8463",
+        "mode": {"attested": {
+          "attestor": {
+            "quorum_threshold": 1,
+            "attestor_endpoints": ["http://attestor-cosmos:9101"],
+            "attestor_query_timeout_ms": 10000
+          }
+        }}
+      }
+    },
+    {
+      "name": "eth_to_cosmos",
+      "src_chain": "32382",
+      "dst_chain": "cosmos-1",
+      "config": {
+        "tm_rpc_url": "http://cosmos:26657",
+        "ics26_address": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "eth_rpc_url": "http://besu:8545",
+        "signer_address": "cosmos1zj8jljx8rwyhfp36cmp0u5jqa98af8ehnv8463",
+        "mode": {"attested": {
+          "attestor": {
+            "quorum_threshold": 1,
+            "attestor_endpoints": ["http://attestor:9101"],
+            "attestor_query_timeout_ms": 10000
+          }
+        }}
+      }
+    }
+  ]
+}
+```
+
+### `server`
+
+| Field | Description |
+| --- | --- |
+| `log_level` | Log verbosity: `"info"`, `"debug"`, or `"warn"` |
+| `address` | Bind address for the gRPC server |
+| `port` | gRPC port the relayer connects to |
+
+### `modules[]`
+
+| Field | Description |
+| --- | --- |
+| `name` | Module identifier — used in logs and metrics |
+| `src_chain` | Chain ID of the source chain (where the packet originates) |
+| `dst_chain` | Chain ID of the destination chain (where the relay transaction is submitted) |
+| `config` | Direction-specific configuration |
+
+### `config` (per module)
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `tm_rpc_url` | Yes | Tendermint RPC endpoint of the Cosmos chain |
+| `eth_rpc_url` | Yes | JSON-RPC endpoint of the EVM chain |
+| `ics26_address` | Yes | Address of the deployed `ICS26Router` contract on the EVM chain |
+| `signer_address` | Yes | Bech32 address of the Cosmos account that will sign relay transactions. Used when building Cosmos-destination transactions. |
+| `mode` | Yes | Proof construction mode |
+
+### `mode`
+
+Modes are defined per module and determine how proofs are generated. For use with the attestation light client, the `attested` mode is used. It instructs the Proof API to collect attestor signatures rather than generate cryptographic proofs.
+
+| Field | Description |
+| --- | --- |
+| `quorum_threshold` | Minimum number of attestors that must return valid signatures. Must match `min_required_sigs` in the light client. |
+| `attestor_endpoints` | List of attestor gRPC endpoints to query. Each entry should point to the attestor watching the **source** chain for that module. |
+| `attestor_query_timeout_ms` | Maximum time in milliseconds to wait for each attestor response |
+
+Other modes exist for different proof systems. For example, `sp1` (ZK proofs via the SP1 zkVM) in [`cosmos-to-eth`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/packages/relayer/modules/cosmos-to-eth/src/lib.rs#L79-L84) and `real` (Ethereum beacon chain proofs) in [`eth-to-cosmos`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/packages/relayer/modules/eth-to-cosmos/src/lib.rs#L79-L86).
+
+## Running the Proof API
+
+### Startup order
+
+The Proof API depends on the attestors being available (it queries them on every request). The relayer depends on the Proof API. The required startup order is:
+
+```
+attestors → Proof API → relayer
+```
+
+### Deployment
+
+The Proof API is generally run with the relayer. 
+
+The `proof-api` binary is distributed as a Docker image (`ghcr.io/cosmos/proof-api`). The following is the service definition from the IBC demo's [`docker-compose.yml`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/docker-compose.yml):
+
+```yaml
+proof-api:
+  image: ghcr.io/cosmos/proof-api:latest
+  volumes:
+    - ./ibc/local/relayer.json:/usr/local/relayer/relayer.json:ro
+  depends_on:
+    attestor:
+      condition: service_started
+    attestor-cosmos:
+      condition: service_started
+  restart: on-failure
+```
+
+The config file is mounted at `/usr/local/relayer/relayer.json` inside the container.
+
+For a full walkthrough of how the Proof API is deployed alongside the relayer, see the [Configure and Start the Relayer and Proof API](/ibc/next/cosmos-evm/tutorial/walkthrough/06-relayer) step of the IBC demo.
+
+## Relationship to the relayer and attestors
+
+```
+relayer
+  └─► Proof API (gRPC RelayByTx)
+        └─► attestors (one per source chain)
+              └─► chain RPC nodes
+```
+
+The relayer calls `RelayByTx` on the Proof API. The Proof API calls attestors over gRPC to collect signatures. Attestors read chain state directly from the chain RPC nodes.
+
+The relayer points to the Proof API via `ibcv2_proof_api.grpc_address` in its config. See the [relayer configuration reference](/ibc/next/infra/relayer/relayer-guide) for details.
+
+## Applying this to your own setup
+
+### Quorum threshold
+
+`quorum_threshold` must match the `min_required_sigs` value configured in the light client. If the light client requires 2 signatures but the Proof API only collects 1, the relay transaction will be rejected on-chain.
+
+### Attestor endpoints per module
+
+Each module's `attestor_endpoints` should list all attestors watching that module's  source chain. For a 3-of-5 quorum, list all 5 endpoints. The Proof API queries all of them and uses the first `quorum_threshold` valid responses.
+
+### `signer_address`
+
+This is the bech32 address of the Cosmos account the relayer will use to sign and submit Cosmos-destination transactions.
