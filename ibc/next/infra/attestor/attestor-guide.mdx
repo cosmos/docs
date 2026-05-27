@@ -1,5 +1,5 @@
 ---
-title: "Deployment"
+title: "Attestor Guide"
 description: "How to deploy and operate the IBC Attestor service"
 ---
 
@@ -9,6 +9,10 @@ The IBC Attestor is a stateless gRPC service that produces cryptographic attesta
 
 Each attestor instance handles a single chain type. In production, multiple instances per chain are typical (each with a distinct signing key) to support m-of-n quorum verification by the light client.
 
+<Tip>
+To see an attestor running as part of a full IBC setup, follow the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
+</Tip>
+
 ## Getting started
 
 To start the attestor, visit the [ibc-attestor repository](https://github.com/cosmos/ibc-attestor) and follow the [quickstart guide](https://github.com/cosmos/ibc-attestor#quickstart). 
@@ -17,7 +21,7 @@ To start the attestor, visit the [ibc-attestor repository](https://github.com/co
 
 ### 1. IBC Attestor
 
-The core attestation service. Exposes a gRPC API on port `8090` (configurable) and a metrics endpoint on port `9000`.
+The core attestation service. Exposes a gRPC API on port `8080` (configurable) and a metrics endpoint on port `8081`.
 
 **Image**: `ghcr.io/cosmos/ibc-attestor:<version>` — see [releases](https://github.com/cosmos/ibc-attestor/releases) for available tags
 **Binary**: `ibc_attestor`
@@ -49,8 +53,8 @@ The attestor is configured via a TOML file passed with `--config`. The chain typ
 
 ```toml
 [server]
-listen_addr = "0.0.0.0:8090"   # gRPC — queried by the Proof API
-health_addr = "0.0.0.0:9000"   # HTTP health check (GET /healthz) and metrics (GET /metrics)
+listen_addr = "0.0.0.0:8080"   # gRPC — queried by the Proof API
+health_addr = "0.0.0.0:8081"   # HTTP health check (GET /healthz) and metrics (GET /metrics)
 
 [adapter]
 # RPC endpoint of the chain being attested.
@@ -66,7 +70,7 @@ router_address = "0x..."
 # determine the finalized height. If omitted, the `finalized` block tag
 # is used directly (requires the RPC to support it).
 # Use 0 for local/test networks where `finalized` may lag indefinitely.
-finality_offset = 64
+finality_offset = 12
 
 [signer]
 # --- Local signer (--signer-type local) ---
@@ -75,9 +79,9 @@ keystore_path = "~/.ibc-attestor/ibc-attestor-keystore"
 
 # --- Remote signer (--signer-type remote) ---
 # gRPC endpoint of the remote signer service.
-endpoint = "http://signer-service:9006"
-# Wallet ID to request from the signer. Leave empty for singleton signers.
-wallet_id = ""
+endpoint = "http://remote-signer.example:50051"
+# Wallet ID to request from the signer (required).
+wallet_id = "my-wallet-id"
 
 # --- Tracing (optional, omit entire section to disable OTLP export) ---
 [tracing]
@@ -101,7 +105,7 @@ health_addr = "0.0.0.0:9102"
 
 [adapter]
 url = "<EVM_JSON_RPC_ENDPOINT>"
-router_address = "<ICS26_ROUTER_ADDR>"
+router_address = "${ICS26_ROUTER_ADDR}"
 finality_offset = 0
 
 [signer]
@@ -154,27 +158,28 @@ Before running the attestor with a local signer, generate a keypair:
 ibc_attestor key generate
 # Writes to ~/.ibc-attestor/ibc-attestor-keystore by default
 
-# Or specify a custom path:
-ibc_attestor key generate --keystore /etc/ibc-attestor/keystore
+# Or specify a custom keystore directory:
+ibc_attestor key generate --keystore /etc/ibc-attestor/
+# Writes to /etc/ibc-attestor/ibc-attestor-keystore
 ```
 
-Inspect the public key (and optionally the private key):
+Inspect the Ethereum address (and optionally the private key):
 
 ```bash
 ibc_attestor key show
 ibc_attestor key show --show-private
 ```
 
-The **public key / Ethereum address** derived from this keypair must be registered with the IBC light client when the light client is created. On Cosmos chains, registration is fixed at creation time. On EVM chains, the signer set can be updated after creation.
+The **Ethereum address** derived from this keypair must be registered with the IBC light client when the light client is created. On Cosmos chains, registration is fixed at creation time. On EVM chains, the signer set can be updated after creation.
 
 ## Ports
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| `8090` | gRPC (HTTP/2) | Attestation API — used by relayers and the fleet backend |
-| `9000` | HTTP | Metrics (Prometheus) and observability |
+| `8080` | gRPC (HTTP/2) | Attestation API — used by relayers and the fleet backend |
+| `8081` | HTTP | Metrics (Prometheus) and observability |
 
-> The `listen_addr` in your TOML config controls the gRPC port. `8090` matches the `EXPOSE` in the Dockerfile; adjust to match your config.
+> The `listen_addr` in your TOML config controls the gRPC port. These are the defaults from the example config; adjust to match your deployment. Note: the Dockerfile `EXPOSE`s `8090` and `9000` — if running in a container, set your TOML to match.
 
 
 ## Observability
@@ -194,7 +199,7 @@ Prometheus metrics are exposed on the `health_addr` port at `GET /metrics`.
 ## Health Checking
 
 ```bash
-curl http://localhost:9000/healthz
+curl http://localhost:8081/healthz
 ```
 
 Returns `200 OK` when the gRPC server is accepting connections, `503 Service Unavailable` when it is not ready. Allow up to 30 seconds for startup.
@@ -218,13 +223,18 @@ Two places need to be updated when adding attestors. The following are examples 
 - **Proof API** ([`proof-api.json.tmpl`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/proof-api.json.tmpl)) — add all attestor gRPC endpoints to `attestor_endpoints` and set `quorum_threshold` to match `min_required_sigs`:
 
 ```json
-"attestor": {
-  "quorum_threshold": 2,
-  "attestor_endpoints": [
-    "http://attestor-1:9101",
-    "http://attestor-2:9101",
-    "http://attestor-3:9101"
-  ]
+"mode": {
+  "attested": {
+    "attestor": {
+      "quorum_threshold": 2,
+      "attestor_endpoints": [
+        "http://attestor-1:9101",
+        "http://attestor-2:9101",
+        "http://attestor-3:9101"
+      ],
+      "attestor_query_timeout_ms": 10000
+    }
+  }
 }
 ```
 

@@ -5,12 +5,16 @@ description: "What IFT is, how it works, and how to integrate it on EVM"
 
 ## Overview
 
-IFT (Interchain Fungible Token) is a standard for tokens that can move between chains over IBC v2. Tokens are burned on the source chain and minted on the destination chain. This differs from other escrow-based token standards, which locks tokens in escrow and issues a wrapped representation on the destination chain. IFT enables fungible transfers across chains: the same token exists natively on every chain it is bridged to.
+IFT (Interchain Fungible Token) is a standard for tokens that can move between chains over IBC v2. Tokens are burned on the source chain and minted on the destination chain. This differs from other escrow-based token standards, which lock tokens in escrow and issue a wrapped representation on the destination chain. IFT enables fungible transfers across chains: the same token exists natively on every chain it is bridged to.
 
 IFT is built on [ICS-27 GMP](https://github.com/cosmos/ibc/tree/main/spec/IBC_V2/app/ics-027-gmp). Each transfer is a GMP packet whose payload instructs the destination IFT contract to mint tokens to the receiver.
 
 EVM implementation: [`solidity-ibc-eureka/contracts/utils/IFTBaseUpgradeable.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol)
 
+
+<Tip>
+To see IFT in action end-to-end, follow the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
+</Tip>
 
 ## How it works
 
@@ -34,7 +38,7 @@ Every bridge can be scoped to a chain pair: a light client and a counterparty IF
 
 Registration must happen on both sides before transfers succeed. The `counterpartyIFTAddress` field is used by `iftMint` as an authorization check. When a GMP packet arrives, the IFT contract verifies that the GMP account's `sender` matches the registered `counterpartyIFTAddress`. If the remote chain registers a different address, or hasn't registered at all, the mint reverts.
 
-In practice, both IFT contracts are deployed and each is registered on the other chain, then transfers can flow in both directions.
+In practice, both IFT contracts are deployed and each is registered on the other chain; then transfers can flow in both directions.
 
 ### Sending (`iftTransfer`)
 
@@ -52,7 +56,7 @@ In practice, both IFT contracts are deployed and each is registered on the other
 - The GMP account's `sender` field matches the `counterpartyIFTAddress` registered for the bridge.
 - The account's `salt` is empty (IFT only trusts unsalted accounts).
 
-No external caller can trigger a mint, only the registered counterparty IFT contract can, through the GMP account it controls.
+No external caller can trigger a mint; only the registered counterparty IFT contract can, through the GMP account it controls.
 
 ### Failure and refunds
 
@@ -84,7 +88,7 @@ function iftTransfer(
 ```
 
 - `clientId`: the IBC client ID on the local chain that represents the destination chain. Call `getIFTBridge(clientId)` to confirm a bridge is registered for that client.
-- `receiver`: the address on the destination chain as a string. For EVM counterparties, pass a hex address — the `EVMIFTSendCallConstructor` uses `Strings.tryParseAddress` to parse it into a Solidity `address` type when encoding the mint call.
+- `receiver`: the address on the destination chain as a string. For EVM counterparties, pass a hex address. The `EVMIFTSendCallConstructor` uses `Strings.tryParseAddress` to parse it into a Solidity `address` type when encoding the mint call.
 - `amount`: in the ERC20's smallest unit (equivalent to wei for 18-decimal tokens).
 - `timeoutTimestamp`: absolute Unix timestamp in seconds. If the packet is not relayed before this time, it will time out and the sender is refunded.
 
@@ -100,7 +104,7 @@ event IFTTransferRefunded(string clientId, uint64 sequence, address indexed send
 | --- | --- |
 | `IFTTransferInitiated` | Burn succeeded, GMP packet sent |
 | `IFTTransferCompleted` | Destination confirmed success |
-| `IFTTransferRefunded` | Timeout or destination error — tokens returned to sender |
+| `IFTTransferRefunded` | Timeout or destination error: tokens returned to sender |
 
 ### Checking in-flight transfers
 
@@ -131,7 +135,7 @@ The steps below use the demo as a reference.
 
 ### Prerequisites
 
-- `ICS26Router` and `ICS27GMP` must already be deployed and wired (see [EVM deployment](../gmp/gmp.mdx#evm-chain)).
+- `ICS26Router` and `ICS27GMP` must already be deployed and wired (see [EVM deployment](/ibc/next/apps/gmp/gmp#evm-chain)).
 - An IBC client must be created on the local chain representing the counterparty chain.
 - The account performing bridge registration must hold the `authority` role on the IFT contract (`owner` for `IFTOwnable`).
 
@@ -175,7 +179,7 @@ cast send "$IFT_CONTRACT_ADDR" \
 
 The three arguments are:
 - `clientId`: the IBC client ID on the local EVM chain representing the counterparty chain.
-- `counterpartyIFTAddress`: the address that will appear as the GMP packet's `sender` from the counterparty chain. For an EVM counterparty, this is the EIP-55 checksummed address of the counterparty IFT contract — `ICS27GMP.sendCall` records the caller using EIP-55 checksum casing, and `iftMint` does an exact string match against this value.
+- `counterpartyIFTAddress`: the address that will appear as the GMP packet's `sender` from the counterparty chain. For an EVM counterparty, this is the EIP-55 checksummed address of the counterparty IFT contract. `ICS27GMP.sendCall` records the caller using EIP-55 checksum casing, and `iftMint` does an exact string match against this value.
 - `iftSendCallConstructor`: the address of the constructor deployed in step 2.
 
 ### 4. Send a transfer

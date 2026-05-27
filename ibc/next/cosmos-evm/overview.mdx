@@ -7,11 +7,11 @@ IBC v2 enables direct connectivity between Cosmos chains and EVM-compatible netw
 
 IFT (Interchain Fungible Token) transfers are the primary mechanism for moving tokens across these chains. Unlike the ICS-20 escrow model where denoms are transfer path dependent, IFT uses mint and burn semantics: tokens are burned on the source chain and minted as the canonical asset on the destination. Users always hold a native token rather than a wrapped version, and token issuers maintain control over supply across chains.
 
-This page covers the components that make up a Cosmos to EVM IFT deployment and how they work together end-to-end.
+This page covers the components that make up a Cosmos to EVM IFT deployment and how they work together end-to-end. To see this in action, check out the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
 
 ## System Architecture
 
-![Cosmos EVM system architecture](/ibc/images/diagrams/cosmos-evm.png)
+![Cosmos EVM system architecture](/ibc/images/diagrams/cosmos-evm-architecture.png)
 
 ## On-Chain components
 
@@ -45,15 +45,21 @@ On the Cosmos side, the IFT module wraps a token factory module. The `register-b
 
 On the Solidity side, the IFT ERC20 contract handles the same flow. `iftTransfer` burns ERC20 tokens and initiates an outbound IBC packet via the ICS-26 Router. `iftMint` is called via GMP (explained below) on inbound packets to mint tokens to the recipient.
 
+For more details on IFT, see the [Interchain Fungible Token (IFT)](/ibc/next/apps/ift/ift) page.
+
 ### GMP (General Message Passing)
 
 GMP is the ICS-27 application protocol used to send arbitrary cross-chain messages. GMP is used to deliver encoded payloads to a target contract on the destination chain.
 
 When a GMP message arrives, the destination chain lazily creates a deterministic account derived from the sender address, source client ID, and a salt. That account then executes the payload on the target contract. In IFT transfers, GMP carries the `MsgIFTMint` instruction that tells the destination chain what to mint and to whom.
 
+For more details on GMP, see the [General Message Passing (GMP)](/ibc/next/modules/gmp/overview) page.
+
 ### Attestation Light Client
 
 Like other IBC light clients, the attestation light client stores counterparty chain state. Unlike Tendermint light clients, which verify state using consensus headers and Merkle proofs, it verifies incoming packets using quorum-signed ECDSA attestations from a trusted off-chain signer set. It is configured with a set of registered attestors and a quorum threshold, and verifies incoming IBC packets by recovering and validating signer addresses from the submitted signatures. Packets are accepted only when signatures from a minimum number of registered attestors are present (m-of-n). There are two implementations: one in Go for the Cosmos side and one in Solidity for the EVM side. 
+
+For more details on the attestation light client, see the [Attestation Light Client](/ibc/next/light-clients/attestation/attestation-light-client) page.
 
 ## Off-Chain
 
@@ -61,13 +67,19 @@ Like other IBC light clients, the attestation light client stores counterparty c
 
 The attestor is a lightweight, stateless Rust service (cosmos/ibc-attestor) that watches a chain and produces ECDSA-signed attestations on demand via gRPC. When the Proof API asks for an attestation, the attestor queries the chain, signs the relevant state, and returns it. Attestors are registered with their on-chain light clients on counterparty chains.
 
+For more details on the attestor, see the [Attestor Overview](/ibc/next/infra/attestor/overview) page.
+
 ### Proof API
 
 The proof API is a gRPC server that sits between the attestor instances and the relayer. When the relayer needs a proof for a packet, it queries the Proof API, which collects signatures from the relevant attestors, verifies the quorum threshold is met, and returns a proof bundle ready for on-chain submission.
 
+For more details on the Proof API, see the [Proof API](/ibc/next/infra/relayer/proof-api) page.
+
 ### Relayer
 
 Cosmos to EVM connections use the production-ready IBC v2 relayer (cosmos/ibc-relayer) that submits `RecvPacket` and `MsgTimeout` transactions. When a relay is triggered by a user submitting a source transaction hash, it queries the Proof API, which constructs the relay transaction, and submits it to the destination chain. It then relays the acknowledgement and proof back to the origin chain. For packets that time out, it submits a `MsgTimeout` to the source chain to trigger a refund.
+
+For more details on the relayer, see the [Relayer Overview](/ibc/next/infra/relayer/overview) page.
 
 ## Example IBC Transfer Flows
 
