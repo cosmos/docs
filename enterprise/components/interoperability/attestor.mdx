@@ -1,98 +1,65 @@
 ---
 title: "Attestor"
-description: "Lightweight, blockchain-agnostic attestation service for IBC cross-chain communication."
+description: "Enterprise-grade attestation infrastructure for attestation-based IBC interoperability."
 ---
 
-The IBC Attestor is a lightweight, blockchain-agnostic attestation service that provides cryptographically signed attestations of blockchain state for IBC cross-chain communication. IBC Attestors publish attestations on demand and are stateless: consumers of the service must send requests to the service's gRPC server to receive attestations.
+The [IBC Attestor](https://github.com/cosmos/ibc-attestor) is an enterprise-ready attestation service for the attestation light client. It is designed to secure cross-chain messages across Cosmos, EVM, Solana, Hyperledger Besu, and L2 rollup environments through quorum-signed attestations of finalized chain state.
 
-### Key Features
+Attestors are used with the attestation light client because verifying consensus from chains such as EVM networks directly on chain can be prohibitively expensive. The attestation model trades some trust assumptions for a more operationally practical and gas-efficient way to verify cross-chain packets.
 
-- Multi-chain support via pluggable adapter pattern (EVM, Solana, Cosmos)
-- Flexible signing (local keystore or remote HSM/KMS)
-- gRPC API for attestation requests
-- Concurrent packet validation
+The attestor is designed for organizations that require:
 
-## Attestation Types
+1. Configurable trust models, with multi-attestor deployments and m-of-n quorum verification.
+2. Enterprise-grade key security, with support for local keystores or remote signing through HSM, KMS, or dedicated signer infrastructure.
+3. Flexible deployment, with support for cloud, Kubernetes, or self-hosted environments.
+4. Multi-network interoperability, through chain adapters and deployment patterns spanning Cosmos, EVM, Solana, Besu, and L2-based environments.
+5. Production observability, including gRPC, health checks, Prometheus metrics, structured logging, and tracing.
 
-IBC attestors support two kinds of attestations:
+## Attestors secure messages between any two networks
 
-- **State attestations** — A given chain has a block of height `x` where the block was produced at time `y`
-- **Packet attestations** — A given chain's state explicitly does or does not contain packet commitment `z`
+The Enterprise attestor offering emphasizes three advantages for cross-chain operations:
 
-Both types use the same underlying [Attestation](https://github.com/cosmos/ibc-attestor/blob/main/proto/ibc_attestor/attestation.proto) proto type, but the `attested_data` field differs:
-- State attestations hold the height and timestamp of a block
-- Packet attestations contain the packets provided in the initial request and the height at which the commitments were found
+1. Define your trust model, by choosing which actors sign attestations and what signature threshold is required to validate messages. Teams can build quorum policies around their own validators, trusted third parties, Cosmos Labs, or additional trusted actors.
+2. Ensure key security, with built-in support for remote signing, HSM and KMS-style integrations, and controlled key management outside the attestor process.
+3. Deploy your way, in AWS, Azure, GCP, or self-hosted environments, with the flexibility to run your own infrastructure, choose fully managed operations, or self-host with complete control.
 
-## Security Model
+## Why teams use attestors
 
-Within the context of IBC relaying, attestors are an off-chain trusted service. Trust is established with on-chain components via two mechanisms:
-- Securely managed secp256k1 signing keys used by attestors to create attestations. The public parts of the keys must be registered with an on-chain light client.
-- An aggregation layer during relaying that asserts a configurable m-of-n signatures attest to the same state.
+- Attestation light client support, attestors provide the off-chain signed attestations consumed by the attestation light client.
+- Verified quorum model, multiple attestors can be combined so the light client accepts messages only after the configured signature threshold is met.
+- Finalized state verification, attestors reject requests above the configured finalized height and sign only after validating the requested state.
+- Packet and state attestations, attestors can sign both block state and packet commitment statements for cross-chain packet delivery.
+- Multi-chain adapters, the service supports EVM, Cosmos, and Solana through pluggable adapters, with enterprise positioning across Besu and L2-connected environments.
+- Stateless request handling, attestors publish attestations on demand through a gRPC API.
+- Multi-attestor quorum deployments, multiple attestors can be combined so the light client verifies a configurable signature threshold.
 
-**Trust assumptions per attestor instance:**
-- RPC endpoints provide accurate data
-- Private key is kept secure
+## Security model
 
-**Security guarantees per attestor instance:**
-- Packet commitments must be valid before signing: packet must match computed value; ack must exist on chain; receipt must be absent (zero)
-- Signatures are cryptographically sound and recoverable
-- Any heights in gRPC queries cannot be greater than the configured finalization height
+Within the attestation model, trust is defined explicitly. Each attestor signs finalized chain state with a secp256k1 key, and the on-chain light client verifies that a sufficient number of registered attestors signed the same statement.
+
+This lets teams choose who participates in the trust model, including their own infrastructure, validators, trusted third parties, Cosmos Labs, or additional trusted actors, and set thresholds that align with internal security and compliance requirements.
 
 ## Architecture
 
-### Component Structure
+The attestor runs as a standalone service with four main layers: a gRPC API server, attestation logic, a signing backend, and a chain adapter. The gRPC service answers attestation requests, the adapter retrieves and validates chain state, and the signer returns a recoverable ECDSA signature that the attestation light client can verify on chain.
 
-![Attestor Component Structure](/assets/enterprise/interoperability/attestor-diagram.png)
+For a full system view, see the [Deployment Overview](/enterprise/components/interoperability/deployment), the [Attestation Light Client](/ibc/next/light-clients/attestation/attestation-light-client), and the [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction).
 
-## Operating an Attestor Instance
+## Source Code
 
-### CLI and Configuration
+The source code for the IBC Attestor can be found [here](https://github.com/cosmos/ibc-attestor).
 
-When running the attestor you need to specify:
-- What kind of chain (`--chain-type`) will be attested to
-- How the signer key (`--signer-type`) will be provided
+## Available Documentation
 
-Each chain and signer type has its own configuration parameters captured under separate sections in the configuration TOML. See the [example EVM attestor config](https://github.com/cosmos/ibc-attestor/blob/main/apps/ibc-attestor/server.dev.toml) for reference.
+- [IBC Attestor Overview](/ibc/next/infra/attestor/overview)
+- [IBC Attestor Guide](/ibc/next/infra/attestor/attestor-guide)
+- [Attestation Light Client](/ibc/next/light-clients/attestation/attestation-light-client)
+- [Cosmos ↔ EVM Interoperability Tutorial](/ibc/next/cosmos-evm/tutorial/introduction)
+- [Configure Attestors in the Tutorial](/ibc/next/cosmos-evm/tutorial/walkthrough/05-attestors)
+- [Deployment Overview](/enterprise/components/interoperability/deployment)
 
-### Chain Adapters
+## Availability
 
-To add support for new kinds of chains, implement the `AttestationAdapter` and `AdapterBuilder` [interfaces](https://github.com/cosmos/ibc-attestor/blob/main/apps/ibc-attestor/src/adapter/mod.rs):
+The IBC Attestor repository is published under a Source Available Evaluation License. Production or commercial use requires an Enterprise License from Cosmos Labs.
 
-- **`AttestationAdapter`** — Responsible for retrieving on-chain state and ensuring it can be parsed as a valid height and timestamp for a `StateAttestation`, or a valid 32-byte commitment path for an IBC Packet.
-- **`AdapterBuilder`** — Enables per-chain configurations needed by the `AttestationAdapter` implementation.
-
-The CLI must also be extended to support any new chain types.
-
-### Signing
-
-The IBC attestor supports two signing modes: **local** and **remote**. The remote signer is based on the Cosmos Labs remote signer which uses AWS KMS for key rotation.
-
-The attestor signing algorithm:
-1. Retrieve relevant chain/packet state via the chain adapter
-2. Encode the data using ABI format to facilitate EVM parsing
-3. Send the encoded message to the signer, which first hashes and then signs the data as an ECDSA 65-byte recoverable signature (`r||s||v`)
-
-Any new signer implementations **must guarantee**:
-- Arbitrary ABI-encoded data is hashed before signing
-- The signature is in the ECDSA 65-byte recoverable signature format (`r||s||v`)
-
-## Observability
-
-The IBC attestor uses a logging middleware to time requests, set trace IDs, and add structured fields to traces. These fields include:
-- Adapter kind
-- Signer kind
-- Requested height (where applicable)
-- Number of packets (where applicable)
-- Packet commitment kind (where applicable)
-
-### Logging
-
-- Logs are emitted in JSON format
-- Errors must be logged at occurrence to simplify line number tracing
-- Info logs are reserved for middleware and startup operations
-- Debug logs capture adapter and attestation creation operations
-
-### Tracing
-
-- OpenTelemetry-compatible spans
-- Minimal request time tracking
+See the [license file](https://github.com/cosmos/ibc-attestor/blob/main/LICENSE) for details. Please contact [Cosmos Labs](mailto:sales@cosmoslabs.io) for enterprise licensing.
