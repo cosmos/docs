@@ -81,6 +81,17 @@ wrong:   03-build-a-module
 
 The path is the file's location relative to the `docs/` root, without the `.mdx` extension.
 
+## External Links in Navigation
+
+Create an MDX file with a `url` frontmatter and register it in `docs.json` as a normal page path:
+
+```mdx
+---
+title: "Page Title"
+url: "https://example.com"
+---
+```
+
 ### Anchor Links
 
 Mintlify preserves special characters in anchor IDs. Rules:
