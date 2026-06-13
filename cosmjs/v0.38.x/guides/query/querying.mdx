@@ -1,0 +1,165 @@
+---
+title: "Querying On-Chain Data"
+description: "Read blockchain state using high-level client methods and composable QueryClient extensions"
+---
+
+CosmJS provides two ways to query on-chain data: convenience methods on the high-level clients (`StargateClient`, `CosmWasmClient`) and a low-level `QueryClient` with composable module extensions. Choose the approach that fits your needs — high-level methods for common tasks, extensions for full module coverage.
+
+## Prerequisites
+
+- `@cosmjs/stargate` installed (`npm install @cosmjs/stargate`)
+- A connected client (see [Connect to a Chain](/cosmjs/v0.38.x/guides/connect/connect))
+
+## Quick Start
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+const balance = await client.getBalance("cosmos1...", "uatom");
+console.info(balance); // { denom: "uatom", amount: "1000000" }
+
+const account = await client.getAccount("cosmos1...");
+console.info(account); // { address, pubkey, accountNumber, sequence }
+
+client.disconnect();
+```
+
+## High-Level Client Methods
+
+`StargateClient` bundles the most common queries behind simple methods. These cover bank, staking, auth, and transaction queries out of the box.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getChainId()` | `string` | Chain identifier |
+| `getHeight()` | `number` | Latest block height |
+| `getBlock(height?)` | `Block` | Block data at the given or latest height |
+| `getAccount(address)` | `Account \| null` | Account info (address, pubkey, sequence) |
+| `getSequence(address)` | `SequenceResponse` | Account number and sequence |
+| `getBalance(address, denom)` | `Coin` | Single-denom balance |
+| `getAllBalances(address)` | `Coin[]` | All balances for an address |
+| `getBalanceStaked(address)` | `Coin \| null` | Total staked balance across all validators |
+| `getDelegation(delegator, validator)` | `Coin \| null` | Delegation to a specific validator |
+| `getTx(id)` | `IndexedTx \| null` | Transaction by hash |
+| `searchTx(query)` | `IndexedTx[]` | Search transactions by events |
+
+`CosmWasmClient` extends these with contract-specific queries:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getCodes()` | `Code[]` | All uploaded WASM codes |
+| `getCodeDetails(codeId)` | `CodeDetails` | Code metadata and bytecode |
+| `getContracts(codeId)` | `string[]` | Contract addresses for a code ID |
+| `getContractsByCreator(creator)` | `string[]` | Contracts created by an address |
+| `getContract(address)` | `Contract` | Contract metadata |
+| `getContractCodeHistory(address)` | `ContractCodeHistoryEntry[]` | Migration history |
+| `queryContractRaw(address, key)` | `Uint8Array \| null` | Raw contract state by key |
+| `queryContractSmart(address, query)` | `JsonObject` | JSON smart query |
+
+## Using QueryClient with Extensions
+
+For queries beyond what the high-level clients expose, build a `QueryClient` with the exact extensions you need. This gives you typed access to every query endpoint in each Cosmos SDK module.
+
+```typescript
+import {
+  QueryClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+  setupMintExtension,
+} from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+  setupMintExtension,
+);
+```
+
+Extensions are merged into the `QueryClient` instance. Each one adds a namespace — `queryClient.bank`, `queryClient.staking`, `queryClient.gov`, etc. You can compose up to 18 extensions in a single call.
+
+## Combining Multiple Extensions
+
+You can compose any combination of extensions to build a query client tailored to your needs:
+
+```typescript
+import {
+  QueryClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+  setupMintExtension,
+  setupSlashingExtension,
+  setupAuthzExtension,
+  setupFeegrantExtension,
+  setupIbcExtension,
+} from "@cosmjs/stargate";
+
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupStakingExtension,
+  setupGovExtension,
+  setupDistributionExtension,
+  setupMintExtension,
+  setupSlashingExtension,
+  setupAuthzExtension,
+  setupFeegrantExtension,
+  setupIbcExtension,
+);
+
+const balance = await queryClient.bank.balance("cosmos1...", "uatom");
+const validators = await queryClient.staking.validators("BOND_STATUS_BONDED");
+const inflation = await queryClient.mint.inflation();
+```
+
+Each extension is independently typed — TypeScript knows exactly which namespaces and methods are available based on the setup functions you pass.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Bank Queries" icon="building-columns" href="/cosmjs/v0.38.x/guides/query/bank">
+    Token balances, supply, and denomination metadata.
+  </Card>
+  <Card title="Staking Queries" icon="coins" href="/cosmjs/v0.38.x/guides/query/staking">
+    Validators, delegations, unbonding, and staking pool.
+  </Card>
+  <Card title="Governance Queries" icon="landmark" href="/cosmjs/v0.38.x/guides/query/governance">
+    Proposals, votes, deposits, and tallies.
+  </Card>
+  <Card title="Account Queries" icon="user" href="/cosmjs/v0.38.x/guides/query/accounts">
+    Account info, auth extension, and custom parsers.
+  </Card>
+  <Card title="Distribution & Mint" icon="hand-holding-dollar" href="/cosmjs/v0.38.x/guides/query/distribution-and-mint">
+    Staking rewards, commission, inflation, and community pool.
+  </Card>
+  <Card title="IBC Queries" icon="arrow-right-arrow-left" href="/cosmjs/v0.38.x/guides/query/ibc">
+    Channels, connections, clients, and transfer denominations.
+  </Card>
+  <Card title="Transaction Queries" icon="receipt" href="/cosmjs/v0.38.x/guides/query/transactions">
+    Search, decode, and inspect transactions and events.
+  </Card>
+  <Card title="CosmWasm Queries" icon="file-code" href="/cosmjs/v0.38.x/guides/query/cosmwasm">
+    Smart contract state and metadata queries.
+  </Card>
+  <Card title="Pagination" icon="forward" href="/cosmjs/v0.38.x/guides/query/pagination">
+    Navigate large result sets page by page.
+  </Card>
+  <Card title="Blocks & Chain Info" icon="cubes" href="/cosmjs/v0.38.x/guides/query/blocks-and-chain-info">
+    Block data, chain status, and CometBFT RPC.
+  </Card>
+  <Card title="Custom Extensions" icon="puzzle-piece" href="/cosmjs/v0.38.x/guides/query/custom-extensions">
+    Write query extensions for custom chain modules.
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/query/error-handling">
+    Handle missing data, NotFound errors, and broadcast failures.
+  </Card>
+</CardGroup>

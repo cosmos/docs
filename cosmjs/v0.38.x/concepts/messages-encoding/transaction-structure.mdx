@@ -1,0 +1,84 @@
+---
+title: Transaction Structure
+description: How Cosmos transactions are structured and how message type URLs work
+---
+
+A Cosmos transaction is a Protobuf-encoded envelope containing three parts:
+
+```text
++--------------------------------------------------+
+|                      TxRaw                        |
++-----------------+------------------+--------------+
+|  bodyBytes      |  authInfoBytes   |  signatures  |
+|  (TxBody)       |  (AuthInfo)      |  (bytes[])   |
++--------+--------+---------+--------+--------------+
+         |                  |
+         v                  v
++----------------+  +-------------------------------+
+|    TxBody      |  |           AuthInfo             |
++----------------+  +-------------------------------+
+|  messages[]    |  |  signerInfos[]                 |
+|  memo          |  |    - publicKey (Any)           |
+|  timeoutHeight |  |    - modeInfo (SignMode)       |
+|                |  |    - sequence                  |
+|                |  |  fee                           |
+|                |  |    - amount (Coin[])           |
+|                |  |    - gasLimit                  |
+|                |  |    - payer                     |
+|                |  |    - granter                   |
++----------------+  +-------------------------------+
+```
+
+Each message inside `TxBody.messages` is wrapped in a `google.protobuf.Any` —
+a two-field wrapper that pairs a **type URL** string with raw Protobuf **bytes**.
+This is how the chain knows which message handler to route to.
+
+## Message Type URLs
+
+Every Cosmos SDK message has a unique identifier called a **type URL**. It
+follows the Protobuf `Any` convention: a leading `/` followed by the fully
+qualified Protobuf type name.
+
+```text
+/cosmos.bank.v1beta1.MsgSend
+ ^                    ^
+ |                    +-- message name
+ +-- package path (module.version)
+```
+
+Type URLs serve as the bridge between your JavaScript code and the on-chain
+message router. When a validator receives a transaction, it reads the type URL
+from each `Any`-wrapped message to determine which module should handle it.
+
+### Common Type URLs
+
+| Module | Type URL | Description |
+|--------|----------|-------------|
+| **Bank** | `/cosmos.bank.v1beta1.MsgSend` | Transfer tokens |
+| | `/cosmos.bank.v1beta1.MsgMultiSend` | Transfer to multiple recipients |
+| **Staking** | `/cosmos.staking.v1beta1.MsgDelegate` | Delegate to a validator |
+| | `/cosmos.staking.v1beta1.MsgUndelegate` | Begin unbonding |
+| | `/cosmos.staking.v1beta1.MsgBeginRedelegate` | Move delegation between validators |
+| | `/cosmos.staking.v1beta1.MsgCreateValidator` | Register a new validator |
+| | `/cosmos.staking.v1beta1.MsgEditValidator` | Edit validator details |
+| | `/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation` | Cancel pending unbonding |
+| **Distribution** | `/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward` | Claim staking rewards |
+| | `/cosmos.distribution.v1beta1.MsgSetWithdrawAddress` | Set reward withdrawal address |
+| | `/cosmos.distribution.v1beta1.MsgFundCommunityPool` | Fund the community pool |
+| | `/cosmos.distribution.v1beta1.MsgWithdrawValidatorCommission` | Withdraw validator commission |
+| **Governance** | `/cosmos.gov.v1.MsgSubmitProposal` | Submit a governance proposal (v1) |
+| | `/cosmos.gov.v1.MsgVote` | Vote on a proposal (v1) |
+| | `/cosmos.gov.v1.MsgDeposit` | Deposit on a proposal (v1) |
+| | `/cosmos.gov.v1beta1.MsgSubmitProposal` | Submit a proposal (legacy) |
+| | `/cosmos.gov.v1beta1.MsgVote` | Vote on a proposal (legacy) |
+| **Authz** | `/cosmos.authz.v1beta1.MsgGrant` | Grant authorization |
+| | `/cosmos.authz.v1beta1.MsgExec` | Execute on behalf of granter |
+| | `/cosmos.authz.v1beta1.MsgRevoke` | Revoke authorization |
+| **Fee Grant** | `/cosmos.feegrant.v1beta1.MsgGrantAllowance` | Grant fee allowance |
+| | `/cosmos.feegrant.v1beta1.MsgRevokeAllowance` | Revoke fee allowance |
+| **Vesting** | `/cosmos.vesting.v1beta1.MsgCreateVestingAccount` | Create a vesting account |
+| **IBC** | `/ibc.applications.transfer.v1.MsgTransfer` | Cross-chain token transfer |
+| **CosmWasm** | `/cosmwasm.wasm.v1.MsgStoreCode` | Upload contract code |
+| | `/cosmwasm.wasm.v1.MsgInstantiateContract` | Create a contract instance |
+| | `/cosmwasm.wasm.v1.MsgExecuteContract` | Call a contract |
+| | `/cosmwasm.wasm.v1.MsgMigrateContract` | Migrate a contract to new code |
