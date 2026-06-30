@@ -226,26 +226,6 @@ export const MobileMenuDrawer = () => {
                     CometBFT
                   </a>
                 </li>
-                <li style={{
-                  marginBottom: '32px',
-                  opacity: isAnimating ? 1 : 0,
-                  transform: isAnimating ? 'translateY(0)' : 'translateY(20px)',
-                  transition: 'opacity 0.4s ease-out 0.5s, transform 0.4s ease-out 0.5s'
-                }}>
-                  <a
-                    href="/enterprise/overview"
-                    className="text-black dark:text-white hover:opacity-70"
-                    style={{
-                      textDecoration: 'none',
-                      fontSize: '48px',
-                      fontWeight: '300',
-                      display: 'block',
-                      transition: 'opacity 0.2s'
-                    }}
-                  >
-                    Cosmos Enterprise
-                  </a>
-                </li>
               </ul>
             </nav>
 
