@@ -1,0 +1,68 @@
+---
+noindex: true
+title: "Post-quantum keys"
+description: "The keys and signature algorithms of a Cosmos chain, what post-quantum security means, and what adopting ML-DSA costs."
+---
+
+A Cosmos chain uses various keys backed by a set of signature algorithms, including ML-DSA, a native post-quantum option for consensus keys and user accounts. This page surveys the keys and algorithms and explains what post-quantum security means and how it applies.
+
+## Keys and algorithms
+
+Keys are the foundation of a chain's security: funds, consensus votes, and governance are only as safe as the keys that sign for them. Every signature on a Cosmos chain comes from one of four keys, each held by a different party and signing different things:
+
+| Key | Held by | Signs | Algorithms |
+| --- | --- | --- | --- |
+| User account key | Anyone with an account | Transactions | [`secp256k1`](https://en.bitcoin.it/wiki/Secp256k1); [`ml_dsa_65`](https://csrc.nist.gov/pubs/fips/204/final) (post-quantum); [`eth_secp256k1`](https://ethereum.org/en/developers/docs/accounts/) on EVM chains |
+| Validator operator key | The validator's operator | Staking transactions | An account key; same algorithms |
+| Validator consensus key | The validator node | Votes and proposals | [`ed25519`](https://ed25519.cr.yp.to/); [`ml_dsa_65`](https://csrc.nist.gov/pubs/fips/204/final) (post-quantum); [`secp256k1eth`](https://ethereum.org/en/developers/docs/accounts/) on EVM chains |
+| Node key | Every node | Peer-to-peer identity | [`ed25519`](https://ed25519.cr.yp.to/) |
+
+Consensus params decide which algorithms consensus keys may use on a given chain, while users pick an account algorithm each time they create a key. To check what a chain currently allows and which algorithms its validator set is running, see [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys). For information on validator key rotation, see [Key rotation](/sdk/next/keys/key-rotation).
+
+## What post-quantum means
+
+A post-quantum key signs with an algorithm that stays secure against an attacker equipped with a quantum computer.
+
+Every algorithm in the stack except `ml_dsa_65` is based on an elliptic curve. A sufficiently powerful quantum computer running [Shor's algorithm](https://en.wikipedia.org/wiki/Shor%27s_algorithm) breaks elliptic curve cryptography outright: no key size makes a curve safe. Account keys, operator keys, and consensus keys therefore share the same long-term exposure, and whenever practical quantum hardware arrives, curve-based signatures stop being trustworthy.
+
+## How ML-DSA works
+
+The Module-Lattice-Based Digital Signature Algorithm (ML-DSA) is NIST's lattice-based signature standard, published as [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) in 2024 and the finalized form of CRYSTALS-Dilithium. Instead of deriving security from elliptic curves, it builds keys and signatures on [lattice problems](https://en.wikipedia.org/wiki/Lattice-based_cryptography), a class of mathematics with no known quantum attack.
+
+The Cosmos stack uses the middle FIPS 204 parameter set, ML-DSA-65 (NIST security category 3), as the algorithm `ml_dsa_65`.
+
+With the addition of this key algorithm, nothing about the signing workflow changes. The keyring generates and recovers an ML-DSA account like any other, and consensus treats an ML-DSA consensus key like any other key type. What differs is the math underneath and the size of what it produces.
+
+## Is hashing post-quantum secure?
+
+Yes. Current cryptographic hash functions such as SHA-256 are considered post-quantum secure. Unlike RSA and elliptic-curve cryptography, which are broken by Shor's algorithm, the best known quantum attack against generic hash functions is [Grover's algorithm](https://en.wikipedia.org/wiki/Grover%27s_algorithm). Grover's algorithm provides only a quadratic speedup, reducing SHA-256's effective security from 256 bits to about 128 bits, which is still considered secure.
+
+## Who adopts ML-DSA, and when a chain counts as post-quantum
+
+Only account keys and consensus keys can use `ml_dsa_65`. The node key stays `ed25519` and merely identifies a node to its peers, and module accounts and smart contract accounts hold funds without any key at all, so neither has anything to migrate.
+
+Adoption differs by role. A user generates a new ML-DSA account and moves funds into it; there is no in-place migration for accounts. A validator migrates its consensus key in place through key rotation. Both paths require the chain to allow `ml_dsa_65` in consensus params first.
+
+Consensus security follows voting power. A chain's consensus becomes post-quantum secure once at least two thirds of voting power signs with post-quantum consensus keys, because two thirds is the threshold an attacker must forge to break finality. Account security is individual: each account is exactly as secure as its own key, and the chain never depends on account keys migrating.
+
+## The cost of post-quantum keys
+
+Post-quantum security trades size for resistance. An ML-DSA-65 public key is 1,952 bytes against 32 bytes for `ed25519`. A signature is 3,309 bytes against 64.
+
+Signatures dominate the cost because every block commit carries one per validator. **Example:** On a chain with 100 validators and six-second blocks, commits carry about 331 KB of ML-DSA signatures per block, against about 6 KB with `ed25519`. Over a year that is roughly 1.7 TB of signature data, against roughly 34 GB.
+
+The same growth reaches IBC. A light client proof that transmits the full signature set grows 25 to 30 times larger, which raises relaying costs for counterparty chains.
+
+Signing and verification are slightly slower than `ed25519`. This is unlikely to affect most chains.
+
+## EVM chains
+
+Validators on EVM chains can run ML-DSA consensus keys, as on any other chain. User accounts cannot: the EVM requires `eth_secp256k1` account keys, and those cannot move to a post-quantum scheme in place.
+
+Ethereum's path to post-quantum accounts runs through account abstraction instead. EIP-7702 already lets an account delegate to contract code, so a contract can verify a post-quantum signature inside the VM. EIP-8141 proposes native post-quantum transaction signatures. Cosmos EVM conforms to that roadmap and ships user-side post-quantum support as it lands upstream.
+
+## Next steps
+
+- Upgrade first; every flow on this page requires SDK 0.55 and CometBFT 0.40. See the [release notes](/sdk/next/upgrade/release).
+- Allow `ml_dsa_65` on a new or live chain. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
+- Learn how rotation works before touching a production validator. See [Key rotation](/sdk/next/keys/key-rotation).

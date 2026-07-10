@@ -1,0 +1,91 @@
+---
+noindex: true
+title: "Enable ML-DSA keys on a chain"
+description: "Add ml_dsa_65 to a chain's accepted consensus key types, through genesis on a new chain or governance on a live one."
+---
+
+Validator key types are a consensus parameter, so allowing post-quantum validator keys is a chain-level change. This guide adds `ml_dsa_65` to the accepted consensus key types: on a new chain through genesis, or on a live chain through a governance proposal, with no coordinated restart.
+
+For background on ML-DSA and the key types, see [Post-quantum keys](/sdk/next/keys/post-quantum-keys).
+
+## Prerequisites
+
+- The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later. See the [release notes](/sdk/next/upgrade/release).
+- For a live chain: the ability to pass a governance proposal.
+
+Commands use `simd`; substitute your chain's binary. Key names and denoms are the only values to adjust, and each appears once.
+
+## Check the current state
+
+Consensus params list the allowed key types under `validator.pub_key_types`. Query them:
+
+```shell
+simd query consensus params
+```
+
+The default is `ed25519` only. To see which types the validator set is currently running, list the validators and read each one's pubkey type:
+
+```shell
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.type'
+```
+
+The output shows registered type names, one per validator: `tendermint/PubKeyEd25519` for ed25519 keys, `cometbft/PubKeyMlDsa65` for ML-DSA keys.
+
+The first command shows what the chain allows; the second shows what the set uses. The gap between them is your migration progress once validators start rotating.
+
+## New chain: set the types in genesis
+
+Add `ml_dsa_65` to `consensus.params.validator.pub_key_types` in `genesis.json` before launch:
+
+```json
+"validator": {
+  "pub_key_types": ["ed25519", "ml_dsa_65"]
+}
+```
+
+Keep `ed25519` in the list unless every genesis validator starts on an ML-DSA key. Validators whose key type is not in the list cannot join the set.
+
+## Live chain: expand the types through governance
+
+The change is a parameter update executed by governance. It takes effect when the proposal passes, with no node restarts and no coordinated upgrade.
+
+All steps read and write `params.json` in the current directory, so run them from one place.
+
+1. Build the proposal params from the live chain state. The update message replaces the entire params object, so it must carry every current value. The following command derives the params from a query, adds `ml_dsa_65` to `pub_key_types`, and converts the evidence duration to the format the proposal parser accepts:
+
+```shell
+simd query consensus params -o json | jq '.params | {block, evidence, validator, abci} | .validator.pub_key_types += ["ml_dsa_65"] | .evidence.max_age_duration |= (capture("((?<h>[0-9]+)h)?((?<m>[0-9]+)m)?((?<s>[0-9]+)s)?") | ((((.h//"0")|tonumber)*3600 + ((.m//"0")|tonumber)*60 + ((.s//"0")|tonumber))|tostring) + "s")' > params.json
+```
+
+2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination:
+
+```shell
+simd tx consensus update-params-proposal "$(jq -c .block params.json)" "$(jq -c .evidence params.json)" "$(jq -c .validator params.json)" "$(jq -c .abci params.json)" --title "Allow ML-DSA validator keys" --summary "Add ml_dsa_65 to consensus pub_key_types" --deposit 10000000stake --from mykey -y
+```
+
+3. Vote as with any governance proposal. When it passes, the new list is live.
+
+<Warning>
+A proposal missing the `block`, `evidence`, or `validator` fields fails with "all parameters must be present" when it executes, after the deposit and voting period are already spent. Always start from the queried current params and change only the key type list.
+</Warning>
+
+## Verify
+
+Query the params again and confirm the list includes `ml_dsa_65`:
+
+```shell
+simd query consensus params
+```
+
+New validators can now join with ML-DSA keys. Existing validators can migrate by rotation. See [Key rotation](/sdk/next/keys/key-rotation).
+
+## Remove a key type
+
+<Danger>
+Do not remove a key type while validators still use it. Existing validators are not re-checked when a type leaves the list. However, every later voting-power update for a validator with a removed key type fails validation. This includes power changes from ordinary delegation activity.
+</Danger>
+
+## Next steps
+
+- Move validators to the new key type by rotation. See [Rotate a validator consensus key, x/staking](/sdk/next/keys/rotate-validator-key).
+- Understand the rotation mechanics first. See [Key rotation](/sdk/next/keys/key-rotation).

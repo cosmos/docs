@@ -1,0 +1,91 @@
+---
+noindex: true
+title: "Rotate a validator consensus key, x/staking"
+description: "Rotate a staked validator's consensus key with no downtime: run a second node, submit the rotation, verify, and retire the old node."
+---
+
+This guide rotates a staked validator's consensus key with no downtime: run a second node on the new key, submit the rotation, verify, and retire the old node. For how rotation works and its limits, see [Key rotation](/sdk/next/keys/key-rotation).
+
+Commands use `simd`. Substitute your chain's binary. Examples use `~/.node` for the existing node's home and `~/.rotation-node` for the new one; those paths, the key name `val`, and host addresses are the only values to adjust.
+
+## Prerequisites
+
+- The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later, and allows your target key type. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
+- No rotation in the current unbonding period. The chain rejects a second one inside the window.
+- The operator account holds enough funds for the rotation fee, which is burned. Check the fee:
+
+```shell
+simd query staking params
+```
+
+The `key_rotation_fee` field shows the fee amount.
+
+## 1. Start a second node with the new key
+
+Initialize a fresh node home. The init command generates a new consensus key in `priv_validator_key.json`:
+
+```shell
+simd init rotation-node --chain-id my-chain-1 --home ~/.rotation-node
+```
+
+A fresh init writes a placeholder genesis. Replace it with the chain's genesis:
+
+```shell
+cp ~/.node/config/genesis.json ~/.rotation-node/config/genesis.json
+```
+
+Start the new node peered with the existing one, and let it sync to the chain head:
+
+```shell
+simd start --home ~/.rotation-node --p2p.persistent_peers "$(simd comet show-node-id --home ~/.node)@127.0.0.1:26656"
+```
+
+Adjust the peer address to the existing node's host. If both nodes share a host, also give the new node its own ports with `--p2p.laddr`, `--rpc.laddr`, and `--grpc.address`. Until the rotation applies, the node follows the chain as a non-signing full node.
+
+<Danger>Never copy the old `priv_validator_key.json` to the new node. Two nodes signing with the same consensus key is a double sign, which tombstones the validator. The new node must have its own freshly generated key.</Danger>
+
+## 2. Confirm both nodes are healthy
+
+Before you submit, the old node must still be signing and the new node must be caught up to the chain head. If the new node is still syncing when the rotation applies, the validator misses blocks until it catches up. Check sync status:
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.catching_up'
+```
+
+Run this against each node. Both must report `false`.
+
+## 3. Submit the rotation
+
+The rotation message carries the new node's public key, read directly from that node's home:
+
+```shell
+simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val
+```
+
+<Warning>A rotation cannot be undone. After it applies, the validator is committed to the new key for the rest of the unbonding period. Keep the old node running until step 4 verifies the new key is signing.</Warning>
+
+## 4. Verify the new key is signing
+
+The rotation applies two heights after the message executes, so the new key can appear within seconds on a fast chain. A successful broadcast confirms only that the chain accepted the transaction; confirm the validator set actually carries the new key:
+
+```shell
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key'
+```
+
+The `value` matches the key shown by `simd comet show-validator --home ~/.rotation-node`, and the old key is gone. If the set still shows the old key, wait a few blocks and check again. Watch the new node's logs to see it signing votes.
+
+## 5. Retire the old node
+
+Stop the old node and decommission it. Its consensus key holds no power, but it remains slashable for past behavior until the unbonding period ends. Store its key material securely rather than leaving it on shared infrastructure.
+
+## What can go wrong
+
+- The transaction is rejected with a rotation limit error: a rotation already happened this unbonding period. Wait out the window.
+- The transaction is rejected for an unsupported key type: the target type is not in the chain's consensus params. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
+- The fee cannot be paid: fund the operator account with at least `key_rotation_fee`.
+- The validator misses blocks after the rotation applies: the new node was not caught up. It resumes signing once synced.
+
+## Next steps
+
+- Understand the mechanics behind each step. See [Key rotation](/sdk/next/keys/key-rotation).
+- Check what key types the chain allows. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
