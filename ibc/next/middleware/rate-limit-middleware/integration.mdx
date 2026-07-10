@@ -89,13 +89,40 @@ genesisModuleOrder := []string{
     // ...
     ratelimittypes.ModuleName,
 }
+app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
+app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
 ```
 
 Key details:
 
 - The last keeper argument is the governance authority. The keeper stores it and enforces it on every message. A chain that uses the standard governance module passes `authtypes.NewModuleAddress(govtypes.ModuleName).String()`.
 - The module runs a begin-block hook and has genesis state, so it must appear in the begin-blocker order and the init and export genesis orderings.
-- If the chain already wires transfer middleware such as packet forward, add rate limiting to the existing stack with another `Next` call rather than creating a new stack.
+- If the chain already wires other transfer middleware, add rate limiting to the same stack with another `Next` call rather than creating a new stack. See the packet forward example below.
+
+### With packet forward middleware
+
+If the chain runs packet forward middleware, place rate limiting above it in the same stack, so limits apply to the final inbound transfer before it is forwarded:
+
+```go
+// transfer stack, from top to bottom:
+// - rate limiting
+// - packet forward
+// - transfer
+//
+// SendPacket: transfer -> packet forward -> rate limiting -> core IBC
+// RecvPacket: core IBC -> rate limiting -> packet forward -> transfer
+transferStack := porttypes.NewIBCStackBuilder(app.IBCKeeper.ChannelKeeper)
+transferStack.
+    Base(transfer.NewIBCModule(app.TransferKeeper)).
+    Next(packetforward.NewIBCMiddleware(
+        app.PFMKeeper,
+        0, // retries on timeout
+        packetforwardkeeper.DefaultForwardTransferPacketTimeoutTimestamp,
+    )).
+    Next(ratelimiting.NewIBCMiddleware(app.RateLimitKeeper))
+
+ibcRouter.AddRoute(ibctransfertypes.ModuleName, transferStack.Build())
+```
 
 ## Wire rate limiting for IBC v2
 
@@ -169,6 +196,8 @@ genesisModuleOrder := []string{
     // ...
     ratelimittypes.ModuleName,
 }
+app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
+app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
 ```
 
 The v2 constructor takes four arguments: the keeper by value, the module being wrapped, a write-acknowledgement wrapper, and the v2 channel keeper. In simapp the last two are both `app.IBCKeeper.ChannelKeeperV2`. Both are required, and the constructor panics if either is nil.
