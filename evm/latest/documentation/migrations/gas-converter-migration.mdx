@@ -56,6 +56,7 @@ package gasconverter
 
 const (
     ModuleName        = "gasconverter"
+    UnderlyingDenom   = "ustake"
     PrecompileAddress = "0x0000000000000000000000000000000000000900" // stock set ends at 0x807
 )
 
@@ -143,7 +144,12 @@ decorators := []sdk.AnteDecorator{
 
 ```go
 func (d GasConverterDepositDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
-    _, ethTx, err := evmtypes.UnpackEthMsg(tx.GetMsgs()[0])
+    msgs := tx.GetMsgs()
+    if len(msgs) == 0 {
+        return next(ctx, tx, simulate)
+    }
+
+    _, ethTx, err := evmtypes.UnpackEthMsg(msgs[0])
     if err != nil || !isDepositTx(ethTx) { // to == PrecompileAddress && selector == deposit && value == 0
         return next(ctx, tx, simulate)
     }
@@ -261,7 +267,7 @@ evmGenState.Params.ActiveStaticPrecompiles = append(
 
 // blocklist — module accounts are blocked via maccPerms; block the precompile
 // address too, alongside the stock precompiles.
-blockedPrecompilesHex := append(vmtypes.AvailableStaticPrecompiles, gasconverter.PrecompileAddress)
+blockedPrecompilesHex := append(slices.Clone(vmtypes.AvailableStaticPrecompiles), gasconverter.PrecompileAddress)
 
 // power reduction — the evmd example sets AttoPowerReduction (1e18) for its
 // 18-decimal bond denom; with a 6-decimal bond denom every gentx fails at
