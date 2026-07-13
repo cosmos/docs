@@ -1,0 +1,302 @@
+---
+title: "Migrating off x/precisebank: Gas Converter Precompile"
+description: "Run an 18-decimal gas token alongside a 6-decimal staking denom using a converter precompile, replacing the deprecated x/precisebank module."
+noindex: true
+canonical: https://docs.cosmos.network/evm/latest/documentation/migrations/gas-converter-migration
+---
+
+<Warning>
+The code on this page is example code, not a production-ready implementation. It is not part of `cosmos/evm` and is not tested or maintained by the Cosmos EVM team. If you adopt this approach, the code lives in your application and you are responsible for auditing and maintaining it going forward.
+</Warning>
+
+Applies to: chains on `cosmos/evm` v0.7.x+ with a 6-decimal staking denom.
+Scope: every change lives in your application, no fork of `cosmos/evm` is needed.
+
+Instead of scaling your 6-decimal denom (`ustake`) into the EVM, launch the EVM with a
+separate, natively 18-decimal gas denom (`astake`). A precompile is the sole mint/burn
+authority for `astake`, converting against escrowed `ustake` at a fixed rate:
+
+```
+1 ustake = 10^12 astake
+deposit:   escrow ustake → mint  ustakeAmount × 10^12 astake to caller
+withdraw:  burn  astake  → release astakeAmount ÷ 10^12 ustake to caller
+```
+
+`astake` is always fully collateralized. Assert this in your e2e tests (x/crisis is
+deprecated):
+
+```
+supply(astake) == 10^12 × balance(gasconverter module account, "ustake")
+```
+
+Staking, governance, inflation, and all existing balances stay on `ustake` untouched.
+Because `astake` is a plain 18-decimal denom (`EvmDenom == ExtendedDenom`), `x/vm`'s
+denom validation passes as-is, avoiding the scaled-denom machinery
+`x/precisebank` existed to support.
+
+## Solidity interface
+
+```solidity
+interface IGasConverter {
+    function deposit(uint256 ustakeAmount) external returns (bool);
+    function withdraw(uint256 astakeAmount) external returns (bool); // multiple of 1e12
+    event Deposit(address indexed account, uint256 ustakeAmount, uint256 astakeAmount);
+    event Withdraw(address indexed account, uint256 astakeAmount, uint256 ustakeAmount);
+}
+```
+
+Neither method is payable: `ustake` is not the EVM-native token, so it cannot travel as
+`msg.value`.
+
+## Precompile
+
+Standard stateful precompile in your app (the `distribution` precompile is the
+reference structure), at a free address:
+
+```go
+package gasconverter
+
+const (
+    ModuleName        = "gasconverter"
+    PrecompileAddress = "0x0000000000000000000000000000000000000900" // stock set ends at 0x807
+)
+
+var ScalingFactor = math.NewInt(1_000_000_000_000)
+
+// The shared precompiles/common.BankKeeper deliberately lacks mint/burn;
+// construct with the real bankkeeper.Keeper, which satisfies this superset.
+type BankKeeper interface {
+    cmn.BankKeeper
+    SendCoinsFromAccountToModule(ctx context.Context, sender sdk.AccAddress, module string, amt sdk.Coins) error
+    SendCoinsFromModuleToAccount(ctx context.Context, module string, recipient sdk.AccAddress, amt sdk.Coins) error
+    MintCoins(ctx context.Context, module string, amt sdk.Coins) error
+    BurnCoins(ctx context.Context, module string, amt sdk.Coins) error
+}
+
+func NewPrecompile(bankKeeper BankKeeper) *Precompile {
+    return &Precompile{
+        Precompile: cmn.Precompile{
+            KvGasConfig:          storetypes.KVGasConfig(),
+            TransientKVGasConfig: storetypes.TransientGasConfig(),
+            ContractAddress:      common.HexToAddress(PrecompileAddress),
+            // Replays bank events into the stateDB. It extracts only the EVM
+            // denom, so the ustake legs journal as zero.
+            BalanceHandlerFactory: cmn.NewBalanceHandlerFactory(bankKeeper),
+        },
+        ABI:        ABI,
+        bankKeeper: bankKeeper,
+    }
+}
+
+func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readonly bool) ([]byte, error) {
+    // RunNativeAction journals bank writes on the stateDB so mints revert with
+    // the EVM tx. A mint that escapes a revert is an inflation bug; never
+    // bypass this.
+    return p.RunNativeAction(evm, contract, func(ctx sdk.Context) ([]byte, error) {
+        return p.Execute(ctx, evm.StateDB, contract, readonly)
+    })
+}
+
+// ConvertForFees is the deposit path, shared with the ante handler below.
+func ConvertForFees(ctx sdk.Context, bk BankKeeper, caller sdk.AccAddress, ustakeAmt math.Int) error {
+    ustake := sdk.NewCoin("ustake", ustakeAmt)
+    astake := sdk.NewCoin(evmtypes.GetEVMCoinDenom(), ustakeAmt.Mul(ScalingFactor))
+
+    if err := bk.SendCoinsFromAccountToModule(ctx, caller, ModuleName, sdk.NewCoins(ustake)); err != nil {
+        return err
+    }
+    if err := bk.MintCoins(ctx, ModuleName, sdk.NewCoins(astake)); err != nil {
+        return err
+    }
+    return bk.SendCoinsFromModuleToAccount(ctx, ModuleName, caller, sdk.NewCoins(astake))
+}
+```
+
+`withdraw` reverses the sequence (collect → `BurnCoins` → release) after rejecting
+amounts not a multiple of `ScalingFactor`. The mint permission is the entire "module",
+no AppModule, store key, or Msg service:
+
+```go
+var maccPerms = map[string][]string{
+    // ...
+    gasconverter.ModuleName: {authtypes.Minter, authtypes.Burner},
+}
+```
+
+## Ante handlers: own the chain
+
+Assemble your own ante router from the exported `cosmos/evm` decorators (copy the stock
+assembly) and make two changes.
+
+### First gas
+
+A `ustake`-only account cannot pay for the EVM tx that would give it
+`astake`. Front the fee in a decorator ahead of the unmodified mono decorator, whose
+balance checks then see the converted funds:
+
+```go
+decorators := []sdk.AnteDecorator{
+    NewGasConverterDepositDecorator(bankKeeper), // below
+    evmante.NewEVMMonoDecorator(options.AccountKeeper, options.FeeMarketKeeper,
+        options.EvmKeeper, options.MaxTxGasWanted, &evmParams, &feemarketParams),
+    rootante.NewTxListenerDecorator(options.PendingTxListener),
+}
+```
+
+```go
+func (d GasConverterDepositDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+    _, ethTx, err := evmtypes.UnpackEthMsg(tx.GetMsgs()[0])
+    if err != nil || !isDepositTx(ethTx) { // to == PrecompileAddress && selector == deposit && value == 0
+        return next(ctx, tx, simulate)
+    }
+
+    // This runs before the mono decorator's signature verification, so recover
+    // the sender here. Fronting early is safe: an invalid signature makes the
+    // mono decorator error, discarding the whole ante state, conversion included.
+    signer := ethtypes.LatestSignerForChainID(evmtypes.GetEthChainConfig().ChainID)
+    from, err := ethtypes.Sender(signer, ethTx)
+    if err != nil {
+        return next(ctx, tx, simulate)
+    }
+
+    // Convert only the shortfall; the fee is still secured before execution
+    // (a reverting tx still pays), so there is no free-tx vector. The unspent
+    // remainder stays with the sender as spendable astake.
+    sender := sdk.AccAddress(from.Bytes())
+    cost := math.NewIntFromBigInt(ethTx.GasFeeCap()).MulRaw(int64(ethTx.Gas()))
+    short := cost.Sub(d.bankKeeper.SpendableCoin(ctx, sender, evmtypes.GetEVMCoinDenom()).Amount)
+    if !short.IsPositive() {
+        return next(ctx, tx, simulate)
+    }
+    ustakeNeeded := short.Add(gasconverter.ScalingFactor).SubRaw(1).Quo(gasconverter.ScalingFactor) // ceil
+    if err := gasconverter.ConvertForFees(ctx, d.bankKeeper, sender, ustakeNeeded); err != nil {
+        return ctx, err
+    }
+    return next(ctx, tx, simulate)
+}
+```
+
+### Cosmos tx fees
+
+In your Cosmos-tx chain, substitute a min-gas-price decorator that
+quotes both denoms, and a fee checker that prices `ustake` fees at the fixed rate:
+
+```go
+// min-gas-price decorator: accept either denom against feemarket MinGasPrice
+minGasPrices := sdk.DecCoins{
+    {Denom: evmtypes.GetEVMCoinDenom(), Amount: minGasPrice},                      // e.g. 10^7
+    {Denom: gasconverter.UnderlyingDenom, Amount: minGasPrice.QuoInt(gasconverter.ScalingFactor)}, // e.g. 10^-5
+}
+
+// fee checker: normalize before the EIP-1559 base-fee check and priority
+underlyingFeeAmt := feeCoins.AmountOf(gasconverter.UnderlyingDenom)
+feeAmtDec := sdkmath.LegacyNewDecFromInt(
+    feeCoins.AmountOf(denom).Add(underlyingFeeAmt.Mul(gasconverter.ScalingFactor)))
+// ...
+if underlyingFeeAmt.IsPositive() {
+    // Deduct exactly what was provided; the payer may hold no astake at all.
+    effectiveFee = feeCoins
+}
+```
+
+Delegators and relayers then never need `astake`.
+
+## Mempool: wrap the VM keeper you hand to it
+
+`cosmos/evm` now runs an app-side EVM mempool, and the JSON-RPC server requires it.
+EVM txs enter the pool before any ante handler runs, so without this change the
+first-gas `deposit()` dies at the RPC with `insufficient funds for gas * price +
+value: balance 0`. Your app chooses the VM keeper the pool reads state through:
+
+```go
+// Pool admission values an account at its total convertible wealth. Only the
+// mempool reads through this wrapper; consensus, RPC balances, and the ante
+// use the real keeper. Admission becomes slightly optimistic (any ustake
+// holder passes the funding check); the ante enforces real payability at
+// execution, and the pool's recheck (which runs the ante) evicts the rest.
+type convertibleBalanceKeeper struct {
+    evmmempool.VMKeeperI
+    bankKeeper bankkeeper.Keeper
+}
+
+func (k convertibleBalanceKeeper) GetAccount(ctx sdk.Context, addr common.Address) *statedb.Account {
+    acct := k.VMKeeperI.GetAccount(ctx, addr)
+    if acct == nil || acct.Balance == nil {
+        return acct
+    }
+    spendable := k.bankKeeper.SpendableCoin(ctx, sdk.AccAddress(addr.Bytes()), gasconverter.UnderlyingDenom)
+    if !spendable.Amount.IsPositive() {
+        return acct
+    }
+    aux, overflow := uint256.FromBig(spendable.Amount.Mul(gasconverter.ScalingFactor).BigInt())
+    if overflow {
+        return acct
+    }
+    augmented := *acct
+    augmented.Balance = new(uint256.Int)
+    if _, overflow := augmented.Balance.AddOverflow(acct.Balance, aux); overflow {
+        return acct
+    }
+    return &augmented
+}
+
+mempool := evmmempool.NewMempool(app.CreateQueryContext, logger,
+    convertibleBalanceKeeper{VMKeeperI: app.EVMKeeper, bankKeeper: app.BankKeeper},
+    app.FeeMarketKeeper, app.txConfig, evmRechecker, cosmosRechecker, mpConfig, cosmosPoolMaxTx)
+```
+
+## Registration and genesis
+
+```go
+// app.go — register alongside the stock set; the precompile address never
+// touches the library.
+staticPrecompiles := precompiletypes.DefaultStaticPrecompiles(/* stock args */)
+gc := gasconverter.NewPrecompile(app.BankKeeper)
+staticPrecompiles[gc.Address()] = gc
+app.EVMKeeper = app.EVMKeeper.WithStaticPrecompiles(staticPrecompiles)
+
+// genesis defaults — the default list ships WITHOUT your address, and a
+// missing entry makes calls no-op silently. 0x…0900 sorts after the stock
+// set, as params validation requires.
+evmGenState.Params.ActiveStaticPrecompiles = append(
+    slices.Clone(evmtypes.AvailableStaticPrecompiles), gasconverter.PrecompileAddress)
+
+// blocklist — module accounts are blocked via maccPerms; block the precompile
+// address too, alongside the stock precompiles.
+blockedPrecompilesHex := append(vmtypes.AvailableStaticPrecompiles, gasconverter.PrecompileAddress)
+
+// power reduction — the evmd example sets AttoPowerReduction (1e18) for its
+// 18-decimal bond denom; with a 6-decimal bond denom every gentx fails at
+// genesis unless this is micro.
+sdk.DefaultPowerReduction = utils.MicroPowerReduction // 1e6
+```
+
+```jsonc
+// genesis.json — staking/mint/gov stay on ustake; the EVM runs on astake
+"staking": { "params": { "bond_denom": "ustake" } },
+"mint":    { "params": { "mint_denom": "ustake" } },
+"evm":     { "params": { "evm_denom": "astake", "extended_denom_options": null } },
+"feemarket": { "params": {                 // quoted in astake units: ×10^12 the
+    "no_base_fee": false,                  // ustake-equivalent values
+    "base_fee": "10000000", "min_gas_price": "10000000" } },
+"bank": { "denom_metadata": [{             // x/vm derives decimals from the
+    "base": "astake", "display": "gstake", // display unit's exponent — it must be 18
+    "denom_units": [ { "denom": "astake", "exponent": 0 },
+                     { "denom": "gstake", "exponent": 18 } ] }] }
+```
+
+## Caveats
+
+- Balances are split across two denoms permanently: `eth_getBalance` shows only
+  `astake`; explorers and wallets should present `ustake + astake/10¹²` as one asset.
+- MetaMask pre-checks `eth_getBalance ≥ fee + value` locally and blocks zero-`astake`
+  senders regardless of chain rules. The ante + mempool changes cover raw-RPC and dApp
+  flows; wallet-first onboarding still needs a Cosmos-side path (fee-granted helper,
+  faucet, or dust airdrop at the upgrade).
+- Staking/distribution precompiles operate in 6-dec `ustake` while the rest of the EVM
+  is 18-dec `astake`; EVM stakers must `withdraw()` first. Rewards arrive in both
+  denoms (EVM fees in `astake`, inflation in `ustake`).
+- `astake` is IBC-transferable and becomes a distinct voucher from `ustake` on remote
+  chains; decide before launch whether to rate-limit or filter it.
+- Circulating supply is just `supply(ustake)`; adding `supply(astake)/10¹²` double-counts
+  the escrow.
