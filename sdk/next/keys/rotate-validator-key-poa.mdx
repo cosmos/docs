@@ -8,21 +8,45 @@ This guide rotates a PoA validator's consensus key using the `enterprise/poa` mo
 
 Commands use `simd`. Substitute your chain's binary. Examples use `~/.node` for the validator node's home, `~/.poa-newkey` for the scratch home holding the new key, and `val` for the operator key name.
 
+{/*
+Manual verification setup (hidden, macOS). Reproduces a single-validator PoA chain, using the enterprise/poa simapp.
+Build: cd enterprise/poa/simapp && go build -o /tmp/poa-simd ./simd, then use /tmp/poa-simd as `simd`.
+PoA validators come from poa genesis (no gentx); operator_address is a plain acc address (cosmos1...), not cosmosvaloper1....
+
+simd init mynode --chain-id my-chain-1 --home ~/.node
+simd config set client chain-id my-chain-1 --home ~/.node
+simd config set client keyring-backend test --home ~/.node
+simd keys add val --keyring-backend test --home ~/.node
+simd keys add admin --keyring-backend test --home ~/.node
+VAL=$(simd keys show val -a --keyring-backend test --home ~/.node)
+ADMIN=$(simd keys show admin -a --keyring-backend test --home ~/.node)
+simd genesis add-genesis-account $VAL 1000000000000stake --home ~/.node
+simd genesis add-genesis-account $ADMIN 1000000000000stake --home ~/.node
+G=~/.node/config/genesis.json
+jq --arg admin "$ADMIN" '.app_state.poa.params.admin=$admin' $G > /tmp/g && mv /tmp/g $G
+jq --arg op "$VAL" --slurpfile pk <(jq '{pub_key:{"@type":"/cosmos.crypto.ed25519.PubKey", key:.pub_key.value}, power:10000000, metadata:{moniker:"mynode", operator_address:"'$VAL'"}}' ~/.node/config/priv_validator_key.json) '.app_state.poa.validators=$pk' $G > /tmp/g && mv /tmp/g $G
+sed -i '' 's/timeout_commit = ".*"/timeout_commit = "1s"/' ~/.node/config/config.toml
+sed -i '' 's/minimum-gas-prices = ".*"/minimum-gas-prices = "0stake"/' ~/.node/config/app.toml
+simd start --home ~/.node
+# then follow the guide. Note: on a single-validator chain the block production halts between the set
+# switch (step 3) and the node key swap (step 4); that is expected and step 4 recovers it.
+*/}
+
 ## Prerequisites
 
 - The chain runs `enterprise/poa` v1.1 or later.
 - The new key's type is in the chain's consensus params. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
 - The signer is the validator's operator, or the chain admin. Any other sender is rejected.
 
-## 1. Generate the new consensus key
+## 1. Generate a new consensus key
 
-Create the new key in a scratch home, on a secondary machine or offline. Do not touch the live node's `priv_validator_key.json` yet:
+Create the new key in on a secondary machine or offline. Do not touch the live node's `priv_validator_key.json` yet:
 
 ```shell
 simd init poa-newkey --chain-id my-chain-1 --home ~/.poa-newkey
 ```
 
-The only output that matters is `~/.poa-newkey/config/priv_validator_key.json`, the new consensus key. Confirm it and read its public key:
+The important output is `~/.poa-newkey/config/priv_validator_key.json`, which is the new consensus key. Confirm it and read its public key:
 
 ```shell
 simd comet show-validator --home ~/.poa-newkey
@@ -33,8 +57,12 @@ simd comet show-validator --home ~/.poa-newkey
 The command takes the new public key as base64 plus its type, and identifies the validator by operator address. Both derive from earlier steps:
 
 ```shell
-simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val --bech val -a)" --from val
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val -a)" --from val
 ```
+
+The operator address is a regular account address (`cosmos1...`), not a `cosmosvaloper1...` address, so read it with `simd keys show val -a`.
+
+Add standard transaction flags as your setup requires: `--chain-id` and `--keyring-backend` if your client config does not supply them, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price.
 
 The transaction re-keys the validator's state and migrates its accrued fees in the same block. Power, metadata, and the operator address are unchanged.
 
@@ -42,11 +70,13 @@ To rotate as the admin instead, keep the command identical and sign with the adm
 
 ## 3. Wait for the validator set to switch
 
-The chain's state swaps immediately. CometBFT applies the validator set change a couple of blocks later. Until then, CometBFT still expects the old key to sign, so keep the live node running untouched. Watch the set until the new consensus address appears and the old one is gone:
+The chain's state swaps immediately, so `simd q poa validators` shows the new key in the same block the transaction lands. CometBFT applies the actual validator set change a couple of blocks later, and only that switch governs when the node must sign with the new key. Until it happens, CometBFT still expects the old key, so keep the live node running untouched. Watch the CometBFT validator set until the new consensus key appears and the old one is gone:
 
 ```shell
-simd q poa validators
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.value'
 ```
+
+The value matches the key from `simd comet show-validator --home ~/.poa-newkey`. Confirm the module re-keyed with `simd q poa validators`, but note it updates immediately and does not reflect the couple-block CometBFT delay.
 
 <Danger>Do not swap the node's key before the set switches. Swapping early makes the node sign with a key CometBFT does not yet expect, and the validator misses blocks. Running two nodes that hold this validator's signing keys at the same time risks a double sign. Never run more than one active signer for the validator.</Danger>
 

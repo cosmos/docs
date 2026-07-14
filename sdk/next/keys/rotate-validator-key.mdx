@@ -8,11 +8,31 @@ This guide rotates a staked validator's consensus key with no downtime: run a se
 
 Commands use `simd`. Substitute your chain's binary. Examples use `~/.node` for the existing node's home and `~/.rotation-node` for the new one; those paths, the key name `val`, and host addresses are the only values to adjust.
 
+{/*
+Manual verification setup (hidden, macOS). Reproduces the running staked chain this guide assumes, using simd/simapp.
+Build: from the cosmos-sdk repo run `make build`, then put ./build/simd on PATH as `simd`.
+
+simd init mynode --chain-id my-chain-1 --home ~/.node
+simd config set client chain-id my-chain-1 --home ~/.node
+simd config set client keyring-backend test --home ~/.node
+simd keys add val --keyring-backend test --home ~/.node
+simd genesis add-genesis-account val 100000000000stake --keyring-backend test --home ~/.node
+simd genesis gentx val 1000000000stake --chain-id my-chain-1 --keyring-backend test --home ~/.node
+simd genesis collect-gentxs --home ~/.node
+# fast blocks + zero min-gas so the guide's commands work without extra flags
+# (substitute --fees <fee> in step 3 with e.g. 2000stake, or omit it on this localnet)
+sed -i '' 's/timeout_commit = ".*"/timeout_commit = "1s"/' ~/.node/config/config.toml
+sed -i '' 's/minimum-gas-prices = ".*"/minimum-gas-prices = "0stake"/' ~/.node/config/app.toml
+simd start --home ~/.node
+# then follow the guide. The new node in step 1 shares this host, so it also needs
+# --p2p.laddr/--rpc.laddr/--grpc.address and a distinct pprof_laddr (see step 1's note).
+*/}
+
 ## Prerequisites
 
 - The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later, and allows your target key type. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
 - No rotation in the current unbonding period. The chain rejects a second one inside the window.
-- The operator account holds enough funds for the rotation fee, which is burned. Check the fee:
+- The operator account holds enough funds for two separate charges: the rotation fee, which is burned, and the ordinary gas fee for the transaction itself. Check the rotation fee:
 
 ```shell
 simd query staking params
@@ -40,7 +60,7 @@ Start the new node peered with the existing one, and let it sync to the chain he
 simd start --home ~/.rotation-node --p2p.persistent_peers "$(simd comet show-node-id --home ~/.node)@127.0.0.1:26656"
 ```
 
-Adjust the peer address to the existing node's host. If both nodes share a host, also give the new node its own ports with `--p2p.laddr`, `--rpc.laddr`, and `--grpc.address`. Until the rotation applies, the node follows the chain as a non-signing full node.
+Adjust the peer address to the existing node's host. If both nodes share a host, also give the new node its own ports with `--p2p.laddr`, `--rpc.laddr`, and `--grpc.address`, and set a distinct `pprof_laddr` in its `config.toml`. Otherwise the new node logs a harmless `address already in use` error for the default pprof port and keeps running. Until the rotation applies, the node follows the chain as a non-signing full node.
 
 <Danger>Never copy the old `priv_validator_key.json` to the new node. Two nodes signing with the same consensus key is a double sign, which tombstones the validator. The new node must have its own freshly generated key.</Danger>
 
@@ -52,15 +72,17 @@ Before you submit, the old node must still be signing and the new node must be c
 curl -s localhost:26657/status | jq '.result.sync_info.catching_up'
 ```
 
-Run this against each node. Both must report `false`.
+Run this against each node, using the RPC port each one listens on (a co-located new node answers on the `--rpc.laddr` port you gave it, not `26657`). Both must report `false`.
 
 ## 3. Submit the rotation
 
 The rotation message carries the new node's public key, read directly from that node's home:
 
 ```shell
-simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val
+simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val --gas auto --gas-adjustment 1.5 --fees <fee> --yes
 ```
+
+Set `--fees` (or `--gas-prices`) to meet the chain's minimum gas price; without it the node rejects the transaction with `insufficient fees`. This gas fee is separate from the burned rotation fee. The command reads the operator key and chain ID from your client config; add `--chain-id`, `--keyring-backend`, and `--home` if that config does not already supply them.
 
 <Warning>A rotation cannot be undone. After it applies, the validator is committed to the new key for the rest of the unbonding period. Keep the old node running until step 4 verifies the new key is signing.</Warning>
 

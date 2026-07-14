@@ -1,0 +1,165 @@
+---
+noindex: true
+title: "Run cosmos-kms with the file backend"
+description: "Tutorial: stand up a local chain whose validator signs through cosmos-kms, using the file backend."
+---
+
+This tutorial builds a working remote signer from scratch: a single-node local chain where a cosmos-kms process signs the votes instead of the node itself. It uses the file backend, which needs no HSM or cloud account and exists for exactly this kind of learning setup. At the end, you stop the signer and watch the chain stall, which proves where signing really happens.
+
+Commands use `simd` for the chain binary. The node home is `~/.kms-demo-node` and the signer home is `~/.kms-demo`.
+
+{/*
+Manual verification (hidden, macOS). Verified 2026-07-14 on Darwin 25.5.0 (arm64), Go 1.26.5, make, jq, curl.
+simd built with `make install` from cosmos-sdk main @ b9a11304cf (reports 0.0.0-dev; 0.55 not tagged yet).
+kms built with `make install` from https://github.com/cosmos/kms @ 7932ceb.
+All three checkpoints pass: no blocks before the signer; height climbs once the node connects; production stalls when kms stops and resumes when it restarts.
+*/}
+
+## Prerequisites
+
+- Go 1.26 or later, `make`, `git`, `jq`, and `curl`.
+- A chain binary at Cosmos SDK 0.55 or later. The tutorial uses `simd`, built with `make install` in the cosmos-sdk repo.
+
+## 1. Install cosmos-kms
+
+Clone and install the signer:
+
+```shell
+git clone https://github.com/cosmos/kms
+```
+
+```shell
+cd kms && make install
+```
+
+Confirm the binary works:
+
+```shell
+kms version
+```
+
+## 2. Create a single-node chain
+
+Set up a fresh chain home with one validator. Do not start the node yet:
+
+```shell
+# Initialize the node home with the chain ID
+simd init signer-demo --chain-id kms-demo-1 --home ~/.kms-demo-node
+
+# Create the validator key in the test keyring
+simd keys add val --keyring-backend test --home ~/.kms-demo-node
+
+# Fund the validator account in genesis
+simd genesis add-genesis-account val 1000000000stake --keyring-backend test --home ~/.kms-demo-node
+
+# Register the validator with a genesis staking transaction
+simd genesis gentx val 500000000stake --chain-id kms-demo-1 --keyring-backend test --home ~/.kms-demo-node
+
+# Collect the gentx into the genesis file
+simd genesis collect-gentxs --home ~/.kms-demo-node
+```
+
+## 3. Initialize the signer
+
+Scaffold the signer's home. This writes a stub `kms.yaml` and generates `identity.json`, the key the signer uses to authenticate its connection:
+
+```shell
+kms init --home ~/.kms-demo
+```
+
+The command prints `initialized kms in /Users/you/.kms-demo`. Pass the `--home` flag on every kms command. Without it, kms uses the current directory.
+
+## 4. Give the signer the consensus key
+
+Copy the consensus key that `simd init` generated into the signer's home:
+
+```shell
+cp ~/.kms-demo-node/config/priv_validator_key.json ~/.kms-demo/priv_validator_key.json
+```
+
+<Note>Once the node is configured for remote signing, it never reads its local key file again. In production, move the key instead of copying it, so no key material remains on the node host. For this tutorial, the copy keeps things simple.</Note>
+
+## 5. Configure the signer
+
+Replace the contents of `~/.kms-demo/kms.yaml` with:
+
+```yaml
+chains:
+  - id: kms-demo-1
+
+validators:
+  - chain_id: kms-demo-1
+    addr: tcp://127.0.0.1:26659
+    identity_key: identity.json
+
+keys:
+  - chain_ids: [kms-demo-1]
+    backend: file
+    algorithm: ed25519
+    key_file: priv_validator_key.json
+```
+
+The three blocks say: sign for the chain `kms-demo-1`, dial its node at port 26659, and read the copied key file as an `ed25519` key. The file backend has no default algorithm, so the `algorithm` line is required. Relative paths resolve against the signer's home.
+
+## 6. Point the node at the signer
+
+Open `~/.kms-demo-node/config/config.toml`, find the `priv_validator_laddr` line, and set it:
+
+```toml
+priv_validator_laddr = "tcp://127.0.0.1:26659"
+```
+
+With this set, the node signs nothing locally. It listens on that port for a signer connection and forwards every vote and proposal to it.
+
+## 7. Start the signer
+
+The node needs its signer available the moment it starts, so bring the signer up first:
+
+```shell
+kms start --home ~/.kms-demo
+```
+
+The signer logs `kms started` and dials the node. The node is not running yet, so kms logs `dial failed; backing off` and keeps retrying. That is expected. Leave it running.
+
+## 8. Start the node
+
+In a second terminal:
+
+```shell
+simd start --home ~/.kms-demo-node
+```
+
+The node opens its private-validator listener on port 26659. The signer's next dial connects, the node fetches its consensus public key from the signer, and block production begins. Confirm the height is climbing:
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
+```
+
+Also confirm the signer created its double-sign protection state file:
+
+```shell
+ls ~/.kms-demo/state/kms-demo-1.json
+```
+
+<Note>The node cannot start consensus without its signer. Start it while no signer is reachable and `simd start` exits with `can't get pubkey: ... endpoint connection timed out` instead of waiting. If the node exits this way, leave kms running and rerun `simd start`; the signer keeps retrying and connects.</Note>
+
+## 9. Prove the signer is doing the signing
+
+Stop the kms process with Ctrl-C and watch the node's logs. Block production stalls because the validator can no longer sign. Start kms again:
+
+```shell
+kms start --home ~/.kms-demo
+```
+
+The signer reconnects and the chain resumes. The node never touches a private key. Every signature comes from the signer.
+
+## What you built
+
+A validator whose consensus key lives outside the node. The node handles consensus and networking. The kms process holds the key and signs, and the double-sign state file travels with the signer. The file backend keeps this tutorial self-contained, but it holds the key in plaintext on disk and is not production custody. The production version of this setup swaps one config block to move the key into an HSM or AWS KMS.
+
+## Next steps
+
+- Swap the file backend for real custody, AWS KMS or an HSM. See [Configure a signing backend](/sdk/next/kms/configure-backend).
+- Understand the architecture you just ran. See [Cosmos-kms and remote signing](/sdk/next/kms/remote-signing).
+
+- Look up any config field. See the [configuration reference](/sdk/next/kms/configuration-reference).

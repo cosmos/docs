@@ -1,0 +1,122 @@
+---
+noindex: true
+title: "Configure a signing backend"
+description: "Point cosmos-kms at the custodian holding the consensus key: AWS KMS, a PKCS#11 HSM, or a file."
+---
+
+A signing backend is the custodian that holds the validator's consensus key and signs with it. cosmos-kms supports three: AWS KMS, a PKCS#11 hardware module, and a file on disk. The `keys` block in `kms.yaml` selects one, and this guide configures each in turn.
+
+This guide assumes a running signer, which the [Cosmos KMS tutorial](/sdk/next/kms/tutorial-file-backend) sets up. Only the `keys` block changes between backends, so everything else from the tutorial runs as is. The `algorithm` field is required for all backends.
+
+{/* TODO(FLAG Eric): config.go says algorithm defaults to ed25519; a tested run errored without it on the file backend. Confirm intended behavior, then edit the note above. */}
+
+## AWS KMS
+
+AWS Key Management Service (KMS) is a managed service that stores cryptographic keys and signs with them on request. With this backend, the consensus key lives in KMS and never leaves it. The signer calls the KMS Sign API to produce each signature. Credentials come from the standard AWS default chain: environment, shared config, SSO, or an IAM role. No secrets enter `kms.yaml`.
+
+Provision an Ed25519 signing key, or reuse one:
+
+```shell
+aws kms create-key --key-spec ECC_NIST_EDWARDS25519 --key-usage SIGN_VERIFY
+```
+
+```shell
+aws kms create-alias --alias-name alias/validator --target-key-id <key-id>
+```
+
+Then bind it in the `keys` block:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: awskms
+    algorithm: ed25519
+    key_id: alias/validator
+    region: us-east-1
+```
+
+The `key_id` accepts a key ID, a full ARN, or an alias. The `region` and `profile` fields are optional and fall back to the AWS default chain. The `endpoint` field exists for LocalStack-style testing only.
+
+{/* TODO: this section is source-verified (config.go AWSKMSConfig, signing/awskms) but not yet executed against real AWS or LocalStack. Test and add the manual verification comment: IAM policy actually required for kms:Sign/kms:GetPublicKey, the exact startup error on missing permissions, and whether an existing validator key can be imported rather than created fresh (KMS key import for EdDSA). */}
+
+## `PKCS#11`
+
+The `PKCS#11` backend keeps the consensus key on a hardware security module (HSM) or token and signs on the device through `PKCS#11`, the standard interface for cryptographic hardware. The key never leaves the module. The signer uses an existing key only, so provision one with your HSM tooling first. For a local test rig, SoftHSM2 works:
+
+```shell
+softhsm2-util --init-token --free --label validator-token --pin 1234 --so-pin 4321
+```
+
+```shell
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --login --pin 1234 --keypairgen --key-type EC:edwards25519 --label validator --id 01
+```
+
+Then bind it:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: pkcs11
+    algorithm: ed25519
+    module: /usr/lib/softhsm/libsofthsm2.so
+    token_label: validator-token
+    key_label: validator
+    pin_env: KMS_PIN
+```
+
+The signer enforces three field rules at startup:
+
+- Select the token with exactly one of `token_label` or `slot`.
+- Select the key with `key_label`, `key_id` (the hex `CKA_ID`), or both.
+- Supply the PIN through exactly one of `pin`, `pin_env`, or `pin_file`.
+
+Prefer `pin_env` or `pin_file`. An inline `pin` puts the PIN in the config file.
+
+{/* TODO: this section is source-verified (config.go PKCS11Config, signing/pkcs11) but not yet executed. It is testable locally with SoftHSM2 on macOS or Linux; run it, confirm the module path per platform (Homebrew installs under /opt/homebrew or /usr/local), and add the manual verification comment. */}
+
+## File
+
+The file backend reads the consensus key from a file on the signer's disk into memory. It is the development and testing backend. The key sits in plaintext, so it is not production custody. The tutorial covers it end to end:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: file
+    algorithm: ed25519
+    key_file: priv_validator_key.json
+```
+
+The `key_file` accepts a CometBFT `priv_validator_key.json` or a raw base64-encoded private key. The file backend is also the one that signs post-quantum consensus keys:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: file
+    algorithm: mldsa65
+    key_file: priv_validator_key.json
+```
+
+<Note>The algorithm name in `kms.yaml` is `mldsa65`, without underscores. The chain-side key type in consensus params is `ml_dsa_65`. Same algorithm, two spellings.</Note>
+
+{/* TODO: the mldsa65 file-backend flow is source-verified (signing/file/mldsa65.go) but blocked on ML-DSA keygen tooling for a real run; test when Eric's keygen PR lands and add the manual verification comment. */}
+
+## Verify any backend
+
+Verification is the same regardless of custodian. Start the signer, start the node, and confirm blocks flow, exactly as in [the tutorial](/sdk/next/kms/tutorial-file-backend):
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
+```
+
+Backend problems surface when the signer starts, not when it signs. A wrong PIN, a missing PKCS#11 module, or missing AWS permissions all fail at `kms start` before any connection is made. Fix the `keys` block and start the signer again.
+
+## What can go wrong
+
+- The signer rejects the config at startup: a missing `algorithm`, both `token_label` and `slot` set, or more than one PIN source. The error names the offending field.
+- The signer starts but cannot reach the key: wrong `module` path, wrong `key_id` or alias, or AWS credentials that resolve to no permission. These also fail at startup.
+- The node exits with a pubkey timeout: the signer is not running or not reachable. Start the signer first. It dials and retries.
+
+## Next steps
+
+- Look up any config field, its type, and its constraints. See the [configuration reference](/sdk/next/kms/configuration-reference).
+- Run the whole flow once with the file backend. See [Run cosmos-kms with the file backend](/sdk/next/kms/tutorial-file-backend).

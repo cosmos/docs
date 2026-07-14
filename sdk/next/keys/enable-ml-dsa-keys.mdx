@@ -15,6 +15,26 @@ For background on ML-DSA and the key types, see [Post-quantum keys](/sdk/next/ke
 
 Commands use `simd`; substitute your chain's binary. Key names and denoms are the only values to adjust, and each appears once.
 
+{/*
+Manual verification setup (hidden, macOS). Reproduces a running chain with governance for the live-chain path, using simd/simapp.
+Build: from the cosmos-sdk repo run `make build`, then put ./build/simd on PATH as `simd`.
+
+simd init mynode --chain-id my-chain-1 --home ~/.node
+simd config set client chain-id my-chain-1 --home ~/.node
+simd config set client keyring-backend test --home ~/.node
+simd keys add val --keyring-backend test --home ~/.node
+simd genesis add-genesis-account val 100000000000stake --keyring-backend test --home ~/.node
+simd genesis gentx val 50000000000stake --chain-id my-chain-1 --keyring-backend test --home ~/.node
+simd genesis collect-gentxs --home ~/.node
+# short voting period so the proposal can pass quickly during testing
+jq '.app_state.gov.params.voting_period="15s" | .app_state.gov.params.expedited_voting_period="10s"' ~/.node/config/genesis.json > /tmp/g && mv /tmp/g ~/.node/config/genesis.json
+sed -i '' 's/timeout_commit = ".*"/timeout_commit = "1s"/' ~/.node/config/config.toml
+sed -i '' 's/minimum-gas-prices = ".*"/minimum-gas-prices = "0stake"/' ~/.node/config/app.toml
+simd start --home ~/.node
+# then follow the guide (use --home ~/.node). Submit the proposal and vote quickly, within the 15s window.
+# All commands run from one directory so params.json is shared.
+*/}
+
 ## Check the current state
 
 Consensus params list the allowed key types under `validator.pub_key_types`. Query them:
@@ -57,16 +77,22 @@ All steps read and write `params.json` in the current directory, so run them fro
 simd query consensus params -o json | jq '.params | {block, evidence, validator, abci} | .validator.pub_key_types += ["ml_dsa_65"] | .evidence.max_age_duration |= (capture("((?<h>[0-9]+)h)?((?<m>[0-9]+)m)?((?<s>[0-9]+)s)?") | ((((.h//"0")|tonumber)*3600 + ((.m//"0")|tonumber)*60 + ((.s//"0")|tonumber))|tostring) + "s")' > params.json
 ```
 
-2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination:
+2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination. Also add `--chain-id` and `--keyring-backend` if your client config does not supply them, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price:
 
 ```shell
 simd tx consensus update-params-proposal "$(jq -c .block params.json)" "$(jq -c .evidence params.json)" "$(jq -c .validator params.json)" "$(jq -c .abci params.json)" --title "Allow ML-DSA validator keys" --summary "Add ml_dsa_65 to consensus pub_key_types" --deposit 10000000stake --from mykey -y
 ```
 
-3. Vote as with any governance proposal. When it passes, the new list is live.
+3. Vote as with any governance proposal, using the proposal ID returned by the submission (find it with `simd query gov proposals` if needed):
+
+```shell
+simd tx gov vote <proposal-id> yes --from mykey
+```
+
+When it passes, the new list is live.
 
 <Warning>
-A proposal missing the `block`, `evidence`, or `validator` fields fails with "all parameters must be present" when it executes, after the deposit and voting period are already spent. Always start from the queried current params and change only the key type list.
+The update replaces the entire params object, so every group must be present. If `params.json` is missing `block`, `evidence`, or `validator`, the `jq -c` substitution above emits `null` and the CLI rejects the command before it is submitted, with `invalid argument "null": proto: syntax error`. Submitting the same gap through a proposal JSON file instead fails later at execution with "all parameters must be present", after the deposit and voting period are already spent. Either way, always start from the queried current params and change only the key type list.
 </Warning>
 
 ## Verify
