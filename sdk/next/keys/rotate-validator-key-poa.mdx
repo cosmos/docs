@@ -1,0 +1,92 @@
+---
+noindex: true
+title: "Rotate a validator consensus key, x/poa"
+description: "Rotate a PoA validator's consensus key as the operator or the admin: generate the key, submit the rotation, and time the node cutover."
+---
+
+This guide rotates a PoA validator's consensus key using the `enterprise/poa` module. PoA rotation drops three of the staking rails: there is no fee, no rate limit, and no rotation history. PoA chains have no slashing or evidence handling to protect. The operator can rotate its own key, and the chain admin can rotate any validator's key. For how rotation works in general, see [Key rotation](/sdk/next/keys/key-rotation).
+
+Commands use `simd`. Substitute your chain's binary. Examples use `~/.node` for the validator node's home, `~/.poa-newkey` for the scratch home holding the new key, and `val` for the operator key name.
+
+## Prerequisites
+
+- The chain runs `enterprise/poa` v1.1 or later.
+- The new key's type is in the chain's consensus params. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
+- The signer is the validator's operator, or the chain admin. Any other sender is rejected.
+
+## 1. Generate the new consensus key
+
+Create the new key in a scratch home, on a secondary machine or offline. Do not touch the live node's `priv_validator_key.json` yet:
+
+```shell
+simd init poa-newkey --chain-id my-chain-1 --home ~/.poa-newkey
+```
+
+The only output that matters is `~/.poa-newkey/config/priv_validator_key.json`, the new consensus key. Confirm it and read its public key:
+
+```shell
+simd comet show-validator --home ~/.poa-newkey
+```
+
+## 2. Submit the rotation
+
+The command takes the new public key as base64 plus its type, and identifies the validator by operator address. Both derive from earlier steps:
+
+```shell
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val --bech val -a)" --from val
+```
+
+The transaction re-keys the validator's state and migrates its accrued fees in the same block. Power, metadata, and the operator address are unchanged.
+
+To rotate as the admin instead, keep the command identical and sign with the admin key: `--from admin`. See [Rotate as the admin](#rotate-as-the-admin).
+
+## 3. Wait for the validator set to switch
+
+The chain's state swaps immediately. CometBFT applies the validator set change a couple of blocks later. Until then, CometBFT still expects the old key to sign, so keep the live node running untouched. Watch the set until the new consensus address appears and the old one is gone:
+
+```shell
+simd q poa validators
+```
+
+<Danger>Do not swap the node's key before the set switches. Swapping early makes the node sign with a key CometBFT does not yet expect, and the validator misses blocks. Running two nodes that hold this validator's signing keys at the same time risks a double sign. Never run more than one active signer for the validator.</Danger>
+
+## 4. Swap the node's key
+
+Once the new consensus address is in the set, stop the node, replace its key, and restart:
+
+```shell
+cp ~/.poa-newkey/config/priv_validator_key.json ~/.node/config/priv_validator_key.json
+```
+
+Confirm the node signs under the new consensus address after the restart. If you run a redundant standby, make a single switch. Keep the old-key node signing until the set updates, stop it fully, and only then let the new-key node start signing.
+
+<Note>A validator with power 0 is outside the active set. Its rotation emits no validator set update, so there is no transition to time. Swap the node's key first, then have the admin grant power.</Note>
+
+## Rotate as the admin
+
+The admin rotates any validator's key with the same command, signed by the admin key. 
+```shell
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address <operator-address> --from admin
+```
+
+<Warning>The admin override changes on-chain state only. Whoever runs the node must still swap `priv_validator_key.json` with the timing in steps 3 and 4. Otherwise the validator goes dark until its node signs with the new key. Coordinate the node-side swap with the operator before submitting, unless the goal is to cut off a compromised key.</Warning>
+
+## Verify
+
+The rotation emits an event with the operator address, the old consensus address, and the new one. Confirm the set carries the new consensus address and the node is signing:
+
+```shell
+simd q poa validators
+```
+
+## What can go wrong
+
+- The transaction is rejected as unauthorized: the signer is neither the validator's operator nor the admin.
+- The transaction is rejected for the key itself: the new key equals the current one, is already used by another validator, or its type is not in the chain's consensus params.
+- The validator misses blocks right after the swap: the node's key was replaced before the set switched. Restore the old key, wait for the set, then swap again.
+- The validator goes dark after an admin rotation: the node still holds the old key. Swap `priv_validator_key.json` and restart.
+
+## Next steps
+
+- Rotate to a post-quantum key. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).
+- Understand the mechanics and the staking differences. See [Key rotation](/sdk/next/keys/key-rotation).
