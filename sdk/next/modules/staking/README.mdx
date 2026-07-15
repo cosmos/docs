@@ -737,6 +737,15 @@ they are in a deterministic order.
 The oldest HistoricalEntries will be pruned to ensure that there only exist the parameter-defined number of
 historical entries.
 
+### Consensus key rotation
+
+Pending and historical consensus key rotations are tracked in four stores:
+
+* ConsKeyRotationQueue: `0x91 | format(maturityTime) | ValAddress` - rotations awaiting the end of their unbonding period, at which point the old consensus address unlocks and the entry is pruned
+* ValidatorConsKeyRotation: `0x92 | ValAddress` - a validator's pending rotation, enforcing one rotation per unbonding period
+* RotationLockedConsAddrIndex: `0x93 | ConsAddress` - consensus addresses locked by a rotation: the old address remains attributable for evidence, and the new address cannot be reused, until maturity
+* ConsKeyRotationApplyQueue: `0x94 | height` - height-keyed queue of rotations, applied two heights after the rotation message
+
 ## State Transitions
 
 ### Validators
@@ -1128,6 +1137,24 @@ The message handling can fail if:
 * signer is not the authority defined in the staking keeper (usually the gov module account).
 * the `bond_denom` in the updated params has zero supply in the bank module (i.e., the denom does not exist on-chain).
 
+### MsgRotateConsPubKey
+
+The `MsgRotateConsPubKey` message replaces a validator's consensus public key in place. The message is signed by the validator's operator address and carries the new public key. Power, delegations, commission, and the operator address are unchanged.
+
+```protobuf
+// Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/staking/v1beta1/tx.proto#L210-L224
+```
+
+Handling the message burns the `KeyRotationFee` param from the operator account and enqueues the rotation. The new key enters the CometBFT validator set two heights after the message executes. The rotation history is retained for the unbonding period so that evidence against the old key still slashes the validator.
+
+The message handling can fail if:
+
+* the fee cannot be deducted from the operator account.
+* the validator already rotated within the current unbonding period.
+* the new key's type is not in the chain's consensus params `validator.pub_key_types`.
+
+For the operational procedure, see [Rotate a validator consensus key, x/staking](/sdk/next/keys/rotate-validator-key). For the concepts, see [Key rotation](/sdk/next/keys/key-rotation).
+
 ## Begin-Block
 
 Each abci begin block call, the historical info will get stored and pruned
@@ -1220,6 +1247,10 @@ Complete the unbonding of all mature `Redelegation.Entries` within the
 * remove the mature entry from `Redelegation.Entries`
 * remove the `Redelegation` object from the store if there are no
   remaining entries.
+
+### Consensus Key Rotations
+
+At the height a rotation message executes, the end blocker emits the validator update handing the validator's power from the old consensus key to the new one. Two heights later, when CometBFT makes the update effective, the apply queue swaps the stored consensus key. When a rotation's unbonding period ends, the maturity queue purges its history, unlocking the old consensus address and allowing the validator to rotate again.
 
 ## Hooks
 
@@ -1348,6 +1379,9 @@ The staking module contains the following parameters:
 | HistoricalEntries | uint16           | 3                      |
 | BondDenom         | string           | "stake"                |
 | MinCommissionRate | string           | "0.000000000000000000" |
+| KeyRotationFee    | sdk.Coin         | {"denom":"stake","amount":"1000000"} |
+
+The limit of one consensus key rotation per unbonding period is fixed and is not a parameter.
 
 ## Client
 

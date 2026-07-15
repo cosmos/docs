@@ -1,6 +1,6 @@
 ---
 noindex: true
-title: "Rotate a validator consensus key, x/poa"
+title: "Rotate a consensus key, PoA"
 description: "Rotate a PoA validator's consensus key as the operator or the admin: generate the key, submit the rotation, and time the node cutover."
 ---
 
@@ -34,13 +34,15 @@ simd start --home ~/.node
 
 ## Prerequisites
 
-- The chain runs `enterprise/poa` v1.1 or later.
-- The new key's type is in the chain's consensus params. See [Enable ML-DSA keys on a chain](/sdk/next/keys/enable-ml-dsa-keys).
+- The chain runs [`enterprise/poa`](https://github.com/cosmos/cosmos-sdk/tree/main/enterprise/poa) v1.1 or later.
+- [jq](https://jqlang.org/) and [curl](https://curl.se/). The commands extract the new public key with jq and watch the validator set with curl.
+- A running PoA validator you operate, with the chain's binary on your PATH and a secondary machine or scratch directory for the new key.
+- The new key's type is in the chain's consensus params. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
 - The signer is the validator's operator, or the chain admin. Any other sender is rejected.
 
 ## 1. Generate a new consensus key
 
-Create the new key in on a secondary machine or offline. Do not touch the live node's `priv_validator_key.json` yet:
+Create the new key on a secondary machine or offline. Do not touch the live node's `priv_validator_key.json` yet:
 
 ```shell
 simd init poa-newkey --chain-id my-chain-1 --home ~/.poa-newkey
@@ -70,15 +72,15 @@ To rotate as the admin instead, keep the command identical and sign with the adm
 
 ## 3. Wait for the validator set to switch
 
-The chain's state swaps immediately, so `simd q poa validators` shows the new key in the same block the transaction lands. CometBFT applies the actual validator set change a couple of blocks later, and only that switch governs when the node must sign with the new key. Until it happens, CometBFT still expects the old key, so keep the live node running untouched. Watch the CometBFT validator set until the new consensus key appears and the old one is gone:
+The chain's state swaps immediately, so `simd q poa validators` shows the new key in the same block the transaction lands. CometBFT applies the actual validator set change two blocks later, and only that switch governs when the node must sign with the new key. Until it happens, CometBFT still expects the old key, so keep the live node running untouched. Watch the CometBFT validator set until the new consensus key appears and the old one is gone:
 
 ```shell
 curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.value'
 ```
 
-The value matches the key from `simd comet show-validator --home ~/.poa-newkey`. Confirm the module re-keyed with `simd q poa validators`, but note it updates immediately and does not reflect the couple-block CometBFT delay.
+The value should match the key from `simd comet show-validator --home ~/.poa-newkey`. Confirm the module re-keyed with `simd q poa validators`.
 
-<Danger>Do not swap the node's key before the set switches. Swapping early makes the node sign with a key CometBFT does not yet expect, and the validator misses blocks. Running two nodes that hold this validator's signing keys at the same time risks a double sign. Never run more than one active signer for the validator.</Danger>
+<Danger>Do not swap the node's key before the set switches (wait at least 2 blocks). Swapping early makes the node sign with a key CometBFT does not yet expect, and the validator misses blocks. Running two nodes that hold this validator's signing keys at the same time risks a double sign. Never run more than one active signer for the validator.</Danger>
 
 ## 4. Swap the node's key
 
@@ -120,3 +122,4 @@ simd q poa validators
 
 - Rotate to a post-quantum key. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).
 - Understand the mechanics and the staking differences. See [Key rotation](/sdk/next/keys/key-rotation).
+- Look up the message. See the [PoA API reference](/sdk/next/enterprise/poa/api#rotateconspubkey).

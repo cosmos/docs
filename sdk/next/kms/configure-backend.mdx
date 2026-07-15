@@ -1,16 +1,23 @@
 ---
 noindex: true
 title: "Configure a signing backend"
-description: "Point cosmos-kms at the custodian holding the consensus key: AWS KMS, a PKCS#11 HSM, or a file."
+description: "Point Cosmos-KMS at the custodian holding the consensus key: AWS KMS, a PKCS#11 HSM, or a file."
 ---
 
-A signing backend is the custodian that holds the validator's consensus key and signs with it. cosmos-kms supports three: AWS KMS, a PKCS#11 hardware module, and a file on disk. The `keys` block in `kms.yaml` selects one, and this guide configures each in turn.
+A signing backend is the custodian that holds the validator's consensus key and signs with it. Cosmos-KMS supports three: AWS KMS, a PKCS#11 hardware module, and a file on disk. The `keys` block in `kms.yaml` selects one, and this guide configures each in turn.
 
-This guide assumes a running signer, which the [Cosmos KMS tutorial](/sdk/next/kms/tutorial-file-backend) sets up. Only the `keys` block changes between backends, so everything else from the tutorial runs as is. The `algorithm` field is required for all backends.
+## Prerequisites
+
+- A running signer and node, which [Remote signing tutorial](/sdk/next/kms/tutorial-file-backend) sets up. Only the `keys` block changes between backends, so everything else from the tutorial runs as is.
+- Per backend: the [AWS CLI](https://aws.amazon.com/cli/) and an AWS account for AWS KMS; your HSM's tooling plus [OpenSC](https://github.com/OpenSC/OpenSC)'s `pkcs11-tool` for PKCS#11, with [SoftHSM2](https://www.opendnssec.org/softhsm/) as a local test rig.
+
+The `algorithm` field is required for all backends.
 
 {/* TODO(FLAG Eric): config.go says algorithm defaults to ed25519; a tested run errored without it on the file backend. Confirm intended behavior, then edit the note above. */}
 
 ## AWS KMS
+
+{/* TODO Eric: please verify the content of this section and add any missing information. Can ML-dsa keys be used with AWS KMS?*/}
 
 AWS Key Management Service (KMS) is a managed service that stores cryptographic keys and signs with them on request. With this backend, the consensus key lives in KMS and never leaves it. The signer calls the KMS Sign API to produce each signature. Credentials come from the standard AWS default chain: environment, shared config, SSO, or an IAM role. No secrets enter `kms.yaml`.
 
@@ -37,7 +44,7 @@ keys:
 
 The `key_id` accepts a key ID, a full ARN, or an alias. The `region` and `profile` fields are optional and fall back to the AWS default chain. The `endpoint` field exists for LocalStack-style testing only.
 
-{/* TODO: this section is source-verified (config.go AWSKMSConfig, signing/awskms) but not yet executed against real AWS or LocalStack. Test and add the manual verification comment: IAM policy actually required for kms:Sign/kms:GetPublicKey, the exact startup error on missing permissions, and whether an existing validator key can be imported rather than created fresh (KMS key import for EdDSA). */}
+{/* TODO Eric: this section is source-verified (config.go AWSKMSConfig, signing/awskms) but not yet executed against real AWS or LocalStack. Test and add the manual verification comment: IAM policy actually required for kms:Sign/kms:GetPublicKey, the exact startup error on missing permissions, and whether an existing validator key can be imported rather than created fresh (KMS key import for EdDSA). */}
 
 ## `PKCS#11`
 
@@ -119,4 +126,5 @@ Backend problems surface when the signer starts, not when it signs. A wrong PIN,
 ## Next steps
 
 - Look up any config field, its type, and its constraints. See the [configuration reference](/sdk/next/kms/configuration-reference).
-- Run the whole flow once with the file backend. See [Run cosmos-kms with the file backend](/sdk/next/kms/tutorial-file-backend).
+- Run the whole flow once with the file backend. See [Remote signing tutorial](/sdk/next/kms/tutorial-file-backend).
+- Move an existing validator onto a key in a new backend by rotation. See [Rotate a consensus key held in Cosmos-KMS](/sdk/next/kms/rotate-key-remote-signer).

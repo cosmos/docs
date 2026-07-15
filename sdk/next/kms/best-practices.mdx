@@ -6,6 +6,8 @@ description: "Choose and defend a signing architecture: placement, transport, ke
 
 A remote signing setup is a set of trust decisions: where the signer runs, how the connection is secured, and which keys are protected to what degree. This page states the recommended defaults and the reasoning, so a setup can be defended in a security review rather than inherited by accident.
 
+{/* TODO(FLAG Eric): please verify the content of this page and add any missing information. */}
+
 ## Place the signer in its own trust domain
 
 Run the signer on a separate host, in a separate network segment, with network ACLs between it and the validator. The validator node is the exposed machine: it peers with the public network and sees frequent maintenance. The signing host should do exactly one job, accept no inbound connections, and be reachable by as few people and systems as possible.
@@ -40,17 +42,15 @@ The consensus key is the asset; keep it in the HSM or cloud KMS and never in a f
 
 Double-sign protection lives in the signer's per-chain state file, which records the highest height, round, and step ever signed. That protection assumes one writer. Two signer instances holding the same consensus key with separate or missing state files can each sign the same height, which is a double sign.
 
-<Danger>Never run two signer instances against the same validator key. High availability by running a second kms is not redundancy; it is a double-sign generator. If availability matters more than custody, that is Horcrux's problem to solve, not a second kms.</Danger>
+<Danger>Never run two signer instances against the same validator key. High availability by running a second signer is not redundancy; it is a double-sign generator. If availability matters more than custody, that is Horcrux's problem to solve, not a second signer's.</Danger>
 
 ## Keep the gRPC listener off consensus paths
 
 The optional gRPC SignerService performs no caller authentication or authorization: any client that reaches the listener can use every configured key. If the service is enabled, front it with TLS, restrict it with network policy, and give it only the keys it exists to serve. Consensus keys belong to the privval side only; the gRPC service is for IBC signing and is documented with the interoperability release.
 
-## What this does not solve
-
-Custody and availability are different problems. A single signer holding a single key is a single point of failure by design: when it is down, the validator misses blocks until it returns. Sharding a key across signers for availability is [Horcrux](https://github.com/strangelove-ventures/horcrux)'s design, with its own operational tradeoffs. Choose custody (cosmos-kms) or availability (Horcrux) for the problem your validator actually has.
 
 ## Next steps
 
 - Set up the backend that holds the key. See [Configure a signing backend](/sdk/next/kms/configure-backend).
 - Look up transport and connection fields. See the [configuration reference](/sdk/next/kms/configuration-reference).
+- Rotate the consensus key without moving it out of custody. See [Rotate a consensus key held in Cosmos-KMS](/sdk/next/kms/rotate-key-remote-signer).
