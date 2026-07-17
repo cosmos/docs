@@ -3,7 +3,7 @@ title: Migration
 description: Move an existing ibc-apps rate limiting integration to ibc-go.
 ---
 
-The rate limiting middleware moved from the standalone `ibc-apps` repository into ibc-go. Migrating is a code change across `app.go`. The import paths, the package name, the keeper constructor, and both middleware constructors all change. This guide moves an integration from `ibc-apps` v10 to ibc-go v11. For the full current wiring, see [integrate the rate limiting middleware](/ibc/next/middleware/rate-limit-middleware/integration).
+The rate limiting middleware moved from the standalone `ibc-apps` repository into ibc-go. Migrating is a code change across `app.go`. The import paths, the package name, the keeper constructor, and both middleware constructors all change. This guide moves an integration from `ibc-apps` v10 to ibc-go v11.2. For the full current wiring, see [integrate the rate limiting middleware](/ibc/next/middleware/rate-limit-middleware/integration).
 
 ## Update the imports
 
@@ -93,6 +93,21 @@ The v2 constructor gains two required arguments, a write-acknowledgement wrapper
 - ratelimit.NewAppModule(appCodec, app.RateLimitKeeper)
 + ratelimiting.NewAppModule(app.RateLimitKeeper)
 ```
+
+## Add store upgrades
+
+If rate limiting is being added to a chain for the first time, you must [manually add store upgrades](/sdk/next/guides/upgrades/upgrade#adding-new-modules-during-an-upgrade) for the new module and configure the store loader to apply them in `app.go`:
+
+```go
+if upgradeInfo.Name == "v11_2" && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.Height) {
+    storeUpgrades := store.StoreUpgrades{
+        Added: []string{ratelimittypes.StoreKey},
+    }
+    app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, &storeUpgrades))
+}
+```
+
+This ensures the new module's stores are added to the multistore before the migrations begin.
 
 ## Verify the migration
 
