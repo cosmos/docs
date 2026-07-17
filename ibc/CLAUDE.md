@@ -139,7 +139,8 @@ next/
 │   └── rate-limit-middleware/
 │       ├── overview.mdx
 │       ├── integration.mdx
-│       └── setting-limits.mdx
+│       ├── setting-limits.mdx
+│       └── migration.mdx
 │
 ├── migrations/                 # Version migration guides
 │   ├── sdk-to-v1.mdx
