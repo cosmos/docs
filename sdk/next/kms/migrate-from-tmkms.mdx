@@ -108,7 +108,7 @@ mkdir -p <home>/state
 jq '{height, round: (.round|tonumber), step: (.step + 1)}' tmkms_state.json > <home>/state/<chain-id>.json
 ```
 
-The `step + 1` is deliberate: TMKMS numbers the signing steps 0, 1, 2 while CometBFT numbers them 1, 2, 3, so the translation remaps them. Do not remove it.
+The `jq` makes two needed conversions: `round` from string to number (the source of the `int32` error otherwise), and `step + 1` to remap TMKMS's 0/1/2 signing steps to CometBFT's 1/2/3.
 
 ## 5. Start Cosmos-KMS
 
@@ -122,7 +122,7 @@ Confirm the chain includes the validator's signatures again and the new signer's
 
 - Both signers briefly alive: the double-sign risk above. Cut over with the old process confirmed dead, not just signaled.
 - The validator stays dark after cutover: the new signer is not reaching the listener. Check the `validators[].addr` translation and the firewall between the hosts.
-- `dial tcp: lookup node-id@host:port no such host`: the `<node-id>@` prefix was left in `validators[].addr`. Drop it and keep only host and port.
+- `dial tcp: lookup node-id@host: no such host`: the `<node-id>@` prefix was left in `validators[].addr`. Drop it and keep only host and port.
 - `file: parse key file "<path>": expected 64-byte ed25519 key, got 32`: a TMKMS softsign key was pointed at directly. See the [key section](#from-softsign).
 - `chain "<chain-id>": reload sign-state: json: cannot unmarshal string into Go value of type int32`: the TMKMS state file was reused as is. Translate it first; see [step 4](#4-translate-the-double-sign-state).
 
