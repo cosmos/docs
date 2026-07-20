@@ -13,18 +13,16 @@ A signing backend is the custodian that holds the validator's consensus key and 
 
 The `algorithm` field is required for all backends.
 
-{/* TODO(ERIC): config.go says algorithm defaults to ed25519; a tested run errored without it on the file backend. Confirm intended behavior, then edit the note above. */}
-
 ## AWS KMS
-
-{/* TODO(ERIC): please verify the content of this section and add any missing information. Can ML-DSA keys be used with AWS KMS? */}
 
 AWS Key Management Service (KMS) is a managed service that stores cryptographic keys and signs with them on request. With this backend, the consensus key lives in KMS and never leaves it. The signer calls the KMS Sign API to produce each signature. Credentials come from the standard AWS default chain: environment, shared config, SSO, or an IAM role. No secrets enter `kms.yaml`.
 
-Provision an Ed25519 signing key, or reuse one:
+This backend signs with any key type Cosmos-KMS supports: `ed25519`, `secp256k1`, `secp256k1eth`, and post-quantum `mldsa65`. Provision the AWS key with the key spec that matches the algorithm, such as `ECC_NIST_EDWARDS25519` for `ed25519` or `ML_DSA_65` for `mldsa65`.
+
+Provision an ML-DSA-65 signing key, or reuse one:
 
 ```shell
-aws kms create-key --key-spec ECC_NIST_EDWARDS25519 --key-usage SIGN_VERIFY
+aws kms create-key --key-spec ML_DSA_65 --key-usage SIGN_VERIFY
 ```
 
 ```shell
@@ -37,14 +35,14 @@ Then bind it in the `keys` block:
 keys:
   - chain_ids: [my-chain-1]
     backend: awskms
-    algorithm: ed25519
+    algorithm: mldsa65
     key_id: alias/validator
     region: us-east-1
 ```
 
 The `key_id` accepts a key ID, a full ARN, or an alias. The `region` and `profile` fields are optional and fall back to the AWS default chain. The `endpoint` field exists for LocalStack-style testing only.
 
-{/* TODO(ERIC): this section is source-verified (config.go AWSKMSConfig, signing/awskms) but not yet executed against real AWS or LocalStack. Test and add the manual verification comment: IAM policy actually required for kms:Sign/kms:GetPublicKey, the exact startup error on missing permissions, and whether an existing validator key can be imported rather than created fresh (KMS key import for EdDSA). */}
+{/* TODO(ERIC): this section is source-verified (config.go AWSKMSConfig, signing/awskms) but not yet executed against real AWS or LocalStack. Test the config and commands above to make sure they work. Add anything or change if needed. Test and add the manual verification comment: IAM policy actually required for kms:Sign/kms:GetPublicKey, the exact startup error on missing permissions, and whether an existing validator key can be imported rather than created fresh (KMS key import for EdDSA). */}
 
 ## `PKCS#11`
 
@@ -57,6 +55,8 @@ softhsm2-util --init-token --free --label validator-token --pin 1234 --so-pin 43
 ```shell
 pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --login --pin 1234 --keypairgen --key-type EC:edwards25519 --label validator --id 01
 ```
+
+The `--module` path is platform-specific: Linux uses `/usr/lib/softhsm/libsofthsm2.so`, and macOS Homebrew uses `/opt/homebrew/lib/softhsm/libsofthsm2.so` (`/usr/local/lib/softhsm/...` on Intel). Use the same path for the `module` field below.
 
 Then bind it:
 
@@ -79,7 +79,7 @@ The signer enforces three field rules at startup:
 
 Prefer `pin_env` or `pin_file`. An inline `pin` puts the PIN in the config file.
 
-{/* TODO(ERIC): this section is source-verified (config.go PKCS11Config, signing/pkcs11) but not yet executed. It is testable locally with SoftHSM2 on macOS or Linux; run it, confirm the module path per platform (Homebrew installs under /opt/homebrew or /usr/local), and add the manual verification comment. */}
+{/* Manual verification (pkcs11/SoftHSM2 backend): run-verified 2026-07-20 on macOS arm64 (simd cosmos-sdk @ 46a177139a, kms @ 0007b0d, SoftHSM2 2.7.0, OpenSC 0.27.1). Token inited and ed25519 key generated with the commands as written (module path /opt/homebrew/lib/softhsm/libsofthsm2.so on macOS); the validator's consensus pubkey was set to the HSM key via `simd genesis gentx --pubkey`, the kms pkcs11 backend signed every block, blocks flowed, and stop-kms→stall / restart→resume passed. Full run: ~/Documents/tests/kms-backend-verification-findings.md. */}
 
 ## File
 
@@ -105,7 +105,7 @@ keys:
 
 
 {/* Manual verification (mldsa65 file backend): run-verified 2026-07-17 on macOS (simd from cosmos-sdk pr-26604 @ 46a177139a, kms @ 0007b0d): chain inited with --consensus-key-algo ml_dsa_65, signer with algorithm: mldsa65, blocks flowed, stop/resume proof passed. Full run: ~/Documents/tests/mldsa-keygen-test-findings.md. */}
-{/* TODO(ERIC): confirm the per-backend mldsa65 support matrix for the release; awskms/ and pkcs11/ ship mldsa65 at kms 0007b0d but are untested against real hardware. Verify that post-quantum keys work with aws and pkcs11 backends and update this page to reflect that. */}
+{/* Verification status (mldsa65 on pkcs11/awskms): the support matrix is source- and owner-confirmed — mldsa65 works on file, pkcs11, and awskms for privval (Eric review; kms signing/pkcs11 and signing/awskms register mldsa65). File is run-verified above. pkcs11 and awskms mldsa65 are NOT run-verified on real hardware: SoftHSM2 has no ML-DSA mechanism (pkcs11 mldsa65 needs an ML-DSA-capable HSM), and awskms needs real AWS. The ed25519 pkcs11 run on 2026-07-20 does not cover mldsa65. */}
 
 ## Verify any backend
 
