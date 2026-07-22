@@ -52,6 +52,8 @@ simd init rotation-node --chain-id my-chain-1 --home ~/.rotation-node
 
 <Note>To rotate to a post-quantum key, add `--consensus-key-algo ml_dsa_65` to the command above. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).</Note>
 
+<Danger>Never copy the old `priv_validator_key.json` to the new node. Two nodes signing with the same consensus key is a double sign, which tombstones the validator. The new node must have its own freshly generated key.</Danger>
+
 A fresh init writes a placeholder genesis. Replace it with the chain's genesis:
 
 ```shell
@@ -68,8 +70,6 @@ Adjust the peer address to the existing node's host. If both nodes share a host,
 
 On a chain with history, a fresh node takes days to sync from genesis. Use state sync or a snapshot to reach the chain head quickly. See [State sync](/sdk/next/node/run-node#state-sync).
 
-<Danger>Never copy the old `priv_validator_key.json` to the new node. Two nodes signing with the same consensus key is a double sign, which tombstones the validator. The new node must have its own freshly generated key.</Danger>
-
 ## 2. Confirm both nodes are healthy
 
 Before you submit, the old node must still be signing and the new node must be caught up to the chain head. If the new node is still syncing when the rotation applies, the validator will miss blocks until it catches up. Check sync status:
@@ -85,7 +85,7 @@ Run this against each node, using the RPC port each one listens on (a co-located
 The rotation message carries the new node's public key, read directly from that node's home:
 
 ```shell
-simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val --gas auto --gas-adjustment 1.5 --fees <fee> --yes
+simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val --home ~/.node --gas auto --gas-adjustment 1.5 --fees <fee> --yes
 ```
 
 Set `--fees` (or `--gas-prices`) to meet the chain's minimum gas price; without it the node rejects the transaction with `insufficient fees`. This gas fee is separate from the burned rotation fee. The command reads the operator key and chain ID from your client config; add `--chain-id`, `--keyring-backend`, and `--home` if that config does not already supply them.

@@ -63,7 +63,7 @@ simd comet show-validator --home ~/.poa-newkey
 The command takes the new public key as base64 plus its type, and identifies the validator by operator address. Both derive from earlier steps:
 
 ```shell
-simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val -a)" --from val
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val -a --home ~/.node)" --from val --home ~/.node
 ```
 
 <Note>To rotate to a post-quantum key, pass `ml_dsa_65` instead of `ed25519` in the command above, and add `--gas auto --gas-adjustment 1.5` since the ML-DSA public key exceeds the default gas limit. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).</Note>
@@ -75,6 +75,8 @@ Add standard transaction flags as your setup requires: `--chain-id` and `--keyri
 The transaction re-keys the validator's state and migrates its accrued fees in the same block. Power, metadata, and the operator address are unchanged.
 
 To rotate as the admin instead, keep the command identical and sign with the admin key: `--from admin`. See [Rotate as the admin](#rotate-as-the-admin).
+
+<Danger>If the rotated validator holds more than 1/3 of voting power, the chain halts during the cutover period (steps 3 and 4) and does not resume until the node with the rotated key starts signing.</Danger>
 
 ## 3. Wait for the validator set to switch
 
@@ -102,12 +104,13 @@ Confirm the node signs under the new consensus address after the restart. If you
 
 ## Rotate as the admin
 
-The admin rotates any validator's key with the same command, signed by the admin key. 
-```shell
-simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address <operator-address> --from admin
-```
+<Warning>The admin override changes on-chain state only. Whoever runs the node must still swap `priv_validator_key.json` with the timing in steps 3 and 4 above. Otherwise the validator goes dark until its node signs with the new key. Coordinate the node-side swap with the operator before submitting, unless the goal is to cut off a compromised key.</Warning>
 
-<Warning>The admin override changes on-chain state only. Whoever runs the node must still swap `priv_validator_key.json` with the timing in steps 3 and 4. Otherwise the validator goes dark until its node signs with the new key. Coordinate the node-side swap with the operator before submitting, unless the goal is to cut off a compromised key.</Warning>
+The admin rotates any validator's key with the same command, signed by the admin key. 
+
+```shell
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address <operator-address> --from admin --home ~/.node
+```
 
 ## Verify
 
