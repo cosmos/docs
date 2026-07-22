@@ -4,7 +4,7 @@ title: "Migrate from TMKMS"
 description: "Move a validator from TMKMS to Cosmos-KMS: translate the config, move or rotate the key, and cut over without double signing."
 ---
 
-This guide moves a validator's signing from TMKMS to Cosmos-KMS, the recommended remote signer going forward. The migration translates the config, gets the key into a Cosmos-KMS backend, and cuts over with exactly one signer alive at every moment. For what Cosmos-KMS is and how it relates to TMKMS, see [Cosmos-KMS and remote signing](/sdk/next/kms/remote-signing).
+This guide moves a validator's signing from TMKMS to Cosmos-KMS, the recommended remote signer going forward. Cosmos-KMS includes several upgrades over TMKMS: it adds AWS KMS and PKCS#11 backends and post-quantum ML-DSA signing. The migration translates the config, gets the key into a Cosmos-KMS backend, and cuts over with exactly one signer alive at every moment. For what Cosmos-KMS is and how it relates to TMKMS, see [Cosmos-KMS and remote signing](/sdk/next/kms/remote-signing).
 
 The validator node itself needs no changes: both signers speak the same privval protocol to the same `priv_validator_laddr` listener. TMKMS connects over CometBFT's SecretConnection, and the Cosmos-KMS `tcp://` transport is the same, so the listener works unchanged.
 
@@ -33,7 +33,7 @@ Create `kms.yaml` and translate each block from your `tmkms.toml`:
 
 A standard cosmos-sdk node has no peer ID on its `priv_validator_laddr` listener, so there is usually no `<node-id>@` prefix to carry over, and both TMKMS and Cosmos-KMS use a bare `tcp://host:port`.
 
-A complete `kms.yaml` for a single validator on the file backend:
+Below is a complete `kms.yaml` example for a single validator on the file backend:
 
 ```yaml
 chains:
@@ -50,7 +50,7 @@ keys:
     key_file: priv_validator_key.json
 ```
 
-The `keys` block shown is the file backend; it differs per backend, which step 2 fills in. The [configuration reference](/sdk/next/kms/configuration-reference) lists every field.
+The `keys` block shown is the file backend; it differs per backend, which step 2 fills in. It also needs `keys[].algorithm`, which has no `tmkms.toml` equivalent, so set it explicitly (`ed25519` for a softsign key), as the example shows. The [configuration reference](/sdk/next/kms/configuration-reference) lists every field.
 
 ## 2. Move the consensus key into a backend
 
@@ -60,7 +60,7 @@ Get the consensus key into the backend named in your `keys` block. The path depe
 
 The softsign backend keeps the key in a file, but the format differs from what the Cosmos-KMS file backend reads. A TMKMS softsign key is the base64-encoded 32-byte ed25519 seed, while the file backend expects a CometBFT `priv_validator_key.json` or the base64-encoded 64-byte ed25519 key. Pointing `key_file` at a softsign key directly fails with `expected 64-byte ed25519 key, got 32`.
 
-If you still have the validator's original `priv_validator_key.json` (TMKMS softsign was imported from it), point `key_file` at that file directly. No conversion is needed.
+If you still have the validator's original `priv_validator_key.json` (TMKMS softsign was imported from it), point `key_file` at that file directly. No conversion is needed. That file lives on the node host, so copy it to the signer's home or give `key_file` an absolute path; a bare filename resolves against the signer's `--home`.
 
 From only the softsign key (the file named by the `path` in your `[[providers.softsign]]` block), expand the 32-byte seed into the 64-byte `seed||pubkey` form the file backend accepts. Replace `tmkms_softsign.key` in the command with that file:
 
@@ -89,19 +89,19 @@ Most HSM-held keys do not move. A YubiHSM, a Fortanix device, or any HSM that ex
 
 When you are changing custodian rather than keeping the key in place, migrate by rotation: generate a new key in the target custodian and rotate the validator to it on chain, which retires the TMKMS-held key entirely. See [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key).
 
-Ledger-held consensus keys have no path today. The TMKMS Ledger signer is not implemented in Cosmos-KMS and is out of scope for this release. If you need it, open a [feature request](https://github.com/cosmos/kms/issues) so it can be evaluated by demand.
+Ledger-held consensus keys are not currently supported in Cosmos-KMS. If you need it, open a [feature request](https://github.com/cosmos/kms/issues) so it can be evaluated by demand.
 
 ## 3. Stop TMKMS
 
-Stop TMKMS and confirm the process is gone. The validator misses blocks from this moment, which is expected and safe.
+Stop TMKMS and confirm the process is gone. The validator misses blocks until Cosmos-KMS takes over. That gap is expected: missed blocks are recoverable, a double sign from two live signers is not. Keep it short to avoid downtime jailing.
 
 <Danger>Never run TMKMS and Cosmos-KMS at the same time against the same validator key. Each keeps its own last-signed state, so together they can sign the same height, which is a double sign. Stop one fully before starting the other, in both directions, including any rollback.</Danger>
 
 ## 4. Translate the double-sign state
 
-TMKMS and Cosmos-KMS both track the last signed height, round, and step per chain, and the protection only works if the new signer starts at or above the old signer's high-water mark. The two store this state differently, so it needs translating rather than copying.
+TMKMS and Cosmos-KMS both track the last signed height, round, and step per chain, and the protection only works if the new signer starts at or above the old signer's high-water mark. The two store this state differently, so it needs translating.
 
-Point the command at the TMKMS state file named by `state_file` in your `[[chain]]` block; `tmkms_state.json` is a placeholder. It writes the translated state into the Cosmos-KMS location:
+Point the following command at the TMKMS state file named by `state_file` in your `[[chain]]` block (`tmkms_state.json` is a placeholder). It writes the translated state into the Cosmos-KMS location:
 
 ```shell
 mkdir -p <home>/state
@@ -114,9 +114,19 @@ The `jq` makes two needed conversions: `round` from string to number (the source
 
 Start Cosmos-KMS with the completed `kms.yaml`. It dials the validator and resumes signing.
 
+```shell
+kms start --home <home>
+```
+
 ## 6. Confirm signing resumed
 
-Confirm the chain includes the validator's signatures again and the new signer's state file advances.
+Confirm the chain is producing again and the signer's state file is advancing. Run the status check twice; a climbing height means signing resumed:
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
+```
+
+The signer's `<home>/state/<chain-id>.json` should also advance past the last height TMKMS signed.
 
 ## What can go wrong
 

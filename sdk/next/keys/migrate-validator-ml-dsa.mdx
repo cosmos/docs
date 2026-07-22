@@ -9,6 +9,7 @@ Migrating a validator to post-quantum signing is an ordinary key rotation with a
 ## Prerequisites
 
 - All prerequisites of the rotation procedure, including [jq](https://jqlang.org/) and [curl](https://curl.se/): no rotation in the current unbonding period, and fee funds on the operator account. See [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key).
+- The chain's binary; the examples use `simd`. To build it and run a node, see [Run a node](/sdk/next/node/run-node).
 
 ## 1. Confirm the chain allows ML-DSA
 
@@ -40,10 +41,10 @@ Follow [Rotate a consensus key, PoA](/sdk/next/keys/rotate-validator-key-poa) wi
 simd init poa-newkey --chain-id my-chain-1 --consensus-key-algo ml_dsa_65 --home ~/.poa-newkey
 ```
 
-And pass `ml_dsa_65` instead of `ed25519` as the key type when submitting:
+And pass `ml_dsa_65` instead of `ed25519` as the key type when submitting. The ML-DSA public key is large enough that the default gas limit runs out, so add `--gas auto`:
 
 ```shell
-simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ml_dsa_65 --operator-address "$(simd keys show val -a)" --from val
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ml_dsa_65 --operator-address "$(simd keys show val -a)" --from val --gas auto --gas-adjustment 1.5
 ```
 
 The cutover timing is unchanged: keep the node on the old key until the validator set switches, then swap the key file in place, exactly as the guide's steps 3 and 4 describe.
@@ -58,7 +59,7 @@ Full flow run verbatim: init with --consensus-key-algo ml_dsa_65 produced cometb
 the ML-DSA proto-JSON; rotation executed (code 0, fee burned); /validators flipped to cometbft/PubKeyMlDsa65; blocks flowed.
 Full run: ~/Documents/tests/mldsa-keygen-test-findings.md. Re-verify at #26604 merge.
 */}
-{/* TODO(MATT): the PoA path has not run with a real ML-DSA key; test it against the #26590 branch with simd from #26604. */}
+{/* TODO(MATT): this ML-DSA PoA rotation command needed a fix; https://github.com/cosmos/cosmos-sdk/pull/26614 fixes it (verified on that PR branch). Test from that PR, and re-confirm it works after it merges. */}
 
 ## 3. Verify
 

@@ -15,13 +15,13 @@ Manual verification (hidden, macOS). Verified 2026-07-14 on Darwin 25.5.0 (arm64
 simd built with `make install` from cosmos-sdk main @ b9a11304cf (reports 0.0.0-dev; 0.55 not tagged yet).
 kms built with `make install` from https://github.com/cosmos/kms @ 7932ceb.
 All three checkpoints pass: no blocks before the signer; height climbs once the node connects; production stalls when kms stops and resumes when it restarts.
-Step 8 startup timing re-verified 2026-07-20 on a clean single-localnet machine (simd @ 46a17713, kms @ 0007b0d): node started within ~5s of the signer passes 5/5; longer gaps hit dead zones (~6-9s, ~13-21s) and time out with `can't get pubkey`; a rerun recovers. Root cause: kms dial backoff (200ms→10s cap, internal/manager) vs the node's single 3s pubkey fetch (cometbft node/setup.go:735, socket_listeners.go). Hence the "start promptly" instruction and reworded Note. Full run: ~/Documents/tests/kms-tutorial-step8-reverify-findings.md.
+Step 8 startup timing re-verified 2026-07-20 on a clean single-localnet machine (simd @ 46a17713, kms @ 0007b0d): node started within ~5s of the signer passes 5/5; longer gaps hit dead zones (~6-9s, ~13-21s) and time out with `can't get pubkey`. Re-verified again 2026-07-21 (kms-tutorial-reverify-findings.md): a plain node rerun is unreliable (~30%), worsened on a node's first boot by a one-time IAVL storage upgrade that delays its listener; restarting the signer (resets its backoff to fast dials) reliably recovers. Root cause: kms dial backoff (200ms→10s cap, internal/manager) vs the node's single ~3s pubkey fetch (cometbft node/setup.go:736). Note updated to the restart-the-signer recovery. Fix flagged to eng (lower kms defaultBackoffMax to ~1s). Full runs: ~/Documents/tests/kms-tutorial-step8-reverify-findings.md and kms-tutorial-reverify-findings.md.
 */}
 
 ## Prerequisites
 
 - [Go](https://go.dev/doc/install) 1.26 or later, [make](https://www.gnu.org/software/make/), [git](https://git-scm.com/), [jq](https://jqlang.org/), and [curl](https://curl.se/).
-- A chain binary at Cosmos SDK 0.55 or later. The tutorial uses `simd`, built with `make install` in the [cosmos-sdk repo](https://github.com/cosmos/cosmos-sdk).
+- A chain binary at Cosmos SDK 0.55 or later. The tutorial uses `simd`, built with `make install` in the [cosmos-sdk repo](https://github.com/cosmos/cosmos-sdk). To build it and run a node, see [Run a node](/sdk/next/node/run-node).
 
 ## 1. Install Cosmos-KMS
 
@@ -144,7 +144,7 @@ Also confirm the signer created its double-sign protection state file:
 ls ~/.kms-demo/state/kms-demo-1.json
 ```
 
-<Note>If you wait too long between the two, `simd start` exits with `can't get pubkey: ... endpoint connection timed out` instead of waiting. Leave the signer running and rerun `simd start`; it reconnects on the signer's next dial.</Note>
+<Note>If `simd start` exits with `can't get pubkey: ... endpoint connection timed out`, the signer has backed off to slow retries. Restart the signer, then start the node again.</Note>
 
 ## 9. Prove the signer is doing the signing
 

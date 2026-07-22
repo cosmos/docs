@@ -32,11 +32,13 @@ simd start --home ~/.node
 # switch (step 3) and the node key swap (step 4); that is expected and step 4 recovers it.
 */}
 
+{/* Manual verification (PoA rotation): ed25519 run-verified 2026-07-20 against merged enterprise/poa (cosmos-sdk origin/main 3d3b901ce5, includes #26590 merge c52e67a39d; poa binary built via `cd enterprise/poa/simapp && go build ./simd`). Operator self-rotation and admin override PASS: rotate_cons_pubkey event with operator/old/new, power+operator preserved, set switch at tx height +2, fees migrated; all four rejections reproduced (already-in-use, nothing-to-rotate, unauthorized, type-not-in-params); power-0 note holds; cutover timing confirmed. Full ed25519 run: ~/Documents/tests/poa-rotation-test-findings.md. ML-DSA: not executable on merged #26590 (poa rotate CLI pubkeyFactory has no ml_dsa_65 entry → `unknown pubkey type: ml_dsa_65`); cosmos/cosmos-sdk#26614 adds it and was verified on that PR branch (operator + admin ML-DSA rotation execute, set switches to cometbft/PubKeyMlDsa65, needs --gas auto). Re-confirm when #26614 merges. */}
+
 ## Prerequisites
 
 - The chain runs [`enterprise/poa`](https://github.com/cosmos/cosmos-sdk/tree/main/enterprise/poa) v1.1 or later.
 - [jq](https://jqlang.org/) and [curl](https://curl.se/). The commands extract the new public key with jq and watch the validator set with curl.
-- A running PoA validator you operate, with the chain's binary on your PATH and a secondary machine or scratch directory for the new key.
+- A running PoA validator you operate, with the chain's binary on your PATH and a secondary machine or scratch directory for the new key. To build `simd` and run a node, see [Run a node](/sdk/next/node/run-node).
 - The new key's type is in the chain's consensus params. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
 - The signer is the validator's operator, or the chain admin. Any other sender is rejected.
 
@@ -64,7 +66,7 @@ The command takes the new public key as base64 plus its type, and identifies the
 simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address "$(simd keys show val -a)" --from val
 ```
 
-<Note>To rotate to a post-quantum key, pass `ml_dsa_65` instead of `ed25519` in the command above. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).</Note>
+<Note>To rotate to a post-quantum key, pass `ml_dsa_65` instead of `ed25519` in the command above, and add `--gas auto --gas-adjustment 1.5` since the ML-DSA public key exceeds the default gas limit. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).</Note>
 
 The operator address is a regular account address (`cosmos1...`), not a `cosmosvaloper1...` address, so read it with `simd keys show val -a`.
 
