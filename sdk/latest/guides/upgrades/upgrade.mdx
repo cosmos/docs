@@ -8,29 +8,102 @@ Read and understand all of this page before running a migration on a live chain.
 
 <Note>
 **Synopsis**
-In-place store migrations allow modules to upgrade to new versions that include breaking changes. This document covers both the module-side (writing migrations) and the app-side (running migrations during an upgrade).
+In-place store migrations let modules ship breaking state changes during a chain upgrade. This page covers how an upgrade runs, setting up `x/upgrade`, writing and registering migrations, running them in an upgrade handler, and a worked example.
 </Note>
 
-The Cosmos SDK supports two approaches to chain upgrades: exporting the entire application state to JSON and starting fresh with a modified genesis file, or performing in-place store migrations that update state directly. In-place migrations are significantly faster for chains with large state and are the standard approach for live networks.
+The Cosmos SDK supports two approaches to chain upgrades: exporting the entire application state to JSON and starting fresh with a modified genesis file, or performing in-place store migrations that update state directly. In-place migrations are significantly faster for chains with large state and are the standard approach for live networks. This page covers the in-place approach.
 
-This page covers how to write module migrations and how to run them inside an upgrade handler in your app.
+## How an upgrade works
 
-## Consensus Version
+An upgrade is scheduled on-chain, usually through governance, and runs in this order:
+
+1. Someone submits a governance proposal containing a `MsgSoftwareUpgrade` whose `Plan` names the upgrade (matching the name passed to `SetUpgradeHandler`) and sets a target height.
+2. Validators vote. If the proposal passes, `x/upgrade` records the plan.
+3. At the plan height every node halts and writes `upgrade-info.json` to its home directory.
+4. The node operator, or Cosmovisor, starts the new binary. During the next block's `PreBlock`, `x/upgrade` sees the due plan and runs the registered upgrade handler, which calls `RunMigrations`.
+5. The chain continues on the new binary with migrated state.
+
+A `Plan` is the on-chain upgrade record: a name and a target height. The `VersionMap` is a map of module name to consensus version, stored by `x/upgrade`, recording the version each module's state was last migrated to. The sections below cover each piece. The [Cosmovisor](/sdk/latest/guides/upgrades/cosmovisor) guide covers the node-operator side.
+
+## Consensus version
 
 Successful upgrades of existing modules require each `AppModule` to implement the function `ConsensusVersion() uint64`.
 
 * The versions must be hard-coded by the module developer.
 * The initial version **must** be set to 1.
 
-Consensus versions serve as state-breaking versions of app modules and must be incremented when the module introduces breaking changes.
+Consensus versions serve as state-breaking versions of app modules and must be incremented when the module introduces breaking changes. `RunMigrations` compares these against the `VersionMap` to decide which migrations to run.
 
-## Registering Migrations
+## Set up x/upgrade
 
-To register the functionality that takes place during a module upgrade, you must register which migrations you want to take place.
+The rest of this page assumes the app has `x/upgrade` wired in. Create the `UpgradeKeeper` before the module manager so the upgrade module can be registered, register the module, and run its `PreBlocker`. See the full wiring in the [cosmos/example](https://github.com/cosmos/example) app.
 
-Migration registration takes place in the `Configurator` using the `RegisterMigration` method. The `AppModule` reference to the configurator is in the `RegisterServices` method.
+```go expandable
+import (
+    "github.com/cosmos/cosmos-sdk/x/upgrade"
+    upgradekeeper "github.com/cosmos/cosmos-sdk/x/upgrade/keeper"
+    upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
+)
 
-You can register one or more migrations. If you register more than one migration script, list the migrations in increasing order and ensure there are enough migrations that lead to the desired consensus version. For example, to migrate to version 3 of a module, register separate migrations for version 1 and version 2 as shown in the following example:
+// Reserve a store key for x/upgrade alongside the other module keys:
+// upgradetypes.StoreKey
+
+// Create the UpgradeKeeper before the module manager. homePath is where
+// ReadUpgradeInfoFromDisk looks for the upgrade-info.json a node writes at the
+// halt height. The authority is usually the governance module account.
+app.UpgradeKeeper = upgradekeeper.NewKeeper(
+    skipUpgradeHeights,
+    runtime.NewKVStoreService(keys[upgradetypes.StoreKey]),
+    appCodec,
+    homePath,
+    app.BaseApp,
+    authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+)
+
+// Register the upgrade module with the module manager.
+app.ModuleManager = module.NewManager(
+    // other modules...
+    upgrade.NewAppModule(app.UpgradeKeeper, app.AccountKeeper.AddressCodec()),
+)
+
+// Run x/upgrade first in PreBlock so it can detect a due plan and execute the
+// handler before the rest of the block.
+app.ModuleManager.SetOrderPreBlockers(
+    upgradetypes.ModuleName,
+    // other pre-blockers...
+)
+app.SetPreBlocker(app.PreBlocker)
+```
+
+The `PreBlocker` method runs the module manager's `PreBlock`, which is where `x/upgrade` detects a due plan and executes its handler:
+
+```go
+func (app *MyApp) PreBlocker(ctx sdk.Context, _ *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+    return app.ModuleManager.PreBlock(ctx)
+}
+```
+
+<Warning>
+`x/upgrade` only runs during `PreBlock`. If `SetPreBlocker` is not wired to a `PreBlocker` that calls the module manager's `PreBlock`, upgrade plans never execute and no migrations run.
+</Warning>
+
+Also save the consensus version of each module to state at genesis, so future upgrades can detect when modules with newer consensus versions are introduced. Add this to `InitChainer`:
+
+```go
+func (app *MyApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+    // ...
+    if err := app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap()); err != nil {
+        return nil, err
+    }
+    // ...
+}
+```
+
+## Registering migrations
+
+To register the functionality that takes place during a module upgrade, register the migrations in the `Configurator` using its `RegisterMigration` method, from the `AppModule`'s `RegisterServices` method.
+
+Register migrations in increasing order, one per source version, up to the target consensus version. For example, to migrate to version 3 of a module, register migrations for versions 1 and 2:
 
 ```go
 func (am AppModule) RegisterServices(cfg module.Configurator) {
@@ -51,7 +124,40 @@ func (am AppModule) RegisterServices(cfg module.Configurator) {
 }
 ```
 
-Since these migrations are functions that need access to a Keeper's store, use a wrapper around the keepers called `Migrator` as shown in this example:
+The migration functions need access to the keeper's store, so they are defined as methods on a `Migrator` that wraps the keeper. The next section writes one.
+
+## Writing migration scripts
+
+A migration reads the module's existing state and rewrites it into the new layout. Place migration functions in the module's `keeper` package, or in a versioned `migrations/` directory for larger modules (for example `x/bank/migrations/v2`).
+
+The following `Migrator` moves the counter module from consensus version 1 to 2. The breaking change is a re-denomination: every stored count is multiplied by 10. `Migrate1to2` reads the current value, transforms it, and writes it back, treating an unset value as a no-op rather than an error:
+
+```go
+type Migrator struct {
+    keeper *Keeper
+}
+
+func NewMigrator(keeper *Keeper) Migrator {
+    return Migrator{keeper: keeper}
+}
+
+func (m Migrator) Migrate1to2(ctx sdk.Context) error {
+    count, err := m.keeper.counter.Get(ctx)
+    if err != nil {
+        // A chain that never touched the counter has no stored value yet.
+        if errors.Is(err, collections.ErrNotFound) {
+            return nil
+        }
+        return err
+    }
+
+    return m.keeper.counter.Set(ctx, count*10)
+}
+```
+
+Register this migration with `RegisterMigration(types.ModuleName, 1, m.Migrate1to2)` as shown in the previous section.
+
+For larger modules, keep the transformation in a versioned package so the `Migrator` method stays a thin wrapper. The bank module follows this pattern:
 
 ```go expandable
 package keeper
@@ -92,26 +198,19 @@ func (m Migrator) Migrate3to4(ctx sdk.Context) error {
 }
 ```
 
-## Writing Migration Scripts
+For a production example that manipulates raw KV store keys, see [migrateBalanceKeys](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/migrations/v2/store.go#L55-L76). This code updated bank addresses to be prefixed by their length in bytes as outlined in [ADR-028](/sdk/latest/reference/architecture/adr-028-public-key-addresses).
 
-To define the functionality that takes place during an upgrade, write a migration script and place the functions in a `migrations/` directory. For example, to write migration scripts for the bank module, place the functions in `x/bank/migrations/`. Import each version package and call its `MigrateStore` function from the corresponding `Migrator` method:
-
-```go
-// Migrating bank module from version 1 to 2
-func (m Migrator) Migrate1to2(ctx sdk.Context) error {
-    return v2.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc) // v2 is package `x/bank/migrations/v2`.
-}
-```
-
-To see example code of changes that were implemented in a migration of balance keys, check out [migrateBalanceKeys](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/migrations/v2/store.go#L55-L76). For context, this code introduced migrations of the bank store that updated addresses to be prefixed by their length in bytes as outlined in [ADR-028](/sdk/latest/reference/architecture/adr-028-public-key-addresses).
-
-## Running Migrations in the App
+## Running migrations in the app
 
 Once modules have registered their migrations, the app runs them inside an `UpgradeHandler`. The upgrade handler type is:
 
 ```go
 type UpgradeHandler func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error)
 ```
+
+<Note>
+  As of Cosmos SDK v0.54, `x/upgrade` is part of the main SDK module. Import it from `github.com/cosmos/cosmos-sdk/x/upgrade`, not the standalone `cosmossdk.io/x/upgrade` module, which is not compatible with v0.54.
+</Note>
 
 The handler receives the `VersionMap` stored by `x/upgrade` (reflecting the consensus versions from the previous binary), performs any additional upgrade logic, and must return the updated `VersionMap` from `RunMigrations`. Register the handler in `app.go`:
 
@@ -132,7 +231,7 @@ By default, migrations run in alphabetical order by module name, with one except
 
 New modules are recognized because they have no entry in the `x/upgrade` `VersionMap` store. `RunMigrations` calls `InitGenesis` for them automatically.
 
-If you need to add stores for a new module, configure the store loader before the upgrade runs:
+If you need to add stores for a new module, configure the store loader before the upgrade runs. The loader reads `upgrade-info.json` at startup and adds the store at the upgrade height:
 
 ```go
 upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
@@ -147,26 +246,14 @@ if upgradeInfo.Name == "my-plan" && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.
 }
 ```
 
+Configure the store loader in the app constructor, before `LoadLatestVersion` runs, so the new store is mounted when the store loads.
+
 To skip `InitGenesis` for a new module (for example, if you are manually initializing state in the handler), set its version in `fromVM` before calling `RunMigrations`:
 
 ```go
 fromVM["newmodule"] = newmodule.AppModule{}.ConsensusVersion()
 return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 ```
-
-### Genesis state
-
-When starting a new chain, the consensus version of each module must be saved to state during genesis. Add this to `InitChainer` in `app.go`:
-
-```go
-func (app *MyApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
-    // ...
-    app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap())
-    // ...
-}
-```
-
-This lets the Cosmos SDK detect when modules with newer consensus versions are introduced in a future upgrade.
 
 ### Overwriting genesis functions
 
@@ -184,13 +271,44 @@ app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan up
     fromVM["foo"] = foo.AppModule{}.ConsensusVersion()
 
     // Run your custom genesis initialization for foo.
-    app.ModuleManager.Modules["foo"].(module.HasGenesis).InitGenesis(ctx, app.appCodec, myCustomGenesisState)
+    // InitGenesis takes sdk.Context, so unwrap the handler's context.Context.
+    // myCustomGenesisState must be a json.RawMessage (the marshaled genesis state).
+    app.ModuleManager.Modules["foo"].(module.HasGenesis).InitGenesis(sdk.UnwrapSDKContext(ctx), app.AppCodec(), myCustomGenesisState)
 
     return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 })
 ```
 
-## Syncing a Full Node to an Upgraded Blockchain
+## Counter module upgrade example
+
+The counter module is built step by step in the [example chain tutorial](/sdk/latest/tutorials/example/00-overview), and its source lives in the [cosmos/example](https://github.com/cosmos/example) repository. This example continues from that module: it bumps the counter to consensus version 2 and runs the migration shown earlier during an upgrade named `my-plan`.
+
+1. Increment the module's `ConsensusVersion` so the SDK detects that its state layout changed:
+
+   ```go
+   func (AppModule) ConsensusVersion() uint64 { return 2 }
+   ```
+
+2. In `RegisterServices`, wrap the keeper in a `Migrator` and register the version 1 to 2 migration:
+
+   ```go
+   m := keeper.NewMigrator(am.keeper)
+   if err := cfg.RegisterMigration(types.ModuleName, 1, m.Migrate1to2); err != nil {
+       panic(fmt.Sprintf("failed to migrate x/%s from version 1 to 2: %v", types.ModuleName, err))
+   }
+   ```
+
+3. In `app.go`, register a handler for the plan that calls `RunMigrations`:
+
+   ```go
+   app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+       return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+   })
+   ```
+
+4. Schedule the `my-plan` upgrade through governance. When the chain reaches the plan height it halts, the node operator starts the new binary, and the handler runs the counter migration during `PreBlock`. See [How an upgrade works](#how-an-upgrade-works).
+
+## Syncing a full node to an upgraded blockchain
 
 A full node joining an already-upgraded chain must start from the initial binary that the chain used at genesis and replay all historical upgrades. If all upgrade plans include binary download instructions, Cosmovisor's auto-download mode handles this automatically. Otherwise, you must provide each historical binary manually.
 
