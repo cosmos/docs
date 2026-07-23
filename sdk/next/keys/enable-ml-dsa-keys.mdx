@@ -81,7 +81,17 @@ All steps read and write `params.json` in the current directory, so run them fro
 1. Build the proposal params from the live chain state. The update message replaces the entire params object, so it must carry every current value. The following command derives the params from a query, adds `ml_dsa_65` to `pub_key_types`, and converts the evidence duration to the format the proposal parser accepts:
 
 ```shell
-simd query consensus params -o json | jq '.params | {block, evidence, validator, abci} | .validator.pub_key_types += ["ml_dsa_65"] | .evidence.max_age_duration |= (capture("((?<h>[0-9]+)h)?((?<m>[0-9]+)m)?((?<s>[0-9]+)s)?") | ((((.h//"0")|tonumber)*3600 + ((.m//"0")|tonumber)*60 + ((.s//"0")|tonumber))|tostring) + "s")' > params.json
+simd query consensus params -o json \
+  | jq '.params
+        | {block, evidence, validator, abci}
+        | .validator.pub_key_types += ["ml_dsa_65"]
+        | .evidence.max_age_duration |= (
+            capture("((?<h>[0-9]+)h)?((?<m>[0-9]+)m)?((?<s>[0-9]+)s)?")
+            | ((((.h // "0") | tonumber) * 3600
+                + ((.m // "0") | tonumber) * 60
+                + ((.s // "0") | tonumber)) | tostring) + "s"
+          )' \
+  > params.json
 ```
 
 2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination. Also add `--chain-id` and `--keyring-backend` if your client config does not supply them, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price:

@@ -14,6 +14,19 @@ Separating the two keeps signing secure and makes the node replaceable. The key 
 
 CometBFT supports this through privval, the seam between the node and whatever holds the key. With `priv_validator_laddr` set in `config.toml`, the node signs nothing locally: it listens for a signer connection and sends each vote and proposal out for signature. The wire protocol carries three requests: sign this vote, sign this proposal, and return the public key. The node does not care what is on the other end.
 
+```mermaid
+sequenceDiagram
+    participant N as Validator node
+    participant S as Cosmos-KMS signer
+    participant B as Backend (file / PKCS11 / AWS KMS)
+    N->>S: vote or proposal to sign (privval)
+    S->>B: sign with consensus key
+    B-->>S: signature
+    S-->>N: signature
+```
+
+The node forwards each vote or proposal to the signer over the privval connection. The signer has its backend produce the signature and returns only that, so the consensus key never leaves the backend.
+
 ## Cosmos-KMS
 
 The [`cosmos-kms`](https://github.com/cosmos/kms) repo is a remote signer for CometBFT, written in Go. It implements the signer side of privval and answers a node's signing requests from a backend that holds the key. One signer process can sign for multiple chains, with each chain backed by exactly one key, and can hold connections to multiple nodes per chain. It is built for operators who must keep validator keys in real custody, an HSM or a cloud key service, rather than in files on chain infrastructure. Three backends are supported:
@@ -23,6 +36,8 @@ The [`cosmos-kms`](https://github.com/cosmos/kms) repo is a remote signer for Co
 - AWS KMS: a key that never leaves AWS KMS, using standard AWS credentials and IAM.
 
 Cosmos-KMS is designed to work with existing validator infrastructure, and validators are recommended to use it over previous remote-signing solutions. If you run [TMKMS](https://github.com/iqlusioninc/tmkms) today, see [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms).
+
+Cosmos-KMS speaks the CometBFT privval protocol, so it can sign for any node that implements that protocol.
 
 ## How it works
 

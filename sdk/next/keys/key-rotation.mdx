@@ -30,7 +30,27 @@ Three rules bound what a rotation can do:
 2. A validator can rotate once per unbonding period. Until the unbonding period ends, the previous key remains accountable, so the chain rejects a second rotation inside the window.
 3. A rotation cannot be undone. No cancel message exists, and the once-per-unbonding-period limit blocks an immediate rotation back, so an applied rotation stands until the window expires.
 
-Slashing follows a validator's history, not the key. The chain keeps a mapping from each historical consensus address to its validator for the length of the unbonding period, so evidence of a double sign under the old key still slashes the validator after rotation. Rotating away from a key does not allow a validator to escape slashing.
+## Security implications
+
+<Danger>Read this section carefully. Key rotation introduces security and performance tradeoffs that chains must be aware of before rotating keys.</Danger>
+
+### Slashing window length
+
+Slashing follows a validator's history, not the key. Evidence of a double sign under the old key still slashes the validator after rotation. When a rotation lands, the chain records the old consensus address. It keeps that address tied to the validator. It tracks the address for as long as evidence against it can still be admitted. It computes this window at rotation time from the evidence params `MaxAgeNumBlocks` and `MaxAgeDuration`. Once both elapse, the chain stops tracking the address. The window can be months, depending on the chain's evidence settings. Rotating away from a key does not let a validator escape slashing within that window.
+
+The chain computes a rotation tracking window once at the time of rotation. It never updates this window. If governance extends `MaxAgeNumBlocks` or `MaxAgeDuration` after a rotation, the original window for the rotation remains in effect. In this scenario, the old consensus address will stop being tracked before the current evidence window closes. During that gap, a double sign under the old key cannot be slashed. This is a risk that chains should be aware of. Do not extend the evidence params while rotations are in flight without accounting for it.
+
+### Increased light client verification cost
+
+Frequent rotations also raise the cost of light client updates. Each rotation changes the validator set. Tendermint light clients verify an update using the overlap between successive validator sets. Heavy rotation churn shrinks that overlap, and less overlap makes each update more expensive to verify. The once-per-unbonding-period limit exists partly to bound this cost.
+
+### Proposer priority reset
+
+Rotation resets the validator's proposer priority. CometBFT orders validators by a proposer priority value. That value decides when a validator's turn to propose comes up. A rotation sends the validator to the back of that order. This holds even if the validator was next in line to propose.
+
+### Mixed key types slow down
+
+A validator set with mixed consensus key types verifies signatures more slowly. CometBFT batch-verifies signatures when every validator uses the same key type. Batch verification is faster than checking each signature on its own. One validator on a different key type breaks batching. Verification then falls back to one signature at a time, which can slow block times. This applies whenever the set holds more than one key type, not only during a rotation.
 
 ## Exports and restarts
 
