@@ -27,7 +27,7 @@ like the file below; however, double-check by inspecting the
 
 # The version of the CometBFT binary that created or
 # last modified the config file. Do not modify this.
-version = "0.38.0"
+version = "0.40.0"
 
 #######################################################################
 ###                   Main Base Config Options                      ###
@@ -40,20 +40,14 @@ proxy_app = "tcp://127.0.0.1:26658"
 # A custom human readable name for this node
 moniker = "anonymous"
 
-# Database backend: goleveldb | cleveldb | boltdb | rocksdb | badgerdb
-# * goleveldb (github.com/syndtr/goleveldb)
-#   - UNMAINTAINED
-#   - stable
+# Database backend: goleveldb | cleveldb | rocksdb | badgerdb
+# * goleveldb (github.com/syndtr/goleveldb - most popular implementation)
 #   - pure go
 #   - stable
 # * cleveldb (uses levigo wrapper)
 #   - fast
 #   - requires gcc
 #   - use cleveldb build tag (go build -tags cleveldb)
-# * boltdb (uses etcd's fork of bolt - github.com/etcd-io/bbolt)
-#   - EXPERIMENTAL
-#   - may be faster in some use-cases (random reads - indexer)
-#   - use boltdb build tag (go build -tags boltdb)
 # * rocksdb (uses github.com/tecbot/gorocksdb)
 #   - EXPERIMENTAL
 #   - requires gcc
@@ -96,6 +90,11 @@ abci = "socket"
 # If true, query the ABCI app on connecting to a new peer
 # so the app can decide if we should keep the connection or not
 filter_peers = false
+
+# Buffer capacity for the internal EventBus. A value of 0 means unbuffered
+# (publishers block until subscribers receive). Higher values reduce back-pressure
+# at the cost of memory.
+event_bus_buffer_capacity = 0
 
 
 #######################################################################
@@ -189,14 +188,9 @@ experimental_close_on_slow_client = false
 # See https://github.com/tendermint/tendermint/issues/3435
 timeout_broadcast_tx_commit = "10s"
 
-# Maximum number of requests that can be sent in a JSON-RPC batch request.
-# Possible values: number greater than 0.
-# If the number of requests sent in a JSON-RPC batch exceed the maximum batch
-# size configured, an error will be returned.
-# The default value is set to `10`, which will limit the number of requests
-# to 10 requests per JSON-RPC batch request.
-# If you don't want to enforce a maximum number of requests for a batch
-# request, set this value to `0`.
+# Maximum number of requests that can be sent in a batch
+# If the value is set to '0' (zero-value), then no maximum batch size will be
+# enforced for a JSON-RPC batch request.
 max_request_batch_size = 10
 
 # Maximum size of request body, in bytes
@@ -262,7 +256,7 @@ unconditional_peer_ids = ""
 persistent_peers_max_dial_period = "0s"
 
 # Time to wait before flushing messages out on the connection
-flush_throttle_timeout = "100ms"
+flush_throttle_timeout = "10ms"
 
 # Maximum size of a message packet payload, in bytes
 max_packet_msg_payload_size = 1024
@@ -292,6 +286,64 @@ allow_duplicate_ip = false
 handshake_timeout = "20s"
 dial_timeout = "3s"
 
+# Experimental: configuration for go-libp2p
+[p2p.libp2p]
+
+# Enabled set true to use go-libp2p for networking instead of CometBFT's p2p.
+enabled = false
+
+# Bootstrap peers to connect to
+# format: { host, id, private (opt), persistent (opt), unconditional (opt) }
+bootstrap_peers = []
+
+
+# Options for scaling concurrent p2p message queues.
+# Tune workers to keep the system near the ideal operating point:
+# enough concurrency for throughput while keeping processing latency low.
+[p2p.libp2p.scaler]
+
+# Min and max concurrent worker range.
+min_workers = 4
+max_workers = 32
+
+# Target latency threshold:
+# scale up when observed latency is below this value, scale down when above it.
+threshold_latency = "100ms"
+
+# Override a specific reactor (case-insensitive), for example:
+# [[p2p.libp2p.scaler.overrides]]
+# reactor = "BLOCKSYNC"
+# min_workers = 2
+# max_workers = 16
+# threshold_latency = "250ms"
+#
+# By default, MEMPOOL reactor is overridden to have increased throughput
+# If you want to disable this, explicitly set override to an empty list:
+# overrides = []
+[[p2p.libp2p.scaler.overrides]]
+reactor = "MEMPOOL"
+min_workers = 8
+max_workers = 512
+threshold_latency = "500ms"
+
+# Configuration for resource limits
+[p2p.libp2p.limits]
+
+# Resource management modes:
+# - disabled: no resource limits. Use only in trusted environments (e.g. local dev, testing).
+#   Disabling limits can expose the node to resource exhaustion from malicious peers.
+# - default: libp2p's built-in limits. Memory is 1/8th of total system RAM, capped at 128MB min
+#   and 1GB max. Suitable for most production deployments.
+# - custom: disable limits for app protocols but enforce max_peers and max_peer_streams.
+#   Use when you need tighter control over peer count and stream concurrency.
+mode = "default"
+
+# Maximum number of peers (custom mode only)
+max_peers = 0
+
+# Maximum number of concurrent streams per peer (custom mode only)
+max_peer_streams = 0
+
 #######################################################
 ###          Mempool Configuration Option          ###
 #######################################################
@@ -305,6 +357,7 @@ dial_timeout = "3s"
 #  - "nop"   : nop-mempool (short for no operation; the ABCI app is responsible
 #  for storing, disseminating and proposing txs). "create_empty_blocks=false" is
 #  not supported.
+# - "app"    : app-side mempool (the ABCI app is responsible for mempool, comet only broadcasts txs).
 type = "flood"
 
 # Recheck (default: true) defines whether CometBFT should recheck the
@@ -313,6 +366,17 @@ type = "flood"
 # mempool may become invalid. If this does not apply to your application,
 # you can disable rechecking.
 recheck = true
+
+# recheck_timeout is the time the application has during the rechecking process
+# to return CheckTx responses, once all requests have been sent. Responses that
+# arrive after the timeout expires are discarded. It only applies to
+# non-local ABCI clients and when recheck is enabled.
+#
+# The ideal value will strongly depend on the application. It could roughly be estimated as the
+# average size of the mempool multiplied by the average time it takes the application to validate one
+# transaction. We consider that the ABCI application runs in the same location as the CometBFT binary
+# so that the recheck duration is not affected by network delays when making requests and receiving responses.
+recheck_timeout = "1s"
 
 # Broadcast (default: true) defines whether the mempool should relay
 # transactions to other peers. Setting this to false will stop the mempool
@@ -323,7 +387,7 @@ broadcast = true
 
 # WalPath (default: "") configures the location of the Write Ahead Log
 # (WAL) for the mempool. The WAL is disabled by default. To enable, set
-# wal_dir to where you want the WAL to be written (e.g.
+# WalPath to where you want the WAL to be written (e.g.
 # "data/mempool.wal").
 wal_dir = ""
 
@@ -351,6 +415,32 @@ max_tx_bytes = 1048576
 # Including space needed by encoding (one varint per transaction).
 # XXX: Unused due to https://github.com/tendermint/tendermint/issues/5796
 max_batch_bytes = 0
+
+# Experimental parameters to limit gossiping txs to up to the specified number of peers.
+# We use two independent upper values for persistent and non-persistent peers.
+# Unconditional peers are not affected by this feature.
+# If we are connected to more than the specified number of persistent peers, only send txs to
+# ExperimentalMaxGossipConnectionsToPersistentPeers of them. If one of those
+# persistent peers disconnects, activate another persistent peer.
+# Similarly for non-persistent peers, with an upper limit of
+# ExperimentalMaxGossipConnectionsToNonPersistentPeers.
+# If set to 0, the feature is disabled for the corresponding group of peers, that is, the
+# number of active connections to that group of peers is not bounded.
+# For non-persistent peers, if enabled, a value of 10 is recommended based on experimental
+# performance results using the default P2P configuration.
+experimental_max_gossip_connections_to_persistent_peers = 0
+experimental_max_gossip_connections_to_non_persistent_peers = 0
+
+# App mempool only: size of LRU cache for seen transactions (deduplication).
+seen_cache_size = 100000
+# App mempool only: max bytes passed to ReapTxs (0 = no limit).
+reap_max_bytes = 0
+# App mempool only: max gas passed to ReapTxs (0 = no limit).
+reap_max_gas = 0
+# App mempool only: interval between ReapTxs calls when streaming txs from app.
+reap_interval = "500ms"
+# App mempool only: delay after which a tx is forgotten for ABCI.CheckTx
+check_tx_retry_delay = "5s"
 
 #######################################################
 ###         State Sync Configuration Options        ###
@@ -388,6 +478,9 @@ chunk_request_timeout = "10s"
 # The number of concurrent chunk fetchers to run (default: 1).
 chunk_fetchers = "4"
 
+# Maximum number of chunks allowed in a snapshot (default: 100000).
+max_snapshot_chunks = 100000
+
 #######################################################
 ###       Block Sync Configuration Options          ###
 #######################################################
@@ -401,6 +494,15 @@ chunk_fetchers = "4"
 #   1) "v0" - the default block sync implementation
 version = "v0"
 
+# Experimental Adaptive sync (bool):
+#
+# Run both BLOCKSYNC and CONSENSUS for improved liveness, connectivity, and performance.
+# NOTE: On validator nodes, running consensus concurrently with blocksync while catching up
+# risks equivocation — consensus can sign votes for heights where the ingestor has not yet
+# committed the already-decided block. The HRS file and KMS are not sufficient backstops
+# for this scenario. Only enable on validators if you understand and accept this risk.
+adaptive_sync = false
+
 #######################################################
 ###         Consensus Configuration Options         ###
 #######################################################
@@ -412,11 +514,11 @@ wal_file = "data/cs.wal/wal"
 timeout_propose = "3s"
 # How much timeout_propose increases with each round
 timeout_propose_delta = "500ms"
-# How long we wait after receiving +2/3 prevotes for "anything" (ie. not a single block or nil)
+# How long we wait after receiving +2/3 prevotes for “anything” (ie. not a single block or nil)
 timeout_prevote = "1s"
 # How much the timeout_prevote increases with each round
 timeout_prevote_delta = "500ms"
-# How long we wait after receiving +2/3 precommits for "anything" (ie. not a single block or nil)
+# How long we wait after receiving +2/3 precommits for “anything” (ie. not a single block or nil)
 timeout_precommit = "1s"
 # How much the timeout_precommit increases with each round
 timeout_precommit_delta = "500ms"
@@ -441,6 +543,9 @@ create_empty_blocks_interval = "0s"
 # Reactor sleep duration parameters
 peer_gossip_sleep_duration = "100ms"
 peer_query_maj23_sleep_duration = "2s"
+
+# Maximum allowed difference between proposed block time and wall-clock time.
+block_time_tolerance = "1m0s"
 
 #######################################################
 ###         Storage Configuration Options           ###
@@ -496,8 +601,7 @@ max_open_connections = 3
 
 # Instrumentation namespace
 namespace = "cometbft"
-
- ```
+```
 
 ## Empty blocks vs. no empty blocks
 

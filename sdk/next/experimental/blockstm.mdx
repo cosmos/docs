@@ -171,6 +171,28 @@ bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
 ))
 ```
 
+### Configuration via app.toml
+
+The wiring above installs Block-STM programmatically. An application that uses `blockexec.Apply` can instead select the executor from `app.toml`, or from the equivalent `simd start` flags. Three keys control this:
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `block-executor` | string | `sequential` | Selects the execution strategy. Set it to `block-stm` to enable parallel execution. |
+| `block-stm-workers` | int | `0` | Sets the worker count. This maps to the `workers` runner parameter. A value of `0` resolves to `min(GOMAXPROCS, NumCPU)` at runtime. |
+| `block-stm-pre-estimate` | bool | `false` | Enables pre-estimation of read and write conflicts. This maps to the `estimate` runner parameter. |
+
+When `block-executor` is set to `block-stm`, the block gas meter is disabled automatically. This is required, because the parallel runner panics if the block gas meter is still enabled. The programmatic wiring above does not disable it for you. Call `SetDisableBlockGasMeter(true)` when you wire the runner by hand.
+
+Example `app.toml` that enables Block-STM:
+
+```toml
+block-executor = "block-stm"
+block-stm-workers = 0
+block-stm-pre-estimate = true
+```
+
+The `block-stm-pre-estimate` value is set to `true` here to match the `estimate` guidance above.
+
 ## Parallel Transaction Optimization
 
 Once Block-STM is wired in, you may initially notice that most blocks execute slower than with serial execution. This is due to the overhead of re-executing transactions when any two have conflicting reads or writes. To realize performance gains, you need to reduce storage access conflicts between transactions.
