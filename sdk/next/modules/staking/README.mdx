@@ -744,9 +744,9 @@ historical entries.
 Pending and historical consensus key rotations are tracked in five stores:
 
 * ConsKeyRotationQueue: `0x91 | format(maturityTime) | ValAddress` - rotations awaiting the end of their unbonding period, at which point the re-rotation rate limit is retired and the entry is pruned
-* ValidatorConsKeyRotation: `0x92 | ValAddress` - a validator's pending rotation, enforcing one rotation per unbonding period
-* RotationLockedConsAddrIndex: `0x93 | ConsAddress` - consensus addresses locked by a rotation: the old address remains attributable for evidence, and the new address cannot be reused, until equivocation evidence for the rotated-away key can no longer be admitted
-* ConsKeyRotationApplyQueue: `0x94 | height` - height-keyed queue of rotations, applied two heights after the rotation message
+* ValidatorConsKeyRotation: `0x92 | ValAddress` - a marker that the validator has rotated within the current unbonding period, enforcing the one-rotation-per-unbonding-period limit. The value is empty, and the entry is removed when the maturity queue retires it
+* RotationLockedConsAddrIndex: `0x93 | ConsAddress` - consensus addresses a rotation has claimed, valued with a lock kind and the validator's operator address. A rotated-away address stays locked until equivocation evidence for it can no longer be admitted, and resolves back to the validator for slashing. A pending rotation's target address is reserved so no other validator can claim it, and that entry is released once the rotation applies in the end blocker
+* ConsKeyRotationApplyQueue: `0x94 | BigEndian(applyHeight) | ValAddress` - height-keyed queue of rotations, valued with the new consensus public key, applied two heights after the rotation message
 * ConsKeyEvidenceExpiryQueue: `0x95 | format(evidenceExpiryTime) | ConsAddress` - queue that retires an old address's lock once equivocation evidence for the rotated-away key can no longer be admitted, using the evidence time and block-height windows captured at rotation time
 
 ## State Transitions
@@ -1148,7 +1148,7 @@ The `MsgRotateConsPubKey` message replaces a validator's consensus public key in
 // Reference: https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/staking/v1beta1/tx.proto#L210-L224
 ```
 
-Handling the message burns the `KeyRotationFee` param from the operator account and enqueues the rotation. The new key enters the CometBFT validator set two heights after the message executes. The rotation history is retained for the unbonding period so that evidence against the old key still slashes the validator.
+Handling the message burns the `KeyRotationFee` param from the operator account and enqueues the rotation. The new key enters the CometBFT validator set two heights after the message executes. The rotated-away consensus address is retained until equivocation evidence for it can no longer be admitted, which is at least the unbonding period and often longer, so evidence against the old key still slashes the validator.
 
 The message handling can fail if:
 
@@ -1253,7 +1253,7 @@ Complete the unbonding of all mature `Redelegation.Entries` within the
 
 ### Consensus Key Rotations
 
-At the height a rotation message executes, the end blocker emits the validator update handing the validator's power from the old consensus key to the new one. Two heights later, when CometBFT makes the update effective, the apply queue swaps the stored consensus key. When a rotation's unbonding period ends, the maturity queue purges its history, unlocking the old consensus address and allowing the validator to rotate again.
+At the height a rotation message executes, the end blocker emits the validator update handing the validator's power from the old consensus key to the new one. Two heights later, when CometBFT makes the update effective, the apply queue swaps the stored consensus key. When a rotation's unbonding period ends, the maturity queue retires the re-rotation rate limit and the validator may rotate again. The old consensus address stays locked on its own, longer schedule, until equivocation evidence for it can no longer be admitted.
 
 ## Hooks
 
@@ -1377,9 +1377,9 @@ The staking module contains the following parameters:
 | Key               | Type             | Example                |
 | ----------------- | ---------------- | ---------------------- |
 | UnbondingTime     | string (time ns) | "259200000000000"      |
-| MaxValidators     | uint16           | 100                    |
-| KeyMaxEntries     | uint16           | 7                      |
-| HistoricalEntries | uint16           | 3                      |
+| MaxValidators     | uint32           | 100                    |
+| MaxEntries        | uint32           | 7                      |
+| HistoricalEntries | uint32           | 3                      |
 | BondDenom         | string           | "stake"                |
 | MinCommissionRate | string           | "0.000000000000000000" |
 | KeyRotationFee    | sdk.Coin         | `{"denom":"stake","amount":"1000000"}` |
@@ -2755,7 +2755,7 @@ A user can query the `staking` module using REST endpoints.
 
 #### DelegatorDelegations
 
-The `DelegtaorDelegations` REST endpoint queries all delegations of a given delegator address.
+The `DelegatorDelegations` REST endpoint queries all delegations of a given delegator address.
 
 ```bash
 /cosmos/staking/v1beta1/delegations/{delegatorAddr}
