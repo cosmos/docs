@@ -16,7 +16,7 @@ The `algorithm` field is required for all backends.
 
 ## AWS KMS
 
-<Warning>AWS KMS has a limit to the size of the data it will sign. This backend sends the raw consensus message to AWS KMS, which rejects anything larger than 4096 bytes. Be careful with features that make that message large, such as vote extensions.</Warning>
+<Warning>AWS KMS caps messages it signs in raw form at 4096 bytes. This binds `ed25519` and `secp256k1`, which send the raw consensus message, so be careful with features that enlarge it, such as vote extensions. The signer checks the size itself and fails before calling AWS. `mldsa65` and `secp256k1eth` are not bound by the cap.</Warning>
 
 AWS Key Management Service (KMS) is a managed service that stores cryptographic keys and signs with them on request. With this backend, the consensus key lives in KMS and never leaves it. The signer calls the KMS Sign API to produce each signature. Credentials come from the standard AWS default chain: environment, shared config, SSO, or an IAM role. No secrets enter `kms.yaml`.
 
@@ -133,7 +133,7 @@ keys:
 
 ## Adopt the key on a validator
 
-The AWS KMS and PKCS#11 backends generate the key inside the custodian, so it is a new consensus key, not the one your validator already runs. Do not just repoint an existing validator's signer at a fresh key: the node then signs with a key the chain never registered, and the chain rejects its proposals with `invalid proposal signature`. Only the file backend, pointed at the validator's existing `priv_validator_key.json`, skips this step.
+The AWS KMS and PKCS#11 backends generate the key inside the custodian, so it is a new consensus key, not the one your validator already runs. Do not just repoint an existing validator's signer at a fresh key. The node finds its consensus key absent from the validator set and demotes itself, so it never proposes and there is no signature error to look for. The symptom is `This node is not a validator` in the node log and a chain that does not advance. Only the file backend, pointed at the validator's existing `priv_validator_key.json`, skips this step.
 
 Adopt the key one of two ways:
 

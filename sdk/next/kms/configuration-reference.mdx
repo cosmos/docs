@@ -105,9 +105,10 @@ A `grpc.keys` entry with `backend: pkcs11` also takes the PKCS#11 fields, with t
 - Every `validators[].chain_id` and every entry in `keys[].chain_ids` must match a declared `chains[].id`.
 - Each chain must be backed by exactly one key.
 - PKCS#11 keys must select the token with exactly one of `token_label` or `slot`, select the key with `key_label` or `key_id`, and supply exactly one PIN source.
+- A declared chain with no `validators` entry is not rejected. The signer starts, binds nothing, and signs nothing, with no warning, so check that every chain has a validator entry.
 - Every chain's sign-state file must exist and be non-empty. A missing or empty file fails closed with `sign-state file <path> is missing or empty; refusing to start at height 0`, so the signer cannot re-sign a height it has no record of. See [First start on a new chain](#first-start-on-a-new-chain).
 
-This list is not exhaustive. Other startup errors are prefixed `config:` and name the field at fault.
+This list is not exhaustive. Config-level rejections are prefixed `config:` and name the field at fault; errors raised later, when a backend or chain signer is opened, use their own prefixes such as `app:` or `file:`.
 
 ## First start on a new chain
 
@@ -123,7 +124,7 @@ kms state init --chain <chain-id> --height 0 --home <home>
 
 `kms state init` also accepts `--round` and `--step`, which is how a migration seeds a non-zero floor. See [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms).
 
-<Warning>Pass `--allow-fresh-state` only for a chain the key has genuinely never signed on. Once the state file exists the flag is inert, so a service definition that carries it permanently looks healthy while removing the protection: a deleted or truncated state file resets the double-sign floor to zero instead of stopping the signer.</Warning>
+<Warning>Pass `--allow-fresh-state` only for a chain the key has genuinely never signed on. It will not overwrite an existing floor, but a service definition that carries it permanently removes the protection: a deleted or truncated state file resets the double-sign floor to zero instead of stopping the signer.</Warning>
 
 ## Next steps
 

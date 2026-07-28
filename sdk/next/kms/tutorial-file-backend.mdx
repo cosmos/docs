@@ -80,7 +80,7 @@ Copy the consensus key that `simd init` generated into the signer's home:
 cp ~/.kms-demo-node/config/priv_validator_key.json ~/.kms-demo/priv_validator_key.json
 ```
 
-<Note>Once the node is configured for remote signing, it never reads its local key file again. In production, move the key instead of copying it, so no key material remains on the node host. For this tutorial, the copy keeps things simple.</Note>
+<Note>Once the node is configured for remote signing, it never reads its local key file again. In production, move the key instead of copying it. Note that the node regenerates a fresh, unused consensus key file if it finds none, so moving the key reduces what is on the node host rather than leaving it key-free. For this tutorial, the copy keeps things simple.</Note>
 
 ## 5. Configure the signer
 
@@ -124,7 +124,7 @@ kms start --home ~/.kms-demo --allow-fresh-state kms-demo-1
 
 This validator has never signed on `kms-demo-1`, so no sign-state file exists yet. `--allow-fresh-state` writes the height-0 double-sign floor on this first start. Without it the signer refuses to start rather than risk re-signing a height it cannot prove it has already passed.
 
-<Warning>Pass `--allow-fresh-state` only on a first start, and only for a chain the key has never signed on. Once the state file exists the flag does nothing, so leaving it in a service definition is not immediately visible, but it means a deleted or truncated state file silently resets the double-sign floor to zero instead of stopping the signer. Later starts in this tutorial use the bare command.</Warning>
+<Warning>Pass `--allow-fresh-state` only on a first start, and only for a chain the key has never signed on. It will not overwrite an existing floor, but leaving it in a service definition means a deleted or truncated state file resets the floor to zero instead of stopping the signer. Later starts in this tutorial use the bare command.</Warning>
 
 To seed the floor as a separate step instead, run `kms state init --chain kms-demo-1 --height 0 --home ~/.kms-demo` and then start the signer with no flag.
 
@@ -132,11 +132,13 @@ The signer logs `kms started` and dials the node. The node is not running yet, s
 
 ## 8. Start the node
 
-In a second terminal, start the node promptly, within a few seconds of starting the signer:
+In a second terminal, start the node within five seconds of starting the signer:
 
 ```shell
 simd start --home ~/.kms-demo-node
 ```
+
+<Note>If `simd start` exits with `can't get pubkey: ... endpoint connection timed out`, the signer has backed off to slow retries. Restart the signer, then start the node again within five seconds.</Note>
 
 The node opens its private-validator listener on port 26659. The signer's next dial connects, the node fetches its consensus public key from the signer, and block production begins. Confirm the height is climbing:
 
