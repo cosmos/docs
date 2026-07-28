@@ -38,9 +38,9 @@ simd start --home ~/.node
 
 ## Prerequisites
 
-- The chain runs [`enterprise/poa`](https://github.com/cosmos/cosmos-sdk/tree/main/enterprise/poa) v1.1 or later.
+- A chain binary built with the `poa` module. Clone the cosmos-sdk repo and build the `poa` module: `cd enterprise/poa/simapp && go build ./simd`. Check with `simd tx poa --help`, which must list `rotate-cons-pub-key`.
 - [jq](https://jqlang.org/) and [curl](https://curl.se/). The commands extract the new public key with jq and watch the validator set with curl.
-- A running PoA validator you operate, with the chain's binary on your PATH and a secondary machine or scratch directory for the new key. To build `simd` and run a node, see [Run a node](/sdk/next/node/run-node).
+- A running PoA validator you operate, with the chain's binary on your PATH and a secondary machine or scratch directory for the new key. PoA validators come from `app_state.poa.validators` in genesis, not from `gentx`. See [PoA API](/sdk/next/enterprise/poa/api) for the genesis shape.
 - The new key's type is in the chain's consensus params. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
 - The signer is the validator's operator, or the chain admin. Any other sender is rejected.
 
@@ -108,7 +108,7 @@ Confirm the node signs under the new consensus address after the restart. If you
 
 <Warning>The admin override changes on-chain state only. Whoever runs the node must still swap `priv_validator_key.json` with the timing in steps 3 and 4 above. Otherwise the validator goes dark until its node signs with the new key. Coordinate the node-side swap with the operator before submitting, unless the goal is to cut off a compromised key.</Warning>
 
-The admin rotates any validator's key with the same command, signed by the admin key. 
+The admin rotates any validator's key with the same command, signed by the admin key. Generate a fresh key home for it.
 
 ```shell
 simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ed25519 --operator-address <operator-address> --from admin --home ~/.node
@@ -116,10 +116,16 @@ simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newke
 
 ## Verify
 
-The rotation emits an event with the operator address, the old consensus address, and the new one. Confirm the set carries the new consensus address and the node is signing:
+Confirm the module carries the new key:
 
 ```shell
-simd q poa validators
+simd q poa validators --home ~/.node
+```
+
+The rotation also emits a `rotate_cons_pubkey` event with the operator address and the old and new consensus addresses. Read it from the transaction:
+
+```shell
+simd q tx <txhash> --home ~/.node
 ```
 
 ## What can go wrong
