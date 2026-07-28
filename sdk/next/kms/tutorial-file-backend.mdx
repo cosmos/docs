@@ -8,13 +8,11 @@ This tutorial builds a working remote signer from scratch: a single-node local c
 
 Commands use `simd` for the chain binary. The node home is `~/.kms-demo-node` and the signer home is `~/.kms-demo`.
 
-{/* TODO(ERIC): please verify the content of this page and run it for yourself to verify it works. */}
 
 {/*
-Manual verification (hidden, macOS). Verified 2026-07-14 on Darwin 25.5.0 (arm64), Go 1.26.5, make, jq, curl.
-simd built with `make install` from cosmos-sdk main @ b9a11304cf (reports 0.0.0-dev; 0.55 not tagged yet).
-kms built with `make install` from https://github.com/cosmos/kms @ 7932ceb.
-All three checkpoints pass: no blocks before the signer; height climbs once the node connects; production stalls when kms stops and resumes when it restarts.
+CURRENT VERIFICATION: blind execution audit 2026-07-28 against shipping refs, kms v0.1.0 (4bd83922ee), cometbft v0.40.0 (0880b4d378), simd v0.55.0 (64fd208a11), go1.26.0, macOS 26.5.2 arm64. Verdict PARTIAL: all three checkpoints pass (no blocks before the signer; height climbs once the node connects; production stalls when kms stops and resumes on restart), and the state file is confirmed written at signer start rather than at first signature. The one blocker found was the step-8 timing cliff, since fixed on this page. Full run: ~/Documents/tests/kms-docs-audit-findings.md.
+Note that kms v0.1.0 fails closed on a missing sign-state file (PR #35, c952fac), which the pre-2026-07-28 runs below predate: they were verified against kms commits where a bare `kms start` still worked on a fresh home. Any future re-verification must use a ref at or after v0.1.0.
+Earlier runs, retained for provenance: verified 2026-07-14 on Darwin 25.5.0 (arm64), Go 1.26.5, with simd from cosmos-sdk main @ b9a11304cf (reported 0.0.0-dev; 0.55 not tagged then) and kms @ 7932ceb.
 Step 8 startup timing re-verified 2026-07-20 on a clean single-localnet machine (simd @ 46a17713, kms @ 0007b0d): node started within ~5s of the signer passes 5/5; longer gaps hit dead zones (~6-9s, ~13-21s) and time out with `can't get pubkey`. Re-verified again 2026-07-21 (kms-tutorial-reverify-findings.md): a plain node rerun is unreliable (~30%), worsened on a node's first boot by a one-time IAVL storage upgrade that delays its listener; restarting the signer (resets its backoff to fast dials) reliably recovers. Root cause: kms dial backoff (200ms→10s cap, internal/manager) vs the node's single ~3s pubkey fetch (cometbft node/setup.go:736). Note updated to the restart-the-signer recovery. Fix flagged to eng (lower kms defaultBackoffMax to ~1s). Full runs: ~/Documents/tests/kms-tutorial-step8-reverify-findings.md and kms-tutorial-reverify-findings.md.
 */}
 
@@ -151,8 +149,6 @@ Also confirm the signer's double-sign protection state file is in place, written
 ```shell
 ls ~/.kms-demo/state/kms-demo-1.json
 ```
-
-<Note>If `simd start` exits with `can't get pubkey: ... endpoint connection timed out`, the signer has backed off to slow retries. Restart the signer, then start the node again.</Note>
 
 ## 9. Prove the signer is doing the signing
 

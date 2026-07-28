@@ -62,7 +62,7 @@ The signer needs only two IAM permissions on the key: `kms:GetPublicKey`, called
 
 A freshly created KMS key is a new consensus key. To move an existing validator onto it, rotate the validator to the new key; to stand up a new validator, register it with the new key's public key. See [Rotate a consensus key held in Cosmos-KMS](/sdk/next/kms/rotate-key-remote-signer). Creating the key inside KMS keeps it from ever leaving the service. 
 
-{/* Manual verification (awskms backend): run-verified 2026-07-20 against real AWS KMS (us-east-1, account 326804803147; simd cosmos-sdk @ 46a177139a, kms @ 0007b0d). Both ed25519 (ECC_NIST_EDWARDS25519) and mldsa65 (ML_DSA_65) keys signed consensus end to end: create-key + alias as written, validator built around the KMS key's pubkey, blocks flowed, stop-kms→stall / restart→resume passed; CloudTrail confirmed kms:GetPublicKey at startup and kms:Sign per block. Full run: ~/Documents/tests/kms-aws-verification-findings.md. */}
+{/* AWS IS STILL THE 2026-07-20 RUN. The 2026-07-28 blind audit deliberately skipped AWS (no account, no simulating), so the run below remains the only end-to-end evidence for this backend and must not be restamped with a later date. Its claims were re-checked from source on 2026-07-28 at kms v0.1.0 and still hold. Manual verification (awskms backend): run-verified 2026-07-20 against real AWS KMS (us-east-1, account 326804803147; simd cosmos-sdk @ 46a177139a, kms @ 0007b0d). Both ed25519 (ECC_NIST_EDWARDS25519) and mldsa65 (ML_DSA_65) keys signed consensus end to end: create-key + alias as written, validator built around the KMS key's pubkey, blocks flowed, stop-kms→stall / restart→resume passed; CloudTrail confirmed kms:GetPublicKey at startup and kms:Sign per block. Full run: ~/Documents/tests/kms-aws-verification-findings.md. */}
 
 ## `PKCS#11`
 
@@ -103,7 +103,7 @@ Set the PIN in the environment the signer runs in so it matches `pin_env`: `expo
 
 As with AWS KMS, a key generated in the HSM is a new consensus key. Move an existing validator onto it by rotation, or register a new validator with its public key. See [Rotate a consensus key held in Cosmos-KMS](/sdk/next/kms/rotate-key-remote-signer).
 
-{/* Manual verification (pkcs11/SoftHSM2 backend): run-verified 2026-07-20 on macOS arm64 (simd cosmos-sdk @ 46a177139a, kms @ 0007b0d, SoftHSM2 2.7.0, OpenSC 0.27.1). Token inited and ed25519 key generated with the commands as written (module path /opt/homebrew/lib/softhsm/libsofthsm2.so on macOS); the validator's consensus pubkey was set to the HSM key via `simd genesis gentx --pubkey`, the kms pkcs11 backend signed every block, blocks flowed, and stop-kms→stall / restart→resume passed. Full run: ~/Documents/tests/kms-backend-verification-findings.md. */}
+{/* Re-verified 2026-07-28 by blind execution audit at shipping refs (kms v0.1.0 4bd83922ee, cometbft v0.40.0, simd v0.55.0 64fd208a11, SoftHSM2 2.7.0): token provisioning ran verbatim, the HSM-held ed25519 key signed every block, `gentx --pubkey` adoption worked, and stop-signer/stall plus restart/resume both passed. The macOS module-path note on this page is correct and load-bearing. mldsa65 on PKCS#11 remains untestable locally: SoftHSM2 exposes no ML-DSA mechanism. Full run: ~/Documents/tests/kms-docs-audit-findings.md. Original run, retained for provenance: run-verified 2026-07-20 on macOS arm64 (simd cosmos-sdk @ 46a177139a, kms @ 0007b0d, SoftHSM2 2.7.0, OpenSC 0.27.1). Token inited and ed25519 key generated with the commands as written (module path /opt/homebrew/lib/softhsm/libsofthsm2.so on macOS); the validator's consensus pubkey was set to the HSM key via `simd genesis gentx --pubkey`, the kms pkcs11 backend signed every block, blocks flowed, and stop-kms→stall / restart→resume passed. Full run: ~/Documents/tests/kms-backend-verification-findings.md. */}
 
 ## File
 
@@ -128,7 +128,7 @@ keys:
 ```
 
 
-{/* Manual verification (mldsa65 file backend): run-verified 2026-07-17 on macOS (simd from cosmos-sdk pr-26604 @ 46a177139a, kms @ 0007b0d): chain inited with --consensus-key-algo ml_dsa_65, signer with algorithm: mldsa65, blocks flowed, stop/resume proof passed. Full run: ~/Documents/tests/mldsa-keygen-test-findings.md. */}
+{/* Manual verification (mldsa65 file backend): re-verified 2026-07-28 at shipping refs (kms v0.1.0 4bd83922ee, simd v0.55.0 64fd208a11) by blind execution audit: chain inited with --consensus-key-algo ml_dsa_65 produced cometbft/PubKeyMlDsa65, the signer with algorithm: mldsa65 signed to height 3-4, and key_file accepted a raw base64 private key. Original run 2026-07-17 on macOS (simd from cosmos-sdk pr-26604 @ 46a177139a, kms @ 0007b0d) also covered the stop/resume proof. Full runs: ~/Documents/tests/kms-docs-audit-findings.md and mldsa-keygen-test-findings.md. */}
 {/* Verification status (mldsa65 per backend): file — run-verified above (2026-07-17). awskms — run-verified 2026-07-20 against real AWS KMS (ML_DSA_65 key signed consensus end to end; see the AWS manual-verification note). pkcs11 — source/owner-confirmed but NOT run-verified: SoftHSM2 has no ML-DSA mechanism, so it needs an ML-DSA-capable HSM. */}
 
 ## Adopt the key on a validator
