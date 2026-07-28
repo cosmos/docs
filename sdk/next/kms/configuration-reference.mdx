@@ -96,6 +96,8 @@ Each `grpc.keys` entry:
 | `key_id` | string | awskms | KMS key ID, ARN, or `alias/<name>`. |
 | `key_file` | string | file | Path to the key. Accepts a CometBFT `priv_validator_key.json`, or a raw private key file (base64-encoded for `ed25519`, hex-encoded for `secp256k1eth`). |
 
+A `grpc.keys` entry with `backend: pkcs11` also takes the PKCS#11 fields, with the same rules and the same validation as a privval key. See [backend: pkcs11](#backend-pkcs11) for `module`, `token_label`, `slot`, `key_label`, `key_id`, and the PIN sources.
+
 <Warning>The gRPC server performs no caller authentication or authorization. Any client that can reach the listener can use every configured key. Restrict access with TLS and network controls.</Warning>
 
 ## Constraints checked at startup
@@ -103,6 +105,25 @@ Each `grpc.keys` entry:
 - Every `validators[].chain_id` and every entry in `keys[].chain_ids` must match a declared `chains[].id`.
 - Each chain must be backed by exactly one key.
 - PKCS#11 keys must select the token with exactly one of `token_label` or `slot`, select the key with `key_label` or `key_id`, and supply exactly one PIN source.
+- Every chain's sign-state file must exist and be non-empty. A missing or empty file fails closed with `sign-state file <path> is missing or empty; refusing to start at height 0`, so the signer cannot re-sign a height it has no record of. See [First start on a new chain](#first-start-on-a-new-chain).
+
+This list is not exhaustive. Other startup errors are prefixed `config:` and name the field at fault.
+
+## First start on a new chain
+
+A key that has never signed on a chain has no sign-state file, so the checks above block its first start. Two ways to write the height-0 floor:
+
+```shell
+kms start --home <home> --allow-fresh-state <chain-id>
+```
+
+```shell
+kms state init --chain <chain-id> --height 0 --home <home>
+```
+
+`kms state init` also accepts `--round` and `--step`, which is how a migration seeds a non-zero floor. See [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms).
+
+<Warning>Pass `--allow-fresh-state` only for a chain the key has genuinely never signed on. Once the state file exists the flag is inert, so a service definition that carries it permanently looks healthy while removing the protection: a deleted or truncated state file resets the double-sign floor to zero instead of stopping the signer.</Warning>
 
 ## Next steps
 

@@ -119,8 +119,14 @@ With this set, the node signs nothing locally. It listens on that port for a sig
 The node needs its signer available the moment it starts, so bring the signer up first:
 
 ```shell
-kms start --home ~/.kms-demo
+kms start --home ~/.kms-demo --allow-fresh-state kms-demo-1
 ```
+
+This validator has never signed on `kms-demo-1`, so no sign-state file exists yet. `--allow-fresh-state` writes the height-0 double-sign floor on this first start. Without it the signer refuses to start rather than risk re-signing a height it cannot prove it has already passed.
+
+<Warning>Pass `--allow-fresh-state` only on a first start, and only for a chain the key has never signed on. Once the state file exists the flag does nothing, so leaving it in a service definition is not immediately visible, but it means a deleted or truncated state file silently resets the double-sign floor to zero instead of stopping the signer. Later starts in this tutorial use the bare command.</Warning>
+
+To seed the floor as a separate step instead, run `kms state init --chain kms-demo-1 --height 0 --home ~/.kms-demo` and then start the signer with no flag.
 
 The signer logs `kms started` and dials the node. The node is not running yet, so the signer logs `dial failed; backing off` and keeps retrying. That is expected. Leave it running.
 
@@ -138,7 +144,7 @@ The node opens its private-validator listener on port 26659. The signer's next d
 curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
 ```
 
-Also confirm the signer created its double-sign protection state file:
+Also confirm the signer's double-sign protection state file is in place, written when the signer started:
 
 ```shell
 ls ~/.kms-demo/state/kms-demo-1.json
@@ -148,7 +154,7 @@ ls ~/.kms-demo/state/kms-demo-1.json
 
 ## 9. Prove the signer is doing the signing
 
-Stop the signer with Ctrl-C and watch the node's logs. Block production stalls because the validator can no longer sign. Start the signer again:
+Stop the signer with Ctrl-C and watch the node's logs. Block production stalls because the validator can no longer sign. Start the signer again, this time with no `--allow-fresh-state`, because the state file now exists and carries the highest height signed so far:
 
 ```shell
 kms start --home ~/.kms-demo

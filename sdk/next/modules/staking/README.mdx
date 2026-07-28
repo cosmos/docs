@@ -1155,6 +1155,10 @@ The message handling can fail if:
 * the fee cannot be deducted from the operator account.
 * the validator already rotated within the current unbonding period.
 * the new key's type is not in the chain's consensus params `validator.pub_key_types`.
+* the validator does not exist.
+* the validator is jailed.
+* the new key is already in use by another validator.
+* the new key is locked by a rotation, either because a validator rotated away from it and evidence against it can still be admitted, or because a pending rotation already targets it.
 
 For the operational procedure, see [Rotate a validator consensus key, x/staking](/sdk/next/keys/rotate-validator-key). For the concepts, see [Key rotation](/sdk/next/keys/key-rotation).
 
@@ -1592,8 +1596,12 @@ Example Output:
 ```bash
 bond_denom: stake
 historical_entries: 10000
+key_rotation_fee:
+  amount: "1000000"
+  denom: stake
 max_entries: 7
 max_validators: 50
+min_commission_rate: "0.000000000000000000"
 unbonding_time: 1814400s
 ```
 
@@ -2124,6 +2132,22 @@ Example:
 
 ```bash
 simd tx staking cancel-unbond cosmosvaloper1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 100stake 123123 --from mykey
+```
+
+##### rotate-cons-pub-key
+
+The command `rotate-cons-pub-key` allows a validator operator to replace the validator's consensus public key. The new key is given as proto-JSON, and the validator address is derived from the `--from` signer. Handling the message burns the `key_rotation_fee` param.
+
+Usage:
+
+```bash
+simd tx staking rotate-cons-pub-key [new-pubkey] [flags]
+```
+
+Example:
+
+```bash
+simd tx staking rotate-cons-pub-key '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"..."}' --from myvalidator
 ```
 
 ### gRPC
@@ -2744,7 +2768,12 @@ Example Output:
     "maxValidators": 100,
     "maxEntries": 7,
     "historicalEntries": 10000,
-    "bondDenom": "stake"
+    "bondDenom": "stake",
+    "minCommissionRate": "0.000000000000000000",
+    "keyRotationFee": {
+      "denom": "stake",
+      "amount": "1000000"
+    }
   }
 }
 ```
