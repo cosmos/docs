@@ -1,0 +1,179 @@
+---
+title: "Rotate a consensus key held in Cosmos-KMS"
+description: "Rotate a validator's consensus key when the current key lives in a remote signer: new key in the backend, a second node and signer, rotate, cut over."
+---
+
+This tutorial rotates a staked validator's consensus key when Cosmos-KMS holds the current key rather than a local file. It continues the [remote signing tutorial](/sdk/latest/kms/tutorial-file-backend) and reuses that setup: the single-node chain `kms-demo-1`, with node home `~/.kms-demo-node` (RPC on port 26657, privval listener on port 26659) and signer home `~/.kms-demo`, whose signer dials that listener.
+
+The rotation is the standard zero-downtime rotation with three differences. The new key is generated in a signing backend. The second node gets its own signer process. The new public key comes from the second node's RPC instead of a key file. For the standard procedure and the rotation rules, see [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key).
+
+<Warning>Key rotation can introduce security implications for your chain. Read the [Key rotation](/sdk/latest/keys/key-rotation) overview in its entirety before proceeding.</Warning>
+
+Commands use `simd` as the chain binary and `val` as the validator key name. Substitute your own for a real chain. The live pair and the new pair run on one host, so the second node and its new signer take spare ports: the second node listens for its signer on port 26669 and serves RPC on port 26667.
+
+{/*
+CURRENT VERIFICATION: blind execution audit 2026-07-28 against shipping refs, kms v0.1.0 (4bd83922ee), cometbft v0.40.0 (0880b4d378), simd v0.55.0 (64fd208a11), macOS 26.5.2 arm64. Verdict PASS, the only page in the KMS set to pass outright: every command ran verbatim on the first attempt and every checkpoint was observable. Rotation tx at height 39; old key served heights 39 and 40, new key from 41; CometBFT stopped requesting signatures from the old pair on its own; the chain kept producing on the new pair alone after both old processes were stopped. Full run: ~/Documents/tests/kms-docs-audit-findings.md.
+Earlier run, retained for provenance: verified 2026-07-15 on Darwin 25.5.0 (arm64), Go 1.26.5, with simd from cosmos-sdk @ b9a11304cf and kms @ 538e5c5, which predates the fail-closed sign-state change in kms v0.1.0.
+Base setup: the remote signing tutorial's single-validator localnet signing through kms (file backend), 1s timeout_commit, 0stake min gas.
+Every command below was run verbatim. Checkpoints observed: second node caught up with zero signatures from the new signer;
+rotation tx executed (code 0, 1000000stake fee burned); set swapped to the new key with no overlap; old signer stopped on its own; chain kept producing on the new pair alone.
+
+*/}
+
+## Prerequisites
+
+- A validator already signing through Cosmos-KMS, from the [remote signing tutorial](/sdk/latest/kms/tutorial-file-backend), still running.
+- All prerequisites of the standard rotation: Cosmos SDK 0.55 and CometBFT 0.40 or later, the target key type in consensus params, no rotation in the current unbonding period, and funds for the burned rotation fee plus gas. See [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key).
+- [jq](https://jqlang.org/) and [curl](https://curl.se/), used to derive the new public key.
+- Spare ports on the host for the second node and its signer.
+- The chain's binary; the examples use `simd`. To build it and run a node, see [Run a node](/sdk/latest/node/run-node).
+
+## 1. Generate the new key in a backend
+
+For an HSM or AWS KMS, generate the key with the backend's own tooling. The commands are in [Configure a signing backend](/sdk/latest/kms/configure-backend). This guide uses the file backend, so a scratch `simd init` generates a fresh key file.
+
+```shell
+simd init scratch --chain-id kms-demo-1 --home ~/.kms-demo-scratch
+```
+
+<Note>For a post-quantum `mldsa65` target on the file backend, add `--consensus-key-algo ml_dsa_65` to the `simd init` command above and set `algorithm: mldsa65` in the signer's `keys` block in step 2. The PKCS#11 and AWS KMS backends also sign `mldsa65`; see [Configure a signing backend](/sdk/latest/kms/configure-backend) for generating the key on those.</Note>
+
+The new key is `~/.kms-demo-scratch/config/priv_validator_key.json`. The rest of the scratch home is disposable.
+
+<Danger>The new key must be freshly generated. Reusing key material any signer has signed with risks a double sign, which tombstones the validator.</Danger>
+
+## 2. Configure a second signer with the new key
+
+One Cosmos-KMS process cannot hold two keys for the same chain. The new key must run in its own process, with its own home and double-sign state:
+
+```shell
+kms init --home ~/.kms-demo2
+```
+
+Copy the new key to the second signer's home:
+
+```shell
+cp ~/.kms-demo-scratch/config/priv_validator_key.json ~/.kms-demo2/priv_validator_key.json
+```
+
+Replace the contents of `~/.kms-demo2/kms.yaml` with the following. The `addr` is the port the second node listens on for its signer. For an HSM or AWS KMS key, the `keys` block instead binds the backend entry from step 1:
+
+```yaml
+chains:
+  - id: kms-demo-1
+
+validators:
+  - chain_id: kms-demo-1
+    addr: tcp://127.0.0.1:26669
+    identity_key: identity.json
+
+keys:
+  - chain_ids: [kms-demo-1]
+    backend: file
+    algorithm: ed25519
+    key_file: priv_validator_key.json
+```
+
+<Note>For a post-quantum `mldsa65` key, set `algorithm: mldsa65` in the signer's `keys` block above.</Note>
+
+Do not start the signer yet. It starts in step 3, right before the second node, so its connection retries are still fast when the node comes up.
+
+## 3. Bring up the second node and its signer
+
+Initialize a fresh node home and give it the chain's genesis:
+
+<Note>On a real chain with history, a fresh node takes days to sync from genesis. Use state sync or a snapshot to reach the chain head quickly. See [State sync](/sdk/latest/node/run-node#state-sync) for more info.</Note>
+
+```shell
+simd init shadow --chain-id kms-demo-1 --home ~/.kms-demo-node2
+```
+
+```shell
+cp ~/.kms-demo-node/config/genesis.json ~/.kms-demo-node2/config/genesis.json
+```
+
+With the prep done, start the new signer and the second node in quick succession. In one terminal, start the signer. It logs `dial failed` and retries until the node exists:
+
+```shell
+kms start --home ~/.kms-demo2 --allow-fresh-state kms-demo-1
+```
+
+The new key has never signed on this chain, and this signer home is new, so it holds no sign-state file. `--allow-fresh-state` writes the height-0 double-sign floor so the signer will start. Without it the signer exits with `sign-state file ... is missing or empty; refusing to start at height 0`.
+
+<Warning>Use `--allow-fresh-state` only here, for the new key's first start. Do not add it to the live signer or to any later start of this one. Once a state file exists the flag has no effect, so it fails quietly, but it means a lost or truncated state file resets the double-sign floor to zero rather than stopping the signer. After the cutover in step 5, run the new signer with the bare command.</Warning>
+
+Right away, in a second terminal, start the second node. The flags point it at the new signer on port 26669. Move its listeners off the live node's ports, and peer it with the live node so it syncs:
+
+```shell
+simd start --home ~/.kms-demo-node2 \
+  --priv_validator_laddr tcp://127.0.0.1:26669 \
+  --p2p.laddr tcp://0.0.0.0:26666 \
+  --rpc.laddr tcp://127.0.0.1:26667 \
+  --grpc.address localhost:9092 \
+  --proxy_app tcp://127.0.0.1:26668 \
+  --rpc.pprof_laddr localhost:6061 \
+  --p2p.persistent_peers "$(simd comet show-node-id --home ~/.kms-demo-node)@127.0.0.1:26656"
+```
+
+<Warning>If the second node exits with `can't get pubkey: ... endpoint connection timed out`, the signer has backed off to slow retries. Restart the signer, then start the node again.</Warning>
+
+Confirm the second node has caught up. The value is `false` once it is synced:
+
+```shell
+curl -s localhost:26667/status | jq '.result.sync_info.catching_up'
+```
+
+Until the rotation applies, the second node follows the chain without signing. Its signer logs `served pubkey request` but no signatures. That is correct.
+
+## 4. Derive the new public key and rotate
+
+The second node fetched its key from the new signer at startup and reports it at `/status`. Read it and reformat it into the proto-JSON the rotation command accepts:
+
+```shell
+PK=$(curl -s localhost:26667/status | jq -c '{"@type":"/cosmos.crypto.ed25519.PubKey", key: .result.validator_info.pub_key.value}')
+```
+
+For an ML-DSA key, the proto type differs: use `"@type":"/cosmos.crypto.mldsa65.PubKey"` in the jq expression instead.
+
+Submit the rotation from the operator account and capture the transaction hash:
+
+```shell
+TXHASH=$(simd tx staking rotate-cons-pub-key "$PK" --from val --keyring-backend test --home ~/.kms-demo-node --chain-id kms-demo-1 --node tcp://localhost:26657 --gas auto --gas-adjustment 1.5 --fees 2000stake --yes --output json | jq -r .txhash)
+```
+
+After the transaction lands in a block, confirm the code is `0`:
+
+```shell
+simd query tx "$TXHASH" --node tcp://localhost:26657 --output json | jq '{height: .height, code: .code}'
+```
+
+The burned rotation fee is charged separately from the gas fee above.
+
+## 5. Verify and retire the old pair
+
+The validator set swaps to the new key atomically two heights after execution. Confirm the set carries only the new key. The value matches `$PK`, and the old key is gone:
+
+```shell
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.value'
+```
+
+At the swap, CometBFT stops requesting signatures from the old pair on its own. Stop the live node (`~/.kms-demo-node`) and the live signer (`~/.kms-demo`) with Ctrl-C in their terminals.
+
+Confirm blocks keep flowing through the new pair. Run this twice a few seconds apart and watch the height climb:
+
+```shell
+curl -s localhost:26667/status | jq '.result.sync_info.latest_block_height'
+```
+
+Keep the old key in its backend until the unbonding period ends. The validator remains slashable for its past behavior until then.
+
+## What can go wrong
+
+- The new signer exits with `app: multiple signers bound to chain`: both keys are in one `kms.yaml`. Run the new key in its own process.
+- The validator is jailed after the rotation and neither signer is signing: the rotation targeted the stray local key. Rotate to the key from the second node's `/status`, once the unbonding window allows it.
+- The transaction is rejected: the standard failure modes apply, including the rotation limit and unsupported key types. See [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key).
+
+## Next steps
+
+- Harden the new signer's placement and transport. See [Remote signing best practices](/sdk/latest/kms/best-practices).
+- Rotate to a post-quantum key with the same procedure. See [Migrate a validator to ML-DSA](/sdk/latest/keys/migrate-validator-ml-dsa).

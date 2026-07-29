@@ -501,3 +501,69 @@ Scope check before acting further, read-only: 2,965 headings across 570 pages co
 Deliberately not swept. None of the 147 touch sdk/next/keys, sdk/next/kms, or any page in the release surface, so this does not block the release. The 664 bucket will contain false positives from smart-punctuation cases I have not characterised, and my slugifier is a model of a system that surprised us twice in one sitting. The durable fix is a linter that checks fragments against the `id` attributes of a rendered page rather than against any written-down rule; that would have caught all ~800 without modelling anything. Filed as post-release work.
 
 Scratch test page sdk/next/anchor-rule-test.mdx deleted; it was never registered in docs.json and no reference to it remains.
+
+## 2026-07-29 (SDK v0.55 and CometBFT v0.40 release)
+
+- Froze both products. SDK: `latest/` archived to `sdk/v0.54/`, `next/` promoted to `latest/` as v0.55 (upstream v0.55.0, released 2026-07-27). CometBFT: `latest/` archived to `cometbft/v0.39/`, `next/` promoted as v0.40 (upstream v0.40.0). Changelogs in `next/` were regenerated first so they carried through the promotion, per the release process.
+- Both freeze runs failed at the final nav step, as documented in `scripts/versioning/CLAUDE.md`: `updateNavigation` looks up the dropdown by `SUBDIR.toUpperCase()` ("SDK", "COMETBFT") and the actual labels are "Cosmos SDK" and "CometBFT". The archive and promotion steps had already completed, so only `docs.json` and `versions.json` needed doing by hand. Did both: new `latest` entries cloned from `next` with paths rewritten, old `latest` entries demoted to archive entries with paths rewritten to `v0.54/` and `v0.39/`, order set to latest, next, then archived newest-first. `versions.json` got the new archive dirs and bumped `latestDisplayVersion`.
+- Deleted `rfc-template` and `adr-template` from all six SDK version directories, 13 files including a stray nested duplicate at `sdk/v0.50/build/rfc/rfc/rfc-template.mdx`. Added 13 redirects to the parent index pages, removed the 6 `rfc-template` nav entries, and de-linked 13 inbound references to backticked filenames, matching how `PROCESS.mdx` already refers to them. `adr-template` was never registered in SDK nav and had no inbound markdown links. Hub's own `adr-template` pages were left alone per decision; they are a different product and are the only `adr-template` entries in the nav.
+
+### Changelog generator rewritten to stop dropping content
+
+Found while reviewing the generated release notes: `manage-changelogs.js` decomposed each release body into `{sections: {name: [bulletString]}}` and then rebuilt it, so anything not expressible as a bullet string inside a named section was silently discarded. Three symptoms, one cause.
+
+- Wrapped bullets lost everything after their first line. CometBFT wraps heavily, 437 continuation lines in its changelog, so 31 of 44 bullets on the new `latest` page ended mid-sentence with their PR links gone.
+- Versions with prose and no `###` section vanished entirely. v0.54.2 was absent from the v0.54 changelog for this reason.
+- Nested sub-bullets were flattened to siblings, so the four modules moved to `./contrib` under SDK #25090 read as four independent breaking changes.
+
+Replaced `parseChangelog` and `generateMintlifyContent` with a passthrough: slice on `##` version boundaries and copy the body verbatim, applying only heading demotion, MDX escaping, bullet-marker normalization, and removal of empty bullets and empty section headers. Only header lines are interpreted now, so the body cannot lose content because it is never rebuilt.
+
+The escaping is also a real fix rather than the previous whitelist. `sanitizeLine` only escaped `<` and `>` with spaces around them; bare `{` was never handled, and gaia's changelog has an unbacked `{delegatorAddr}` that would have broken the MDX build on its next regeneration. Now `<` and `{` are escaped everywhere outside inline code and fenced blocks.
+
+Verified by generating every product and target with the old and new code against identical source refs and diffing. `sdk/next` came out byte-identical, so the current SDK release notes did not regress. Recovered content elsewhere: CometBFT bullets with lost text went 31 to 0 on `latest` and 49 to 2 on v0.39, hub 155 to 37 with 16 previously-dropped bullets restored, and v0.54.2 is back. Residual cases are upstream bullets that simply do not end in punctuation. Release labels also improved, since dates on their own italic line are now lifted into the `<Update label>` instead of being dropped: hub went from 45 entries labelled "Release" to 3.
+
+Regenerated only the four files in this release. `evm`, `ibc`, and `hub` will pick up the new behavior on their next run, which is worth knowing before the next freeze since hub's output grows by about 400 lines.
+
+- Re-tagged the four regenerated changelog files, which lost their front matter when rewritten: `noindex` plus `canonical` restored on both `next/` pages, and `tag-archived.js` re-run for the two archive dirs, 1 file each with the rest correctly skipped. Also synced `cometbft/latest/changelog` which the promotion had left holding pre-fix output.
+
+`writeChangelog` never reads the file it replaces, so a regeneration writes the generator's three hardcoded front matter fields and drops everything else. `noindex` and `canonical` are the obvious casualties, but the subtler one is that a hand-corrected value of a field the template does own is reverted silently: `ibc`'s five archived changelogs are `mode: "center"` against the template's `wide`, and `cometbft/v0.38` reads "Cosmos CometBFT" against the template's uppercased `product.toUpperCase()`. Both revert on their next regeneration.
+
+Per Evan, left alone deliberately: no preservation logic in the generator and no reordering of the freeze's tagging step. The four files stay tagged, consistent with every other product's changelog page. The cost is that this recurs on each post-freeze regeneration and someone has to re-tag, which is accepted rather than unnoticed.
+
+One unrelated gap surfaced while checking this and was not touched, since `ibc` is outside this release: `ibc/next/changelog/release-notes.mdx` carries no `noindex`, while every other product's `next/` changelog does and 160 of 185 `ibc/next` pages are tagged. That page is currently indexable against `ibc/latest`.
+- `npx mint broken-links` clean. Every `docs.json` nav path resolves to a file, all 52 redirects have live destinations and no cycles, and the six changelog pages scan clean for unescaped JSX characters outside code.
+
+## 2026-07-29 (post-freeze fixes and version-pinning findings)
+
+- Bumped the displayed version label from v0.54 to v0.55 on the five SDK pages that carry it in front matter `description`, in both `latest/` and `next/`: `learn.mdx`, `tutorials.mdx`, `reference/spec.mdx`, `reference/rfc.mdx`, `reference/architecture.mdx`. This is what renders as "Version: v0.54" under the page title, and the freeze does not touch it. Archived directories correctly keep their own label. Only the SDK uses this pattern.
+- Fixed `learn/concepts/store.mdx`, which documented `TraceKVStore` as a live store wrapper. Store tracing was removed upstream in v0.54 (PR #26061, "Remove store tracing API and all related plumbing"), and `store/tracekv/store.go` is absent from the tree at v0.54.x, v0.55.x and main. Renamed the section from "Gas and trace store wrappers" to "Gas store wrapper", dropped the `TraceKVStore` bullet and its dead link, updated the in-page table of contents anchor, and corrected the storage-stack diagram from "wrapped with gas/trace" to "wrapped with gas metering". Also bumped all 11 remaining GitHub refs on the page from `release/v0.54.x` to `release/v0.55.x` after verifying each path exists at the new ref and that the one line anchor (`store/iavl/store.go#L36`) still lands on the same line. Synced to `next/` with `scripts/sync-latest-to-next.js`, which preserves the destination front matter so `noindex` and `canonical` survived.
+- Found this via a dead GitHub link, which is the durable lesson: the 404 was a symptom, and the actual defect was prose describing a removed feature. Bumping the ref would have kept the 404 and left the wrong paragraph in place.
+- Left alone deliberately: `reference/architecture/adr-038-state-listening.mdx` still shows `tracekv` in code samples, which is correct because an ADR records what was proposed at the time and should not be rewritten. `modules/genutil/README.mdx:696` still lists a `flagTraceStore` CLI flag inside a copied upstream code block; the flag is gone from both v0.54.x and v0.55.x, but that file is generated content and hand-patching one line of it would drift it further from its source.
+
+### Version-pinned GitHub links: survey and process change
+
+Neither the freeze script nor `npx mint broken-links` touches or validates external links. `broken-links` checks internal page paths only, not heading anchors and not external URLs, so nothing in CI has ever looked at these.
+
+Current state of `latest/` for both products:
+
+| scope | category | links | anchored |
+| ----- | -------- | ----- | -------- |
+| sdk | version-tracking (`release/v0.<N>.x`) | 125 | 66 |
+| sdk | moving (`main`, `master`) | 91 | 24 |
+| sdk | pinned tag (64 of them `v0.47.0-rc1`) | 78 | 66 |
+| sdk | pinned sha | 29 | 19 |
+| cometbft | version-tracking (82 at `v0.38.x`) | 90 | 12 |
+| cometbft | moving | 13 | 0 |
+| cometbft | pinned sha | 6 | 5 |
+
+Measured what a blind version bump would do, old ref versus new ref. Paths mostly survive: 93 of 96 SDK, 77 of 82 CometBFT. Line anchors do not. Of 39 anchored SDK links, 29 still landed on the same line, 7 had moved, and 3 needed a human (line deleted, file deleted, ambiguous). CometBFT was worse at two versions of drift, with only 4 of 12 surviving. So roughly a quarter of anchored links would have kept working while pointing at unrelated code, which is worse than leaving them on the old ref.
+
+Two traps that produced false positives on the first pass, both now documented: paths must be URL-decoded before a tree lookup (`abci%2B%2B_methods.md` resolves fine), and a `/blob/` URL pointing at a directory is valid because GitHub redirects it to `/tree/`.
+
+Rename detection needs `git diff --find-renames`; matching on basename is useless, giving 23 candidates for `store.go`. Line mapping needs `git diff -U0` hunk offsets rather than content comparison, which cannot distinguish a moved line from a coincidentally identical one and produced six candidates for one `.proto` anchor.
+
+Process change recorded in both `CLAUDE.md` files: page-content fixes of this kind belong in `next/` **before** the freeze, because the promotion then carries them into `latest/` in one pass. Doing them afterwards means editing `latest/` and syncing every touched file back. The release sequence in the root `CLAUDE.md` gained a new step 2 for this, ahead of the freeze.
+
+Not done, and the reason: none of the 178 stale version-tracking links were bumped. That is a content change across roughly 110 files, the ambiguous anchors need human judgement, and doing it correctly wants tooling rather than a sed. Also outstanding is the dead `RELEASE_PROCESS.md` link at `modules/modules.mdx:44`, which existed at v0.53.x and was deleted upstream with no replacement, so it needs a decision on where to point.
+
+Open question, not yet decided: whether to build `scripts/versioning/check-github-refs.js` to implement the checks above, and whether it runs as a freeze step or on a CI schedule. Pinned refs need a drift check rather than a bump, comparing only the anchored region against the current release branch, since a pinned link never 404s but the prose around it can still go stale. The 24 SDK links that combine `main` with a line anchor have no correct maintenance strategy at all and should be repointed at either a pinned sha or the current release branch.

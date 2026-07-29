@@ -65,6 +65,102 @@ After every freeze, add a `latest` version entry to the product's dropdown in `d
 5. Order: `latest [Latest, default]` → `next [Unreleased]` → stable archived newest-first
 6. Check redirects to make sure they are redirected properly.
 
+### Manual checklist around every freeze
+
+The freeze script does not do any of the following. None of it is caught by `npx mint broken-links`.
+
+Order matters. Items 2 and 4 are content that lives in the pages themselves, so do them in `next/` **before** freezing and the promotion carries them into `latest/` for free. Doing them afterwards means editing `latest/` and then running `scripts/sync-latest-to-next.js` on every file touched, which is the same work twice with a chance to miss a file. Item 1 can only be done after, and item 3 must be done after because the freeze is what strips the front matter.
+
+**1. `docs.json` navigation** (after) — see the section above.
+
+**2. Version label in front matter (SDK only, do before).** Five pages carry the displayed version in their `description`, which is what renders as "Version: v0.54" under the page title. Bump all five in both `latest/` and `next/`:
+
+```
+sdk/<latest|next>/learn.mdx
+sdk/<latest|next>/tutorials.mdx
+sdk/<latest|next>/reference/spec.mdx
+sdk/<latest|next>/reference/rfc.mdx
+sdk/<latest|next>/reference/architecture.mdx
+```
+
+```bash
+grep -rn 'description: "Version: v' sdk/latest sdk/next --include='*.mdx'
+```
+
+Archived directories keep their own version and must not be touched. Only the SDK uses this pattern; the other products do not.
+
+**3. Changelog front matter (after).** `manage-changelogs.js` overwrites the whole file and does not preserve front matter, so a changelog regenerated after the freeze has already tagged it loses its `noindex` and `canonical`. Re-add them to `<product>/next/changelog/release-notes.mdx` and re-run `tag-archived.js` for the archive directory. Verify with:
+
+```bash
+for p in sdk cometbft; do for f in $(find $p/next -name '*.mdx'); do head -12 "$f" | grep -q noindex || echo "$f"; done; done
+```
+
+**4. GitHub links pinned to the previous version (do before).** Pages link into the product repo at a version-tracking ref, and those refs do not follow the freeze. After promoting SDK v0.55, `sdk/latest/` still held 96 links to `release/v0.54.x`; CometBFT at v0.40 still held 82 to `v0.38.x`. See the section below, because a blind find-and-replace is the wrong fix.
+
+### GitHub link refs — do not blind-replace
+
+Refs fall into three groups and only the first should ever be bumped:
+
+| Ref shape | Treatment |
+| --------- | --------- |
+| `release/v0.<N>.x` (SDK), `v0.<N>.x` (CometBFT) | Version-tracking. Bump on freeze. |
+| `main`, `master` | Always current, never stale in the version sense, but line anchors silently rot as upstream moves. |
+| Pinned tag (`v0.47.0-rc1`) or 40-char SHA | Deliberate historical citation. Leave alone. Bumping changes what the prose is referring to. |
+
+The hazard is line anchors (`#L127`). Bumping the ref while leaving the line number is worse than staying on the old ref, because the link keeps working while pointing at unrelated code. Measured on the v0.54 to v0.55 SDK freeze, of 39 line-anchored `release/v0.54.x` links:
+
+- 29 anchors still landed on the same line of code
+- 7 had moved, with the original line findable uniquely elsewhere in the file
+- 1 anchored line was deleted upstream, 1 file was deleted, 1 was ambiguous
+
+So roughly a quarter would have pointed somewhere wrong. CometBFT was worse, since it had drifted two minor versions: only 4 of 12 anchors survived.
+
+#### The check that works
+
+Per link: does the path exist at the new ref, then does the line number still mean the same thing.
+
+**Path existence.** Compare against the full file tree at each ref rather than probing URLs one at a time:
+
+```bash
+curl -sL "https://api.github.com/repos/cosmos/cosmos-sdk/git/trees/release/v0.55.x?recursive=1"
+```
+
+Check the `truncated` field; it was `false` for both products at ~5,000 entries. Measured on this freeze, 93 of 96 SDK paths and 77 of 82 CometBFT paths survived the bump, so disappearance is the rare case.
+
+Two traps produce false positives here, and both bit on the first pass:
+
+- URL-decode the path first. `spec/abci/abci%2B%2B_methods.md` is `abci++_methods.md` in the tree and resolves fine.
+- A `/blob/` URL pointing at a directory is valid. GitHub redirects it to `/tree/`, returning 200.
+
+**Line numbers.** Use git, not content matching. Content equality cannot tell a moved line from a coincidentally identical one, which is how a `query.proto#L108` link produced six candidate lines. Git resolves it deterministically:
+
+```bash
+git init -q --bare refcheck && cd refcheck
+git remote add origin https://github.com/cosmos/cosmos-sdk.git
+git fetch -q --depth=1 origin 'release/v0.54.x:refs/heads/old' 'release/v0.55.x:refs/heads/new'
+
+# renames, with similarity scoring
+git diff --find-renames --name-status old new
+
+# exact line mapping for one file
+git diff -U0 old new -- <path>
+```
+
+`--find-renames` is what makes rename detection usable. Matching on basename does not work: `store.go` had 23 candidates across the tree.
+
+For a line anchor, read the hunk headers from `git diff -U0`. A line outside every hunk moves by the cumulative offset, which is a safe automatic rewrite. A line inside a changed hunk was edited or deleted, which is a human decision. Do not guess.
+
+**Verdicts.** Four outcomes, not two:
+
+| Verdict | Action |
+| ------- | ------ |
+| Path exists, anchor unaffected | Bump the ref |
+| Path exists, anchor moved outside any hunk | Bump the ref and rewrite the line number |
+| Path renamed, deleted, or anchor inside a changed hunk | Flag for a human |
+| Already 404 at the current ref | Flag, and read the page before repointing it |
+
+That last verdict is the valuable one. It found `store/tracekv/store.go`, dead since v0.54, which was the symptom of a page still documenting store tracing after upstream removed the API.
+
 ### Version format validation
 
 `newDisplayVersion` and `archiveVersion` must match `/^v\d+\.\d+(?:\.(?:\d+|x))?$/` — e.g. `v0.54`, `v11.0.x`, `v0.38`. Single-component versions like `v25` will fail validation.

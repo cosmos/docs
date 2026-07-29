@@ -1,0 +1,85 @@
+---
+title: "Migrate a validator to ML-DSA"
+description: "Move a validator's consensus key to the post-quantum ml_dsa_65 algorithm through an ordinary key rotation."
+---
+
+Migrating a validator to post-quantum signing is an ordinary key rotation with an ML-DSA target key. This guide adds the ML-DSA-specific steps around the standard procedure in [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key). For more information on ML-DSA, see [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).
+
+<Warning>Key rotation can introduce security implications for your chain. Read the [Key rotation](/sdk/latest/keys/key-rotation) overview in its entirety before proceeding.</Warning>
+
+<Danger>Before rotating any validator to ML-DSA, confirm every counterparty chain that verifies this chain over IBC runs CometBFT v0.40 or later. An older `07-tendermint` light client cannot verify ML-DSA consensus signatures. See [IBC considerations](/sdk/latest/keys/post-quantum-keys#ibc-considerations) for more information.</Danger>
+
+## Prerequisites
+
+- All prerequisites of the rotation procedure: [jq](https://jqlang.org/) and [curl](https://curl.se/), no rotation in the current unbonding period, and fee funds on the operator account. See [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key).
+- The chain's binary; the examples use `simd`. To build it and run a node, see [Run a node](/sdk/latest/node/run-node).
+
+## 1. Confirm the chain allows ML-DSA
+
+Validator key types are a consensus parameter. Check that `ml_dsa_65` is in the list:
+
+```shell
+simd query consensus params
+```
+
+If `validator.pub_key_types` does not include `ml_dsa_65`, the rotation is rejected. To add the type, see [Enable ML-DSA keys](/sdk/latest/keys/enable-ml-dsa-keys).
+
+## 2. Rotate to an ML-DSA key
+
+### On a staking chain
+
+Follow [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key), replacing the `simd init` command in its step 1 with one that adds  `--consensus-key-algo ml_dsa_65` to create an ML-DSA key:
+
+```shell
+simd init rotation-node --chain-id my-chain-1 --consensus-key-algo ml_dsa_65 --home ~/.rotation-node
+```
+
+Everything else runs as written. The guide's rotation command derives the public key with `simd comet show-validator` on the second node's home, which now prints the ML-DSA key, so the rotation message carries it automatically.
+
+### On a PoA chain
+
+Follow [Rotate a consensus key, PoA](/sdk/latest/keys/rotate-validator-key-poa) with two changes. Replace the `simd init` command in its step 1 with:
+
+```shell
+simd init poa-newkey --chain-id my-chain-1 --consensus-key-algo ml_dsa_65 --home ~/.poa-newkey
+```
+
+And pass `ml_dsa_65` instead of `ed25519` as the key type when submitting. The ML-DSA public key may be large enough that the default gas limit runs out, so add `--gas auto`:
+
+```shell
+simd tx poa rotate-cons-pub-key "$(simd comet show-validator --home ~/.poa-newkey | jq -r .key)" ml_dsa_65 --operator-address "$(simd keys show val -a --home ~/.node)" --from val --home ~/.node --gas auto --gas-adjustment 1.5
+```
+
+The cutover timing is unchanged: keep the node on the old key until the validator set switches, then swap the key file in place, exactly as the guide's [steps 3 and 4](/sdk/latest/keys/rotate-validator-key-poa#3-wait-for-the-validator-set-to-switch) describe.
+
+### On a remote signer
+
+If the validator's consensus key lives in Cosmos-KMS rather than a local file, the second node gets its own signer and the public key derivation differs. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer).
+
+{/*
+CURRENT VERIFICATION: blind execution audit 2026-07-28 at shipping refs, cosmos-sdk v0.55.0 (64fd208a11), cometbft v0.40.0, PoA via enterprise/poa/simapp, macOS 26.5.2 arm64. Verdict PASS: both the staking and PoA ML-DSA rotations execute as written. Staking rotation returned code 0 at height 33 and /validators reported cometbft/PubKeyMlDsa65 with the chain still producing. Confirmed that --gas auto is required, since an ML-DSA pubkey exceeds the 200000 default (observed gasUsed 217674 to 233565). Full run: ~/Documents/tests/keys-docs-audit-findings.md.
+Earlier run, retained for provenance: verified 2026-07-17 with simd from cosmos-sdk pr-26604 @ 46a177139a. #26604 has since merged and is in v0.55.0, so the "re-verify at merge" instruction is discharged.
+*/}
+{/* PoA ML-DSA rotation run-verified 2026-07-28 on cosmos-sdk v0.55.0 (includes #26614, merged as d6a3c6e27a): the command below executes as written on a PoA simapp binary, the module reports /cosmos.crypto.mldsa65.PubKey, and the chain resumes producing on the ML-DSA consensus key. Needs --gas auto (an ML-DSA pubkey exceeds the 200000 default). */}
+
+## 3. Verify
+
+Check the key type in the validator set:
+
+```shell
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.type'
+```
+
+A migrated validator reports `cometbft/PubKeyMlDsa65` instead of `tendermint/PubKeyEd25519`. The chain's consensus is post-quantum secure once validators holding at least two thirds of voting power report a post-quantum type. For more information, see [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).
+
+## What can go wrong
+
+- The rotation is rejected for an unsupported key type: the chain does not list `ml_dsa_65` yet. See [Enable ML-DSA keys](/sdk/latest/keys/enable-ml-dsa-keys).
+- Anything else follows the standard rotation failure modes. See [Rotate a consensus key, Staking](/sdk/latest/keys/rotate-validator-key).
+
+<Note>The consensus key this rotation installs is a raw keypair with no mnemonic behind it. Custody the key file, not a seed phrase.</Note>
+
+## Next steps
+
+- Check which key types the chain allows and which the validator set is running. See [Enable ML-DSA keys](/sdk/latest/keys/enable-ml-dsa-keys).
+- Understand the storage and bandwidth costs the chain takes on as the set migrates. See [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).

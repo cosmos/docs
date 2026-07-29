@@ -1,0 +1,199 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/sdk/latest/guides/upgrades/upgrade'
+title: Upgrades and Store Migrations
+---
+
+<Warning>
+Read and understand all of this page before running a migration on a live chain.
+</Warning>
+
+<Note>
+**Synopsis**
+In-place store migrations allow modules to upgrade to new versions that include breaking changes. This document covers both the module-side (writing migrations) and the app-side (running migrations during an upgrade).
+</Note>
+
+The Cosmos SDK supports two approaches to chain upgrades: exporting the entire application state to JSON and starting fresh with a modified genesis file, or performing in-place store migrations that update state directly. In-place migrations are significantly faster for chains with large state and are the standard approach for live networks.
+
+This page covers how to write module migrations and how to run them inside an upgrade handler in your app.
+
+## Consensus Version
+
+Successful upgrades of existing modules require each `AppModule` to implement the function `ConsensusVersion() uint64`.
+
+* The versions must be hard-coded by the module developer.
+* The initial version **must** be set to 1.
+
+Consensus versions serve as state-breaking versions of app modules and must be incremented when the module introduces breaking changes.
+
+## Registering Migrations
+
+To register the functionality that takes place during a module upgrade, you must register which migrations you want to take place.
+
+Migration registration takes place in the `Configurator` using the `RegisterMigration` method. The `AppModule` reference to the configurator is in the `RegisterServices` method.
+
+You can register one or more migrations. If you register more than one migration script, list the migrations in increasing order and ensure there are enough migrations that lead to the desired consensus version. For example, to migrate to version 3 of a module, register separate migrations for version 1 and version 2 as shown in the following example:
+
+```go
+func (am AppModule) RegisterServices(cfg module.Configurator) {
+    // --snip--
+    if err := cfg.RegisterMigration(types.ModuleName, 1, func(ctx sdk.Context) error {
+        // Perform in-place store migrations from ConsensusVersion 1 to 2.
+        return nil
+    }); err != nil {
+        panic(fmt.Sprintf("failed to migrate %s from version 1 to 2: %v", types.ModuleName, err))
+    }
+
+    if err := cfg.RegisterMigration(types.ModuleName, 2, func(ctx sdk.Context) error {
+        // Perform in-place store migrations from ConsensusVersion 2 to 3.
+        return nil
+    }); err != nil {
+        panic(fmt.Sprintf("failed to migrate %s from version 2 to 3: %v", types.ModuleName, err))
+    }
+}
+```
+
+Since these migrations are functions that need access to a Keeper's store, use a wrapper around the keepers called `Migrator` as shown in this example:
+
+```go expandable
+package keeper
+
+import (
+    sdk "github.com/cosmos/cosmos-sdk/types"
+    "github.com/cosmos/cosmos-sdk/x/bank/exported"
+    v2 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v2"
+    v3 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v3"
+    v4 "github.com/cosmos/cosmos-sdk/x/bank/migrations/v4"
+)
+
+// Migrator is a struct for handling in-place store migrations.
+type Migrator struct {
+    keeper         BaseKeeper
+    legacySubspace exported.Subspace
+}
+
+// NewMigrator returns a new Migrator.
+func NewMigrator(keeper BaseKeeper, legacySubspace exported.Subspace) Migrator {
+    return Migrator{keeper: keeper, legacySubspace: legacySubspace}
+}
+
+// Migrate1to2 migrates from version 1 to 2.
+func (m Migrator) Migrate1to2(ctx sdk.Context) error {
+    return v2.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc)
+}
+
+// Migrate2to3 migrates x/bank storage from version 2 to 3.
+func (m Migrator) Migrate2to3(ctx sdk.Context) error {
+    return v3.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc)
+}
+
+// Migrate3to4 migrates x/bank storage from version 3 to 4.
+func (m Migrator) Migrate3to4(ctx sdk.Context) error {
+    m.MigrateSendEnabledParams(ctx)
+    return v4.MigrateStore(ctx, m.keeper.storeService, m.legacySubspace, m.keeper.cdc)
+}
+```
+
+## Writing Migration Scripts
+
+To define the functionality that takes place during an upgrade, write a migration script and place the functions in a `migrations/` directory. For example, to write migration scripts for the bank module, place the functions in `x/bank/migrations/`. Import each version package and call its `MigrateStore` function from the corresponding `Migrator` method:
+
+```go
+// Migrating bank module from version 1 to 2
+func (m Migrator) Migrate1to2(ctx sdk.Context) error {
+    return v2.MigrateStore(ctx, m.keeper.storeService, m.keeper.cdc) // v2 is package `x/bank/migrations/v2`.
+}
+```
+
+To see example code of changes that were implemented in a migration of balance keys, check out [migrateBalanceKeys](https://github.com/cosmos/cosmos-sdk/blob/release/v0.54.x/x/bank/migrations/v2/store.go#L55-L76). For context, this code introduced migrations of the bank store that updated addresses to be prefixed by their length in bytes as outlined in [ADR-028](/sdk/v0.54/reference/architecture/adr-028-public-key-addresses).
+
+## Running Migrations in the App
+
+Once modules have registered their migrations, the app runs them inside an `UpgradeHandler`. The upgrade handler type is:
+
+```go
+type UpgradeHandler func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error)
+```
+
+The handler receives the `VersionMap` stored by `x/upgrade` (reflecting the consensus versions from the previous binary), performs any additional upgrade logic, and must return the updated `VersionMap` from `RunMigrations`. Register the handler in `app.go`:
+
+```go
+app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+    // optional: additional upgrade logic here
+    return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+})
+```
+
+`RunMigrations` iterates over all registered modules in order, checks each module's version in the `VersionMap`, and runs all registered migration scripts for modules whose consensus version has increased. The updated `VersionMap` is returned to the upgrade keeper, which persists it in the `x/upgrade` store.
+
+### Order of migrations
+
+By default, migrations run in alphabetical order by module name, with one exception: `x/auth` runs last due to state dependencies with other modules (see [cosmos/cosmos-sdk#10591](https://github.com/cosmos/cosmos-sdk/issues/10591)). To change the order, call `app.ModuleManager.SetOrderMigrations(module1, module2, ...)` in `app.go`. The function panics if any registered module is omitted.
+
+### Adding new modules during an upgrade
+
+New modules are recognized because they have no entry in the `x/upgrade` `VersionMap` store. `RunMigrations` calls `InitGenesis` for them automatically.
+
+If you need to add stores for a new module, configure the store loader before the upgrade runs:
+
+```go
+upgradeInfo, err := app.UpgradeKeeper.ReadUpgradeInfoFromDisk()
+if err != nil {
+    panic(err)
+}
+if upgradeInfo.Name == "my-plan" && !app.UpgradeKeeper.IsSkipHeight(upgradeInfo.Height) {
+    storeUpgrades := storetypes.StoreUpgrades{
+        Added: []string{"newmodule"},
+    }
+    app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, &storeUpgrades))
+}
+```
+
+To skip `InitGenesis` for a new module (for example, if you are manually initializing state in the handler), set its version in `fromVM` before calling `RunMigrations`:
+
+```go
+fromVM["newmodule"] = newmodule.AppModule{}.ConsensusVersion()
+return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+```
+
+### Genesis state
+
+When starting a new chain, the consensus version of each module must be saved to state during genesis. Add this to `InitChainer` in `app.go`:
+
+```go
+func (app *MyApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
+    // ...
+    app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap())
+    // ...
+}
+```
+
+This lets the Cosmos SDK detect when modules with newer consensus versions are introduced in a future upgrade.
+
+### Overwriting genesis functions
+
+The SDK provides modules that app developers can import, and those modules often already have an `InitGenesis` function. If you want to run a custom genesis function for one of those modules during an upgrade instead of the default one, you must both call your custom function in the handler AND manually set that module's consensus version in `fromVM`. Without the second step, `RunMigrations` will run the module's existing `InitGenesis` even though you already initialized it.
+
+<Warning>
+You must manually set the consensus version in `fromVM` for any module whose `InitGenesis` you are overriding. If you don't, the SDK will call the module's default `InitGenesis` in addition to your custom one.
+</Warning>
+
+```go
+import foo "github.com/my/module/foo"
+
+app.UpgradeKeeper.SetUpgradeHandler("my-plan", func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+    // Prevent RunMigrations from calling foo's default InitGenesis.
+    fromVM["foo"] = foo.AppModule{}.ConsensusVersion()
+
+    // Run your custom genesis initialization for foo.
+    app.ModuleManager.Modules["foo"].(module.HasGenesis).InitGenesis(ctx, app.appCodec, myCustomGenesisState)
+
+    return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
+})
+```
+
+## Syncing a Full Node to an Upgraded Blockchain
+
+A full node joining an already-upgraded chain must start from the initial binary that the chain used at genesis and replay all historical upgrades. If all upgrade plans include binary download instructions, Cosmovisor's auto-download mode handles this automatically. Otherwise, you must provide each historical binary manually.
+
+See the [Cosmovisor](/sdk/v0.54/guides/upgrades/cosmovisor) guide for setup and configuration.
