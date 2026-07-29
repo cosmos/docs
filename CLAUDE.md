@@ -97,11 +97,15 @@ url: "https://example.com"
 Mintlify preserves special characters in anchor IDs. Rules:
 
 - Spaces become `-`
+- `.` becomes `-` (e.g. `v0.53.x` becomes `#v0-53-x`)
 - `&`, `+`, `=`, `@`, `#`, `$`, `%` are kept with surrounding hyphens (e.g. `Gas & Fees` becomes `#gas-&-fees`)
-- `/` is kept as-is, no surrounding hyphens (e.g. `x/gov` becomes `#x/gov`)
-- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` are dropped (surrounding spaces still become `-`)
+- `/` is kept, percent-encoded (e.g. `x/params` becomes `#x%2Fparams`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*` are dropped (surrounding spaces still become `-`)
 - `-` in a heading stays as `-`, spaces around it collapse (e.g. `A - B` becomes `#a-b`)
 - All characters lowercased
+- Adjacent replacements collapse to one `-`
+
+Smart punctuation rewrites headings before slugging; copy anchors from a render.
 
 ## snippets/
 
@@ -138,7 +142,29 @@ cd scripts/versioning && npm run changelogs -- --product <product> --target next
 cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --unreleased-as <version> --current-only
 ```
 
-### 2. Freeze the Version
+### 2. Update Version-Pinned Content in `next/`
+
+Do this before freezing, not after. The freeze copies `next/` to `latest/`, so anything fixed in `next/` first lands in both directories in one pass. Fixing it afterwards means editing `latest/` and then syncing every file back to `next/`.
+
+Two things are version-pinned and do not follow the freeze on their own:
+
+**Version label in front matter (SDK only).** Five pages render the version under the page title via their `description`:
+
+```bash
+grep -rn 'description: "Version: v' sdk/next --include='*.mdx'
+```
+
+**GitHub links pinned to the previous release branch.** Pages link into the product repo at `release/v0.<N>.x` (SDK) or `v0.<N>.x` (CometBFT), and those refs keep pointing at the old version:
+
+```bash
+grep -rhoE 'github\.com/cosmos/cosmos-sdk/(blob|tree)/release/v[0-9.]+x' <product>/next --include='*.mdx' | sort | uniq -c
+```
+
+Do not blind-replace these. Pinned tags and commit SHAs are deliberate historical citations, and bumping a ref under a `#L` line anchor can leave the link working while pointing at unrelated code. See the GitHub link section in [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for the rules and the measured failure rates.
+
+A stale ref is often a symptom rather than the problem. A link that 404s at its current ref usually means the prose describes something upstream deleted, so check what the page claims before repointing the URL.
+
+### 3. Freeze the Version
 
 Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.
 
@@ -160,13 +186,13 @@ If the product has pre-existing archived version directories (e.g. `v0.53/`, `v1
 node tag-archived.js --product <product> --all
 ```
 
-### 3. Check for Broken Links
+### 4. Check for Broken Links
 
 ```bash
 npx mint broken-links
 ```
 
-Fix any broken links before committing.
+Fix any broken links before committing. Note that this checks internal page paths only. It does not validate heading anchors and it does not check external URLs, so nothing here catches a dead or misdirected GitHub link.
 
 ## Scripts
 

@@ -115,9 +115,9 @@ NewSTMRunner(
 
 `NewSTMRunner` constructs a runner which uses parallel execution. Its parameters are:
 
-* **`txDecoder`** — A standard `sdk.TxDecoder`, readily available in any SDK application.
+* __`txDecoder`__ — A standard `sdk.TxDecoder`, readily available in any SDK application.
 
-* **`stores`** — A list of every store key used in your application. Since Block-STM needs to track store usage across transactions, it must be passed all module-level store keys. Here is an example taken from the Cosmos EVM:
+* __`stores`__ — A list of every store key used in your application. Since Block-STM needs to track store usage across transactions, it must be passed all module-level store keys. Here is an example taken from the Cosmos EVM:
 
 ```go
 keys := storetypes.NewKVStoreKeys(
@@ -144,7 +144,7 @@ for _, k := range oKeys {
 }
 ```
 
-* **`workers`** — The number of parallel workers. Experimentation has shown diminishing returns above your system's hardware parallelism. The recommended value is:
+* __`workers`__ — The number of parallel workers. Experimentation has shown diminishing returns above your system's hardware parallelism. The recommended value is:
 
 ```go
 import "runtime"
@@ -152,9 +152,9 @@ import "runtime"
 workers := min(runtime.GOMAXPROCS(0), runtime.NumCPU())
 ```
 
-* **`estimate`** — Controls whether the system should proactively determine transaction read/write conflicts before execution. Set this to `true` in all cases.
+* __`estimate`__ — Controls whether the system should proactively determine transaction read/write conflicts before execution. Set this to `true` in all cases.
 
-* **`coinDenom`** — A function that returns the staking coin denom at runtime. This is used during estimation to reason about which keys in the `bank` module will be modified when fees are collected. A hard-coded value is acceptable; the value should be your chain's bond denom.
+* __`coinDenom`__ — A function that returns the staking coin denom at runtime. This is used during estimation to reason about which keys in the `bank` module will be modified when fees are collected. A hard-coded value is acceptable; the value should be your chain's bond denom.
 
 ### Full Wiring Example
 
@@ -169,6 +169,28 @@ bApp.SetBlockSTMTxRunner(txnrunner.NewSTMRunner(
     func(ms storetypes.MultiStore) string { return sdk.DefaultBondDenom },
 ))
 ```
+
+### Configuration via app.toml
+
+The wiring above installs Block-STM programmatically. An application that uses `blockexec.Apply` can instead select the executor from `app.toml`, or from the equivalent `simd start` flags. Three keys control this:
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `block-executor` | string | `sequential` | Selects the execution strategy. Set it to `block-stm` to enable parallel execution. |
+| `block-stm-workers` | int | `0` | Sets the worker count. This maps to the `workers` runner parameter. A value of `0` resolves to `min(GOMAXPROCS, NumCPU)` at runtime. |
+| `block-stm-pre-estimate` | bool | `false` | Enables pre-estimation of read and write conflicts. This maps to the `estimate` runner parameter. |
+
+When `block-executor` is set to `block-stm`, the block gas meter is disabled automatically. This is required, because the parallel runner panics if the block gas meter is still enabled. The programmatic wiring above does not disable it for you. Call `SetDisableBlockGasMeter(true)` when you wire the runner by hand.
+
+Example `app.toml` that enables Block-STM:
+
+```toml
+block-executor = "block-stm"
+block-stm-workers = 0
+block-stm-pre-estimate = true
+```
+
+The `block-stm-pre-estimate` value is set to `true` here to match the `estimate` guidance above.
 
 ## Parallel Transaction Optimization
 

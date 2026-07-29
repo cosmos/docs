@@ -544,13 +544,15 @@ a given public key can only appear once within a given update. If an update incl
 duplicates, the block execution will fail irrecoverably.
 
 Structure `ValidatorUpdate` contains a public key, which is used to identify the validator:
-The public key currently supports three types:
+The public key currently supports the following types:
 
 - `ed25519`
 - `secp256k1`
-- `bls12381`
+- `secp256k1eth`
+- `bls12_381`
+- `ml_dsa_65`
 
-Structure `ValidatorUpdate` also contains an `ìnt64` field denoting the validator's new power.
+Structure `ValidatorUpdate` also contains an `int64` field denoting the validator's new power.
 Applications must ensure that
 `ValidatorUpdate` structures abide by the following rules:
 
@@ -579,18 +581,19 @@ all full nodes have the same value at a given height.
 
 #### List of Parameters
 
-These are the current consensus parameters (as of v0.38.x):
+These are the current consensus parameters:
 
 1. [ABCIParams.VoteExtensionsEnableHeight](#abciparamsvoteextensionsenableheight)
-2. [BlockParams.MaxBytes](#blockparamsmaxbytes)
-3. [BlockParams.MaxGas](#blockparamsmaxgas)
-4. [EvidenceParams.MaxAgeDuration](#evidenceparamsmaxageduration)
-5. [EvidenceParams.MaxAgeNumBlocks](#evidenceparamsmaxagenumblocks)
-6. [EvidenceParams.MaxBytes](#evidenceparamsmaxbytes)
-7. [ValidatorParams.PubKeyTypes](#validatorparamspubkeytypes)
-8. [VersionParams.App](#versionparamsapp)
+2. [AuthorityParams.Authority](#authorityparamsauthority)
+3. [BlockParams.MaxBytes](#blockparamsmaxbytes)
+4. [BlockParams.MaxGas](#blockparamsmaxgas)
+5. [EvidenceParams.MaxAgeDuration](#evidenceparamsmaxageduration)
+6. [EvidenceParams.MaxAgeNumBlocks](#evidenceparamsmaxagenumblocks)
+7. [EvidenceParams.MaxBytes](#evidenceparamsmaxbytes)
+8. [ValidatorParams.PubKeyTypes](#validatorparamspubkeytypes)
+9. [VersionParams.App](#versionparamsapp)
 
-#### ABCIParams.VoteExtensionsEnableHeight
+##### ABCIParams.VoteExtensionsEnableHeight
 
 This parameter is either 0 or a positive height at which vote extensions
 become mandatory. If the value is zero (which is the default), vote
@@ -608,6 +611,11 @@ include the vote extensions from height `H`. For all heights after `H`
 
 Must always be set to a future height, 0, or the same height that was previously set.
 Once the chain's height reaches the value set, it cannot be changed to a different value.
+
+##### AuthorityParams.Authority
+
+An opaque, application-defined authority string. CometBFT does not interpret it and
+only enforces a maximum length. The default is the empty string.
 
 ##### BlockParams.MaxBytes
 
@@ -639,7 +647,10 @@ If the Application sets value -1, consensus will:
 Must have `MaxBytes == -1` OR `0 < MaxBytes <= 100 MB`.
 
 > Bear in mind that the default value for the `BlockParams.MaxBytes` consensus
-> parameter accepts as valid blocks with size up to 21 MB.
+> parameter accepts as valid blocks with size up to roughly 53 MiB: a 21 MiB
+> budget for block data, plus a worst-case commit reserve sized for the maximum
+> validator set at the maximum signature size. Enabling a large-signature key
+> type such as `ml_dsa_65` is what makes that reserve large.
 > If the Application's use case does not need blocks of that size,
 > or if the impact (specially on bandwidth consumption and block latency)
 > of propagating blocks of that size was not evaluated,

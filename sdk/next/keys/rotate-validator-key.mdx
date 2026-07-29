@@ -1,0 +1,125 @@
+---
+noindex: true
+title: "Rotate a consensus key, Staking"
+description: "Rotate a staked validator's consensus key with no downtime: run a second node, submit the rotation, verify, and retire the old node."
+---
+
+This guide rotates a staked validator's consensus key with no downtime: run a second node on the new key, submit the rotation, verify, and retire the old node. For how rotation works and its limits, see [Key rotation](/sdk/next/keys/key-rotation).
+
+<Warning>Key rotation can introduce security implications for your chain. Read the [Key rotation](/sdk/next/keys/key-rotation) overview in its entirety before proceeding.</Warning>
+
+Commands use `simd`. Substitute your chain's binary. Examples use `~/.node` for the existing node's home and `~/.rotation-node` for the new one; those paths, the key name `val`, and host addresses are the only values to adjust.
+
+{/*
+Manual verification setup (hidden, macOS). Reproduces the running staked chain this guide assumes, using simd/simapp.
+Build: from the cosmos-sdk repo run `make build`, then put ./build/simd on PATH as `simd`.
+
+simd init mynode --chain-id my-chain-1 --home ~/.node
+simd config set client chain-id my-chain-1 --home ~/.node
+simd config set client keyring-backend test --home ~/.node
+simd keys add val --keyring-backend test --home ~/.node
+simd genesis add-genesis-account val 100000000000stake --keyring-backend test --home ~/.node
+simd genesis gentx val 1000000000stake --chain-id my-chain-1 --keyring-backend test --home ~/.node
+simd genesis collect-gentxs --home ~/.node
+# fast blocks + zero min-gas so the guide's commands work without extra flags
+# (substitute --fees <fee> in step 3 with e.g. 2000stake, or omit it on this localnet)
+sed -i '' 's/timeout_commit = ".*"/timeout_commit = "1s"/' ~/.node/config/config.toml
+sed -i '' 's/minimum-gas-prices = ".*"/minimum-gas-prices = "0stake"/' ~/.node/config/app.toml
+simd start --home ~/.node
+# then follow the guide. The new node in step 1 shares this host, so it also needs
+# --p2p.laddr/--rpc.laddr/--grpc.address and a distinct pprof_laddr (see step 1's note).
+*/}
+
+## Prerequisites
+
+- The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later, and allows your target key type. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
+- [jq](https://jqlang.org/) and [curl](https://curl.se/) for the verification steps.
+- A running validator you operate, and a second machine (or spare ports on the same host) for the new node, with the chain's binary installed on it. To build `simd` and run a node, see [Run a node](/sdk/next/node/run-node).
+- No rotation in the current unbonding period. Only one rotation is allowed per unbonding period.
+- The operator account holds enough funds for two separate charges: the rotation fee, which is burned, and the ordinary gas fee for the transaction itself. Check the rotation fee:
+
+```shell
+simd query staking params
+```
+
+The `key_rotation_fee` field shows the fee amount.
+
+## 1. Start a second node with the new key
+
+Initialize a fresh node home. The init command generates a new consensus key in `priv_validator_key.json`:
+
+```shell
+simd init rotation-node --chain-id my-chain-1 --home ~/.rotation-node
+```
+
+<Note>To rotate to a post-quantum key, add `--consensus-key-algo ml_dsa_65` to the command above. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).</Note>
+
+<Danger>Never copy the old `priv_validator_key.json` to the new node. Two nodes signing with the same consensus key is a double sign, which tombstones the validator. The new node must have its own freshly generated key.</Danger>
+
+A fresh init writes a placeholder genesis. Replace it with the chain's genesis:
+
+```shell
+cp ~/.node/config/genesis.json ~/.rotation-node/config/genesis.json
+```
+
+Start the new node peered with the existing one, and let it sync to the chain head:
+
+```shell
+simd start --home ~/.rotation-node --p2p.persistent_peers "$(simd comet show-node-id --home ~/.node)@127.0.0.1:26656"
+```
+
+Adjust the peer address to the existing node's host. If both nodes share a host, also give the new node its own ports with `--p2p.laddr`, `--rpc.laddr`, `--grpc.address`, and `--rpc.pprof_laddr`. The pprof port is required, not optional: without it the new node exits at startup with `address already in use` for the default port 6060, which the first node already holds. Until the rotation applies, the node follows the chain as a non-signing full node.
+
+On a chain with history, a fresh node takes days to sync from genesis. Use state sync or a snapshot to reach the chain head quickly. See [State sync](/sdk/next/node/run-node#state-sync).
+
+## 2. Confirm both nodes are healthy
+
+Before you submit, the old node must still be signing and the new node must be caught up to the chain head. If the new node is still syncing when the rotation applies, the validator will miss blocks until it catches up. Check sync status:
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.catching_up'
+```
+
+Run this against each node, using the RPC port each one listens on (a co-located new node answers on the `--rpc.laddr` port you gave it, not `26657`). Both must report `false`.
+
+## 3. Submit the rotation
+
+The rotation message carries the new node's public key, read directly from that node's home:
+
+```shell
+simd tx staking rotate-cons-pub-key "$(simd comet show-validator --home ~/.rotation-node)" --from val --home ~/.node --gas auto --gas-adjustment 1.5 --fees <fee> --yes
+```
+
+Set `--fees` (or `--gas-prices`) to meet the chain's minimum gas price; without it the node rejects the transaction with `insufficient fees`. This gas fee is separate from the burned rotation fee. The command reads the operator key and chain ID from your client config; add `--chain-id`, `--keyring-backend`, and `--home` if that config does not already supply them.
+
+<Warning>A rotation cannot be undone. After it applies, the validator is committed to the new key for the rest of the unbonding period. Keep the old node running until step 4 verifies the new key is signing.</Warning>
+
+## 4. Verify the new key is signing
+
+The rotation applies two heights after the message executes, so the new key can appear within seconds on a fast chain. A successful broadcast confirms only that the chain accepted the transaction; confirm the validator set actually carries the new key:
+
+```shell
+curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key'
+```
+
+The `value` matches the `key` field shown by `simd comet show-validator --home ~/.rotation-node`, and the old key is gone. If the set still shows the old key, wait a few blocks and check again. Watch the new node's logs to see it signing votes.
+
+## 5. Retire the old node
+
+Stop the old node and decommission it. Its consensus key holds no power, but it remains slashable for past behavior until equivocation evidence for it can no longer be admitted. That window is at least the unbonding period and can be longer, depending on the chain's evidence params. See [Key rotation](/sdk/next/keys/key-rotation). Store its key material securely rather than leaving it on shared infrastructure.
+
+## What can go wrong
+
+- The transaction is rejected with a rotation limit error: a rotation already happened this unbonding period. Wait out the window.
+- The transaction is rejected for an unsupported key type: the target type is not in the chain's consensus params. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
+- The fee cannot be paid: fund the operator account with at least `key_rotation_fee`.
+- The transaction is rejected because the new key is unavailable: another validator already uses it, or a recent rotation still holds it locked. Generate a fresh key.
+- The transaction is rejected because the validator is jailed: unjail it first.
+- The validator misses blocks after the rotation applies: the new node was not caught up. It resumes signing once synced.
+
+## Next steps
+
+- Understand the mechanics behind each step. See [Key rotation](/sdk/next/keys/key-rotation).
+- Rotate to a post-quantum key. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).
+- Rotate a key held in a remote signer. See [Rotate a consensus key held in Cosmos-KMS](/sdk/next/kms/rotate-key-remote-signer).
+- Look up the message and parameters. See the [x/staking module reference](/sdk/next/modules/staking/README#msgrotateconspubkey).

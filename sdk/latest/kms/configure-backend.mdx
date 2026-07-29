@@ -1,0 +1,168 @@
+---
+title: "Configure a signing backend"
+description: "Point Cosmos-KMS at the custodian holding the consensus key: AWS KMS, a PKCS#11 HSM, or a file."
+---
+
+A signing backend is the custodian that holds the validator's consensus key and signs with it. Cosmos-KMS supports three: AWS KMS, a PKCS#11 hardware module, and a file on disk. The `keys` block in `kms.yaml` selects one, and this guide configures each in turn.
+
+## Prerequisites
+
+- A running signer and node, which [Remote signing tutorial](/sdk/latest/kms/tutorial-file-backend) sets up. Between backends only the `keys` block changes in `kms.yaml`. The file backend reuses the tutorial's existing key, but the AWS KMS and PKCS#11 backends hold a new consensus key the validator must adopt first. See [Adopt the key on a validator](#adopt-the-key-on-a-validator).
+- Per backend: the [AWS CLI](https://aws.amazon.com/cli/) and an AWS account for AWS KMS; your HSM's tooling plus [OpenSC](https://github.com/OpenSC/OpenSC)'s `pkcs11-tool` for PKCS#11, with [SoftHSM2](https://www.opendnssec.org/softhsm/) as a local test rig.
+- The chain's binary; the examples use `simd`. To build it and run a node, see [Run a node](/sdk/latest/node/run-node).
+
+The `algorithm` field is required for all backends.
+
+## AWS KMS
+
+<Warning>AWS KMS caps messages it signs in raw form at 4096 bytes. This binds `ed25519` and `secp256k1`, which send the raw consensus message, so be careful with features that enlarge it, such as vote extensions. The signer checks the size itself and fails before calling AWS. `mldsa65` and `secp256k1eth` are not bound by the cap.</Warning>
+
+AWS Key Management Service (KMS) is a managed service that stores cryptographic keys and signs with them on request. With this backend, the consensus key lives in KMS and never leaves it. The signer calls the KMS Sign API to produce each signature. Credentials come from the standard AWS default chain: environment, shared config, SSO, or an IAM role. No secrets enter `kms.yaml`.
+
+This backend signs with any key type Cosmos-KMS supports: `ed25519`, `secp256k1`, `secp256k1eth`, and post-quantum `mldsa65`. Provision the AWS key with the key spec that matches the algorithm, such as `ECC_NIST_EDWARDS25519` for `ed25519` or `ML_DSA_65` for `mldsa65`.
+
+Create an ML-DSA-65 signing key and give it an alias (or skip these and point `key_id` at a key you already have):
+
+```shell
+aws kms create-key --key-spec ML_DSA_65 --key-usage SIGN_VERIFY
+```
+
+```shell
+aws kms create-alias --alias-name alias/validator --target-key-id <key-id>
+```
+
+Then bind it in the `keys` block:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: awskms
+    algorithm: mldsa65
+    key_id: alias/validator
+    region: us-east-1
+```
+
+The `key_id` accepts a key ID, a full ARN, or an alias. `region` is optional and falls back to the AWS default chain. Two more optional fields, not shown above, are `profile` (a named shared-config profile) and `endpoint` (for LocalStack-style testing only).
+
+The signer needs only two IAM permissions on the key: `kms:GetPublicKey`, called once at startup, and `kms:Sign`, called per block. `kms:DescribeKey` is not required. Attach a least-privilege policy scoped to the key ARN, not the alias; AWS resolves the alias to the key server-side:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["kms:GetPublicKey", "kms:Sign"],
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
+    }
+  ]
+}
+```
+
+A freshly created KMS key is a new consensus key. To move an existing validator onto it, rotate the validator to the new key; to stand up a new validator, register it with the new key's public key. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer). Creating the key inside KMS keeps it from ever leaving the service.
+
+{/* AWS IS STILL THE 2026-07-20 RUN. The 2026-07-28 blind audit deliberately skipped AWS (no account, no simulating), so the run below remains the only end-to-end evidence for this backend and must not be restamped with a later date. Its claims were re-checked from source on 2026-07-28 at kms v0.1.0 and still hold. Manual verification (awskms backend): run-verified 2026-07-20 against real AWS KMS (us-east-1, account 326804803147; simd cosmos-sdk @ 46a177139a, kms @ 0007b0d). Both ed25519 (ECC_NIST_EDWARDS25519) and mldsa65 (ML_DSA_65) keys signed consensus end to end: create-key + alias as written, validator built around the KMS key's pubkey, blocks flowed, stop-kms→stall / restart→resume passed; CloudTrail confirmed kms:GetPublicKey at startup and kms:Sign per block. Full run: ~/Documents/tests/kms-aws-verification-findings.md. */}
+
+## `PKCS#11`
+
+The `PKCS#11` backend keeps the consensus key on a hardware security module (HSM) or token and signs on the device through `PKCS#11`, the standard interface for cryptographic hardware. The key never leaves the module. The signer uses an existing key only, so provision one with your HSM tooling first. The example commands below show how to provision an ed25519 key with SoftHSM2 for testing:
+
+```shell
+softhsm2-util --init-token --free --label validator-token --pin 1234 --so-pin 4321
+```
+
+```shell
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --login --pin 1234 --keypairgen --key-type EC:edwards25519 --label validator --id 01
+```
+
+The `--module` path is platform-specific: Linux uses `/usr/lib/softhsm/libsofthsm2.so`, and macOS Homebrew uses `/opt/homebrew/lib/softhsm/libsofthsm2.so` (`/usr/local/lib/softhsm/...` on Intel). Use the same path for the `module` field below.
+
+Then bind it:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: pkcs11
+    algorithm: ed25519
+    module: /usr/lib/softhsm/libsofthsm2.so
+    token_label: validator-token
+    key_label: validator
+    pin_env: KMS_PIN
+```
+
+The signer enforces three field rules at startup:
+
+- Select the token with exactly one of `token_label` or `slot`.
+- Select the key with `key_label`, `key_id` (the hex `CKA_ID`), or both.
+- Supply the PIN through exactly one of `pin`, `pin_env`, or `pin_file`.
+
+Prefer `pin_env` or `pin_file`. An inline `pin` puts the PIN in the config file.
+
+Set the PIN in the environment the signer runs in so it matches `pin_env`: `export KMS_PIN=<pin>`. If you are using SoftHSM2 as the test rig, also `export SOFTHSM2_CONF=<path-to-softhsm2.conf>` so the module can find the token.
+
+As with AWS KMS, a key generated in the HSM is a new consensus key. Move an existing validator onto it by rotation, or register a new validator with its public key. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer).
+
+{/* Re-verified 2026-07-28 by blind execution audit at shipping refs (kms v0.1.0 4bd83922ee, cometbft v0.40.0, simd v0.55.0 64fd208a11, SoftHSM2 2.7.0): token provisioning ran verbatim, the HSM-held ed25519 key signed every block, `gentx --pubkey` adoption worked, and stop-signer/stall plus restart/resume both passed. The macOS module-path note on this page is correct and load-bearing. mldsa65 on PKCS#11 remains untestable locally: SoftHSM2 exposes no ML-DSA mechanism. Full run: ~/Documents/tests/kms-docs-audit-findings.md. Original run, retained for provenance: run-verified 2026-07-20 on macOS arm64 (simd cosmos-sdk @ 46a177139a, kms @ 0007b0d, SoftHSM2 2.7.0, OpenSC 0.27.1). Token inited and ed25519 key generated with the commands as written (module path /opt/homebrew/lib/softhsm/libsofthsm2.so on macOS); the validator's consensus pubkey was set to the HSM key via `simd genesis gentx --pubkey`, the kms pkcs11 backend signed every block, blocks flowed, and stop-kms→stall / restart→resume passed. Full run: ~/Documents/tests/kms-backend-verification-findings.md. */}
+
+## File
+
+The file backend reads the consensus key from a file on the signer's disk into memory. It is the development and testing backend. The key sits in plaintext, so it is not production custody. The [Remote signing tutorial](/sdk/latest/kms/tutorial-file-backend) covers it end to end:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: file
+    algorithm: ed25519
+    key_file: priv_validator_key.json
+```
+
+The `key_file` accepts a CometBFT `priv_validator_key.json` or a raw base64-encoded private key. The file backend also signs post-quantum consensus keys. Generate the key with `simd init <moniker> --consensus-key-algo ml_dsa_65` and bind it:
+
+```yaml
+keys:
+  - chain_ids: [my-chain-1]
+    backend: file
+    algorithm: mldsa65
+    key_file: priv_validator_key.json
+```
+
+{/* Manual verification (mldsa65 file backend): re-verified 2026-07-28 at shipping refs (kms v0.1.0 4bd83922ee, simd v0.55.0 64fd208a11) by blind execution audit: chain inited with --consensus-key-algo ml_dsa_65 produced cometbft/PubKeyMlDsa65, the signer with algorithm: mldsa65 signed to height 3-4, and key_file accepted a raw base64 private key. Original run 2026-07-17 on macOS (simd from cosmos-sdk pr-26604 @ 46a177139a, kms @ 0007b0d) also covered the stop/resume proof. Full runs: ~/Documents/tests/kms-docs-audit-findings.md and mldsa-keygen-test-findings.md. */}
+{/* Verification status (mldsa65 per backend): file — run-verified above (2026-07-17). awskms — run-verified 2026-07-20 against real AWS KMS (ML_DSA_65 key signed consensus end to end; see the AWS manual-verification note). pkcs11 — source/owner-confirmed but NOT run-verified: SoftHSM2 has no ML-DSA mechanism, so it needs an ML-DSA-capable HSM. */}
+
+## Adopt the key on a validator
+
+The AWS KMS and PKCS#11 backends generate the key inside the custodian, so it is a new consensus key, not the one your validator already runs. Do not just repoint an existing validator's signer at a fresh key. The node finds its consensus key absent from the validator set and demotes itself, so it never proposes and there is no signature error to look for. The symptom is `This node is not a validator` in the node log and a chain that does not advance. Only the file backend, pointed at the validator's existing `priv_validator_key.json`, skips this step.
+
+Adopt the key one of two ways:
+
+- Existing validator: rotate its consensus key to the new one, which derives the new public key from a shadow node and swaps it in with no downtime. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer).
+- New validator: register it with the new key's consensus public key using `gentx --pubkey` (or the `pubkey` field of `create-validator`'s validator.json). Read the public key from the custodian itself, since `gentx` runs before the chain exists and there is no node to query. For PKCS#11, read the object and strip the DER wrapper, leaving the raw 32 bytes to base64:
+
+```shell
+pkcs11-tool --module <module> --login --pin <pin> --read-object --type pubkey --label validator \
+  | xxd -p | tr -d '\n' | sed 's/^302a300506032b6570032100//' | xxd -r -p | base64
+```
+
+For AWS KMS, `aws kms get-public-key` returns a DER `SubjectPublicKeyInfo`; strip the same wrapper before encoding.
+
+## Verify any backend
+
+Verification is the same regardless of custodian. Start the signer, start the node, and confirm blocks flow, exactly as in [the tutorial](/sdk/latest/kms/tutorial-file-backend).
+
+If this key has never signed on the chain, the signer's first start needs `--allow-fresh-state <chain-id>` to write the height-0 double-sign floor, otherwise it exits with `sign-state file ... is missing or empty; refusing to start at height 0`. Pass it only on that first start. See [Start the signer](/sdk/latest/kms/tutorial-file-backend) in the tutorial for the full explanation, and the [configuration reference](/sdk/latest/kms/configuration-reference) for `kms state init`.
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
+```
+
+## What can go wrong
+
+- The signer rejects the config at startup: both `token_label` and `slot` set, or more than one PIN source. The error names the offending field. A missing `algorithm` on the file backend instead fails with the less specific `file: unknown key type`.
+- The signer starts but cannot reach the key: wrong `module` path, wrong `key_id` or alias, or AWS credentials with no permission (denied `kms:GetPublicKey` fails at `kms start` with `awskms: get public key for "<key_id>": <AccessDeniedException>`). These also fail at startup.
+- The node exits with a pubkey timeout: the signer is not running or not reachable. Start the signer first. It dials and retries.
+
+## Next steps
+
+- Look up any config field, its type, and its constraints. See the [configuration reference](/sdk/latest/kms/configuration-reference).
+- Run the whole flow once with the file backend. See [Remote signing tutorial](/sdk/latest/kms/tutorial-file-backend).
+- Move an existing validator onto a key in a new backend by rotation. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer).

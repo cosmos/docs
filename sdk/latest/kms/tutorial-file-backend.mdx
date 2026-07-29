@@ -1,0 +1,171 @@
+---
+title: "Remote signing tutorial"
+description: "Tutorial: stand up a local chain whose validator signs through Cosmos-KMS, using the file backend."
+---
+
+This tutorial builds a working remote signer from scratch: a single-node local chain where a Cosmos-KMS process signs the votes instead of the node itself. It uses the file backend, which needs no HSM or cloud account and exists for exactly this kind of learning setup. At the end, you stop the signer and watch the chain stall, which proves where signing really happens. This tutorial uses one node, one signer, and one key.
+
+Commands use `simd` for the chain binary. The node home is `~/.kms-demo-node` and the signer home is `~/.kms-demo`.
+
+{/*
+CURRENT VERIFICATION: blind execution audit 2026-07-28 against shipping refs, kms v0.1.0 (4bd83922ee), cometbft v0.40.0 (0880b4d378), simd v0.55.0 (64fd208a11), go1.26.0, macOS 26.5.2 arm64. Verdict PARTIAL: all three checkpoints pass (no blocks before the signer; height climbs once the node connects; production stalls when kms stops and resumes on restart), and the state file is confirmed written at signer start rather than at first signature. The one blocker found was the step-8 timing cliff, since fixed on this page. Full run: ~/Documents/tests/kms-docs-audit-findings.md.
+Note that kms v0.1.0 fails closed on a missing sign-state file (PR #35, c952fac), which the pre-2026-07-28 runs below predate: they were verified against kms commits where a bare `kms start` still worked on a fresh home. Any future re-verification must use a ref at or after v0.1.0.
+Earlier runs, retained for provenance: verified 2026-07-14 on Darwin 25.5.0 (arm64), Go 1.26.5, with simd from cosmos-sdk main @ b9a11304cf (reported 0.0.0-dev; 0.55 not tagged then) and kms @ 7932ceb.
+Step 8 startup timing re-verified 2026-07-20 on a clean single-localnet machine (simd @ 46a17713, kms @ 0007b0d): node started within ~5s of the signer passes 5/5; longer gaps hit dead zones (~6-9s, ~13-21s) and time out with `can't get pubkey`. Re-verified again 2026-07-21 (kms-tutorial-reverify-findings.md): a plain node rerun is unreliable (~30%), worsened on a node's first boot by a one-time IAVL storage upgrade that delays its listener; restarting the signer (resets its backoff to fast dials) reliably recovers. Root cause: kms dial backoff (200ms→10s cap, internal/manager) vs the node's single ~3s pubkey fetch (cometbft node/setup.go:736). Note updated to the restart-the-signer recovery. Fix flagged to eng (lower kms defaultBackoffMax to ~1s). Full runs: ~/Documents/tests/kms-tutorial-step8-reverify-findings.md and kms-tutorial-reverify-findings.md.
+*/}
+
+## Prerequisites
+
+- [Go](https://go.dev/doc/install) 1.26 or later, [make](https://www.gnu.org/software/make/), [git](https://git-scm.com/), [jq](https://jqlang.org/), and [curl](https://curl.se/).
+- A chain binary at Cosmos SDK 0.55 or later. The tutorial uses `simd`, built with `make install` in the [cosmos-sdk repo](https://github.com/cosmos/cosmos-sdk). To build it and run a node, see [Run a node](/sdk/latest/node/run-node).
+
+## 1. Install Cosmos-KMS
+
+Clone and install the signer:
+
+```shell
+git clone https://github.com/cosmos/kms
+```
+
+```shell
+cd kms && make install
+```
+
+Confirm the binary works:
+
+```shell
+kms version
+```
+
+## 2. Create a single-node chain
+
+Set up a fresh chain home with one validator. Do not start the node yet:
+
+```shell
+# Initialize the node home with the chain ID
+simd init signer-demo --chain-id kms-demo-1 --home ~/.kms-demo-node
+
+# Create the validator key in the test keyring
+simd keys add val --keyring-backend test --home ~/.kms-demo-node
+
+# Fund the validator account in genesis
+simd genesis add-genesis-account val 1000000000stake --keyring-backend test --home ~/.kms-demo-node
+
+# Register the validator with a genesis staking transaction
+simd genesis gentx val 500000000stake --chain-id kms-demo-1 --keyring-backend test --home ~/.kms-demo-node
+
+# Collect the gentx into the genesis file
+simd genesis collect-gentxs --home ~/.kms-demo-node
+```
+
+## 3. Initialize the signer
+
+Scaffold the signer's home. This writes a stub `kms.yaml` and generates `identity.json`, the key the signer uses to authenticate its connection:
+
+```shell
+kms init --home ~/.kms-demo
+```
+
+The command prints `initialized kms in /Users/you/.kms-demo`. Pass the `--home` flag on every `kms` command. Without it, the signer uses the current directory.
+
+## 4. Give the signer the consensus key
+
+Copy the consensus key that `simd init` generated into the signer's home:
+
+```shell
+cp ~/.kms-demo-node/config/priv_validator_key.json ~/.kms-demo/priv_validator_key.json
+```
+
+<Note>Once the node is configured for remote signing, it never reads its local key file again. In production, move the key instead of copying it. Note that the node regenerates a fresh, unused consensus key file if it finds none, so moving the key reduces what is on the node host rather than leaving it key-free. For this tutorial, the copy keeps things simple.</Note>
+
+## 5. Configure the signer
+
+Replace the contents of `~/.kms-demo/kms.yaml` with:
+
+```yaml
+chains:
+  - id: kms-demo-1
+
+validators:
+  - chain_id: kms-demo-1
+    addr: tcp://127.0.0.1:26659
+    identity_key: identity.json
+
+keys:
+  - chain_ids: [kms-demo-1]
+    backend: file
+    algorithm: ed25519
+    key_file: priv_validator_key.json
+```
+
+The three blocks say: sign for the chain `kms-demo-1`, dial its node at port 26659, and read the copied key file as an `ed25519` key. The file backend has no default algorithm, so the `algorithm` line is required. Relative paths resolve against the signer's home.
+
+## 6. Point the node at the signer
+
+Open `~/.kms-demo-node/config/config.toml`, find the `priv_validator_laddr` line, and set it:
+
+```toml
+priv_validator_laddr = "tcp://127.0.0.1:26659"
+```
+
+With this set, the node signs nothing locally. It listens on that port for a signer connection and forwards every vote and proposal to it.
+
+## 7. Start the signer
+
+The node needs its signer available the moment it starts, so bring the signer up first:
+
+```shell
+kms start --home ~/.kms-demo --allow-fresh-state kms-demo-1
+```
+
+This validator has never signed on `kms-demo-1`, so no sign-state file exists yet. `--allow-fresh-state` writes the height-0 double-sign floor on this first start. Without it the signer refuses to start rather than risk re-signing a height it cannot prove it has already passed.
+
+<Warning>Pass `--allow-fresh-state` only on a first start, and only for a chain the key has never signed on. It will not overwrite an existing floor, but leaving it in a service definition means a deleted or truncated state file resets the floor to zero instead of stopping the signer. Later starts in this tutorial use the bare command.</Warning>
+
+To seed the floor as a separate step instead, run `kms state init --chain kms-demo-1 --height 0 --home ~/.kms-demo` and then start the signer with no flag.
+
+The signer logs `kms started` and dials the node. The node is not running yet, so the signer logs `dial failed; backing off` and keeps retrying. That is expected. Leave it running.
+
+## 8. Start the node
+
+In a second terminal, start the node within five seconds of starting the signer:
+
+```shell
+simd start --home ~/.kms-demo-node
+```
+
+<Note>If `simd start` exits with `can't get pubkey: ... endpoint connection timed out`, the signer has backed off to slow retries. Restart the signer, then start the node again within five seconds.</Note>
+
+The node opens its private-validator listener on port 26659. The signer's next dial connects, the node fetches its consensus public key from the signer, and block production begins. Confirm the height is climbing:
+
+```shell
+curl -s localhost:26657/status | jq '.result.sync_info.latest_block_height'
+```
+
+Also confirm the signer's double-sign protection state file is in place, written when the signer started:
+
+```shell
+ls ~/.kms-demo/state/kms-demo-1.json
+```
+
+## 9. Prove the signer is doing the signing
+
+Stop the signer with Ctrl-C and watch the node's logs. Block production stalls because the validator can no longer sign. Start the signer again, this time with no `--allow-fresh-state`, because the state file now exists and carries the highest height signed so far:
+
+```shell
+kms start --home ~/.kms-demo
+```
+
+The signer reconnects and the chain resumes. The node never touches a private key. Every signature comes from the signer.
+
+## What you built
+
+A validator whose consensus key lives outside the node. The node handles consensus and networking. The signer holds the key and signs, and the double-sign state file travels with it. The file backend keeps this tutorial self-contained, but it holds the key in plaintext on disk and is not production custody. The production version of this setup swaps one config block to move the key into an HSM or AWS KMS.
+
+## Next steps
+
+- Swap the file backend for real custody, AWS KMS or an HSM. See [Configure a signing backend](/sdk/latest/kms/configure-backend).
+- Harden the signer's placement and transport. See [Remote signing best practices](/sdk/latest/kms/best-practices).
+- Understand the architecture you just ran. See [Cosmos-KMS and remote signing](/sdk/latest/kms/remote-signing).
+
+- Look up any config field. See the [configuration reference](/sdk/latest/kms/configuration-reference).

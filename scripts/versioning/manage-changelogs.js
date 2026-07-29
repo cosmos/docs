@@ -179,144 +179,177 @@ async function fetchChangelog(repo, source, changelogPath) {
   throw new Error(`Failed to fetch changelog from ${repo}. Tried: ${errors.join('; ')}`);
 }
 
-// Sanitize line for MDX compatibility
-function sanitizeLine(line) {
-  let cleaned = line.trim();
-  const markdownLinks = [];
+// --- MDX-safe passthrough -------------------------------------------------
+// The upstream changelog is already markdown, and MDX is a superset of it, so
+// release-note bodies are copied through verbatim rather than decomposed into a
+// data structure and rebuilt. Only two textual transforms are applied: heading
+// demotion and escaping of characters MDX would read as JSX. Because the body is
+// never reconstructed, no shape of markdown in it can be silently dropped.
 
-  // Preserve markdown links
-  cleaned = cleaned.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    const placeholder = `__LINK_${markdownLinks.length}__`;
-    markdownLinks.push({ text, url });
-    return placeholder;
-  });
-
-  // Escape comparison operators
-  cleaned = cleaned
-    .replace(/ <= /g, ' &lt;= ')
-    .replace(/ >= /g, ' &gt;= ')
-    .replace(/ < /g, ' &lt; ')
-    .replace(/ > /g, ' &gt; ');
-
-  // Restore markdown links
-  markdownLinks.forEach((link, i) => {
-    cleaned = cleaned.replace(`__LINK_${i}__`, `[${link.text}](${link.url})`);
-  });
-
-  return cleaned;
+// `<` opens a JSX element and `{` opens an expression, so both break the MDX
+// build when they appear in prose. Inside code they are literal, and must be
+// left alone.
+function escapeMdxOutsideCode(line) {
+  // String.split with a capturing group yields the code spans at odd indices.
+  return line
+    .split(/(`+[^`]*`+)/g)
+    .map((part, i) =>
+      i % 2 ? part : part.replace(/</g, '&lt;').replace(/\{/g, '&#123;')
+    )
+    .join('');
 }
 
-// Parse changelog to extract version updates
-function parseChangelog(content, versionFilter = null, unreleasedAs = null) {
+function mapOutsideFences(lines, fn) {
+  let inFence = false;
+  return lines.map(line => {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    return inFence ? line : fn(line);
+  });
+}
+
+const escapeMdx = lines => mapOutsideFences(lines, escapeMdxOutsideCode);
+
+// Products differ in bullet marker (`*` upstream in the SDK, `-` in CometBFT).
+// Normalizing keeps generated output uniform and, more usefully, keeps a
+// regeneration diff limited to real content changes. Indentation is preserved so
+// nesting depth survives.
+const normalizeBullets = lines =>
+  mapOutsideFences(lines, line =>
+    line.replace(/^(\s*)\*(\s)/, '$1-$2').replace(/\s+$/, '')
+  );
+
+// Upstream sections are h3; inside <Update> they should render a level higher.
+const demoteHeadings = lines =>
+  mapOutsideFences(lines, line =>
+    line.replace(/^(#{3,6})(\s+)/, (_, hashes, sp) => hashes.slice(1) + sp)
+  );
+
+// Upstream occasionally leaves a bullet marker with no text after it, which
+// renders as a stray empty list item.
+const dropEmptyBullets = lines =>
+  mapOutsideFences(lines, line => (/^\s*[-*+]\s*$/.test(line) ? null : line)).filter(
+    line => line !== null
+  );
+
+// Upstream ships section headers with nothing under them (e.g. a bare
+// "### DEPENDENCIES"); rendering those as empty headings looks like a bug.
+function dropEmptyHeadings(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#{2,6}\s+/.test(lines[i])) {
+      let hasContent = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^#{2,6}\s+/.test(lines[j])) break;
+        if (lines[j].trim()) {
+          hasContent = true;
+          break;
+        }
+      }
+      if (!hasContent) continue;
+    }
+    out.push(lines[i]);
+  }
+  return out;
+}
+
+function trimBlankEdges(lines) {
+  let a = 0;
+  let b = lines.length;
+  while (a < b && !lines[a].trim()) a++;
+  while (b > a && !lines[b - 1].trim()) b--;
+  return lines.slice(a, b);
+}
+
+// Slice the changelog on `##` version boundaries. Only header lines are
+// interpreted; everything between them is body text.
+function sliceByVersion(content, versionFilter = null, unreleasedAs = null) {
   const lines = content.split('\n');
   const updates = [];
-  let currentVersion = null;
-  let currentDate = null;
-  let sections = {};
-  let currentSection = null;
-  let skipUntilVersion = true;
+  let current = null;
+  let skipping = true;
+
+  const flush = () => {
+    if (!current) return;
+    let body = trimBlankEdges(current.lines);
+
+    // Some products put the release date on its own italic line under the
+    // header rather than in it; lift it into the label instead of leaving it
+    // stranded at the top of the body.
+    if (body.length) {
+      // Italic or bold, and upstream is inconsistent about the space after the
+      // comma (e.g. "*January 23,2026*").
+      const d = body[0].match(/^\*{1,2}([A-Z][a-z]+ \d{1,2},\s*\d{4})\*{1,2}$/);
+      if (d) {
+        if (!current.date) current.date = d[1].replace(/,\s*/, ', ');
+        body = trimBlankEdges(body.slice(1));
+      }
+    }
+
+    body = trimBlankEdges(
+      dropEmptyHeadings(dropEmptyBullets(normalizeBullets(escapeMdx(demoteHeadings(body)))))
+    );
+    if (body.length) {
+      updates.push({
+        version: current.version,
+        date: current.date,
+        body: body.join('\n'),
+      });
+    }
+    current = null;
+  };
 
   for (const line of lines) {
-    // Skip main changelog header
-    if (line.match(/^#\s+Changelog/i)) continue;
+    // Skip the document title
+    if (/^#\s+Changelog/i.test(line)) continue;
 
-    // Handle unreleased section
-    if (line.match(/^##\s*\[?Unreleased\]?(?:\([^)]*\))?/i)) {
+    if (/^##\s*\[?Unreleased\]?(?:\([^)]*\))?/i.test(line)) {
+      flush();
       if (unreleasedAs) {
-        // Treat as a named version entry
-        if (currentVersion && Object.keys(sections).length > 0) {
-          updates.push({ version: currentVersion, date: currentDate, sections });
-        }
-        currentVersion = unreleasedAs;
-        currentDate = '';
-        sections = {};
-        currentSection = null;
-        skipUntilVersion = false;
+        current = { version: unreleasedAs, date: '', lines: [] };
+        skipping = false;
       } else {
-        skipUntilVersion = true;
+        skipping = true;
       }
       continue;
     }
 
-    // Match version headers
-    const versionMatch = line.match(/^##\s*\[?([vV]?\d+\.\d+(?:\.(?:\d+|x))?)\]?(?:\([^)]*\))?\s*(?:-\s*(.+))?$/);
-
+    const versionMatch = line.match(
+      /^##\s*\[?([vV]?\d+\.\d+(?:\.(?:\d+|x))?)\]?(?:\([^)]*\))?\s*(?:-\s*(.+))?$/
+    );
     if (versionMatch) {
-      skipUntilVersion = false;
-
-      // Save previous version if exists
-      if (currentVersion && Object.keys(sections).length > 0) {
-        updates.push({
-          version: currentVersion,
-          date: currentDate,
-          sections: sections,
-        });
-      }
-
-      // Start new version
-      currentVersion = versionMatch[1];
-      currentDate = versionMatch[2] || '';
-      sections = {};
-      currentSection = null;
+      flush();
+      current = {
+        version: versionMatch[1],
+        date: (versionMatch[2] || '').trim(),
+        lines: [],
+      };
+      skipping = false;
       continue;
     }
 
-    if (skipUntilVersion) continue;
-    if (!line.trim() || line.match(/^[-=]+$/)) continue;
+    if (skipping || !current) continue;
+    current.lines.push(line);
+  }
+  flush();
 
-    // Match section headers
-    const sectionMatch = line.match(/^###\s+(.+)$/);
-    if (sectionMatch) {
-      currentSection = sectionMatch[1].trim();
-      if (!sections[currentSection]) {
-        sections[currentSection] = [];
-      }
-      continue;
-    }
-
-    // Collect changes
-    if (currentVersion && (line.startsWith('- ') || line.startsWith('* ') || line.match(/^\s+\*/))) {
-      const cleanedLine = sanitizeLine(line.trim().replace(/^[*-]\s*/, ''));
-      if (currentSection) {
-        sections[currentSection].push(cleanedLine);
-      } else {
-        if (!sections['Changes']) sections['Changes'] = [];
-        sections['Changes'].push(cleanedLine);
-      }
+  // Fallback: a changelog with no recognizable version headers is emitted whole
+  // rather than dropped, so a format change surfaces as odd output, not silence.
+  if (updates.length === 0 && !versionFilter) {
+    const body = trimBlankEdges(dropEmptyBullets(normalizeBullets(escapeMdx(demoteHeadings(content.split('\n'))))));
+    if (body.length) {
+      console.warn('  ⚠ No version headers found; emitting changelog as one entry');
+      return [{ version: 'latest', date: '', body: body.join('\n') }];
     }
   }
 
-  // Add the last version
-  if (currentVersion && Object.keys(sections).length > 0) {
-    updates.push({
-      version: currentVersion,
-      date: currentDate,
-      sections: sections,
-    });
-  }
-
-  // Fallback: if nothing parsed, create a single update with available content
-  if (updates.length === 0) {
-    console.warn('  ⚠ No versions parsed from changelog, creating fallback entry');
-    const nonEmpty = lines.filter(l => l.trim().length).slice(0, 100);
-    updates.push({
-      version: 'latest',
-      date: '',
-      sections: {
-        'Changes': nonEmpty.map(l => sanitizeLine(l.trim()))
-      }
-    });
-  }
-
-  // Apply version filter if specified
-  if (versionFilter) {
-    return updates.filter(u => u.version.startsWith(versionFilter));
-  }
-
-  return updates;
+  return versionFilter
+    ? updates.filter(u => u.version.startsWith(versionFilter))
+    : updates;
 }
 
-// Generate Mintlify content
 function generateMintlifyContent(updates, repo, product, target) {
   const productLabel = product.toUpperCase();
   const versionLabel = updates[0]?.version || target;
@@ -332,20 +365,14 @@ mode: "wide"
   This page tracks releases and changes for ${versionLabel}. For the full release history, see the [CHANGELOG](${changelogUrl}) on GitHub.
 </Info>
 
-${updates.map(update => {
-  const label = update.date || 'Release';
-  const sectionsContent = Object.entries(update.sections)
-    .map(([sectionName, items]) => {
-      if (items.length === 0) return '';
-      return `## ${sectionName}\n\n${items.map(item => `- ${item}`).join('\n')}`;
-    })
-    .filter(s => s)
-    .join('\n\n');
-
-  return `<Update label="${label}" description="${update.version}" tags={["${productLabel}", "Release"]}>
-${sectionsContent}
+${updates
+  .map(update => {
+    const label = update.date || 'Release';
+    return `<Update label="${label}" description="${update.version}" tags={["${productLabel}", "Release"]}>
+${update.body}
 </Update>`;
-}).join('\n\n')}
+  })
+  .join('\n\n')}
 `;
 
   return content;
@@ -403,7 +430,7 @@ async function generateChangelog(config, productConfig, target) {
     productConfig.changelogPath
   );
 
-  let updates = parseChangelog(changelog, versionFilter, config.unreleasedAs);
+  let updates = sliceByVersion(changelog, versionFilter, config.unreleasedAs);
 
   if (config.currentOnly) updates = updates.slice(0, 1);
 
