@@ -97,11 +97,15 @@ url: "https://example.com"
 Mintlify preserves special characters in anchor IDs. Rules:
 
 - Spaces become `-`
+- `.` becomes `-` (e.g. `v0.53.x` becomes `#v0-53-x`)
 - `&`, `+`, `=`, `@`, `#`, `$`, `%` are kept with surrounding hyphens (e.g. `Gas & Fees` becomes `#gas-&-fees`)
-- `/` is kept as-is, no surrounding hyphens (e.g. `x/gov` becomes `#x/gov`)
-- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*`, `.` are dropped (surrounding spaces still become `-`)
+- `/` is kept, percent-encoded (e.g. `x/params` becomes `#x%2Fparams`)
+- `?`, `!`, `(`, `)`, `:`, `` ` ``, `—`, `*` are dropped (surrounding spaces still become `-`)
 - `-` in a heading stays as `-`, spaces around it collapse (e.g. `A - B` becomes `#a-b`)
 - All characters lowercased
+- Adjacent replacements collapse to one `-`
+
+Smart punctuation rewrites headings before slugging; copy anchors from a render.
 
 ## snippets/
 

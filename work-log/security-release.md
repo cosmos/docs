@@ -480,3 +480,24 @@ Reviewed every "Next steps" section across the 14 pages. All links resolved alre
 Left as-is: create-ml-dsa-account, best-practices, rotate-validator-key-poa, configure-backend, rotate-key-remote-signer. remote-signing carries six items, which is a lot, but it is the section hub. configuration-reference and migrate-from-tmkms have two each, defensible for a reference page and a one-way migration.
 
 Net +5 bullets and -1. Slightly against the trimming direction, but these are navigation rather than prose, and each addition covers a place a reader previously stopped. Link count unchanged at the four known /sdk/latest/keys/ items.
+
+## 2026-07-28 (Mintlify anchor rules: corrected in CLAUDE.md)
+
+Evan reported a broken anchor on sdk/next/upgrade/v0.55.mdx. Root cause turned out to be CLAUDE.md's anchor rule table, which said `.` is dropped from heading slugs. It is not: it becomes a hyphen.
+
+Verified empirically by rendering a scratch page with headings varying the punctuation, then clicking both candidate anchors for each. Results:
+- `.` becomes `-`. Confirmed on v0.53.x, v0.39, 1.2.3, a.b, v1.0, and e.g. Every dropped-dot form failed; every hyphenated form worked.
+- `/` is kept and must be percent-encoded in the fragment: `Removed: x/params` is `#removed-x%2Fparams`. CLAUDE.md was already right that the slash is kept; my hypothesis that it hyphenates was wrong.
+- Markdown smart punctuation runs before slugification, so the character in the file is not always the character in the anchor. `Ellipsis... in a heading` becomes `#ellipsis…-in-a-heading`, with three dots collapsed into a single U+2026 that is then kept literally.
+- Adjacent replacements collapse to one hyphen: `Use e.g. sparingly` is `#use-e-g-sparingly`, not `#use-e-g--sparingly`.
+- Colon confirmed dropped, consistent with the existing rule.
+
+Fixed the three references to the reported anchor: v0.55.mdx:8 and :25, plus the cross-page one at v0.55-release.mdx:73, all `#upgrading-from-v053x` to `#upgrading-from-v0-53-x`. Nothing else on the upgrade guides touched, per scope.
+
+Updated CLAUDE.md's Anchor Links section: moved `.` out of the dropped set into its own rule with examples, added the `%2F` requirement for slashes, added the collapse rule, and added a paragraph warning that smart punctuation transforms heading text before slugging, so anchors for headings with punctuation beyond letters, digits, spaces and hyphens must be copied from a render rather than derived. Also recorded that `npx mint broken-links` validates page paths only and never checks fragments, which is why this class of error has always shipped silently.
+
+Scope check before acting further, read-only: 2,965 headings across 570 pages contain a dot or slash. Of the anchors actually referencing them, 147 are wrong specifically because a dot was dropped, almost all in ibc migration pages replicated across four version directories (`#cosmos-sdk-v050-upgrade`, `#ics20---transfer`, `#ics27---interchain-accounts`). A separate 664 anchors do not resolve for unrelated reasons: renamed or missing headings, and at least one percent-encoded `?` where the rule says `?` is dropped. So roughly 800 anchors in this repo do not resolve and nothing in CI has ever checked.
+
+Deliberately not swept. None of the 147 touch sdk/next/keys, sdk/next/kms, or any page in the release surface, so this does not block the release. The 664 bucket will contain false positives from smart-punctuation cases I have not characterised, and my slugifier is a model of a system that surprised us twice in one sitting. The durable fix is a linter that checks fragments against the `id` attributes of a rendered page rather than against any written-down rule; that would have caught all ~800 without modelling anything. Filed as post-release work.
+
+Scratch test page sdk/next/anchor-rule-test.mdx deleted; it was never registered in docs.json and no reference to it remains.
