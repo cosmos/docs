@@ -63,6 +63,7 @@ After every freeze, add a `latest` version entry to the product's dropdown in `d
 3. Set `"version": "<displayVersion>"`, `"tag": "Latest"`, `"default": true`
 4. Give `next` the `"tag": "Unreleased"` field
 5. Order: `latest [Latest, default]` → `next [Unreleased]` → stable archived newest-first
+6. Check redirects to make sure they are redirected properly.
 
 ### Version format validation
 
