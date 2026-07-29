@@ -1,0 +1,86 @@
+---
+title: "Create an ML-DSA account"
+description: "Create a post-quantum user account with the keyring and move funds into it; there is no in-place migration for accounts."
+---
+
+This guide creates a user account backed by `ml_dsa_65`, the post-quantum signature algorithm, and moves funds into it. Accounts do not rotate. An existing account keeps its key for life, so moving to post-quantum means a new account and a transfer. For what ML-DSA is and when account migration matters, see [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).
+
+Commands use `simd`. Substitute your chain's binary and adjust key names and denoms.
+
+{/*
+Manual verification setup (hidden, macOS). Reproduces a running chain with a funded source account, using simd/simapp.
+Build: from the cosmos-sdk repo run `make build`, then put ./build/simd on PATH as `simd`.
+
+simd init mynode --chain-id my-chain-1 --home ~/.node
+simd config set client chain-id my-chain-1 --home ~/.node
+simd config set client keyring-backend test --home ~/.node
+simd keys add old-account --keyring-backend test --home ~/.node
+simd keys add validator --keyring-backend test --home ~/.node
+simd genesis add-genesis-account old-account 100000000000stake --keyring-backend test --home ~/.node
+simd genesis add-genesis-account validator 100000000000stake --keyring-backend test --home ~/.node
+simd genesis gentx validator 1000000000stake --chain-id my-chain-1 --keyring-backend test --home ~/.node
+simd genesis collect-gentxs --home ~/.node
+sed -i '' 's/timeout_commit = ".*"/timeout_commit = "1s"/' ~/.node/config/config.toml
+sed -i '' 's/minimum-gas-prices = ".*"/minimum-gas-prices = "0stake"/' ~/.node/config/app.toml
+simd start --home ~/.node
+# then follow the guide (use --home ~/.node on each command). The bank sends need --chain-id/--keyring-backend
+# from client config, and the first send FROM pq-account needs --gas auto (already shown in step 3).
+*/}
+
+## Know the limits first
+
+- CLI only. Wallet support for ML-DSA accounts is minimal; expect to manage the account with the chain CLI.
+- No hardware wallets. Ledger devices sign with `secp256k1` only. Recovery works from the mnemonic alone.
+- No EVM. EVM transactions require `eth_secp256k1` account keys, so ML-DSA accounts do not work with the EVM. See the EVM section of [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).
+
+## Prerequisites
+
+- The chain runs Cosmos SDK 0.55 or later, on every node.
+- A running chain to send transactions to, with its CLI binary on your PATH and a funded account in the keyring. To stand up a local chain first, see [Run a node](/sdk/latest/node/run-node).
+
+Enabling ML-DSA accounts needs no chain configuration beyond the SDK version. Upgrading to 0.55 is sufficient, but every validator and node must run it: a binary built with an older SDK cannot process ML-DSA signatures.
+
+## 1. Create the account
+
+Generate the account with the keyring and select the ML-DSA algorithm:
+
+```shell
+simd keys add pq-account --key-type ml_dsa_65 --home ~/.node --keyring-backend test
+```
+
+Use the same `--home` and `--keyring-backend` on every command in this guide. Without them the key lands in a different keyring from your funded account, and the transfer in step 2 fails to find it.
+
+The output shows the new address and a mnemonic. Store the mnemonic securely. No hardware wallet can hold this key, so the mnemonic is the only recovery path. To recover the account later:
+
+```shell
+simd keys add pq-account --recover --key-type ml_dsa_65 --home ~/.node --keyring-backend test
+```
+
+<Warning>Do not create an ML-DSA account from a mnemonic already used for a `secp256k1` account. ML-DSA key generation derives its seed from the same secp256k1 BIP32 path, so at that path the secp256k1 private key and the ML-DSA seed are the same secret. Reusing the mnemonic links the two keys: whoever obtains that secret controls both. Generate each ML-DSA account from a fresh mnemonic.</Warning>
+
+## 2. Move funds in
+
+There is no in-place migration for accounts by design. Send funds from the old account with an ordinary transfer:
+
+```shell
+simd tx bank send old-account "$(simd keys show pq-account -a --home ~/.node --keyring-backend test)" 1000000stake --from old-account --home ~/.node --keyring-backend test
+```
+
+Add `--chain-id` if your client config does not supply it, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price.
+
+## 3. Verify the account signs
+
+Prove the new key works by sending from it:
+
+```shell
+simd tx bank send pq-account "$(simd keys show old-account -a --home ~/.node --keyring-backend test)" 1stake --from pq-account --gas auto --gas-adjustment 1.5 --home ~/.node --keyring-backend test
+```
+
+You may need to raise the gas limit for this transfer. The account's first transaction writes its public key to state, and an ML-DSA public key is large enough that a default limit of 200000 runs out of gas. `--gas auto` sizes the limit to fit. Later transactions from the account are smaller and fit within the default.
+
+A successful send from `pq-account` means the chain accepted an ML-DSA signature for the account. Drain and retire the old account afterwards.
+
+## Next steps
+
+- Understand what post-quantum protection the account now has. See [Post-quantum keys](/sdk/latest/keys/post-quantum-keys).
+- Validators migrate differently, by key rotation. See [Migrate a validator to ML-DSA](/sdk/latest/keys/migrate-validator-ml-dsa).

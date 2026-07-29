@@ -1,0 +1,62 @@
+---
+title: "Remote signing best practices"
+description: "Choose and defend a signing architecture: placement, transport, key separation, and the one-signer rule."
+---
+
+A remote signing setup is a set of trust decisions: where the signer runs, how the connection is secured, and which keys are protected to what degree. This page states the recommended defaults and the reasoning, so a setup can be defended in a security review rather than inherited by accident.
+
+## Place the signer in its own trust domain
+
+Run the signer on a separate host, in a separate network segment, with network ACLs between it and the validator. The validator node is the exposed machine: it peers with the public network and sees frequent maintenance. The signing host should do exactly one job, accept no inbound connections, and be reachable by as few people and systems as possible.
+
+The signer dials out to the validator, so this layout costs nothing: the signing host needs no open ports at all. The validator's privval listener is the only listening side; bind it to a private interface and firewall it so only the signing host can reach it.
+
+Choose the layout by the deployment:
+
+- A separate host with a network firewall is the default and reduces the attack surface the most.
+- If the validator sits behind a sentry node, network isolation is already in place, so running the signer locally is reasonable.
+- If cost is a constraint, running both processes on the same host still keeps the key in custody and off the node's disk, an acceptable tradeoff for the core benefit of remote signing.
+
+In the two local layouts the key still never touches disk, but the signer process and its credentials live on the exposed machine.
+
+Every layout adds some network latency between node and signer, so weigh that against the isolation each one provides.
+
+## Prefer the Noise transport
+
+Two transports secure the privval connection; the address scheme in `kms.yaml` selects between them. The default `tcp://` uses CometBFT's SecretConnection: the signer authenticates itself to the validator with its identity key. The validator's listener uses an ephemeral key, so the signer cannot verify it is talking to the right validator.
+
+The `noise://` transport closes that gap with mutual pinning. Each side asserts a stable peer ID: the signer's derives from its identity key, the validator's from its node key. Each side refuses a connection from any unexpected peer. Exchange the two peer IDs out of band and pin them:
+
+```shell
+kms peer-id --home ~/.kms
+```
+
+```shell
+cometbft show-node-id --libp2p --home ~/.node
+```
+
+Use `noise://` for any deployment where the signer and validator cross a network you do not fully control.
+
+## Protect keys according to their power
+
+The consensus key is the asset; keep it in the HSM or cloud KMS and never in a file on production hosts. The signer's identity key (`identity.json`) only authenticates the connection: it signs no consensus messages, and losing it means re-pinning a new peer ID, not a compromise. The two keys do not need the same protection level. Treating the identity key as low value keeps operational friction down.
+
+## Signer, chain, and key topology
+
+One signer can sign for several chains at once. Each chain is backed by exactly one key, so a single signer can hold several keys, one per chain. For redundancy, one signer can also connect to more than one node on the same chain, such as a primary and a backup. Only one live signer may hold a given key, as the next section explains.
+
+## Run exactly one signer per validator
+
+Double-sign protection lives in the signer's per-chain state file, which records the highest height, round, and step ever signed. That protection assumes one writer. Two signer instances holding the same consensus key with separate or missing state files can each sign the same height, which is a double sign.
+
+<Danger>Never run two signer instances against the same validator key, because this can cause double signing.</Danger>
+
+## Keep the gRPC listener off consensus paths
+
+The optional gRPC SignerService performs no caller authentication or authorization: any client that reaches the listener can use every configured key. If the service is enabled, front it with TLS, restrict it with network policy, and give it only the keys it exists to serve.
+
+## Next steps
+
+- Set up the backend that holds the key. See [Configure a signing backend](/sdk/latest/kms/configure-backend).
+- Look up transport and connection fields. See the [configuration reference](/sdk/latest/kms/configuration-reference).
+- Rotate the consensus key without moving it out of custody. See [Rotate a consensus key held in Cosmos-KMS](/sdk/latest/kms/rotate-key-remote-signer).
