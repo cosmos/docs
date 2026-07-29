@@ -50,7 +50,7 @@ Frequent rotations may raise the cost of keeping a light client current. Each ro
 
 Rotation resets the validator's proposer priority. CometBFT orders validators by a proposer priority value. That value decides when a validator's turn to propose comes up. A rotation sends the validator to the back of that order. This holds even if the validator was next in line to propose.
 
-### Mixed key types slow down
+### Slower signature verification
 
 A validator set with mixed consensus key types verifies signatures more slowly. CometBFT batch-verifies signatures when every validator uses the same key type. Batch verification is faster than checking each signature on its own. One validator on a different key type breaks batching. Verification then falls back to one signature at a time, which can slow block times. This applies whenever the set holds more than one key type, not only during a rotation.
 
@@ -63,15 +63,16 @@ In-progress rotations survive a genesis export. A chain exported mid-rotation ca
 Rotation ships in both validator models. On staked chains, it is the `x/staking` implementation described above; for the procedure, see [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key). Chains running `enterprise/poa` get the same rotation with two differences. The admin can rotate any validator's key, not only the operator. And because PoA has no slashing or evidence handling, the safety rails above do not apply: no fee, no rate limit, no rotation history, and the state swap happens in the block the transaction lands. For the procedure, see [Rotate a consensus key, PoA](/sdk/next/keys/rotate-validator-key-poa).
 
 <Warning>
-Vote extensions are not supported on PoA chains. PoA chains running custom logic that resolves a validator from a `LastCommit` address or that use vote extensions may experience unexpected behavior during the two-height delay after a rotation. Read on for more details.
+Vote extensions are not supported on PoA chains. PoA chains running custom logic that resolves a validator from a `LastCommit` address or that uses vote extensions may experience unexpected behavior during the two-height delay after a rotation. Read on for more details.
 </Warning>
 
 The PoS and PoA models differ in how they handle CometBFT's two-height delay. After a key rotation, CometBFT keeps signing `LastCommit` with the old consensus address for two heights. Staking waits out those heights before swapping its own state and keeps a historical address mapping, so the old address still resolves to its validator. PoA swaps immediately and keeps no mapping, so during those two heights it cannot resolve the old address that `LastCommit` still carries. A stock PoA chain never notices, because it runs neither x/distribution nor x/slashing (the modules that generally read those addresses). However, custom logic that resolves a validator from a `LastCommit` address on a PoA chain will not find a rotating validator for those two heights, which can lead to unexpected behavior.
 
-For this reason, vote extensions are not supported on PoA chains. The chain verifies a vote-extension signature by the `LastCommit` address. If a validator rotates its key during the two-height delay, the chain will reject the vote extension because the `LastCommit` address will not resolve to the validator. The standard `ValidateVoteExtensions` helper returns an error on the first commit vote whose LastCommit address it cannot resolve, before it tallies any voting power. One rotating validator that signed the previous block is therefore enough to have the whole extended commit rejected, whatever its share of voting power.
+For this reason, vote extensions are not supported on PoA chains. The chain verifies a vote-extension signature by the `LastCommit` address. If a validator rotates its key during the two-height delay, the chain will reject the vote extension because the `LastCommit` address will not resolve to the validator. The standard `ValidateVoteExtensions` helper returns an error on the first commit vote whose `LastCommit` address it cannot resolve, before it tallies any voting power. One rotating validator that signed the previous block is therefore enough to have the whole extended commit rejected, whatever its share of voting power.
 
 ## Next steps
 
-- Perform a rotation. See [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key).
+- Perform a rotation on a staked chain. See [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key).
+- Perform a rotation on a PoA chain. See [Rotate a consensus key, PoA](/sdk/next/keys/rotate-validator-key-poa).
 - Understand the key types. See [Post-quantum keys](/sdk/next/keys/post-quantum-keys).
 - Look up the message, parameters, and state layout. See the [x/staking module reference](/sdk/next/modules/staking/README#msgrotateconspubkey).

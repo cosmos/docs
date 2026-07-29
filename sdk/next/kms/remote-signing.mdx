@@ -10,7 +10,7 @@ This page covers remote signing for validators and Cosmos-KMS, the Cosmos stack'
 
 Remote signing splits a validator into two processes: a node that participates in consensus, and a signer that holds the consensus key and produces signatures on the node's behalf. The node handles blocks, gossip, and peers; the signer holds the one secret that matters.
 
-Separating the two keeps signing secure and makes the node replaceable. The key moves off the node's exposed filesystem into a hardware security module (HSM) or a cloud key service, where the people and automation that maintain the node never touch it. And because the node holds no secrets, it can be rebuilt, upgraded, or replaced at will. Once replaced, the signer reconnects and signing continues.
+Separating the two keeps signing secure and makes the node replaceable. The key moves off the node's exposed filesystem into a hardware security module (HSM) or a cloud key service, where the people and automation that maintain the node never touch it. And because the node holds no secrets, it can be rebuilt, upgraded, or replaced at will. Once it is replaced, the signer reconnects and signing continues.
 
 CometBFT supports this through privval, the seam between the node and whatever holds the key. With `priv_validator_laddr` set in `config.toml`, the node signs nothing locally: it listens for a signer connection and sends each vote and proposal out for signature. The wire protocol carries four requests: sign this vote, sign this proposal, return the public key, and a keepalive ping. The node does not necessarily care what is on the other end.
 
@@ -35,7 +35,7 @@ The [`cosmos-kms`](https://github.com/cosmos/kms) repo is a remote signer for Co
 - PKCS#11: a hardware security module, signing on-device through the standard HSM interface.
 - AWS KMS: a key that never leaves AWS KMS, using standard AWS credentials and IAM.
 
-Cosmos-KMS is designed to work with existing validator infrastructure, and validators are recommended to use it over previous remote-signing solutions. If you run [TMKMS](https://github.com/iqlusioninc/tmkms) today, see [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms).
+Cosmos-KMS is designed to work with existing validator infrastructure, and validators should prefer it over previous remote-signing solutions. If you run [TMKMS](https://github.com/iqlusioninc/tmkms) today, see [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms).
 
 Cosmos-KMS speaks the CometBFT privval protocol, so it can sign for any node that implements that protocol.
 
@@ -43,7 +43,7 @@ Cosmos-KMS speaks the CometBFT privval protocol, so it can sign for any node tha
 
 A running signer comes down to five moving parts:
 
-- Configuration: one file, `kms.yaml`, in three blocks, the chains it signs for, the validators it dials, and the keys binding each chain to exactly one backend. The `kms init` command scaffolds it; `kms start` serves until stopped.
+- Configuration: one file, `kms.yaml`, in three blocks: the chains it signs for, the validators it dials, and the keys binding each chain to exactly one backend. The `kms init` command scaffolds it; `kms start` serves until stopped.
 - Signing: requests travel the privval connection, the backend signs in place, on disk, on the HSM, or inside AWS KMS, and only the signature returns. The private key never crosses the wire.
 - Connection: the signer dials out, so the signing host needs no inbound ports. The address scheme selects the transport: `tcp://` uses CometBFT's SecretConnection, and `noise://` adds mutual peer pinning, where each side refuses any connection from an unexpected peer.
 - Key types: over privval, the signer signs `ed25519`, `secp256k1eth`, and post-quantum `mldsa65`, plus `secp256k1` on the AWS KMS backend; the gRPC signer service signs `ed25519`, `secp256k1eth`, and `secp256k1`, but not `mldsa65`, which has no gRPC signature scheme and is privval-only. For per-backend support, see [Configure a signing backend](/sdk/next/kms/configure-backend).

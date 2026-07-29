@@ -1,0 +1,79 @@
+---
+noindex: true
+title: "v0.55 Release Notes"
+description: "What's new in the 2026.1 Ledger Security release: post-quantum keys, validator consensus key rotation, and remote signing with Cosmos-KMS."
+---
+
+<Note>
+  If you are upgrading to v0.55, see the [upgrade guide](/sdk/next/upgrade/v0.55). For a full list of changes, see the [changelog](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/CHANGELOG.md).
+</Note>
+
+{/* TODO: add the ship date to the Overview, and the exact TMKMS deprecation date, once the release date is locked. */}
+{/* TODO: the v0.54 release notes carried Upcoming items for IBC on any EVM network, IFT, and the IBC v2 relayer. Those belong to the interop release and need re-dating before they appear here. Not carried forward yet. */}
+
+## Overview
+
+This release is a holistic upgrade to the security of the Cosmos Stack. It adds the first native post-quantum key option in Cosmos, in-place validator consensus key rotation with no downtime, and a remote signer that keeps validator keys in your own KMS or HSM.
+
+All four artifacts ship together and join the existing 2026.1 release family. For the versions each family pins, see [Release Families](/sdk/next/release-family).
+
+## What ships
+
+| Artifact | Version | What changed |
+| -------- | ------- | ------------ |
+| [Cosmos SDK](https://github.com/cosmos/cosmos-sdk) | v0.55.0 | ML-DSA account and consensus keys, consensus key rotation through `x/staking`, keyring key types |
+| [CometBFT](https://github.com/cometbft/cometbft) | v0.40.0 | ML-DSA consensus key support and remote signer compatibility |
+| [enterprise/poa](https://github.com/cosmos/cosmos-sdk/tree/main/enterprise/poa) | v1.1.0 | Consensus key rotation for PoA validators, by the operator or the chain admin |
+| [cosmos-kms](https://github.com/cosmos/kms) | v1.0.0 | First release of the remote signer |
+
+## Features
+
+### Post-quantum keys (ML-DSA)
+
+Chains can run ML-DSA for consensus and user-account keys. ML-DSA keys use lattice-based signatures, which are considered more quantum resistant than elliptic-curve-based keys. New chains set the allowed key types through consensus params; existing chains migrate one validator at a time, and a validator-led path moves a classical key to ML-DSA in place with no hard fork.
+
+A chain reaches post-quantum security once validators holding two-thirds of voting power have rotated to ML-DSA keys, the same threshold CometBFT uses to finalize blocks.
+
+See [Post-quantum keys](/sdk/next/keys/post-quantum-keys) for the tradeoffs, [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys) to allow the type on a chain, and [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa) for the per-validator path.
+
+### Validator consensus key rotation
+
+Staked validators rotate a consensus key in place, keeping the validator's address, voting power, and accumulated fees, so the rotation stays invisible to delegators. Before this, a compromised or policy-expired consensus key meant standing up a new validator and rebuilding the delegator base.
+
+The operator submits `MsgRotateConsPubKey` with the new consensus public key, and CometBFT applies the change two heights later, which lets the operator bring up the new node with no downtime. Each rotation burns the `key_rotation_fee` staking parameter, a validator can rotate once per unbonding period, and a rotated-away key stays attributable for slashing until equivocation evidence for it can no longer be admitted.
+
+See [Key rotation](/sdk/next/keys/key-rotation) for the mechanics and security implications, and [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key) for the procedure. PoA chains follow [Rotate a consensus key, PoA](/sdk/next/keys/rotate-validator-key-poa).
+
+### Remote signing with Cosmos-KMS
+
+`cosmos-kms` is a new remote signing solution that signs on the validator's behalf while keys stay in your own HSM or cloud KMS rather than in local files on the node. It adds AWS KMS and PKCS#11 backends and post-quantum ML-DSA signing, none of which TMKMS supported.
+
+See [Cosmos-KMS and remote signing](/sdk/next/kms/remote-signing) for the architecture, and the [remote signing tutorial](/sdk/next/kms/tutorial-file-backend) to run one against a local chain.
+
+## Removals and deprecations
+
+### TMKMS deprecation notice
+
+This release begins the deprecation of TMKMS. TMKMS reaches official deprecation six months from this release, so operators running it have that window to move to `cosmos-kms`.
+
+Validators using TMKMS should migrate. See [Migrate from TMKMS](/sdk/next/kms/migrate-from-tmkms), which covers moving each TMKMS backend to `cosmos-kms`.
+
+### Removed in v0.55
+
+- `x/params`, replaced by per-module params.
+- `x/protocolpool`, with the community pool returning to `x/distribution`.
+- `SIGN_MODE_TEXTUAL`.
+
+See the [upgrade guide](/sdk/next/upgrade/v0.55) for the wiring changes each removal requires.
+
+## Upgrading
+
+Upgrading to Cosmos SDK v0.55.0 bumps CometBFT to v0.40.0 automatically, so you do not upgrade CometBFT separately. Coordinate the upgrade across the validator set, since it moves the SDK and CometBFT together.
+
+We document the [0.54 to 0.55 upgrade path](/sdk/next/upgrade/v0.55), which also includes a [section on upgrading from 0.53 directly to 0.55](/sdk/next/upgrade/v0.55#upgrading-from-v053x). Module upgrades work across the last two SDK versions.
+
+## Upcoming
+
+- Enterprise HSM and key custody. AWS KMS supports ML-DSA signatures through Cosmos-KMS in this release. Other HSM and KMS solutions will be supported in a future release.
+- Post-quantum support for attestors and signers.
+- Ledger-layer confidential transactions.

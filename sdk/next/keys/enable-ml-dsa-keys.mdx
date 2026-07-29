@@ -12,12 +12,12 @@ For background on ML-DSA and the key types, see [Post-quantum keys](/sdk/next/ke
 
 ## Prerequisites
 
-- The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later. See the [release notes](/sdk/next/upgrade/release).
+- The chain runs Cosmos SDK 0.55 and CometBFT 0.40 or later. See the [release notes](/sdk/next/upgrade/v0.55-release).
 - [jq](https://jqlang.org/) and [curl](https://curl.se/). The commands derive the proposal payload with jq and read the validator set with curl.
 - The chain's CLI binary on your PATH, with RPC access to a node. To stand up a local chain, see [Run a node](/sdk/next/node/run-node).
 - For a live chain: the ability to pass a governance proposal, and an account funded for the proposal deposit and gas.
 
-Commands use `simd`; substitute your chain's binary. Key names and denoms are the only values to adjust, and each appears once.
+Commands use `simd`; substitute your chain's binary, and adjust key names and denoms to your own.
 
 {/*
 Manual verification setup (hidden, macOS). Reproduces a running chain with governance for the live-chain path, using simd/simapp.
@@ -55,8 +55,6 @@ curl -s localhost:26657/validators | jq -r '.result.validators[].pub_key.type'
 
 The output shows registered type names, one per validator: `tendermint/PubKeyEd25519` for ed25519 keys, `cometbft/PubKeyMlDsa65` for ML-DSA keys.
 
-The first command shows what the chain allows; the second shows what the set uses. The gap between them is your migration progress once validators start rotating.
-
 ## New chain: set the types in genesis
 
 Add `ml_dsa_65` to `consensus.params.validator.pub_key_types` in `genesis.json` before launch:
@@ -70,7 +68,6 @@ Add `ml_dsa_65` to `consensus.params.validator.pub_key_types` in `genesis.json` 
 Keep `ed25519` in the list unless every genesis validator starts on an ML-DSA key. Validators whose key type is not in the list cannot join the set. A genesis validator starts on an ML-DSA key by initializing its node with `simd init <moniker> --consensus-key-algo ml_dsa_65`, and a local ML-DSA testnet comes from the same flag on `simd testnet init-files` or `simd testnet start`.
 
 <Warning>`simd init --consensus-key-algo` replaces the genesis `pub_key_types` list with only the chosen algorithm. A chain that should accept both types must re-add `ed25519` to the list after init, or ed25519 validators cannot join.</Warning>
-
 
 ## Live chain: expand the types through governance
 
@@ -94,7 +91,7 @@ simd query consensus params -o json \
   > params.json
 ```
 
-2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination. Also add `--chain-id` and `--keyring-backend` if your client config does not supply them, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price:
+2. You can then submit the file's contents as a governance proposal. The command takes the four param groups as separate arguments, sliced from the same file. Make sure to update the following command to include your key and correct deposit amount/denomination. Add `--home` pointing at your node's home, since the transaction commands on this page read the keyring from it. Also add `--chain-id` and `--keyring-backend` if your client config does not supply them, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price:
 
 ```shell
 simd tx consensus update-params-proposal "$(jq -c .block params.json)" "$(jq -c .evidence params.json)" "$(jq -c .validator params.json)" "$(jq -c .abci params.json)" --title "Allow ML-DSA validator keys" --summary "Add ml_dsa_65 to consensus pub_key_types" --deposit 10000000stake --from mykey -y
@@ -109,7 +106,7 @@ simd tx gov vote <proposal-id> yes --from mykey
 When it passes, the new list is live.
 
 <Warning>
-The update replaces the entire params object, so every group must be present. If `params.json` is missing `block`, `evidence`, or `validator`, the `jq -c` substitution above emits `null` and the CLI rejects the command before it is submitted, with `invalid argument "null": proto: syntax error`. Submitting the same gap through a proposal JSON file instead fails later at execution with "all parameters must be present", after the deposit and voting period are already spent. Either way, always start from the queried current params and change only the key type list.
+The update replaces the entire params object, so every group must be present. If `params.json` is missing `block`, `evidence`, or `validator`, the `jq -c` substitution above emits `null` and the CLI rejects the command before it is submitted, with `invalid argument "null": proto: syntax error`. Always start from the queried current params and change only the key type list.
 </Warning>
 
 ## Verify
@@ -132,5 +129,5 @@ Do not remove a key type while validators still use it. Existing validators are 
 
 ## Next steps
 
-- Move validators to the new key type by rotation. See [Rotate a consensus key, Staking](/sdk/next/keys/rotate-validator-key).
-- Understand the rotation mechanics first. See [Key rotation](/sdk/next/keys/key-rotation).
+- Understand the rotation mechanics before touching a production validator. See [Key rotation](/sdk/next/keys/key-rotation).
+- Migrate a validator to the new key type. See [Migrate a validator to ML-DSA](/sdk/next/keys/migrate-validator-ml-dsa).

@@ -23,7 +23,7 @@ Consensus params decide which algorithms consensus keys may use on a given chain
 
 ## What post-quantum means
 
-Every algorithm in the stack except `ml_dsa_65` is based on an elliptic curve. A sufficiently powerful quantum computer running [Shor's algorithm](https://en.wikipedia.org/wiki/Shor%27s_algorithm) breaks elliptic curve cryptography outright: no key size makes a curve safe. Account keys, operator keys, and consensus keys therefore share the same long-term exposure, and whenever practical quantum hardware arrives, curve-based signatures stop being trustworthy. To counter this, the `ml_dsa_65` key algorithm is introduced. 
+Every algorithm in the stack except `ml_dsa_65` is based on an elliptic curve. A sufficiently powerful quantum computer running [Shor's algorithm](https://en.wikipedia.org/wiki/Shor%27s_algorithm) breaks elliptic curve cryptography outright: no key size makes a curve safe. Account keys, operator keys, and consensus keys therefore share the same long-term exposure, and when practical quantum hardware arrives, curve-based signatures stop being trustworthy. To counter this, the `ml_dsa_65` key algorithm is introduced.
 
 ## How ML-DSA works
 
@@ -35,23 +35,23 @@ With the addition of this key algorithm, nothing about the signing workflow chan
 
 ## Is hashing post-quantum secure?
 
-Yes, the SHA-256 hash functions that underpin Cosmos SDK and CometBFT (block transaction hashes, merkle trees over application state, etc.) are considered post-quantum secure. Unlike RSA and elliptic-curve cryptography, which are broken by Shor's algorithm, the best known quantum attack against generic hash functions is [Grover's algorithm](https://en.wikipedia.org/wiki/Grover%27s_algorithm). Grover's algorithm provides only a quadratic speedup, reducing SHA-256's preimage resistance from 256 bits to about 128 bits, which is still considered secure. Collision resistance, the property that matters for merkle trees and transaction hashes, was already about 128 bits classically and is essentially unaffected.
+Yes, the SHA-256 hash function that underpins the Cosmos SDK and CometBFT (block transaction hashes, merkle trees over application state, etc.) are considered post-quantum secure. Unlike RSA and elliptic-curve cryptography, which are broken by Shor's algorithm, the best known quantum attack against generic hash functions is [Grover's algorithm](https://en.wikipedia.org/wiki/Grover%27s_algorithm). Grover's algorithm provides only a quadratic speedup, reducing SHA-256's preimage resistance from 256 bits to about 128 bits, which is still considered secure. Collision resistance, the property that matters for merkle trees and transaction hashes, was already about 128 bits classically and is essentially unaffected.
 
 ## Who can adopt ML-DSA?
 
-Only account keys and consensus keys can use `ml_dsa_65`. The node key stays `ed25519` and merely identifies a node to its peers, and module accounts and smart contract accounts hold funds without any key at all, so neither has anything to migrate.
+Only account keys and consensus keys can use `ml_dsa_65`. The node key stays `ed25519` and merely identifies a node to its peers, and module accounts and smart contract accounts hold funds without any key at all, so none of them has anything to migrate.
 
 Adoption differs by role. A user can generate a new ML-DSA account and move funds into it at any time, with no chain-level permission required; there is no in-place migration for accounts. A validator migrates its consensus key in place through key rotation, which does require the chain to allow `ml_dsa_65` in consensus params first.
 
 ## When is a chain considered post-quantum?
 
-Consensus security follows voting power. A chain's consensus becomes post-quantum secure once at least two thirds of voting power signs with post-quantum consensus keys, because two thirds is the threshold an attacker must forge to break finality. Account security is individual: each account is exactly as secure as its own key. 
+Consensus security follows voting power. A chain's consensus becomes post-quantum secure once at least two thirds of voting power signs with post-quantum consensus keys, because two thirds is the threshold an attacker must forge to break finality. Account security is individual: each account is exactly as secure as its own key.
 
 ## The cost of post-quantum keys
 
 Post-quantum security trades larger keys and signatures for quantum resistance. Signatures dominate the added cost because every block commit carries one per validator, so the totals below scale with the validator set.
 
-A single ML-DSA signature is about 3,300 bytes, over 50 times an ed25519 signature. Every block stores one per validator, which drives the block-data growth shown below.
+A single ML-DSA signature is about 3,300 bytes, over 50 times the size of an ed25519 signature. Every block stores one per validator, which drives the block-data growth shown below.
 
 The example below assumes 100 validators and six-second blocks.
 
@@ -63,13 +63,13 @@ The example below assumes 100 validators and six-second blocks.
 | Total block size, with ~4 KB fixed overhead | ~10 KB | ~335 KB |
 | Total block data per year | ~56 GB | ~1.8 TB |
 
-Signing and verification are slightly slower than `ed25519`. This is unlikely to affect most chains.
+Signing and verification are slightly slower than with `ed25519`. This is unlikely to affect most chains.
 
 ## IBC considerations
 
 A chain migrating to ML-DSA consensus keys must be aware that this change affects IBC verification.
 
-Any counterparty chains that verify an ML-DSA-enabled chain with an `07-tendermint` light client must be upgraded to CometBFT v0.40 or later. An older client fails as soon as the first ML-DSA validator joins the set, so every counterparty must upgrade to v0.40 before any validator can rotate to ML-DSA.
+Any counterparty chain that verifies an ML-DSA-enabled chain with an `07-tendermint` light client must be upgraded to CometBFT v0.40 or later. An older client fails as soon as the first ML-DSA validator joins the set, so every counterparty must upgrade to v0.40 before any validator can rotate to ML-DSA.
 
 ML-DSA signatures also enlarge block headers, which enlarges the IBC client updates that carry them. CometBFT v0.40 raises its signature-size limits to accommodate the larger signatures.
 
@@ -81,6 +81,7 @@ Ethereum's path to post-quantum accounts runs through account abstraction instea
 
 ## Next steps
 
-- Upgrade first; every flow on this page requires SDK 0.55 and CometBFT 0.40. See the [release notes](/sdk/next/upgrade/release).
+- Upgrade first; every flow on this page requires SDK 0.55 and CometBFT 0.40. See the [release notes](/sdk/next/upgrade/v0.55-release).
+- Create a post-quantum user account and move funds into it. See [Create an ML-DSA account](/sdk/next/keys/create-ml-dsa-account).
 - Allow `ml_dsa_65` on a new or live chain. See [Enable ML-DSA keys](/sdk/next/keys/enable-ml-dsa-keys).
 - Learn how rotation works before touching a production validator. See [Key rotation](/sdk/next/keys/key-rotation).

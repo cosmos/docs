@@ -54,7 +54,7 @@ Use the same `--home` and `--keyring-backend` on every command in this guide. Wi
 The output shows the new address and a mnemonic. Store the mnemonic securely. No hardware wallet can hold this key, so the mnemonic is the only recovery path. To recover the account later:
 
 ```shell
-simd keys add pq-account --recover --key-type ml_dsa_65
+simd keys add pq-account --recover --key-type ml_dsa_65 --home ~/.node --keyring-backend test
 ```
 
 <Warning>Do not create an ML-DSA account from a mnemonic already used for a `secp256k1` account. ML-DSA key generation derives its seed from the same secp256k1 BIP32 path, so at that path the secp256k1 private key and the ML-DSA seed are the same secret. Reusing the mnemonic links the two keys: whoever obtains that secret controls both. Generate each ML-DSA account from a fresh mnemonic.</Warning>
@@ -67,26 +67,19 @@ There is no in-place migration for accounts by design. Send funds from the old a
 simd tx bank send old-account "$(simd keys show pq-account -a --home ~/.node --keyring-backend test)" 1000000stake --from old-account --home ~/.node --keyring-backend test
 ```
 
-Both transfers here are ordinary transactions. They read the signing key and chain ID from your client config; add `--chain-id`, `--keyring-backend`, and `--home` if that config does not supply them, and set `--fees` (or `--gas-prices`) to meet the chain's minimum gas price.
+Add `--chain-id` if your client config does not supply it, and `--fees` (or `--gas-prices`) to meet the chain's minimum gas price.
 
 ## 3. Verify the account signs
 
-Confirm the balance arrived:
+Prove the new key works by sending from it:
 
 ```shell
-simd query bank balances "$(simd keys show pq-account -a)"
-```
-
-Then prove the new key works by sending from it:
-
-```shell
-simd tx bank send pq-account "$(simd keys show old-account -a)" 1stake --from pq-account --gas auto --gas-adjustment 1.5
+simd tx bank send pq-account "$(simd keys show old-account -a --home ~/.node --keyring-backend test)" 1stake --from pq-account --gas auto --gas-adjustment 1.5 --home ~/.node --keyring-backend test
 ```
 
 You may need to raise the gas limit for this transfer. The account's first transaction writes its public key to state, and an ML-DSA public key is large enough that a default limit of 200000 runs out of gas. `--gas auto` sizes the limit to fit. Later transactions from the account are smaller and fit within the default.
 
 A successful send from `pq-account` means the chain accepted an ML-DSA signature for the account. Drain and retire the old account afterwards.
-
 
 ## Next steps
 
