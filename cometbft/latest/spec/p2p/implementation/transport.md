@@ -43,9 +43,9 @@ The `NetAddress` method exports the listen address configured for the transport.
 The maximum number of simultaneous incoming connections accepted by the listener
 is bound to `MaxNumInboundPeer` plus the configured number of unconditional peers,
 using the `MultiplexTransportMaxIncomingConnections` option,
-in the node [initialization](https://github.com/cometbft/cometbft/blob/v0.40.x/node/setup.go#L459).
+in the node [initialization](https://github.com/cometbft/cometbft/blob/v0.34.x/node/node.go#L563).
 
-This method is called when a node is [started](https://github.com/cometbft/cometbft/blob/v0.40.x/node/node.go#L699).
+This method is called when a node is [started](https://github.com/cometbft/cometbft/blob/v0.34.x/node/node.go#L974).
 In case of errors, the `acceptPeers` routine is not started and the error is returned.
 
 ## Accept
@@ -190,7 +190,7 @@ an `ErrRejected` error with reason `isIncompatible` is returned.
 The `Close` method closes the TCP listener created by the `Listen` method,
 and sends a signal for interrupting the `acceptPeers` routine.
 
-This method is called when a node is [stopped](https://github.com/cometbft/cometbft/blob/v0.40.x/node/node.go#L764).
+This method is called when a node is [stopped](https://github.com/cometbft/cometbft/blob/v0.34.x/node/node.go#L1023).
 
 ## Cleanup
 

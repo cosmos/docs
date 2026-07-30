@@ -13,7 +13,7 @@ The PoA module implements a custom fee distribution mechanism based on validator
 
 Fees flow through the PoA system differently than standard Cosmos SDK:
 
-1. **Block Fees**: Transaction fees collected in each block go to the PoA module account (see [Fee Routing Setup](#fee-routing-setup))
+1. **Block Fees**: Transaction fees collected in each block go to the `fee_collector` module account by default, or to the PoA module account if configured (see [Fee Routing Setup](#fee-routing-setup))
 
 2. **Checkpoint System**: Allocated fees are updated for validators when:
    - Any validator power changes
@@ -21,7 +21,7 @@ Fees flow through the PoA system differently than standard Cosmos SDK:
 
 **Why Checkpointing?**: Ensures fair distribution when power changes. If power changes mid-period, fees are allocated based on old power distribution before the change takes effect.
 
-**Location**: [`x/poa/keeper/distribution.go:32`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/distribution.go#L32)
+**Location**: [`x/poa/keeper/distribution.go:18`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/distribution.go#L18)
 
 ## Distribution Algorithm
 
@@ -119,7 +119,7 @@ After this checkpoint, $A_{total}(t+1) = B_{collector}(t)$ (all fees are now all
 
 ## Withdrawing Fees
 
-**MsgWithdrawFees** ([`x/poa/keeper/msg_server.go:182`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/msg_server.go#L182))
+**MsgWithdrawFees** ([`x/poa/keeper/msg_server.go:91`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/msg_server.go#L91))
 
 Any validator operator can withdraw accumulated fees:
 
@@ -137,7 +137,7 @@ Withdrawal:    100 utokens transferred to operator
 Remainder:     0.7543 utokens remain allocated (less than least significant utoken digit)
 ```
 
-**Location**: [`x/poa/keeper/distribution.go:135`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/distribution.go#L135)
+**Location**: [`x/poa/keeper/distribution.go:106`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/distribution.go#L106)
 
 ## Withdrawal Formula
 
@@ -164,7 +164,7 @@ Where:
 
 ## Fee Routing Setup
 
-PoA has its own module account for collecting fees. Enabling the PoA module account is required to keep fee accounting isolated and accurate. The chain panics at block 1 if the ante handler's fee recipient is not the PoA module.
+PoA has its own module account for collecting fees. Enabling the PoA module account is recommended to keep fee accounting isolated and accurate. If not enabled, fees are deposited into the standard `fee_collector` account by default. 
 
 To enable the PoA module account, two wiring changes are required:
 
@@ -186,7 +186,7 @@ app.AccountKeeper = authkeeper.NewAccountKeeper(
 )
 ```
 
-**Source**: [`simapp/app.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/simapp/app.go#L182-L194)
+**Source**: [`simapp/app.go`](https://github.com/cosmos/cosmos-sdk/blob/7bc1b146d437d834d971f415924104188203c96f/enterprise/poa/simapp/app.go#L191)
 
 ### 2. Configure the Ante Handler
 
@@ -210,7 +210,9 @@ anteDecorators := []sdk.AnteDecorator{
 }
 ```
 
-**Source**: [`simapp/ante.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/simapp/ante.go#L41-L56)
+**Source**: [`simapp/ante.go`](https://github.com/cosmos/cosmos-sdk/blob/7bc1b146d437d834d971f415924104188203c96f/enterprise/poa/simapp/ante.go#L49)
+
+`WithFeeRecipientModule` is backwards compatible — omitting it defaults to the standard `fee_collector` behavior.
 
 ## Security Considerations
 
