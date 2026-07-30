@@ -50,11 +50,11 @@ The `DialPeersAsync` method receives a list of peer addresses (strings)
 and dials all of them in parallel.
 It is invoked in two situations:
 
-- In the [setup](https://github.com/cometbft/cometbft/blob/v0.34.x/node/node.go#L987)
+- In the [setup](https://github.com/cometbft/cometbft/blob/v0.40.x/node/node.go#L712)
 of a node, to establish connections with every configured persistent peer
 - In the RPC package, to implement two unsafe RPC commands, not used in production:
-  [`DialSeeds`](https://github.com/cometbft/cometbft/blob/v0.34.x/rpc/core/net.go#L47) and
-  [`DialPeers`](https://github.com/cometbft/cometbft/blob/v0.34.x/rpc/core/net.go#L87)
+  [`DialSeeds`](https://github.com/cometbft/cometbft/blob/v0.40.x/rpc/core/net.go#L51) and
+  [`DialPeers`](https://github.com/cometbft/cometbft/blob/v0.40.x/rpc/core/net.go#L94)
 
 The received list of peer addresses to dial is parsed into `NetAddress` instances.
 In case of parsing errors, the method returns. An exception is made for

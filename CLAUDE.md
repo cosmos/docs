@@ -154,13 +154,17 @@ Two things are version-pinned and do not follow the freeze on their own:
 grep -rn 'description: "Version: v' sdk/next --include='*.mdx'
 ```
 
-**GitHub links pinned to the previous release branch.** Pages link into the product repo at `release/v0.<N>.x` (SDK) or `v0.<N>.x` (CometBFT), and those refs keep pointing at the old version:
+**GitHub links pinned to the previous release branch.** Pages link into the product repo at `release/v0.<N>.x` (SDK) or `v0.<N>.x` (CometBFT), and those refs keep pointing at the old version. Use the checker rather than a find-and-replace:
 
 ```bash
-grep -rhoE 'github\.com/cosmos/cosmos-sdk/(blob|tree)/release/v[0-9.]+x' <product>/next --include='*.mdx' | sort | uniq -c
+node scripts/versioning/check-github-refs.js --product <product> --targets next --json /tmp/flags.json
 ```
 
-Do not blind-replace these. Pinned tags and commit SHAs are deliberate historical citations, and bumping a ref under a `#L` line anchor can leave the link working while pointing at unrelated code. See the GitHub link section in [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for the rules and the measured failure rates.
+Review the report, then apply the safe rewrites with `--fix`. It bumps only what it can prove is safe and flags the rest.
+
+Do not blind-replace these by hand. Pinned tags and commit SHAs are deliberate historical citations, and bumping a ref under a `#L` line anchor can leave the link working while pointing at unrelated code. See the GitHub link section in [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for the rules and the measured failure rates.
+
+Hand the `--json` output to the [`update-stale-refs`](.claude/skills/update-stale-refs/SKILL.md) skill, which decides whether a flagged link means the page's prose needs a correction.
 
 A stale ref is often a symptom rather than the problem. A link that 404s at its current ref usually means the prose describes something upstream deleted, so check what the page claims before repointing the URL.
 
