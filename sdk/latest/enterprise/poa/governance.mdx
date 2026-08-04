@@ -13,7 +13,7 @@ The PoA module integrates with Cosmos SDK governance to restrict participation t
 
 The PoA module restricts governance participation to authorized validators only through governance hooks.
 
-**Governance Hooks** ([`x/poa/keeper/hooks.go`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/hooks.go))
+**Governance Hooks** ([`x/poa/keeper/hooks.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/hooks.go))
 
 The module implements `govtypes.GovHooks`:
 
@@ -29,13 +29,13 @@ The module implements `govtypes.GovHooks`:
 **Rejected Actions**:
 - If non-validator attempts governance action → transaction fails
 - If validator has power = 0 → transaction fails
-- Error: "voter X is not an active PoA validator"
+- Error: "voter X is not an active POA validator"
 
-**Location**: [`x/poa/keeper/governance.go:92`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/governance.go#L92)
+**Location**: [`x/poa/keeper/governance.go:115`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/governance.go#L115)
 
 ## Voting Power
 
-**Custom Vote Tallying** ([`x/poa/keeper/governance.go:18`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/governance.go#L18)). An example of the wiring can be found in the [SimApp](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/simapp/app.go#L197-214).
+**Custom Vote Tallying** ([`x/poa/keeper/governance.go:38`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/governance.go#L38)). An example of the wiring can be found in the [SimApp](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/simapp/app.go#L214-L224).
 
 Standard governance uses staked tokens as voting weight. PoA governance uses validator power:
 
@@ -96,7 +96,7 @@ Where:
 
 ### 1. Proposal Submission
 
-**[MsgSubmitProposal](https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/gov/v1/tx.proto#L54-L65)** (standard x/gov module)
+**[MsgSubmitProposal](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/gov/v1/tx.proto#L57-L88)** (standard x/gov module)
 
 When a proposal is submitted:
 
@@ -112,7 +112,7 @@ When a proposal is submitted:
 
 ### 2. Deposit Period
 
-**[MsgDeposit](https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/gov/v1/tx.proto#L90-L98)** (standard x/gov module)
+**[MsgDeposit](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/gov/v1/tx.proto#L153-L166)** (standard x/gov module)
 
 When a deposit is made:
 
@@ -125,7 +125,7 @@ When a deposit is made:
 
 ### 3. Voting Period
 
-**[MsgVote](https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/gov/v1/tx.proto#L100-L108)** or **[MsgVoteWeighted](https://github.com/cosmos/cosmos-sdk/blob/main/proto/cosmos/gov/v1/tx.proto#L110-L118)** (standard x/gov module)
+**[MsgVote](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/gov/v1/tx.proto#L111-L127)** or **[MsgVoteWeighted](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/proto/cosmos/gov/v1/tx.proto#L132-L148)** (standard x/gov module)
 
 When a vote is cast:
 
@@ -146,7 +146,7 @@ When a vote is cast:
 
 At the end of the voting period, the [custom tally function](#vote-tallying-algorithm) is called:
 
-**NewPoACalculateVoteResultsAndVotingPowerFn** ([`x/poa/keeper/governance.go:18`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/governance.go#L18))
+**NewPOACalculateVoteResultsAndVotingPowerFn** ([`x/poa/keeper/governance.go:38`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/governance.go#L38))
 
 1. Iterate all votes on the proposal
 2. For each vote, look up the validator by voter address
@@ -165,13 +165,13 @@ At the end of the voting period, the [custom tally function](#vote-tallying-algo
 
 ### Governance Hooks
 
-**Location**: [`x/poa/keeper/hooks.go`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/hooks.go)
+**Location**: [`x/poa/keeper/hooks.go`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/hooks.go)
 
 The module implements the `govtypes.GovHooks` interface:
 
 ```
 type GovHooks interface {
-    AfterProposalSubmission(ctx, proposalID, depositorAddr)
+    AfterProposalSubmission(ctx, proposalID, proposerAddr)
     AfterProposalDeposit(ctx, proposalID, depositorAddr)
     AfterProposalVote(ctx, proposalID, voterAddr)
     // ... other hooks
@@ -179,23 +179,23 @@ type GovHooks interface {
 ```
 
 Each hook implementation:
-1. Extracts the operator address from the context
+1. Receives the operator address from the governance hook
 2. Looks up the validator by operator address
 3. Checks if validator exists and has power > 0
 4. Returns error if validation fails
 
 ### Custom Tally Function
 
-**Location**: [`x/poa/keeper/governance.go:18`](https://github.com/cosmos/cosmos-sdk/blob/main/enterprise/poa/x/poa/keeper/governance.go#L18)
+**Location**: [`x/poa/keeper/governance.go:38`](https://github.com/cosmos/cosmos-sdk/blob/release/v0.55.x/enterprise/poa/x/poa/keeper/governance.go#L38)
 
 The tally function replaces the standard governance tally:
 
 ```go
-func NewPoACalculateVoteResultsAndVotingPowerFn(keeper) TallyFn {
+func NewPOACalculateVoteResultsAndVotingPowerFn(keeper) TallyFn {
     return func(ctx, proposal) (totalVotingPower, results) {
         // Iterate votes
         for vote in votes(proposal) {
-            validator = keeper.GetValidatorByOperator(vote.voter)
+            validator = keeper.GetValidatorByOperatorAddress(vote.voter)
             if validator == nil || validator.Power <= 0 {
                 continue // Skip non-authorized validators
             }
