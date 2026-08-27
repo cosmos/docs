@@ -2,16 +2,19 @@ export const ThemeToggle = () => {
   const [mode, setMode] = useState('');
 
   useEffect(() => {
-    // Try to read active mode from Mintlify's hidden buttons
-    for (const m of ['light', 'dark']) {
-      const btn = document.querySelector(`[data-testid="mode-switch-${m}"]`);
-      if (btn && btn.classList.contains('bg-gray-200')) {
-        setMode(m);
-        return;
-      }
+    // Mintlify applies the resolved theme as a class on <html>, which is true
+    // regardless of which theme control version the theme ships.
+    const root = document.documentElement;
+    if (root.classList.contains('dark')) {
+      setMode('dark');
+      return;
     }
-    // Fall back to localStorage / OS preference
-    const stored = localStorage.getItem('isDarkMode');
+    if (root.classList.contains('light')) {
+      setMode('light');
+      return;
+    }
+    // Fall back to stored preference / OS preference
+    const stored = localStorage.getItem('theme') || localStorage.getItem('isDarkMode');
     if (stored === 'dark' || stored === 'light') {
       setMode(stored);
     } else {
@@ -19,23 +22,55 @@ export const ThemeToggle = () => {
     }
   }, []);
 
-  const handleSwitch = (newMode) => {
-    // Delegate to Mintlify's hidden button if present
-    const mintBtn = document.querySelector(`[data-testid="mode-switch-${newMode}"]`);
-    if (mintBtn) {
-      mintBtn.click();
-    } else {
-      // Direct fallback: manage dark class and localStorage ourselves
-      const root = document.documentElement;
-      if (newMode === 'dark') {
-        root.classList.add('dark');
-        localStorage.setItem('isDarkMode', 'dark');
-      } else if (newMode === 'light') {
-        root.classList.remove('dark');
-        localStorage.setItem('isDarkMode', 'light');
+  // Delegating to Mintlify's own control keeps the choice in sync with the rest
+  // of the site. Its markup has changed across releases, so try each known shape
+  // before falling back to driving the theme ourselves.
+  const waitForElement = (selector, timeout = 500) =>
+    new Promise((resolve) => {
+      const start = Date.now();
+      const poll = () => {
+        const el = document.querySelector(selector);
+        if (el) return resolve(el);
+        if (Date.now() - start > timeout) return resolve(null);
+        setTimeout(poll, 20);
+      };
+      poll();
+    });
+
+  const clickMintlifyControl = async (newMode) => {
+    // Current: a menu whose items only mount once the trigger is opened.
+    const trigger = document.querySelector('[data-testid="theme-preference-menu-trigger"]');
+    if (trigger) {
+      trigger.click();
+      const item = await waitForElement(`[data-testid="theme-preference-${newMode}"]`);
+      if (item) {
+        item.click();
+        return true;
       }
+      // Menu opened but the item never appeared: close it again.
+      trigger.click();
     }
+
+    // Older releases: a pair of always-present buttons.
+    const btn = document.querySelector(`[data-testid="mode-switch-${newMode}"]`);
+    if (btn) {
+      btn.click();
+      return true;
+    }
+
+    return false;
+  };
+
+  const handleSwitch = async (newMode) => {
     setMode(newMode);
+    if (await clickMintlifyControl(newMode)) return;
+
+    // Direct fallback: manage the theme class and stored preference ourselves.
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(newMode);
+    localStorage.setItem('theme', newMode);
+    localStorage.setItem('isDarkMode', newMode);
   };
 
   const base = "p-1.5 rounded-lg";
