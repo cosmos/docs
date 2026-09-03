@@ -40,7 +40,68 @@ ENUM_ROW = re.compile(r"^\| `(?P<value>[A-Z][A-Z0-9_]+)` \|", re.M)
 
 
 class Unfillable(Exception):
-    """The page gives a reader no way to determine this field."""
+    """The page gives a reader no way to determine this field.
+
+    Carries the field name and, more importantly, the page's own note for
+    it, resolved at the raise site against whichever field table was in
+    scope there. `fill()` rebinds that table when it recurses into a nested
+    type, so a caller resolving the note itself from a top-level table would
+    either miss it or, worse, match an unrelated same-named field at the top
+    level. Reading `note` off the exception avoids both. `field` and `note`
+    are empty only for a whole-example failure not attributable to one key.
+    """
+
+    def __init__(self, message: str, field: str | None = None, note: str = ""):
+        super().__init__(message)
+        self.field = field
+        self.note = note
+
+
+class Incomplete(Exception):
+    """The page parse did not cover everything the generator says it documents."""
+
+
+def assert_complete(version: str, parsed, kind: str) -> None:
+    """Every name the generator recorded must appear in the parse.
+
+    The runners derive their own totals from what they parsed, so a regex that
+    stops matching would shrink the test set and still exit 0. This turns that
+    into a loud failure naming the exact methods.
+    """
+    path = REPO_ROOT / "sdk" / version / "api-reference" / "inventory.json"
+    if not path.exists():
+        raise Incomplete(
+            f"{path} is missing; regenerate with `npm run sync -- --version {version}`"
+        )
+
+    expected = set(json.loads(path.read_text())[kind])
+    missing = sorted(expected - set(parsed))
+    if missing:
+        raise Incomplete(
+            f"the page parse found {len(set(parsed))} of {len(expected)} {kind}; "
+            f"{len(missing)} missing, so a regex in pagefill.py has stopped matching:\n"
+            + "\n".join(f"  {name}" for name in missing)
+        )
+
+
+GENERATED_FROM = re.compile(
+    r"Generated from (?P<repository>[\w./-]+) at commit (?P<sha>[0-9a-f]{40}) "
+    r"on ref\s+`(?P<ref>[\w./-]+)`"
+)
+
+
+def generated_from(version: str) -> tuple[str, str, str]:
+    """Which upstream commit these pages were generated from, and on what ref.
+
+    Recorded in the spec's own description by the generator, so a check cannot
+    disagree with the artifact about what it is checking. Returns
+    (repository, sha, ref).
+    """
+    path = REPO_ROOT / "sdk" / version / "api-reference" / "rest" / "openapi.yaml"
+    found = GENERATED_FROM.search(path.read_text())
+    if not found:
+        raise Incomplete(f"{path} does not record the commit and ref it was generated from")
+    return found.group("repository"), found.group("sha"), found.group("ref")
 
 
 def read_page(page: Path) -> dict:
@@ -78,6 +139,18 @@ def read_page(page: Path) -> dict:
     }
 
 
+def anchor_for(title: str) -> str:
+    """The anchor Mintlify assigns to a `### ` heading.
+
+    Matches `buildMethodHeadings` in lib/render.js exactly: lowercase, drop
+    `(`, `)` and `,`, collapse whitespace to `-`. Most headings are just the
+    method name, but gov ships v1 and v1beta1 in one module, so a page can
+    hold several `### Deposit` headings disambiguated as `Deposit (Query,
+    v1)`; only the generator's own slugging reproduces that anchor.
+    """
+    return re.sub(r"\s+", "-", re.sub(r"[(),]", "", title.lower()).strip())
+
+
 def transactions_on(page: dict, source: Path):
     """Every transaction message the page documents, with its example and tables."""
     for block in SECTION.finditer(page["text"]):
@@ -88,6 +161,7 @@ def transactions_on(page: dict, source: Path):
         yield type_url.group("type"), {
             "example": json.loads(example.group("json")),
             "fields": _fields(body),
+            "anchor": "#" + anchor_for(block.group("title")),
         }
 
 
@@ -102,6 +176,7 @@ def queries_on(page: dict):
         yield command.group("target"), {
             "example": json.loads(payload) if payload else None,
             "fields": _fields(body),
+            "anchor": "#" + anchor_for(block.group("title")),
         }
 
 
@@ -130,7 +205,7 @@ def fill_value(value, note: str, type_cell: str, page: dict, fixtures: dict, fie
 
     if DEC_NOTE.search(note):
         if not page["dec_decimal"]:
-            raise Unfillable("the page does not state how a Dec is written")
+            raise Unfillable("the page does not state how a Dec is written", field=field, note=note)
         # Every Dec written into a transaction is a decimal string, including
         # the ones whose proto type is bytes.
         return "0.05"
@@ -154,7 +229,7 @@ def fill_value(value, note: str, type_cell: str, page: dict, fixtures: dict, fie
         or re.search(r"hex|base64|RFC|must (be|match)|identifier|type URL|query", note, re.I)
     )
     if constrained:
-        raise Unfillable(f"no value or form for `{field}` (placeholder {value})")
+        raise Unfillable(f"no value or form for `{field}` (placeholder {value})", field=field, note=note)
     return "test"
 
 
@@ -191,7 +266,7 @@ def fill(body, page: dict, fixtures: dict, fields=None):
                     "amount": [{"denom": fixtures["denom"], "amount": "1"}],
                 })
                 continue
-            raise Unfillable(f"`{key}` is an Any and the page names no concrete type")
+            raise Unfillable(f"`{key}` is an Any and the page names no concrete type", field=key, note=note)
 
         if isinstance(value, (dict, list)):
             link = TYPE_LINK.search(type_cell)

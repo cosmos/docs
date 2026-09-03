@@ -93,6 +93,14 @@ therefore drops that method from the test set, prints a smaller total, and exits
 Both runners gain a guard: the set parsed from the pages must equal the set the
 descriptor declares. A shortfall fails and names the missing methods.
 
+The descriptor side of that comparison is `inventory.json`, written beside the
+pages: fully qualified method and message names, nothing else. No request or
+response shape, no field list. The invariant this project exists to protect is
+that the pages, not a script's private copy, are the source of truth for what a
+reader can send and expect back; a names-only list cannot violate that, because
+it asserts membership only, never content. Content still comes from parsing the
+page itself.
+
 This is the same shape as the three generator guards, and exists for the same
 reason: a list that had already gone stale once.
 
@@ -129,6 +137,12 @@ so a removed method leaves a visible trace. `skip` entries are still probed, and
 an unexpected success is reported, so a stale entry cannot quietly understate
 what works. That mechanism has already caught five entries being too
 pessimistic. Both properties survive the unification.
+
+`tx-coverage.toml`'s separate `[unfillable]` table folds into `expect =
+"unfillable"` on the case itself. The two tables agreed by construction, since
+an entry could only be in one or the other, so unifying them removes a
+distinction that never carried information rather than aligning two shapes that
+disagreed.
 
 ### 5. Findings as data
 
@@ -185,8 +199,13 @@ It regenerates, runs the unit tests and `verify-examples`, builds simapp at the
 resolved SHA, runs `conformance`, `query-onchain`, and `tx-onchain`, and exits
 non-zero with a findings file if any page publishes something the chain rejects.
 
-`--dry-run` regenerates into a temporary directory and diffs against what is
-committed, touching nothing under `sdk/`.
+`--dry-run` copies the generated tree and `docs.json` to a temporary directory,
+regenerates in place, diffs the result against the copy, then restores from it.
+So `sdk/<version>/api-reference` and `docs.json` are rewritten during the run
+and put back before it exits, rather than left untouched. The restore runs in a
+`finally`, which covers an exception or Ctrl-C but not a kill, so the run prints
+the scratch path first and anything uncommitted under those paths is at risk
+until it finishes.
 
 Run a few times a year with a person watching, so simapp build time and
 occasional flakiness are acceptable and no non-blocking hedge is needed.

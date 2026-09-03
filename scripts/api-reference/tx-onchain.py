@@ -31,10 +31,11 @@ import json
 import re
 import subprocess
 import sys
-import tomllib
 import urllib.request
 from pathlib import Path
 
+import findings
+import manifest
 import pagefill
 
 HERE = Path(__file__).resolve().parent
@@ -86,13 +87,16 @@ def current_sequence(rest: str, address: str) -> int:
         return 0
 
 
-def broadcast(simd, home, chain_id, key, node, message) -> tuple[int, str]:
+def broadcast(simd, home, chain_id, key, node, message, denom) -> tuple[int, str]:
     """Build, sign and broadcast one message, exactly as the transactions page describes."""
+    # The fee denom is the chain's, not a constant: a hardcoded one turns every
+    # message on a chain that names its stake token differently into a fee
+    # failure, which reads as a documentation defect and is not one.
     document = {
         "body": {"messages": [message], "memo": "", "timeout_height": "0",
                  "extension_options": [], "non_critical_extension_options": []},
         "auth_info": {"signer_infos": [],
-                      "fee": {"amount": [{"denom": "ustake", "amount": "5000"}],
+                      "fee": {"amount": [{"denom": denom, "amount": "5000"}],
                               "gas_limit": "400000", "payer": "", "granter": ""}},
         "signatures": [],
     }
@@ -118,21 +122,6 @@ def broadcast(simd, home, chain_id, key, node, message) -> tuple[int, str]:
     return (int(code.group(1)) if code else -1), (raw.group(1).strip()[:160] if raw else output.strip()[:160])
 
 
-def load_manifest() -> dict:
-    path = HERE / "tx-coverage.toml"
-    if not path.exists():
-        return {}
-    return tomllib.loads(path.read_text()).get("messages", {})
-
-
-def load_unfillable() -> dict:
-    """Fields the page is known not to be able to fill, with the reason."""
-    path = HERE / "tx-coverage.toml"
-    if not path.exists():
-        return {}
-    return tomllib.loads(path.read_text()).get("unfillable", {})
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="latest", choices=["latest", "next"])
@@ -141,15 +130,19 @@ def main() -> int:
     parser.add_argument("--chain-id", required=True)
     parser.add_argument("--from", dest="key", default="alice")
     parser.add_argument("--second-key", default="bob")
+    parser.add_argument("--validator-key", default=None,
+                        help="key behind the validator operator account; defaults to --from")
     parser.add_argument("--node", default="tcp://localhost:26657")
     parser.add_argument("--rest", default="http://localhost:1317")
     parser.add_argument("--only", default=None, help="substring filter, for iterating")
+    parser.add_argument("--findings", default="findings-tx-onchain.json")
     args = parser.parse_args()
 
-    def address_of(name):
+    def address_of(name, bech="acc"):
         out = subprocess.run(
-            [args.simd, "keys", "show", name, "-a", "--keyring-backend", "test",
-             "--home", args.home], capture_output=True, text=True)
+            [args.simd, "keys", "show", name, "-a", "--bech", bech,
+             "--keyring-backend", "test", "--home", args.home],
+            capture_output=True, text=True)
         return out.stdout.strip()
 
     with urllib.request.urlopen(
@@ -159,49 +152,140 @@ def main() -> int:
     validator = validators[0]["operator_address"] if validators else ""
 
     fixtures = discover(args.rest, address_of(args.key), address_of(args.second_key), validator)
+
+    def resolve_validator_key() -> str:
+        """The key behind the validator operator address, verified, not assumed.
+
+        Two entries exist precisely to assert that a validator-only message is
+        signed by the validator's own account and not an arbitrary one. Quietly
+        falling back to --from would sign them with an arbitrary account, and
+        they would be recorded as page defects when the page is fine. So the
+        claim is checked against the chain and a mismatch is fatal.
+        """
+        candidate = args.validator_key or args.key
+        if not validator:
+            raise SystemExit(
+                "the coverage file uses signer = \"validator\" but the chain reports no "
+                "validator; point --rest at a chain that has one"
+            )
+        if address_of(candidate, bech="val") != validator:
+            raise SystemExit(
+                f"--validator-key {candidate!r} is not the account behind {validator}. "
+                "Two entries assert that a validator-only message is signed by the "
+                "validator's own account; signing them with another account would "
+                "record a page defect that is not one. Pass the operator's key."
+            )
+        return candidate
+
+    def signer_for(entry):
+        """Which key signs, given the manifest may name a role rather than a key.
+
+        A validator-only message has to be signed by whoever operates the
+        validator, and that is a fact about the chain under test, not about the
+        page. Naming the role keeps a key from one machine's keyring out of the
+        manifest.
+        """
+        name = entry.get("signer")
+        if name is None:
+            return args.key
+        if name == "validator":
+            return resolve_validator_key()
+        return name
+
     pages = {}
     for path, page in pagefill.pages_for(args.version):
         for type_url, block in pagefill.transactions_on(page, path):
             pages[type_url] = {**block, "page": page}
-    manifest = load_manifest()
-    known_gaps = load_unfillable()
+
+    try:
+        pagefill.assert_complete(args.version, pages, "messages")
+    except pagefill.Incomplete as reason:
+        print(f"\n{reason}", file=sys.stderr)
+        return 1
+
+    try:
+        entries = manifest.load(HERE / "tx-coverage.toml", manifest.TX_VOCABULARY,
+                                default="success")
+    except manifest.Invalid as reason:
+        print(reason, file=sys.stderr)
+        return 1
+
+    counts = {"success": 0, "unauthorized": 0, "state-error": 0, "skip": 0}
+    items = []
 
     # Drift both ways. A message added upstream is exercised with defaults; an
-    # entry whose message is gone is reported rather than silently ignored.
-    orphaned = sorted(set(manifest) - set(pages))
-    if orphaned:
-        print("Manifest entries with no matching message, delete them:")
-        for name in orphaned:
-            print(f"  {name}")
-        print()
+    # entry whose message is gone is a finding rather than a printed aside.
+    # Inside release-check this runner's output is one of several multi-minute
+    # logs, and a list that scrolls past a step reporting ok is not the visible
+    # trace the manifest diff is supposed to leave, so recording it here puts it
+    # in the findings file and makes the run exit non-zero.
+    for name in manifest.orphans(entries, pages):
+        counts.setdefault("stale entry", 0)
+        counts["stale entry"] += 1
+        items.append(findings.Finding(
+            page="tx-coverage.toml", anchor="", method=name,
+            claim=entries[name].get("note", ""), sent=None,
+            response="the manifest names a message the pages no longer document; "
+                     "delete the entry",
+            verdict="stale-manifest-entry", manifest_entry=name,
+        ))
+        print(f"  STALE       {name:52} no matching message, delete the entry")
 
     order = []
     for name in sorted(pages):
-        for prerequisite in manifest.get(name, {}).get("requires", []):
+        for prerequisite in entries.get(name, {}).get("requires", []):
             if prerequisite in pages and prerequisite not in order:
                 order.append(prerequisite)
         if name not in order:
             order.append(name)
 
-    counts = {"success": 0, "unauthorized": 0, "state-error": 0, "skip": 0}
-    findings, unfillable = [], []
+    # Resolved before anything is broadcast, not lazily inside the loop. A
+    # mismatch raises SystemExit, and raising it partway through would abandon
+    # the run after messages had already gone to the chain, with findings.write
+    # never reached: release-check would then point the operator at a findings
+    # file still holding the previous run's contents.
+    selected = [name for name in order if not args.only or args.only in name]
+    if any(entries.get(name, {}).get("signer") == "validator" for name in selected):
+        resolve_validator_key()
 
     for name in order:
         if args.only and args.only not in name:
             continue
-        page, entry = pages[name], manifest.get(name, {})
+        page, entry = pages[name], entries.get(name, {})
         expect = entry.get("expect", "success")
 
         try:
             body = pagefill.fill(page["example"], page["page"], fixtures, page["fields"])
         except pagefill.Unfillable as reason:
-            if name in known_gaps:
+            if entry.get("expect") == "unfillable":
                 counts.setdefault("known gap", 0)
                 counts["known gap"] += 1
-                print(f"  KNOWN GAP   {name:52} {known_gaps[name].get('note', '')[:52]}")
+                print(f"  KNOWN GAP   {name:52} {entry.get('note', '')[:52]}")
             else:
-                unfillable.append((name, page["page"]["name"], str(reason)))
+                claim = reason.note
+                items.append(findings.Finding(
+                    page=page["page"]["name"], anchor=page["anchor"], method=name, claim=claim,
+                    sent=None, response=str(reason), verdict="unfillable",
+                    manifest_entry=name if entry else None,
+                ))
                 print(f"  UNFILLABLE  {name:52} {reason}")
+            continue
+
+        if expect == "unfillable":
+            # The manifest says a reader cannot fill this message, and it just
+            # filled. That is the drift the manifest exists to surface, usually
+            # upstream adding the example the page was missing. Reported rather
+            # than broadcast: the recorded expectation is what is now wrong.
+            counts.setdefault("stale entry", 0)
+            counts["stale entry"] += 1
+            items.append(findings.Finding(
+                page=page["page"]["name"], anchor=page["anchor"], method=name,
+                claim=entry.get("note", ""), sent=body,
+                response="the manifest records this as unfillable, but the page filled it; "
+                         "delete the entry or give it an outcome",
+                verdict="stale-manifest-entry", manifest_entry=name,
+            ))
+            print(f"  STALE       {name:52} recorded unfillable, but it filled")
             continue
 
         if expect == "skip":
@@ -209,10 +293,11 @@ def main() -> int:
             print(f"  SKIP        {name:52} {entry.get('note', '')[:60]}")
             continue
 
-        signer_address = address_of(entry.get("signer", args.key))
+        signer = signer_for(entry)
+        signer_address = address_of(signer)
         before = current_sequence(args.rest, signer_address)
-        signer = entry.get("signer", args.key)
-        code, log = broadcast(args.simd, args.home, args.chain_id, signer, args.node, body)
+        code, log = broadcast(args.simd, args.home, args.chain_id, signer, args.node, body,
+                              fixtures["denom"])
         if code == 0:
             wait_for_sequence(args.rest, signer_address, before)
         unauthorized = "unauthorized" in log or "invalid authority" in log
@@ -224,25 +309,23 @@ def main() -> int:
         else:
             ok = code != 0 and not unauthorized
 
-        counts[expect] += ok
+        counts[expect] = counts.get(expect, 0) + ok
         verdict = "PASS" if ok else "FAIL"
         print(f"  {verdict:11} {name:52} code={code} {log[:60]}")
         if not ok:
-            findings.append((name, page["page"]["name"], expect, code, log))
+            items.append(findings.Finding(
+                page=page["page"]["name"], anchor=page["anchor"], method=name,
+                claim=findings.claim_for(page["fields"], body),
+                sent=body, response=f"expected {expect}, got code {code}: {log}",
+                verdict="page-defect", manifest_entry=name if entry else None,
+            ))
 
-    print(f"\n{len(order)} messages: " + ", ".join(f"{v} {k}" for k, v in counts.items() if v))
-
-    if unfillable:
-        print(f"\n{len(unfillable)} fields a reader could not determine from the page:")
-        for name, page_name, reason in unfillable:
-            print(f"  {page_name:18} {name}\n    {reason}")
-
-    if findings:
-        print(f"\n{len(findings)} did not match their expected outcome:")
-        for name, page_name, expect, code, log in findings:
-            print(f"  {page_name:18} {name}\n    expected {expect}, got code {code}: {log}")
-
-    return 1 if findings or unfillable else 0
+    repository, sha, ref = pagefill.generated_from(args.version)
+    document = findings.document(args.version, repository, ref, sha, "tx-onchain", counts, items)
+    findings.write(args.findings, document)
+    print()
+    print(findings.render(document))
+    return 1 if document["totals"]["findings"] else 0
 
 
 if __name__ == "__main__":

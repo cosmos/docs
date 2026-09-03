@@ -140,3 +140,58 @@ Committed as `be4aaf74`: 76 files, the generator and its checks, 21 gRPC pages a
 - Three Schemathesis crash-cache files under `scripts/api-reference/.schemathesis/` were committed by accident. They are run artifacts and should be removed and gitignored.
 - Added `scripts/api-reference/DESIGN.md`, recording the invariant the tooling follows and the eight agreed hardening changes. Chief among them: `sync` has no `--ref` override, so a freeze publishes `main`-generated content under the new release's version number, and the on-chain runners derive their own denominator from the page parse, so a render change can silently drop a method from the test set and still exit 0.
 - Design decision recorded: no scheduled regeneration. Docs versions freeze at release, `latest` must not change between releases, and the release process itself is the gate.
+
+### The release gate is one command
+
+`release-check.py` runs the whole thing: regenerate, unit tests in both languages, example encoding, then conformance, every documented query and every documented message against a chain built from the commit the pages themselves record. `chain.py` does the building, in a working directory of its own, and tears the node down on failure as well as success.
+
+The chain deliberately avoids every default port (RPC 26667, REST 1318, gRPC 9091, P2P 26666, pprof 6061). The obvious reason is that a developer chain on the same machine would block it from binding. The reason that matters is the other one: if the harness fails to start and the runners still find a chain on the defaults, the gate reports somebody else's chain state as the documentation's and passes.
+
+Two portability defects in the transaction runner only became visible once the gate owned the chain:
+
+- The fee denom was hardcoded to `ustake` while the runner already discovers the chain's bond denom for message amounts. On a chain whose stake token is named anything else, all 37 messages failed the ante handler with `insufficient funds`, which reads as 37 documentation defects and is none.
+- Two coverage entries named `dave`, a key out of one machine's keyring, as the validator operator's signer. They now name the role, `validator`, which `tx-onchain.py` resolves from `--validator-key`.
+
+With both fixed the transaction runner reports 37 success, 9 known gaps, 1 skip and one finding.
+
+The workflow lost its schedule. It keeps `workflow_dispatch`, and now defaults to `next` alone, because `latest` is frozen between releases and regenerating it outside one rewrites published pages.
+
+### The two drifted response fields are now repaired, not reported
+
+`findSchemaDrift` already knew that `sig_verify_cost_mldsa65` and `key_rotation_fee` are defined in the protos and absent from upstream's swagger. The generator reported them and then published a schema it knew was incomplete, marked it `additionalProperties: false`, and conformance duly failed on a real response. Two-sided: the gate could never go green, and anyone generating a client from the spec was missing both fields.
+
+`correctResponseSchemas` now adds a descriptor-known field that upstream omits, in the same pass that marks schemas strict and nullable, building the schema from the field's proto type. It only ever runs where upstream declared no property at all, so it cannot change how an operation upstream did describe is represented. The drift report stays, because upstream lagging its own protos is still worth knowing and still worth raising there, but it now names what was repaired. A second drift pass after the repair throws if anything is left, so the two can never disagree again.
+
+Both versions regenerated. The whole change to `latest` is those two fields.
+
+### The gate goes green
+
+`release-check` now ends with `All checks passed. Safe to freeze.` Conformance passes 3023 of 3023 generated cases, `query-onchain` reports 84 pass and no findings, `tx-onchain` 38 success and no findings.
+
+`signer = "validator"` is verified rather than assumed: the runner compares the validator key's `--bech val` address against the operator address the chain reports and refuses to broadcast on a mismatch. The earlier fallback to `--from` would have signed the two validator-only entries with an arbitrary account and recorded a page defect that is not one, which is the same class of noise as the fee denom.
+
+`MsgUnjail` no longer claims `state-error`. Under `--broadcast-mode sync` the runner reads CheckTx's code, so a message that clears the ante handler and then fails in execution reports 0, and the whole `state-error` class is unassertable until the runner reads the delivered code back by transaction hash. The vocabulary comment now says so, and the entry asserts the outcome the runner can actually see.
+
+### The repair is pinned by tests, and a map is an object
+
+The synthesizer had no unit coverage: nothing under `test/` imported `correctResponseSchemas` or `findSchemaDrift`, so the suite passing said nothing about it and its only verification was one conformance run. `test/schema-repair.test.js` now covers each scalar class, an enum and its default, a nested message, repetition, maps, the well-known types, an Any, and every path where the synthesizer declines to describe something, plus the repair end to end on a miniature spec.
+
+Writing them found the bug they were asked for. A `map<k,v>` is `LABEL_REPEATED` in the descriptor, so a map field was being wrapped in an array of the synthetic `{key, value}` entries that JSON renders as a plain object. It synthesizes as `{type: "object", additionalProperties: <value>}` now. Latent, since no map field drifts today.
+
+A field the synthesizer cannot fully describe, a message absent from the descriptor or an unrecognised scalar, becomes an open object or a string. Conformance then accepts that subtree unconditionally and the post-repair drift check reports nothing, because the property does exist. It cannot mis-describe a response but it can under-describe one, so the repair now names what it declined and the generator warns. There are none today.
+
+`tx-onchain.py` no longer crashes when an entry recorded `unfillable` becomes fillable, which is upstream supplying the example a page was missing and precisely the drift the manifest exists to surface. It was reaching `counts[expect] += ok` with a key the counter never had. It is reported as a stale manifest entry now, and not broadcast: what is wrong is the recorded expectation, not the page.
+
+### Hardening, and moving the release procedure into a skill
+
+- Added `--ref` to the generator, so a pre-freeze regeneration can be pointed at the release branch instead of always resolving `next` to `main`; without it, a freeze publishes development content under the new release's version number, which is the bug this closes.
+- Added a names-only `inventory.json` beside the generated pages and a completeness guard in both on-chain runners, so a rendering change can no longer silently drop a method from the test set.
+- Unified `query-coverage.toml` and `tx-coverage.toml` onto one manifest schema, `[cases."name"]`, with a per-runner `expect` vocabulary; `tx-coverage.toml`'s separate `[unfillable]` table folded into `expect = "unfillable"`.
+- Moved error classification out of `query-onchain.py`'s code and into the manifest's `[errors]` table; an error the manifest does not recognize is now reported as `unclassified` rather than guessed.
+- Added a findings file per run, with the terminal summary rendered from it. It is a run artifact and is never committed.
+- Deleted `smoke.py`, folding its two negative assertions and two REST reads into `query-onchain.py`.
+- Added `chain.py` and `release-check.py`: the release gate builds `simd` at the commit the pages record and runs everything against it, on non-default ports (RPC 26667, REST 1318, gRPC 9091) so it cannot collide with, or be mistaken for, a developer's own chain.
+- The generator now repairs response schemas for fields the protos define and upstream's swagger omits, rather than warning and publishing a schema it knows is incomplete.
+- Moved the release procedure out of the root `CLAUDE.md` (a third of a file loaded into every session, for something done three or four times a year) into `.claude/skills/release-version/SKILL.md`, which loads only when someone is doing a release. Corrected `scripts/api-reference/CLAUDE.md`'s command list and test counts (77 JS, 32 Python) and its testing-philosophy section, which had claimed exhaustive live execution was deliberately not attempted; it is now exactly what `query-onchain` and `tx-onchain` do. The weekly regeneration workflow lost its `schedule:` block, since docs versions freeze at release and a cron that can only report drift carries no decision.
+
+

@@ -18,6 +18,7 @@ import path from 'path';
 
 import { parseDescriptor } from '../lib/descriptor.js';
 import { renderModulePage, buildMethodHeadings } from '../lib/render.js';
+import { buildInventory } from '../lib/inventory.js';
 import {
   convertToOpenApi3,
   joinSpecToDescriptor,
@@ -547,5 +548,29 @@ describe('output stability', () => {
       ['bank', 'gov'],
       'ordering must not depend on descriptor file order',
     );
+  });
+});
+
+describe('inventory', () => {
+  test('lists every query method and transaction message, sorted', () => {
+    const { modules } = parseDescriptor(descriptor([...baseDescriptor().file, ...govModule()]));
+    const inventory = buildInventory(modules);
+
+    assert.ok(inventory.queries.includes('cosmos.bank.v1beta1.Query/Balance'));
+    assert.ok(inventory.messages.includes('cosmos.gov.v1.MsgVote'));
+    assert.deepEqual(inventory.queries, [...inventory.queries].sort());
+    assert.deepEqual(inventory.messages, [...inventory.messages].sort());
+  });
+
+  test('a method added upstream appears without any other edit', () => {
+    const { modules } = parseDescriptor(descriptor([...baseDescriptor().file, ...govModule()]));
+    const before = buildInventory(modules).messages.length;
+
+    const service = modules
+      .find((m) => m.name === 'gov').services
+      .find((s) => s.fullName === 'cosmos.gov.v1.Msg');
+    service.methods.push({ name: 'Deposit', inputType: 'cosmos.gov.v1.MsgDeposit', outputType: 'cosmos.gov.v1.MsgDepositResponse' });
+
+    assert.equal(buildInventory(modules).messages.length, before + 1);
   });
 });

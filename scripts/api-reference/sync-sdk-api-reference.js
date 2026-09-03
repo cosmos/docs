@@ -32,6 +32,7 @@ import yaml from 'js-yaml';
 import { parseArgs, resolveRef } from './lib/refs.js';
 import { parseDescriptor } from './lib/descriptor.js';
 import { renderModulePage, buildMethodHeadings } from './lib/render.js';
+import { buildInventory } from './lib/inventory.js';
 import {
   checkScalarAnnotationsDocumented,
   pruneRemovedModulePages,
@@ -182,6 +183,13 @@ async function main() {
     writeFile(path.join(outputRoot, 'grpc', `${module.name}.mdx`), renderModulePage(module, types, context, headings));
   }
 
+  const inventory = buildInventory(selected);
+  writeFile(
+    path.join(outputRoot, 'inventory.json'),
+    `${JSON.stringify(inventory, null, 2)}\n`,
+  );
+  console.log(`  ${inventory.queries.length} query methods, ${inventory.messages.length} messages`);
+
   console.log('Converting gateway spec');
   const swaggerUrl = `https://raw.githubusercontent.com/${repository}/${sha}/${SWAGGER_PATH}`;
   const swagger = yaml.load(await fetchText(swaggerUrl));
@@ -217,17 +225,40 @@ async function main() {
       }
     }
   }
+  // Measured before the correction runs, so it names what upstream lags on.
+  // Worth keeping visible: it is the signal that upstream's swagger and its own
+  // protos have drifted, and it is worth raising there.
   const drift = findSchemaDrift(joined, types, outputByMethod);
   if (drift.length) {
-    console.warn(
-      `  ${drift.length} response fields defined in the protos but absent from upstream's spec:`,
+    console.log(
+      `  ${drift.length} response fields upstream's spec omits, added from the protos:`,
     );
-    for (const entry of drift.slice(0, 12)) console.warn(`    ${entry}`);
-    if (drift.length > 12) console.warn(`    ... and ${drift.length - 12} more`);
+    for (const entry of drift.slice(0, 12)) console.log(`    ${entry}`);
+    if (drift.length > 12) console.log(`    ... and ${drift.length - 12} more`);
   }
 
   const inline = correctResponseSchemas(joined, types, outputByMethod);
-  console.log(`  inline responses: ${inline.marked} nullable, ${inline.strict} strict`);
+  console.log(
+    `  inline responses: ${inline.marked} nullable, ${inline.strict} strict, ${inline.added} added`,
+  );
+
+  // A repaired field the descriptor could not fully describe becomes an open
+  // object, which conformance accepts unconditionally and the drift check below
+  // reports nothing about, because the property does exist. Under-describing is
+  // not a build failure, but it must not be silent.
+  if (inline.declined.length) {
+    console.warn(`  ${inline.declined.length} repaired fields left under-described:`);
+    for (const entry of inline.declined) console.warn(`    ${entry}`);
+  }
+
+  // The repair has to close the gap it just reported, or a conformance run
+  // fails on a response the generator already knew it was not describing.
+  const remaining = findSchemaDrift(joined, types, outputByMethod);
+  if (remaining.length) {
+    throw new Error(
+      `${remaining.length} response fields still absent after the repair: ${remaining.join(', ')}`,
+    );
+  }
 
   const { marked } = allowGatewayNulls(joined, types);
   const { strict, exempt } = requireDeclaredFields(joined, types);

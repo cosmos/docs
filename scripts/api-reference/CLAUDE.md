@@ -7,11 +7,29 @@ Generates the Cosmos SDK API reference: gRPC query services, transaction message
 ```bash
 npm install                       # once, in this directory
 npm run sync -- --version latest  # regenerate one version
-npm test                          # 40 unit tests, no network, ~80ms
+npm test                          # 77 unit tests, no network, ~110ms
+npm run test-py                   # 32 Python unit tests, no network
 npm run verify-examples           # every JSON example parses against the protos
 npm run conformance               # REST responses match published schemas (needs a chain)
-npm run smoke                     # 15 representative commands actually run (needs a chain)
+npm run query-onchain             # all 123 documented queries actually run (needs a chain)
+npm run tx-onchain                # all 48 documented transaction messages actually run (needs a chain)
+npm run release-check             # the whole gate, on a chain it builds itself
 ```
+
+`release-check` is the one command to run before a freeze. It regenerates, runs the
+offline checks, builds `simd` from the exact commit the pages record, starts a chain
+on its own ports, and runs every documented query and message against it. Needs Go,
+Node, git and `schemathesis`; it says which are missing before it builds anything.
+`--dry-run` copies the generated pages and `docs.json` aside, regenerates them in
+place, reports what would change, then restores them from the copy. The tree ends
+where it started, but it is rewritten while the run is in flight, so commit or
+stash uncommitted generated work first. The run prints the scratch directory it
+copied to, which is where the originals are if it is killed before restoring.
+
+The harness chain runs on RPC 26667, REST 1318, gRPC 9091, P2P 26666 and pprof 6061,
+none of them the default. A developer chain on the defaults is therefore neither
+disturbed nor, far worse, mistaken for the chain under test when the harness fails
+to start.
 
 `sync` needs a `GITHUB_TOKEN` in practice. It resolves a branch to a commit SHA through the GitHub API, and unauthenticated requests are rate-limited to the point of failing silently mid-run.
 
@@ -47,7 +65,7 @@ Three facts cannot be derived from the protos, so they are written by hand and t
 | well-known types | a type with a specification-defined JSON form has no entry in `WELL_KNOWN_JSON` | add its JSON representation to `lib/render.js` |
 | transaction envelope | a `cosmos.tx.v1beta1` field is unmentioned in `transactions.mdx` | mention it |
 
-A fourth check warns rather than fails: response fields the protos define and upstream's spec omits. Upstream's swagger is generated separately from the protos and lags them, so this is expected and should not block a build. It currently reports two, both v0.55 additions.
+A fourth condition is repaired rather than reported: response fields the protos define and upstream's spec omits. Upstream's swagger is generated separately from the protos and lags them, so this is expected, but publishing a schema known to be incomplete and then marking it strict fails conformance against a real response and short-changes anyone generating a client. The response-schema correction adds the field from the descriptor. The drift line still names what was repaired, currently two, both v0.55 additions, and a second pass after the repair fails the build if anything is left.
 
 ## Why some things are the way they are
 
@@ -65,6 +83,8 @@ A fourth check warns rather than fails: response fields the protos define and up
 
 ## Testing philosophy
 
-Every defect found in this reference was a class rather than an instance, because a generator makes the same mistake on every page. So the unit tests assert classes, the smoke test samples shapes rather than endpoints, and exhaustive live execution is deliberately not attempted.
+Every defect found in this reference was a class rather than an instance, because a generator makes the same mistake on every page. So the unit tests assert classes rather than instances.
 
-The limit worth knowing: no automated check distinguishes a wrong documented value from missing chain state. A commission rate documented in the wrong encoding fails with a business error, indistinguishable from a chain that simply has no validator. That judgment needs a person, or an agent reading the errors, and is worth re-running when the SDK version changes.
+Live execution is exhaustive: `query-onchain` runs all 123 documented queries and `tx-onchain` all 48 transaction messages, filled from what each page states. A command that cannot be used as written fails there, and the exceptions that genuinely cannot work are recorded in the manifests with a reason.
+
+The limit worth knowing: no automated check distinguishes a wrong documented value from missing chain state. A commission rate documented in the wrong encoding fails with a business error, indistinguishable from a chain that has no validator. That judgment needs a person, or an agent reading the findings file, and is worth re-running when the SDK version changes.

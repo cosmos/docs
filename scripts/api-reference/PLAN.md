@@ -1,6 +1,29 @@
 # API Reference Hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ## Executed and complete. Do not run this plan.
+>
+> All eight tasks in this plan were implemented and landed on 2026-09-03. The
+> code they describe already exists in this directory. The file is kept as a
+> record of how the work was sequenced and why each task was ordered where it
+> was, not as work remaining.
+>
+> The unchecked `- [ ]` boxes below are the plan as it was written before
+> execution, left unticked on purpose so the record reads as the original
+> document rather than a retrofitted checklist. They are not a to-do list.
+>
+> Re-executing any step would be wrong, and two kinds of step would be actively
+> destructive:
+>
+> - The `git commit` invocations are historical. The human partner made every
+>   commit for this work; the plan's commit steps were superseded and were never
+>   run as written.
+> - `git rm smoke.py` and the other file removals already happened. Running them
+>   again operates on a tree that no longer matches the one the plan assumed.
+>
+> For what the system does now and why, read `DESIGN.md`, which is the
+> authority. For how to run it, read `CLAUDE.md` in this directory.
+
+> **For agentic workers (historical, superseded by the completion notice above):** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the generated SDK API reference provably correct for the version it claims, and make its test suite fail loudly rather than silently shrink.
 

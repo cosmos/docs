@@ -1,29 +1,24 @@
 name: Sync SDK API Reference
 
-# Regenerates the Cosmos SDK API reference from upstream protos and the
-# gRPC-gateway spec, and opens a PR when the output changes.
+# Regenerates the SDK API reference on demand.
 #
-# Every generated API reference in this ecosystem that was not regenerated
-# automatically has rotted: the SDK's own /swagger/ page 404s, ibc-go's
-# proto-docs redirects away, Sei deleted theirs. The generator is not what keeps
-# this current; this workflow is.
+# There is no schedule. Docs versions freeze at release, published `latest` does
+# not change between releases, and the release process is the gate: see
+# .claude/skills/release-version/SKILL.md and scripts/api-reference/DESIGN.md.
 #
-# A guard failure is routed to an issue rather than left as a red cron nobody
+# A guard failure is routed to an issue rather than left as a red run nobody
 # watches. Those guards fire when a fact that cannot be derived from the protos
 # needs writing by hand, and they name the exact item.
 
 on:
-  schedule:
-    # Weekly, early Monday UTC.
-    - cron: '17 4 * * 1'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Which version to regenerate'
+        description: 'Which version to regenerate. `latest` is frozen between releases, so regenerating it outside a release rewrites published pages.'
         required: false
-        default: 'both'
+        default: 'next'
         type: choice
-        options: [both, latest, next]
+        options: [next, latest, both]
 
 permissions:
   contents: write
@@ -69,9 +64,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -o pipefail
-          versions="latest next"
+          # next only unless someone deliberately asks for more: `latest` is
+          # frozen between releases and regenerating it rewrites published pages.
+          versions="next"
           if [ "${{ github.event.inputs.version }}" = "latest" ]; then versions="latest"; fi
-          if [ "${{ github.event.inputs.version }}" = "next" ]; then versions="next"; fi
+          if [ "${{ github.event.inputs.version }}" = "both" ]; then versions="latest next"; fi
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
 
           for v in $versions; do
             echo "::group::sync $v"
@@ -85,7 +83,7 @@ jobs:
 
       - name: Validate the OpenAPI specs
         run: |
-          for v in latest next; do
+          for v in ${{ steps.regenerate.outputs.versions }}; do
             ./scripts/api-reference/node_modules/.bin/oas-validate --quiet \
               "sdk/$v/api-reference/rest/openapi.yaml"
           done
@@ -144,7 +142,7 @@ jobs:
             --jq '.[0].number' || true)
 
           body=$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
-            "The weekly regeneration failed. If a guard fired, the log names the exact item that needs a definition; see scripts/api-reference/CLAUDE.md." \
+            "Regeneration failed. If a guard fired, the log names the exact item that needs a definition; see scripts/api-reference/CLAUDE.md." \
             "$(tail -40 /tmp/sync.log 2>/dev/null || echo 'no generator output captured')" \
             "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
 

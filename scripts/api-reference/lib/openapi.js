@@ -276,9 +276,121 @@ export function useProtoFieldNames(spec, types) {
  * document a validator actually checks against. Pairing the inline schema with
  * the method's output message lets both corrections land where they matter.
  */
+/**
+ * Builds a response schema for a field upstream's swagger never declared.
+ *
+ * Upstream's gateway spec is generated separately from the protos and lags
+ * them, so a field the chain returns can be missing from the schema this
+ * reference publishes. Left alone that is a two-sided defect: conformance fails
+ * on a real response, and anyone generating a client from the spec is missing
+ * the field. The descriptor knows the field, so it is repaired rather than
+ * recorded as an exception.
+ *
+ * Only ever called for a field with no property in the schema, so it cannot
+ * change how an operation upstream did describe is represented. The shapes
+ * match what upstream emits for the same proto types: 64-bit integers as
+ * strings, 32-bit as integers, bytes base64, enums as their value names.
+ */
+const SCALAR_SCHEMAS = {
+  double: { type: 'number', format: 'double' },
+  float: { type: 'number', format: 'float' },
+  int64: { type: 'string', format: 'int64' },
+  sint64: { type: 'string', format: 'int64' },
+  sfixed64: { type: 'string', format: 'int64' },
+  uint64: { type: 'string', format: 'uint64' },
+  fixed64: { type: 'string', format: 'uint64' },
+  int32: { type: 'integer', format: 'int32' },
+  sint32: { type: 'integer', format: 'int32' },
+  sfixed32: { type: 'integer', format: 'int32' },
+  // Upstream widens the unsigned 32-bit types, which do not fit an int32.
+  uint32: { type: 'integer', format: 'int64' },
+  fixed32: { type: 'integer', format: 'int64' },
+  bool: { type: 'boolean' },
+  string: { type: 'string' },
+  bytes: { type: 'string', format: 'byte' },
+};
+
+// Rendered as a JSON scalar rather than as their proto fields.
+const WELL_KNOWN_SCHEMAS = {
+  'google.protobuf.Timestamp': { type: 'string', format: 'date-time' },
+  'google.protobuf.Duration': { type: 'string' },
+  'google.protobuf.FieldMask': { type: 'string' },
+  'google.protobuf.StringValue': { type: 'string' },
+  'google.protobuf.BoolValue': { type: 'boolean' },
+  'google.protobuf.BytesValue': { type: 'string', format: 'byte' },
+};
+
+export function schemaForField(field, types, declined = [], path = '') {
+  const schema = shapeForField(field, types, declined, path);
+  // Upstream puts a repeated field's description on the array, not on its items.
+  if (field.comment) schema.description = field.comment.trim();
+  return schema;
+}
+
+function shapeForField(field, types, declined, path) {
+  const entry = field.repeated && field.typeName ? types.messages.get(field.typeName) : null;
+  if (entry?.isMapEntry) {
+    // A map<k,v> compiles to a repeated synthetic entry message, but in JSON it
+    // is an object keyed by k, not an array of {key, value} pairs. Without this
+    // the LABEL_REPEATED on the field would wrap it in an array.
+    const value = entry.fields.find((f) => f.name === 'value');
+    if (!value) {
+      declined.push(`${path}: a map whose entry message declares no value field`);
+      return { type: 'object' };
+    }
+    return { type: 'object', additionalProperties: schemaForField(value, types, declined, path) };
+  }
+
+  const one = singleSchemaForField(field, types, declined, path);
+  return field.repeated ? { type: 'array', items: one } : one;
+}
+
+function singleSchemaForField(field, types, declined, path) {
+  if (field.type) {
+    const scalar = SCALAR_SCHEMAS[field.type];
+    if (scalar) return { ...scalar };
+    declined.push(`${path}: unknown scalar type ${field.type}, described as a string`);
+    return { type: 'string' };
+  }
+  if (!field.typeName) {
+    declined.push(`${path}: neither a scalar nor a named type, described as a string`);
+    return { type: 'string' };
+  }
+  if (WELL_KNOWN_SCHEMAS[field.typeName]) return { ...WELL_KNOWN_SCHEMAS[field.typeName] };
+
+  const enumType = types.enums.get(field.typeName);
+  if (enumType) {
+    const values = enumType.values.map((v) => v.name);
+    return { type: 'string', enum: values, default: values[0] };
+  }
+
+  // An Any is inlined with @type and carries whatever the concrete message
+  // holds, so it must stay open rather than be described field by field.
+  if (field.typeName === 'google.protobuf.Any') {
+    return { type: 'object', properties: { '@type': { type: 'string' } } };
+  }
+
+  const nested = types.messages.get(field.typeName);
+  if (!nested) {
+    // An open object accepts anything, so conformance stops checking this
+    // subtree. It cannot mis-describe a response, but it under-describes one,
+    // and the drift check that follows sees a property and reports nothing.
+    // Hence the decline is surfaced by the caller rather than left silent.
+    declined.push(`${path}: ${field.typeName} is not in the descriptor, left an open object`);
+    return { type: 'object' };
+  }
+
+  // An empty shell: the caller recurses into it with the nested message, and
+  // the same pass that fills this one fills that.
+  return { type: 'object', properties: {} };
+}
+
 function correctInlineSchema(raw, message, types, counts, seen = new Set(), spec = null) {
   const schema = spec ? resolveRef(raw, spec) : raw;
   if (!schema || !message || typeof schema !== 'object') return;
+  // An Any is inlined with @type in JSON, so type_url and value are correctly
+  // absent and must not be repaired into the schema.
+  if (message.fullName === 'google.protobuf.Any') return;
   if (schema.type === 'array') {
     return correctInlineSchema(schema.items, message, types, counts, seen, spec);
   }
@@ -290,8 +402,17 @@ function correctInlineSchema(raw, message, types, counts, seen = new Set(), spec
 
   let carriesAny = false;
   for (const field of message.fields) {
-    const property = schema.properties[field.name];
     if (field.typeName === 'google.protobuf.Any') carriesAny = true;
+
+    // A field the protos define and upstream's spec omits. Repaired here rather
+    // than reported, so the published spec describes what the chain returns.
+    if (!(field.name in schema.properties)) {
+      schema.properties[field.name] = schemaForField(
+        field, types, counts.declined, `${message.fullName}.${field.name}`,
+      );
+      counts.added += 1;
+    }
+    const property = schema.properties[field.name];
     if (!property) continue;
 
     if ((field.type === 'bytes' || (!field.type && field.typeName)) && property.nullable !== true) {
@@ -367,7 +488,7 @@ export function findSchemaDrift(spec, types, methodsByOperation) {
 }
 
 export function correctResponseSchemas(spec, types, methodsByOperation) {
-  const counts = { marked: 0, strict: 0 };
+  const counts = { marked: 0, strict: 0, added: 0, declined: [] };
 
   for (const pathItem of Object.values(spec.paths ?? {})) {
     for (const operation of Object.values(pathItem)) {
