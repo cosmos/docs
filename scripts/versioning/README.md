@@ -35,6 +35,21 @@ When a new release is ready to ship, run through these steps in order.
 
 Make sure `next/` contains everything that belongs in the new release. Merge any open PRs targeting `next/`.
 
+### 1b. Run the pre-freeze checks
+
+The freeze script promotes `next/` to `latest/` unchanged. It does not verify anything, so whatever is wrong in `next/` becomes published under the new version number. Several things have to happen in `next/` before you run it, and the full ordered list lives in the [`release-version`](../../.claude/skills/release-version/SKILL.md) skill, which is the authoritative runbook. The steps below are the freeze script's own mechanics.
+
+For the SDK specifically, the API reference has a blocking gate:
+
+```bash
+cd scripts/api-reference
+npm run release-check -- --version next --ref release/v0.<N>.x
+```
+
+It regenerates from the release branch, then builds a chain at that commit and executes every documented query and transaction against it. Do not freeze while it fails. The `--ref` matters: without it `next` resolves to `main`, and the freeze publishes development content under the release's version number.
+
+Then read the regenerated pages with the [`review-generated-prose`](../../.claude/skills/review-generated-prose/SKILL.md) skill. The gate proves the examples work; it never reads the pages as English.
+
 ### 2. Run the freeze script
 
 ```bash

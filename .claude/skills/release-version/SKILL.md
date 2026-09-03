@@ -71,6 +71,14 @@ Pass `--ref` pointing at the release branch. Without it, `next` resolves to `mai
 
 If generation fails, a guard has fired: a fact that cannot be derived from the protos needs writing by hand, and the error names the exact item. See [`scripts/api-reference/CLAUDE.md`](../../../scripts/api-reference/CLAUDE.md).
 
+### 2c. Read the generated prose (SDK only)
+
+The gate proves that what a page tells a reader to send is accepted by a chain. Nothing in it reads the page as English, so a field can carry a correct type, a working example, and a description that is a fragment, a typo, or advice contradicting the page above it.
+
+Use the [`review-generated-prose`](../review-generated-prose/SKILL.md) skill on the regenerated pages. It is the last step before the freeze, because the freeze copies whatever is in `next/` into `latest/` and publishes it.
+
+The one thing to know before starting: never edit a generated page. Every `.mdx` under `api-reference/grpc/` is overwritten on the next run, so a fix belongs either in `lib/render.js`, where the generator's own wording lives, or upstream in the proto comments a description came from. The skill covers how to tell which.
+
 ### 3. Freeze the Version
 
 Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.

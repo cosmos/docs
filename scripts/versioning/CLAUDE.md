@@ -69,6 +69,8 @@ After every freeze, add a `latest` version entry to the product's dropdown in `d
 
 The freeze script does not do any of the following. None of it is caught by `npx mint broken-links`.
 
+**Before anything else, for the SDK: the API reference gate.** `cd scripts/api-reference && npm run release-check -- --version next --ref release/v0.<N>.x` regenerates from the release branch and executes every documented query and transaction against a chain built at that commit. It blocks the freeze. Then read the regenerated prose with the `review-generated-prose` skill. Both steps, and the reason `--ref` is not optional, are in the [`release-version`](../../.claude/skills/release-version/SKILL.md) skill, which is the authoritative runbook for a release. This file covers only what the freeze script itself does and does not do.
+
 Order matters. Items 2 and 4 are content that lives in the pages themselves, so do them in `next/` **before** freezing and the promotion carries them into `latest/` for free. Doing them afterwards means editing `latest/` and then running `scripts/sync-latest-to-next.js` on every file touched, which is the same work twice with a chance to miss a file. Item 1 can only be done after, and item 3 must be done after because the freeze is what strips the front matter.
 
 **1. `docs.json` navigation** (after) — see the section above.

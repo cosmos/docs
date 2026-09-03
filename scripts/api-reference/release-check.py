@@ -216,7 +216,14 @@ def main() -> int:
         print("Findings are in findings-*.json. Do not freeze until these are resolved or recorded.")
         return 1
 
-    print("\nAll checks passed. Safe to freeze.")
+    # The gate proves the pages work. It never reads them as English, so the
+    # prose pass is the step that catches a correct example beside a sentence
+    # that misleads. Naming it here because a step nobody is reminded of is a
+    # step nobody runs.
+    print("\nAll checks passed.")
+    print("Last step before freezing: read the generated prose.")
+    print("  Use the review-generated-prose skill on the regenerated pages.")
+    print("  Do not edit a generated page: fixes go in lib/render.js or upstream.")
     return 0
 
 
