@@ -126,3 +126,17 @@ Both confirmed present in real responses. Reported as a warning, since upstream 
 A weekly workflow regenerates both versions, verifies, and opens a PR summarising added and removed methods. A guard failure opens an issue rather than reddening a cron nobody watches.
 
 What no check can do is distinguish a wrong documented value from missing chain state. The `cosmos.Dec` defect returned a business error, indistinguishable from a chain with no validator configured. That judgment needs a person, and is worth repeating when the SDK version changes.
+
+## 2026-09-03
+
+Committed as `be4aaf74`: 76 files, the generator and its checks, 21 gRPC pages and an OpenAPI spec for each of `latest` and `next`, plus the API Reference tab in `docs.json`.
+
+- Added two page-driven on-chain runners, `query-onchain.py` (123 queries) and `tx-onchain.py` (48 messages), sharing `pagefill.py`. They supersede the earlier approach: placeholders are filled from what the page states, following its field tables and type links, never from the proto descriptor. A filler that reads the descriptor can pass while the page tells a reader to write a value the chain rejects, which is what happened with `cosmos.Dec`.
+- Added `query-coverage.toml` and `tx-coverage.toml`, holding only what cannot be derived: preconditions, which key signs, and the gaps where a page genuinely cannot help. Diffed against the pages every run, so a removed method surfaces as an orphan, and `skip` entries are still probed so a stale entry cannot understate what works. That mechanism caught five entries being too pessimistic.
+- Corrected `cosmos.Dec` a fifth time, reversing the previous fix. In transaction JSON every `Dec` is a decimal string whatever its proto type; base64 is only a read form over gRPC. Proven directly: `bytes`-Dec as decimal accepted, as base64 rejected with `failed to set decimal string with base 10`. The generated example was also emitting `""` for those fields, which a reader copying verbatim would hit as `decimal string cannot be empty`.
+- Fixed `staking.Validators.status`, where the `BondStatus` values sat on the page unconnected to the field. Exactly one field in the SDK matches the rule, so it names a real relationship rather than a guess.
+- Amino name now shown on all 48 transaction messages rather than only where it deviates, described in terms of hardware wallets rather than a specific vendor.
+- Added the weekly workflow, `.claude/launch.json`, and a step 2b in the root `CLAUDE.md` regenerating the API reference before a freeze. Both the schedule and that step's contents are revised by the design below.
+- Three Schemathesis crash-cache files under `scripts/api-reference/.schemathesis/` were committed by accident. They are run artifacts and should be removed and gitignored.
+- Added `scripts/api-reference/DESIGN.md`, recording the invariant the tooling follows and the eight agreed hardening changes. Chief among them: `sync` has no `--ref` override, so a freeze publishes `main`-generated content under the new release's version number, and the on-chain runners derive their own denominator from the page parse, so a render change can silently drop a method from the test set and still exit 0.
+- Design decision recorded: no scheduled regeneration. Docs versions freeze at release, `latest` must not change between releases, and the release process itself is the gate.
