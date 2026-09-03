@@ -29,6 +29,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 
+import { parseArgs, resolveRef } from './lib/refs.js';
 import { parseDescriptor } from './lib/descriptor.js';
 import { renderModulePage, buildMethodHeadings } from './lib/render.js';
 import {
@@ -57,39 +58,6 @@ const PRODUCT = 'sdk';
 const BUF = path.join(HERE, 'node_modules/.bin/buf');
 
 const SWAGGER_PATH = 'client/docs/swagger-ui/swagger.yaml';
-
-function parseArgs(argv) {
-  const args = { version: null, modules: null };
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--version') args.version = argv[i + 1];
-    if (argv[i] === '--modules') args.modules = argv[i + 1].split(',').map((m) => m.trim());
-  }
-  if (!['next', 'latest'].includes(args.version)) {
-    throw new Error('--version must be next or latest');
-  }
-  return args;
-}
-
-/**
- * next documents unreleased main. latest documents the released branch, whose
- * name follows from versions.json rather than being written down here, so a
- * freeze to v0.56 carries the generator with it.
- */
-function resolveRef(version) {
-  const versions = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'versions.json'), 'utf8'));
-  const product = versions.products[PRODUCT];
-  if (!product) throw new Error(`versions.json has no ${PRODUCT} product`);
-
-  const displayVersion = product.latestDisplayVersion;
-  const match = displayVersion.match(/^v(\d+)\.(\d+)/);
-  if (!match) throw new Error(`cannot parse latestDisplayVersion ${displayVersion}`);
-
-  return {
-    repository: product.repository,
-    ref: version === 'next' ? 'main' : `release/v${match[1]}.${match[2]}.x`,
-    displayVersion: version === 'next' ? `${displayVersion} (unreleased)` : displayVersion,
-  };
-}
 
 async function fetchJson(url) {
   const response = await fetch(url, {
@@ -178,7 +146,7 @@ function filterSpecToModules(spec, moduleNames) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const { repository, ref, displayVersion } = resolveRef(args.version);
+  const { repository, ref, displayVersion } = resolveRef(args.version, { ref: args.ref });
 
   console.log(`Resolving ${repository}@${ref}`);
   const sha = await resolveSha(repository, ref);
@@ -285,7 +253,9 @@ async function main() {
   console.log(`\nWrote ${outputRoot}`);
 }
 
-main().catch((error) => {
-  console.error(`\n${error.message}`);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(`\n${error.message}`);
+    process.exit(1);
+  });
+}
