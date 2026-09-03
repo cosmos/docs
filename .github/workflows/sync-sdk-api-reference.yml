@@ -1,0 +1,155 @@
+name: Sync SDK API Reference
+
+# Regenerates the Cosmos SDK API reference from upstream protos and the
+# gRPC-gateway spec, and opens a PR when the output changes.
+#
+# Every generated API reference in this ecosystem that was not regenerated
+# automatically has rotted: the SDK's own /swagger/ page 404s, ibc-go's
+# proto-docs redirects away, Sei deleted theirs. The generator is not what keeps
+# this current; this workflow is.
+#
+# A guard failure is routed to an issue rather than left as a red cron nobody
+# watches. Those guards fire when a fact that cannot be derived from the protos
+# needs writing by hand, and they name the exact item.
+
+on:
+  schedule:
+    # Weekly, early Monday UTC.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Which version to regenerate'
+        required: false
+        default: 'both'
+        type: choice
+        options: [both, latest, next]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    name: Regenerate and open a PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install generator dependencies
+        working-directory: scripts/api-reference
+        run: npm ci || npm install
+
+      - name: Install verification dependencies
+        run: pip install --quiet protobuf
+
+      - name: Unit tests
+        working-directory: scripts/api-reference
+        run: npm test
+
+      # The token lifts the GitHub API rate limit. Without it the SHA lookup
+      # fails partway through and the run produces no output at all.
+      - name: Regenerate
+        id: regenerate
+        working-directory: scripts/api-reference
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          versions="latest next"
+          if [ "${{ github.event.inputs.version }}" = "latest" ]; then versions="latest"; fi
+          if [ "${{ github.event.inputs.version }}" = "next" ]; then versions="next"; fi
+
+          for v in $versions; do
+            echo "::group::sync $v"
+            node sync-sdk-api-reference.js --version "$v" 2>&1 | tee -a /tmp/sync.log
+            echo "::endgroup::"
+          done
+
+      - name: Verify every example still parses
+        working-directory: scripts/api-reference
+        run: python3 verify-transaction-examples.py
+
+      - name: Validate the OpenAPI specs
+        run: |
+          for v in latest next; do
+            ./scripts/api-reference/node_modules/.bin/oas-validate --quiet \
+              "sdk/$v/api-reference/rest/openapi.yaml"
+          done
+
+      - name: Check for broken links
+        run: npx mint broken-links
+
+      - name: Summarise what changed
+        id: summary
+        run: |
+          # Method-level diff, which is what a reviewer needs. A file-level diff
+          # of a 1.9 MB generated spec tells nobody anything.
+          added=$(git diff -U0 -- 'sdk/*/api-reference/grpc/*.mdx' | grep -c '^+### ' || true)
+          removed=$(git diff -U0 -- 'sdk/*/api-reference/grpc/*.mdx' | grep -c '^-### ' || true)
+          echo "added=$added"     >> "$GITHUB_OUTPUT"
+          echo "removed=$removed" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Methods"
+            echo "- added: $added"
+            echo "- removed: $removed"
+            echo
+            echo "### Generator output"
+            echo '```'
+            grep -E 'modules|REST paths|nullable|strict|absent from' /tmp/sync.log || true
+            echo '```'
+          } > /tmp/summary.md
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the PR
+        if: steps.summary.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: bot/sdk-api-reference
+          commit-message: 'docs(sdk): regenerate the API reference from upstream'
+          title: 'Regenerate the Cosmos SDK API reference'
+          body-path: /tmp/summary.md
+          labels: automated
+
+      # A guard stops the build when a fact that cannot be derived needs writing
+      # by hand. Left as a failed cron that would go unnoticed, so it becomes an
+      # issue naming the item.
+      - name: Raise an issue if generation failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="SDK API reference generation failed"
+          existing=$(gh issue list --state open --search "$title in:title" --json number \
+            --jq '.[0].number' || true)
+
+          body=$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
+            "The weekly regeneration failed. If a guard fired, the log names the exact item that needs a definition; see scripts/api-reference/CLAUDE.md." \
+            "$(tail -40 /tmp/sync.log 2>/dev/null || echo 'no generator output captured')" \
+            "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label automated
+          fi

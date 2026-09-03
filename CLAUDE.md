@@ -168,6 +168,16 @@ Hand the `--json` output to the [`update-stale-refs`](.claude/skills/update-stal
 
 A stale ref is often a symptom rather than the problem. A link that 404s at its current ref usually means the prose describes something upstream deleted, so check what the page claims before repointing the URL.
 
+### 2b. Regenerate the API Reference (SDK only)
+
+The SDK API reference is generated from upstream protos at a resolved commit. A weekly workflow keeps it current, but a freeze changes which ref `latest` points at, so regenerate before freezing rather than waiting for the next cron.
+
+```bash
+cd scripts/api-reference && GITHUB_TOKEN=$(gh auth token) npm run sync -- --version next
+```
+
+If generation fails, a guard has fired: a fact that cannot be derived from the protos needs writing by hand, and the error names the exact item. See [`scripts/api-reference/CLAUDE.md`](scripts/api-reference/CLAUDE.md).
+
 ### 3. Freeze the Version
 
 Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.
