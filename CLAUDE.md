@@ -150,3 +150,5 @@ npm run reset          # clean + reinstall
 The Cosmos SDK example chain tutorials (`sdk/next/tutorials/example/`, files `00-overview.mdx` through `05-run-and-test.mdx`) are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change, a PR is opened on the other repo with content transformed between formats.
 
 The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other front matter (e.g. `description:`) is preserved.
+
+These pages are the one exception to the version freeze: they say `git checkout main`, so `latest/` must track `next/` rather than stay frozen. Carry changes across with `node scripts/sync-next-to-latest.js`. `sync-latest-to-next.js` refuses these paths, and the generated API reference, because it runs the wrong way for both.
