@@ -67,7 +67,7 @@ cd scripts/api-reference && npm run release-check -- --version next --ref releas
 
 Pass `--ref` pointing at the release branch. Without it, `next` resolves to `main`, and a freeze taken from that regeneration publishes development content under the release's version number, which is the bug this gate exists to catch.
 
-`release-check` regenerates, runs the offline checks, builds `simd` from the exact commit the pages record, starts a chain on its own ports, and runs every documented query and transaction message against it. This is a blocking gate: a freeze does not proceed while it fails. Needs Go, Node, git and `schemathesis`; it says which are missing before it builds anything.
+`release-check` regenerates, runs the offline checks, builds `simd` from the exact commit the pages record, starts a chain on its own ports, and runs every documented query and transaction message against it. This is a blocking gate: a freeze does not proceed while it fails. Needs Go, Node, git, `schemathesis`, and `GITHUB_TOKEN` in the environment (`export GITHUB_TOKEN=$(gh auth token)`); it says which are missing before it builds anything.
 
 If generation fails, a guard has fired: a fact that cannot be derived from the protos needs writing by hand, and the error names the exact item. See [`scripts/api-reference/CLAUDE.md`](../../../scripts/api-reference/CLAUDE.md).
 

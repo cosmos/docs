@@ -16,6 +16,7 @@ for the one under test.
 """
 
 import argparse
+import os
 import difflib
 import shutil
 import subprocess
@@ -62,6 +63,21 @@ def preflight(tools: list) -> bool:
     for tool in missing:
         hint = hints.get(tool, "not on PATH")
         print(f"missing: {tool} ({hint})", file=sys.stderr)
+
+    # Not a tool, but the same class of problem. The generator makes exactly one
+    # authenticated request, resolving a branch name to a commit SHA, so it is
+    # never rate-limited by its own volume. Unauthenticated api.github.com
+    # allows 60 requests an hour per IP, which a shared CI runner can have
+    # already spent, and then that one request 403s. Checked here so the
+    # operator reads "missing: GITHUB_TOKEN" rather than a 403 from a URL that
+    # looks unrelated to the credential they forgot.
+    if not os.environ.get("GITHUB_TOKEN"):
+        print(
+            "missing: GITHUB_TOKEN (export GITHUB_TOKEN=$(gh auth token))",
+            file=sys.stderr,
+        )
+        missing = missing + ["GITHUB_TOKEN"]
+
     return not missing
 
 

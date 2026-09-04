@@ -31,7 +31,7 @@ none of them the default. A developer chain on the defaults is therefore neither
 disturbed nor, far worse, mistaken for the chain under test when the harness fails
 to start.
 
-`sync` needs a `GITHUB_TOKEN` in practice. It resolves a branch to a commit SHA through the GitHub API, and unauthenticated requests are rate-limited to the point of failing silently mid-run.
+`sync` needs a `GITHUB_TOKEN` in practice, for one request: resolving a branch to a commit SHA through the GitHub API. Nothing else is authenticated, since the swagger comes from `raw.githubusercontent.com` and the descriptor from an anonymous `buf` fetch. One request never exhausts a budget on its own, but unauthenticated `api.github.com` allows 60 an hour per IP, and a shared CI runner can have spent them already. It then fails on that first request with a `403`, which `release-check` catches in preflight instead.
 
 ## What is generated and what is not
 
