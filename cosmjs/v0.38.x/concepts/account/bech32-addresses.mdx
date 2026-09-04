@@ -1,0 +1,75 @@
+---
+title: Bech32 Addresses
+description: How Cosmos addresses are encoded and derived from public keys
+---
+
+Cosmos uses [Bech32](https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki)
+encoding for all addresses. A Bech32 address has two parts: a human-readable
+prefix (HRP) that identifies the chain, and a data section containing the raw
+address bytes with a checksum.
+
+```text
+cosmos1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu
+ ^                    ^
+ |                    +-- data + checksum (base32 encoded)
+ +-- prefix (HRP)
+```
+
+## Common Prefixes
+
+| Chain | Address prefix | Validator prefix |
+|-------|---------------|-----------------|
+| Cosmos Hub | `cosmos` | `cosmosvaloper` |
+| Osmosis | `osmo` | `osmovaloper` |
+| Juno | `juno` | `junovaloper` |
+| Neutron | `neutron` | `neutronvaloper` |
+| CosmWasm testnet | `wasm` | `wasmvaloper` |
+
+## Encoding and Decoding
+
+`@cosmjs/encoding` provides three functions:
+
+```typescript
+import { toBech32, fromBech32, normalizeBech32 } from "@cosmjs/encoding";
+
+const address = toBech32("cosmos", rawAddressBytes);
+// "cosmos1..."
+
+const { prefix, data } = fromBech32("cosmos1qypq...");
+// prefix: "cosmos", data: Uint8Array (20 bytes)
+
+const normalized = normalizeBech32("COSMOS1QYPQ...");
+// "cosmos1qypq..." (lowercased and validated)
+```
+
+`fromBech32` validates the checksum and throws on invalid input.
+`normalizeBech32` round-trips through decode/encode, which is safer than calling
+`toLowerCase()` directly.
+
+## How Addresses Are Derived from Public Keys
+
+The raw 20-byte address inside a Bech32 string is derived from the public key
+through hashing. The algorithm depends on the key type:
+
+| Key type | Derivation |
+|----------|-----------|
+| **secp256k1** | `ripemd160(sha256(compressedPubkey))` |
+| **ed25519** | `sha256(pubkey).slice(0, 20)` |
+| **eth_secp256k1** | `keccak256(uncompressedPubkey[1:]).slice(-20)` |
+| **multisig** | `sha256(aminoEncodedPubkey).slice(0, 20)` |
+
+The `@cosmjs/amino` package provides `pubkeyToAddress` for this:
+
+```typescript
+import { pubkeyToAddress } from "@cosmjs/amino";
+
+const address = pubkeyToAddress(pubkey, "cosmos");
+```
+
+This means the same key pair produces different addresses on different chains —
+only the Bech32 prefix changes, but the raw bytes are identical:
+
+```typescript
+const cosmosAddr = toBech32("cosmos", rawAddress); // cosmos1abc...
+const osmoAddr = toBech32("osmo", rawAddress);     // osmo1abc...
+```

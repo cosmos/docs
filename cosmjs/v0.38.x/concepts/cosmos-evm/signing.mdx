@@ -1,0 +1,83 @@
+---
+title: Signing & Key Types
+description: How EVM signing, public key types, and algo identifiers work in CosmJS.
+---
+
+## How Signing Works
+
+EVM wallets hash the serialized sign document with Keccak-256 before signing,
+whereas standard wallets use SHA-256:
+
+```text
+signBytes = SignDoc.encode(signDoc)
+
+# Standard
+hashedMessage = sha256(signBytes)
+
+# EVM
+hashedMessage = keccak256(signBytes)
+
+signature = secp256k1_sign(hashedMessage, privateKey)
+```
+
+The actual elliptic curve operation and signature format (64 bytes: `r || s`) are
+identical — only the pre-signing hash function differs.
+
+## Public Key Types
+
+CosmJS represents public keys in two forms: Amino JSON and Protobuf. EVM chains
+use distinct types in each format to signal that the key requires Keccak-based
+address derivation.
+
+**Amino JSON:**
+
+```typescript
+// Standard
+{ type: "tendermint/PubKeySecp256k1", value: "<base64>" }
+
+// EVM
+{ type: "os/PubKeyEthSecp256k1", value: "<base64>" }
+```
+
+**Protobuf (`Any`):**
+
+```typescript
+// Standard
+{ typeUrl: "/cosmos.crypto.secp256k1.PubKey", value: <bytes> }
+
+// EVM
+{ typeUrl: "/cosmos.evm.crypto.v1.ethsecp256k1.PubKey", value: <bytes> }
+```
+
+The underlying key bytes are identical (33-byte compressed secp256k1). The
+different type identifiers tell the chain how to derive the address from the key.
+
+## The Algo Identifier
+
+The `AccountData.algo` field distinguishes EVM accounts from standard ones.
+Two naming conventions exist in the ecosystem:
+
+- `"eth_secp256k1"` — used by Keplr wallet, CosmJS wallets, and some chains
+- `"ethsecp256k1"` — used by Evmos, Cronos, and other EVM-compatible chains
+
+CosmJS handles both through the `isEthereumSecp256k1Account()` utility:
+
+```typescript
+import { isEthereumSecp256k1Account } from "@cosmjs/amino";
+
+const [account] = await wallet.getAccounts();
+if (isEthereumSecp256k1Account(account)) {
+  // EVM-compatible account
+}
+```
+
+The `getAminoPubkey()` function uses this check to select the correct encoding
+automatically. This is what `SigningStargateClient` calls internally when
+building transactions:
+
+```typescript
+import { getAminoPubkey } from "@cosmjs/amino";
+
+const pubkey = getAminoPubkey(account);
+// Returns EthSecp256k1Pubkey or Secp256k1Pubkey based on account.algo
+```

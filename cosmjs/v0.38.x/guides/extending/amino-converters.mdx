@@ -1,0 +1,143 @@
+---
+title: "Amino Converters"
+description: "Add Amino JSON signing support for custom message types used by wallets like Keplr and Leap"
+---
+
+Wallets like Keplr and Leap use **Amino JSON** signing (`SIGN_MODE_LEGACY_AMINO_JSON`) by default. If your custom module needs to support these wallets, you must provide Amino converters that translate between protobuf field names (camelCase) and Amino field names (snake_case).
+
+## Defining Converters
+
+An `AminoConverter` maps a protobuf type URL to its Amino type string and provides `toAmino`/`fromAmino` transform functions:
+
+```typescript
+import { AminoConverters } from "@cosmjs/stargate";
+
+export function createBlogAminoConverters(): AminoConverters {
+  return {
+    "/blog.v1.MsgCreatePost": {
+      aminoType: "blog/MsgCreatePost",
+      toAmino: ({ author, title, body }) => ({
+        author,
+        title,
+        body,
+      }),
+      fromAmino: ({ author, title, body }) => ({
+        author,
+        title,
+        body,
+      }),
+    },
+    "/blog.v1.MsgEditPost": {
+      aminoType: "blog/MsgEditPost",
+      toAmino: ({ author, id, title, body }) => ({
+        author,
+        id: id.toString(),
+        title,
+        body,
+      }),
+      fromAmino: ({ author, id, title, body }) => ({
+        author,
+        id: BigInt(id),
+        title,
+        body,
+      }),
+    },
+  };
+}
+```
+
+Each converter has three parts:
+
+| Field | Purpose |
+|-------|---------|
+| `aminoType` | The Amino type identifier string registered on the chain (e.g. `"blog/MsgCreatePost"`) |
+| `toAmino` | Converts a protobuf message value to its Amino JSON representation |
+| `fromAmino` | Converts an Amino JSON value back to the protobuf message format |
+
+<Warning>
+The `aminoType` string must match exactly what the chain's `x/` module registers on the server side. A mismatch causes signature verification failures. Check your module's Go source for the registered Amino type name.
+</Warning>
+
+## Handling Type Conversions
+
+Amino JSON uses different representations for some types. Common conversions you'll encounter:
+
+| Protobuf type | Amino representation | `toAmino` | `fromAmino` |
+|---------------|---------------------|-----------|-------------|
+| `bigint` / `int64` | String | `id.toString()` | `BigInt(id)` |
+| `Uint8Array` | Base64 string | `toBase64(data)` | `fromBase64(data)` |
+| `Timestamp` | ISO string | `timestamp.toISOString()` | `new Date(str)` |
+| Nested message | Flattened snake_case | Manual field mapping | Manual field mapping |
+
+Example with multiple type conversions:
+
+```typescript
+import { fromBase64, toBase64 } from "@cosmjs/encoding";
+
+"/blog.v1.MsgCreatePostWithAttachment": {
+  aminoType: "blog/MsgCreatePostWithAttachment",
+  toAmino: ({ author, id, title, attachment }) => ({
+    author,
+    id: id.toString(),
+    title,
+    attachment: toBase64(attachment),
+  }),
+  fromAmino: ({ author, id, title, attachment }) => ({
+    author,
+    id: BigInt(id),
+    title,
+    attachment: fromBase64(attachment),
+  }),
+},
+```
+
+## Passing Converters to the Signing Client
+
+Merge your custom converters with the defaults using `AminoTypes`:
+
+```typescript
+import {
+  SigningStargateClient,
+  GasPrice,
+  AminoTypes,
+  defaultRegistryTypes,
+  createDefaultAminoConverters,
+} from "@cosmjs/stargate";
+import { Registry } from "@cosmjs/proto-signing";
+
+const registry = new Registry([...defaultRegistryTypes, ...blogTypes]);
+
+const aminoTypes = new AminoTypes({
+  ...createDefaultAminoConverters(),
+  ...createBlogAminoConverters(),
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { registry, aminoTypes, gasPrice: GasPrice.fromString("0.025utoken") },
+);
+```
+
+The client automatically selects the signing mode based on the wallet:
+
+- **`OfflineDirectSigner`** (e.g. `DirectSecp256k1HdWallet`) uses `SIGN_MODE_DIRECT` — protobuf encoding, Amino converters not needed
+- **`OfflineAminoSigner`** (e.g. `Secp256k1HdWallet`, Keplr, Leap) uses `SIGN_MODE_LEGACY_AMINO_JSON` — requires Amino converters for all message types in the transaction
+
+<Tip>
+If you only use `DirectSecp256k1HdWallet` and never need Keplr/Leap support, you can skip Amino converters entirely. But adding them makes your code compatible with all Cosmos wallets.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Protobuf Types" icon="cube" href="/cosmjs/v0.38.x/guides/extending/custom-types">
+    Register the protobuf types that your Amino converters translate.
+  </Card>
+  <Card title="Custom Modules" icon="puzzle-piece" href="/cosmjs/v0.38.x/guides/extending/custom-modules">
+    See a complete module integration that ties types, queries, and Amino converters together.
+  </Card>
+  <Card title="Direct vs Amino Signing" icon="pen" href="/cosmjs/v0.38.x/concepts/transactions/direct-vs-amino">
+    Understand how the two signing modes work and when each is used.
+  </Card>
+</CardGroup>

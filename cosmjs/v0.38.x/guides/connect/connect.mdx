@@ -1,0 +1,88 @@
+---
+title: "Connect to a Chain"
+description: "Establish a connection to any Cosmos SDK chain using CosmJS clients over HTTP or WebSocket"
+---
+
+CosmJS clients communicate with Cosmos SDK chains through [CometBFT RPC](https://docs.cometbft.com/v1/spec/rpc/) over HTTP or WebSocket. Pass an RPC URL to any client's `connect` factory method to get started.
+
+## Prerequisites
+
+- `@cosmjs/stargate` installed (`npm install @cosmjs/stargate`)
+- An RPC endpoint for a Cosmos SDK chain (e.g. `https://rpc.cosmos.network`)
+
+## Quick Start
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+```
+
+CosmJS auto-detects the CometBFT version (0.37, 0.38, or 1.x) and picks the right internal client. The same pattern works for all high-level clients:
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await CosmWasmClient.connect("https://rpc.my-chain.network");
+```
+
+## Transport Selection
+
+The transport is selected automatically based on the endpoint you provide:
+
+| Endpoint Value | Transport | Subscriptions |
+|----------------|-----------|---------------|
+| `"https://..."` or `"http://..."` | HTTP | No |
+| `"wss://..."` or `"ws://..."` | WebSocket | Yes |
+| `HttpEndpoint` object | HTTP (always) | No |
+
+When using `HttpBatchClient` or `WebsocketClient` instances directly, create a CometBFT client manually with `Comet38Client.create(rpcClient)` instead of passing them to `connect()`.
+
+## Disconnecting
+
+Always call `disconnect()` when you're done with a client, especially in long-running processes. What happens depends on the transport:
+
+| Transport | `disconnect()` behavior |
+|-----------|------------------------|
+| `HttpClient` | No-op — nothing to close |
+| `HttpBatchClient` | Clears the dispatch interval timer |
+| `WebsocketClient` | Closes the WebSocket and stops all subscription streams |
+
+For high-level clients (`StargateClient`, `CosmWasmClient`, and their signing variants), `disconnect()` delegates to the underlying CometBFT client:
+
+```typescript
+const client = await StargateClient.connect("https://rpc.my-chain.network");
+
+try {
+  const balance = await client.getBalance("cosmos1...", "uatom");
+} finally {
+  client.disconnect();
+}
+```
+
+<Warning>
+Failing to disconnect a `WebsocketClient` leaves the socket open and the reconnection timer running, which can leak resources in server-side applications.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP Transport" icon="globe" href="/cosmjs/v0.38.x/guides/connect/http">
+    Connect over HTTP with direct and batched clients.
+  </Card>
+  <Card title="WebSocket Transport" icon="plug" href="/cosmjs/v0.38.x/guides/connect/websocket">
+    Use WebSocket for persistent connections and real-time subscriptions.
+  </Card>
+  <Card title="Timeouts" icon="clock" href="/cosmjs/v0.38.x/guides/connect/timeouts">
+    Configure HTTP, WebSocket, and broadcast timeouts.
+  </Card>
+  <Card title="Custom Endpoints" icon="key" href="/cosmjs/v0.38.x/guides/connect/custom-endpoints">
+    Attach authentication headers and compose transport layers.
+  </Card>
+  <Card title="Version Detection" icon="code" href="/cosmjs/v0.38.x/guides/connect/version-detection">
+    How CosmJS auto-detects CometBFT versions and how to skip it.
+  </Card>
+  <Card title="Connection Errors" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/connect/errors">
+    Handle transport errors, broadcast failures, and timeouts.
+  </Card>
+</CardGroup>

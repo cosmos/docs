@@ -1,0 +1,131 @@
+---
+title: WebSocket Transport
+description: Using WebsocketClient for persistent connections and event subscriptions
+---
+
+`WebsocketClient` uses a persistent WebSocket connection for both request/response
+queries and event subscriptions. It is the only transport that supports
+`listen()`.
+
+## Basic Usage
+
+```typescript
+import { WebsocketClient } from "@cosmjs/tendermint-rpc";
+
+const client = new WebsocketClient("wss://rpc.my-chain.network");
+```
+
+The client automatically appends `/websocket` to the URL (the standard CometBFT
+WebSocket endpoint path).
+
+## Request/Response
+
+`execute()` sends a JSON-RPC request over the WebSocket and waits for a response
+with a matching `id`. This means you can use `WebsocketClient` as a drop-in
+replacement for `HttpClient` when you need a persistent connection:
+
+```typescript
+import { Comet38Client, WebsocketClient } from "@cosmjs/tendermint-rpc";
+
+const wsClient = new WebsocketClient("wss://rpc.my-chain.network");
+const cometClient = Comet38Client.create(wsClient);
+```
+
+## Subscriptions
+
+The real power of WebSocket is event subscriptions. CometBFT supports
+subscribing to events like new blocks and transactions via the `subscribe`
+JSON-RPC method.
+
+`WebsocketClient.listen()` returns a reactive stream (xstream `Stream`) of
+`SubscriptionEvent` objects:
+
+```typescript
+interface SubscriptionEvent {
+  readonly query: string;
+  readonly data: {
+    readonly type: string;
+    readonly value: Record<string, any>;
+  };
+}
+```
+
+### Subscribing via CometBFT Clients
+
+The CometBFT client classes provide typed subscription helpers:
+
+```typescript
+import { Comet38Client, WebsocketClient } from "@cosmjs/tendermint-rpc";
+
+const wsClient = new WebsocketClient("wss://rpc.my-chain.network");
+const cometClient = Comet38Client.create(wsClient);
+
+const newBlocks = cometClient.subscribeNewBlock();
+const subscription = newBlocks.subscribe({
+  next: (event) => {
+    console.info("New block:", event.header.height);
+  },
+  error: (err) => console.error(err),
+  complete: () => console.info("Subscription ended"),
+});
+
+// Later: clean up
+subscription.unsubscribe();
+cometClient.disconnect();
+```
+
+Available subscription methods:
+
+| Method | Events |
+|--------|--------|
+| `subscribeNewBlock()` | Full block data on each new block |
+| `subscribeNewBlockHeader()` | Block header only on each new block |
+| `subscribeTx(query?)` | Transactions matching an optional query string |
+
+### Subscription Lifecycle
+
+1. `listen()` creates a producer that sends a `subscribe` JSON-RPC request.
+2. CometBFT responds with a confirmation, then pushes events with the same
+   request ID.
+3. Events are filtered and emitted on the returned stream.
+4. When the stream has no more listeners (all `unsubscribe()`), a
+   corresponding `unsubscribe` request is sent to the server to free resources.
+5. Streams are deduplicated by query string — subscribing to the same query
+   twice returns the same stream.
+
+## Reconnection
+
+`WebsocketClient` uses `ReconnectingSocket` under the hood, which provides
+automatic reconnection with exponential backoff. The full socket stack is:
+
+```text
+WebsocketClient
+  └── ReconnectingSocket            ← auto-reconnect with backoff
+        └── QueueingStreamingSocket ← request queue + connection status
+              └── StreamingSocket   ← events as xstream Stream
+                    └── SocketWrapper ← isomorphic-ws wrapper
+```
+
+**Reconnection behavior:**
+
+| Aspect | Behavior |
+|--------|----------|
+| Initial backoff | 100 ms |
+| Backoff growth | Doubles each attempt (100, 200, 400, 800…) |
+| Maximum backoff | 5,000 ms (5 seconds) |
+| Backoff reset | Resets to 100 ms on successful connection |
+| Request queue | Requests made while disconnected are queued and sent on reconnect |
+| Subscription recovery | A `reconnectedHandler` callback fires after reconnection |
+
+## Connection Status
+
+You can observe connection state changes through `QueueingStreamingSocket`:
+
+```typescript
+enum ConnectionStatus {
+  Unconnected,  // Initial state
+  Connecting,   // Connection attempt in progress
+  Connected,    // WebSocket is open
+  Disconnected, // Connection lost (reconnection will be attempted)
+}
+```

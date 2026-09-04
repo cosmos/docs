@@ -1,0 +1,177 @@
+---
+title: "Supporting New Chains"
+description: "Configure CosmJS for new Cosmos SDK chains with custom prefixes, gas prices, and account types"
+---
+
+Connecting to a new Cosmos SDK chain typically involves configuring a few chain-specific parameters. CosmJS auto-detects the CometBFT version (0.37, 0.38, or 1.x), so transport setup is usually automatic.
+
+## Chain Configuration
+
+The minimum configuration you need for a new chain:
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const chainConfig = {
+  rpcEndpoint: "https://rpc.my-chain.network",
+  prefix: "mychain",
+  denom: "umytoken",
+  gasPrice: "0.01umytoken",
+};
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+  prefix: chainConfig.prefix,
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  chainConfig.rpcEndpoint,
+  wallet,
+  { gasPrice: GasPrice.fromString(chainConfig.gasPrice) },
+);
+```
+
+The key parameters are:
+
+| Parameter | Purpose | Example |
+|-----------|---------|---------|
+| `rpcEndpoint` | CometBFT/Tendermint RPC URL | `"https://rpc.my-chain.network"` |
+| `prefix` | Bech32 address prefix | `"osmo"`, `"cosmos"`, `"juno"` |
+| `denom` | Fee token denomination | `"uosmo"`, `"uatom"` |
+| `gasPrice` | Price per gas unit | `"0.025uosmo"` |
+
+## Chains with Custom Modules
+
+Most application-specific chains (Osmosis, dYdX, Stride, etc.) define custom modules beyond the standard Cosmos SDK set. Register their types and converters as described in the [Custom Modules](/cosmjs/v0.38.x/guides/extending/custom-modules) guide:
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import {
+  SigningStargateClient,
+  GasPrice,
+  AminoTypes,
+  defaultRegistryTypes,
+  createDefaultAminoConverters,
+} from "@cosmjs/stargate";
+
+const registry = new Registry([
+  ...defaultRegistryTypes,
+  ...myChainModuleATypes,
+  ...myChainModuleBTypes,
+]);
+
+const aminoTypes = new AminoTypes({
+  ...createDefaultAminoConverters(),
+  ...createModuleAAminoConverters(),
+  ...createModuleBAminoConverters(),
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { registry, aminoTypes, gasPrice: GasPrice.fromString("0.01utoken") },
+);
+```
+
+<Tip>
+Many popular chains have pre-built TypeScript libraries generated with Telescope: [OsmoJS](https://github.com/osmosis-labs/osmojs) for Osmosis, [stargazejs](https://github.com/public-awesome/stargazejs) for Stargaze, [stridejs](https://github.com/Stride-Labs/stridejs) for Stride, and others. Check if one exists for your chain before writing custom module code.
+</Tip>
+
+## Custom Account Parsers
+
+Some chains use non-standard account types (e.g. `EthAccount` on EVM-compatible chains). The default `accountFromAny` parser won't recognize them, causing account lookups to fail. Pass a custom `accountParser` to handle these:
+
+```typescript
+import { decodePubkey } from "@cosmjs/proto-signing";
+import { accountFromAny, AccountParser } from "@cosmjs/stargate";
+import { EthAccount } from "./generated/ethermint/types/v1/account";
+import { Any } from "cosmjs-types/google/protobuf/any";
+
+const customAccountParser: AccountParser = (any: Any) => {
+  if (any.typeUrl === "/ethermint.types.v1.EthAccount") {
+    const ethAccount = EthAccount.decode(any.value);
+    const baseAccount = ethAccount.baseAccount;
+    if (!baseAccount) throw new Error("EthAccount missing baseAccount");
+    return {
+      address: baseAccount.address,
+      pubkey: baseAccount.pubKey ? decodePubkey(baseAccount.pubKey) : null,
+      accountNumber: Number(baseAccount.accountNumber),
+      sequence: Number(baseAccount.sequence),
+    };
+  }
+  return accountFromAny(any);
+};
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { accountParser: customAccountParser },
+);
+```
+
+The `accountParser` option is available on both `StargateClient` (read-only) and `SigningStargateClient` (signing). The parser receives an `Any`-encoded account from the auth module and must return an `Account` object with `address`, `pubkey`, `accountNumber`, and `sequence`.
+
+## HD Derivation Paths
+
+Different chains may use different [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki) coin types in their HD derivation path. The default is `m/44'/118'/0'/0/0` (coin type 118, the Cosmos Hub standard). Override this for chains that use a different coin type:
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { stringToPath } from "@cosmjs/crypto";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+  prefix: "evmos",
+  hdPaths: [stringToPath("m/44'/60'/0'/0/0")],
+});
+```
+
+Common coin types:
+
+| Chain | Coin Type | HD Path |
+|-------|-----------|---------|
+| Cosmos Hub, most Cosmos chains | 118 | `m/44'/118'/0'/0/0` |
+| Ethereum-based (Evmos, Injective) | 60 | `m/44'/60'/0'/0/0` |
+| Terra | 330 | `m/44'/330'/0'/0/0` |
+| Crypto.org | 394 | `m/44'/394'/0'/0/0` |
+
+```typescript
+import { stringToPath } from "@cosmjs/crypto";
+
+const cosmosPath = stringToPath("m/44'/118'/0'/0/0");
+const ethPath = stringToPath("m/44'/60'/0'/0/0");
+```
+
+## Multiple Accounts
+
+To derive multiple accounts from the same mnemonic, pass multiple HD paths:
+
+```typescript
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { stringToPath } from "@cosmjs/crypto";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+  prefix: "cosmos",
+  hdPaths: [
+    stringToPath("m/44'/118'/0'/0/0"),
+    stringToPath("m/44'/118'/0'/0/1"),
+    stringToPath("m/44'/118'/0'/0/2"),
+  ],
+});
+
+const accounts = await wallet.getAccounts();
+// accounts[0], accounts[1], accounts[2] — each with a different address
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Modules" icon="puzzle-piece" href="/cosmjs/v0.38.x/guides/extending/custom-modules">
+    Build a complete module integration for your chain's custom message types.
+  </Card>
+  <Card title="Code Generation" icon="wand-magic-sparkles" href="/cosmjs/v0.38.x/guides/extending/code-generation">
+    Use Telescope or ts-proto to generate TypeScript types from your chain's protobuf definitions.
+  </Card>
+  <Card title="Cosmos EVM Chains" icon="ethereum" href="/cosmjs/v0.38.x/concepts/cosmos-evm/key-differences">
+    Special considerations for EVM-compatible Cosmos chains.
+  </Card>
+</CardGroup>

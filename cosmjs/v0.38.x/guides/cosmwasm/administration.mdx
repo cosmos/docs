@@ -1,0 +1,85 @@
+---
+title: "Contract Administration"
+description: "Migrate contracts to new code, transfer admin privileges, and manage the contract lifecycle"
+---
+
+Contracts with an admin address can be migrated to new code versions and have their admin transferred or cleared. These operations are central to the CosmWasm upgrade lifecycle.
+
+## Migrating a Contract
+
+Migrate moves a contract to a new code ID while preserving its address and state. The contract must have an admin, and the migration message is passed to the new code's `migrate` entry point.
+
+<Steps>
+
+<Step title="Upload the new code">
+
+```typescript
+const newWasmCode = readFileSync("./my_contract_v2.wasm");
+const { codeId: newCodeId } = await client.upload(address, newWasmCode, "auto");
+```
+
+</Step>
+
+<Step title="Migrate the contract">
+
+```typescript
+const migrateResult = await client.migrate(
+  address,
+  contractAddress,
+  newCodeId,
+  { new_field: "default_value" },
+  "auto",
+);
+```
+
+</Step>
+
+</Steps>
+
+The migrate message (fourth argument) is contract-defined. It typically handles schema changes, data migrations, or field initialization for the new version.
+
+<Note>
+Only the contract's admin address can call `migrate`. The sender must match the admin set during instantiation (or a subsequent `updateAdmin` call).
+</Note>
+
+## Updating the Admin
+
+Transfer admin privileges to a different address:
+
+```typescript
+await client.updateAdmin(address, contractAddress, "osmo1newadmin...", "auto");
+```
+
+After this call, only `osmo1newadmin...` can migrate the contract or change the admin again. The original admin loses all privileges.
+
+## Clearing the Admin
+
+Remove the admin entirely, making the contract permanently non-upgradeable:
+
+```typescript
+await client.clearAdmin(address, contractAddress, "auto");
+```
+
+<Warning>
+Clearing the admin is irreversible. The contract can never be migrated or have its admin updated again. Only do this when you are certain the contract should be immutable.
+</Warning>
+
+## Contract Lifecycle Summary
+
+| State | Can Migrate | Can Change Admin | How to Reach |
+|-------|-------------|------------------|--------------|
+| Admin set | Yes | Yes | `instantiate` with `admin` option |
+| Admin transferred | Yes | Yes | `updateAdmin` |
+| Admin cleared | No | No | `clearAdmin` |
+| No admin (from init) | No | No | `instantiate` without `admin` option |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Querying Contracts" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/cosmwasm/querying">
+    Verify contract metadata and code history after migration.
+  </Card>
+  <Card title="Gas and Advanced Usage" icon="gauge-high" href="/cosmjs/v0.38.x/guides/cosmwasm/gas-and-advanced">
+    Gas estimation, custom messages, and the wasm query extension.
+  </Card>
+</CardGroup>

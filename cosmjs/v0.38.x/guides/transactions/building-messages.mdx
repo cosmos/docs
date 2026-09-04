@@ -1,0 +1,63 @@
+---
+title: "Building Messages"
+description: "Construct message objects for token transfers, staking, and multi-message transactions"
+---
+
+Every Cosmos SDK transaction contains one or more **messages** — typed instructions that tell the chain what to do. In CosmJS, messages are represented as `EncodeObject` values: a `typeUrl` string paired with a Protobuf message value.
+
+## Token Transfer (MsgSend)
+
+```typescript
+import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+import { coins } from "@cosmjs/proto-signing";
+
+const sendMsg = {
+  typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+  value: MsgSend.fromPartial({
+    fromAddress: senderAddress,
+    toAddress: "cosmos1recipientaddress...",
+    amount: coins(1_000_000, "uatom"),
+  }),
+};
+```
+
+`MsgSend.fromPartial()` creates a message from a partial object, filling in defaults for missing fields. The `coins` helper builds the `[{ denom, amount }]` array.
+
+## Staking Delegation
+
+```typescript
+import { MsgDelegate } from "cosmjs-types/cosmos/staking/v1beta1/tx";
+
+const delegateMsg = {
+  typeUrl: "/cosmos.staking.v1beta1.MsgDelegate",
+  value: MsgDelegate.fromPartial({
+    delegatorAddress: senderAddress,
+    validatorAddress: "cosmosvaloper1...",
+    amount: { denom: "uatom", amount: "1000000" },
+  }),
+};
+```
+
+## Multiple Messages in One Transaction
+
+A single transaction can carry multiple messages. They execute atomically — all succeed or all fail:
+
+```typescript
+const messages = [sendMsg, delegateMsg];
+const result = await client.signAndBroadcast(senderAddress, messages, "auto");
+```
+
+<Tip>
+For type-safe message construction, use typed encode objects like `MsgSendEncodeObject` from `@cosmjs/stargate`. See [EncodeObject](/cosmjs/v0.38.x/concepts/messages-encoding/encode-objects) for the full list.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Simulating Gas" icon="gauge" href="/cosmjs/v0.38.x/guides/transactions/simulating-gas">
+    Estimate how much gas your messages will consume before broadcasting.
+  </Card>
+  <Card title="Custom Message Types" icon="puzzle-piece" href="/cosmjs/v0.38.x/concepts/transactions/custom-messages">
+    Register your own Protobuf message types with the Registry.
+  </Card>
+</CardGroup>

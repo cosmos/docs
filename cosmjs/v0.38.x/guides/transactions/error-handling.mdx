@@ -1,0 +1,119 @@
+---
+title: "Error Handling"
+description: "Handle CheckTx rejections, execution failures, and broadcast timeouts"
+---
+
+Transactions can fail at different stages, each with a distinct error type. A robust flow handles all of them.
+
+## Stage 1: CheckTx Rejection (`BroadcastTxError`)
+
+The node validates the transaction before adding it to the mempool. Common failures include invalid signatures, insufficient funds for fees, or unregistered message types. These throw a `BroadcastTxError`:
+
+```typescript
+import { BroadcastTxError } from "@cosmjs/stargate";
+
+try {
+  const result = await client.signAndBroadcast(senderAddress, [sendMsg], "auto");
+} catch (error) {
+  if (error instanceof BroadcastTxError) {
+    console.error("Rejected at CheckTx:");
+    console.error("  Code:", error.code);
+    console.error("  Codespace:", error.codespace);
+    console.error("  Log:", error.log);
+  }
+}
+```
+
+CheckTx rejections mean the transaction never entered a block and no gas was consumed.
+
+## Stage 2: Execution Failure (non-zero `code`)
+
+If the transaction passes CheckTx but fails during execution (out of gas, business logic error, etc.), `signAndBroadcast` still returns a `DeliverTxResponse` — but with a non-zero `code`. Gas is consumed up to the point of failure.
+
+```typescript
+import { isDeliverTxFailure, assertIsDeliverTxSuccess } from "@cosmjs/stargate";
+
+const result = await client.signAndBroadcast(senderAddress, [sendMsg], "auto");
+
+if (isDeliverTxFailure(result)) {
+  console.error(`Transaction ${result.transactionHash} failed`);
+  console.error(`  Code: ${result.code}`);
+  console.error(`  Raw log: ${result.rawLog}`);
+}
+
+assertIsDeliverTxSuccess(result);
+```
+
+`assertIsDeliverTxSuccess` throws an error if the transaction failed, making it useful for fail-fast workflows.
+
+## Stage 3: Timeout (`TimeoutError`)
+
+If the transaction is not included in a block before the polling timeout expires, a `TimeoutError` is thrown. The transaction may still succeed later:
+
+```typescript
+import { TimeoutError } from "@cosmjs/stargate";
+
+try {
+  const result = await client.signAndBroadcast(senderAddress, [sendMsg], "auto");
+} catch (error) {
+  if (error instanceof TimeoutError) {
+    console.warn("Tx submitted but not confirmed yet:", error.txId);
+    const laterResult = await client.getTx(error.txId);
+  }
+  throw error;
+}
+```
+
+## Full Error Handling Pattern
+
+A robust transaction flow handles all three failure modes:
+
+```typescript
+import {
+  SigningStargateClient,
+  GasPrice,
+  TimeoutError,
+  BroadcastTxError,
+  isDeliverTxSuccess,
+} from "@cosmjs/stargate";
+
+try {
+  const result = await client.signAndBroadcast(senderAddress, messages, "auto");
+
+  if (isDeliverTxSuccess(result)) {
+    console.info("Success:", result.transactionHash);
+    console.info("Gas used:", result.gasUsed.toString());
+  } else {
+    console.error(
+      `Execution failed (code ${result.code}): ${result.rawLog}`,
+    );
+  }
+} catch (error) {
+  if (error instanceof BroadcastTxError) {
+    console.error(`CheckTx rejected (code ${error.code}): ${error.log}`);
+  } else if (error instanceof TimeoutError) {
+    console.warn("Tx submitted but not confirmed yet:", error.txId);
+  } else {
+    throw error;
+  }
+}
+```
+
+## Error Summary
+
+| Stage | Error Type | Gas Charged? | Retryable? |
+|-------|-----------|-------------|------------|
+| CheckTx | `BroadcastTxError` | No | Rarely — fix the issue first |
+| Block inclusion | `TimeoutError` | Unknown | Query `getTx` later — it may still land |
+| Execution (DeliverTx) | `DeliverTxResponse` with `code !== 0` | Yes (up to failure point) | Depends on the error |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Classes" icon="circle-exclamation" href="/cosmjs/v0.38.x/concepts/errors/error-classes">
+    Detailed reference for all CosmJS error classes.
+  </Card>
+  <Card title="Events & Lookups" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/transactions/events-and-lookups">
+    Read transaction events and look up past transactions.
+  </Card>
+</CardGroup>

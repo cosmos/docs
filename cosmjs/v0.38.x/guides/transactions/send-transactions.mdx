@@ -1,0 +1,122 @@
+---
+title: "Send Transactions"
+description: "Build messages, estimate gas, sign, broadcast, and handle the full transaction lifecycle with CosmJS"
+---
+
+Sending a transaction on a Cosmos SDK chain is a multi-step process: you build one or more messages, estimate gas, sign the transaction, broadcast it to a node, and then wait for block inclusion. This guide walks through each step using `SigningStargateClient`.
+
+## Prerequisites
+
+- **Node.js** v22 or later
+- `@cosmjs/stargate` and `@cosmjs/proto-signing` installed
+- An RPC endpoint for the target chain
+
+<CodeGroup>
+```bash npm
+npm install @cosmjs/stargate @cosmjs/proto-signing cosmjs-types
+```
+```bash yarn
+yarn add @cosmjs/stargate @cosmjs/proto-signing cosmjs-types
+```
+```bash pnpm
+pnpm add @cosmjs/stargate @cosmjs/proto-signing cosmjs-types
+```
+</CodeGroup>
+
+## Set Up a Signing Client
+
+Create a wallet and connect a signing client. This example uses a mnemonic-based wallet for simplicity — see [Local Wallets](/cosmjs/v0.38.x/concepts/account/local-wallets) and [Injected Wallets](/cosmjs/v0.38.x/concepts/account/injected-wallets) for production options.
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+  "your mnemonic words here ...",
+  { prefix: "cosmos" },
+);
+const [{ address: senderAddress }] = await wallet.getAccounts();
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025uatom") },
+);
+```
+
+<Warning>
+Never hard-code mnemonics in source files. Use environment variables or a secrets manager.
+</Warning>
+
+Setting `gasPrice` in the client options enables `"auto"` fee estimation for all transactions. Without it, you must pass an explicit `StdFee` to every transaction method.
+
+## Transaction Lifecycle
+
+Every transaction follows these steps:
+
+1. **Build messages** — describe what the transaction should do
+2. **Estimate gas** — simulate execution to determine fees
+3. **Sign** — produce a cryptographic signature over the transaction bytes
+4. **Broadcast** — send the signed transaction to a node
+5. **Confirm** — wait for the transaction to be included in a block
+
+The simplest path combines all steps in a single call:
+
+```typescript
+const result = await client.sendTokens(
+  senderAddress,
+  "cosmos1recipientaddress...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+);
+
+console.info("Tx hash:", result.transactionHash);
+```
+
+The following pages break down each step in detail.
+
+## Convenience Methods
+
+`SigningStargateClient` provides high-level methods for the most common transactions. They construct the message internally and call `signAndBroadcast`:
+
+```typescript
+const result = await client.sendTokens(
+  senderAddress,
+  "cosmos1recipientaddress...",
+  [{ denom: "uatom", amount: "1000000" }],
+  "auto",
+  "thanks for lunch",
+);
+```
+
+| Method | Description |
+|--------|-------------|
+| `sendTokens(sender, recipient, amount, fee, memo?)` | Transfer tokens (`MsgSend`) |
+| `delegateTokens(delegator, validator, amount, fee, memo?)` | Delegate to a validator (`MsgDelegate`) |
+| `undelegateTokens(delegator, validator, amount, fee, memo?)` | Undelegate from a validator (`MsgUndelegate`) |
+| `withdrawRewards(delegator, validator, fee, memo?)` | Withdraw staking rewards (`MsgWithdrawDelegatorReward`) |
+
+These convenience methods accept the same three fee forms — `"auto"`, a number multiplier, or an explicit `StdFee`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building Messages" icon="hammer" href="/cosmjs/v0.38.x/guides/transactions/building-messages">
+    Construct message objects for token transfers, staking, and multi-message transactions.
+  </Card>
+  <Card title="Simulating Gas" icon="gauge" href="/cosmjs/v0.38.x/guides/transactions/simulating-gas">
+    Estimate gas with auto fees, manual simulation, or explicit fee objects.
+  </Card>
+  <Card title="Signing & Broadcasting" icon="paper-plane" href="/cosmjs/v0.38.x/guides/transactions/signing-broadcasting">
+    Sign and broadcast transactions, or separate the two steps for advanced workflows.
+  </Card>
+  <Card title="Waiting for Confirmation" icon="clock" href="/cosmjs/v0.38.x/guides/transactions/confirmation">
+    Configure polling timeouts and handle transactions that take too long.
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/transactions/error-handling">
+    Handle CheckTx rejections, execution failures, and timeouts.
+  </Card>
+  <Card title="Events & Lookups" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/transactions/events-and-lookups">
+    Read transaction events and look up past transactions by hash or query.
+  </Card>
+</CardGroup>
