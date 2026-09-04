@@ -37,6 +37,7 @@ ONE_OF = re.compile(r"One of: (?P<options>`/[\w.]+`(?:, `/[\w.]+`)*)")
 DEC_NOTE = re.compile(r"Encoded as cosmos\.Dec")
 SCALAR_NOTE = re.compile(r"Encoded as (?P<name>cosmos\.\w+)")
 ENUM_ROW = re.compile(r"^\| `(?P<value>[A-Z][A-Z0-9_]+)` \|", re.M)
+GOVERNANCE_GATED = "The signer is the governance module account"
 
 
 class Unfillable(Exception):
@@ -135,7 +136,10 @@ def read_page(page: Path) -> dict:
         "by_anchor": {name.lower().replace(".", "-"): name for name in types},
         # The page's own statement of how a Dec is written into a transaction.
         # Read rather than assumed, so the runner is testing that sentence.
-        "dec_decimal": 'decimal string such as `"0.05"`' in text,
+        # Tied to the value a reader would copy rather than to one sentence's
+        # wording, so the boilerplate can be rewritten without silently making
+        # every Dec field unfillable. The page still has to state the form.
+        "dec_decimal": 'such as `"0.05"`' in text,
     }
 
 
@@ -162,6 +166,11 @@ def transactions_on(page: dict, source: Path):
             "example": json.loads(example.group("json")),
             "fields": _fields(body),
             "anchor": "#" + anchor_for(block.group("title")),
+            # The page states, in its own words, that no user can sign this.
+            # Read rather than derived from the descriptor, so what the runner
+            # expects is what the reader was told, and so a message that becomes
+            # governance gated upstream classifies itself with no manifest edit.
+            "governance_gated": GOVERNANCE_GATED in body,
         }
 
 

@@ -119,7 +119,44 @@ def broadcast(simd, home, chain_id, key, node, message, denom) -> tuple[int, str
     output = sent.stdout + sent.stderr
     code = re.search(r'"?code"?:\s*(\d+)', output)
     raw = re.search(r'raw_log:\s*(.*)', output)
-    return (int(code.group(1)) if code else -1), (raw.group(1).strip()[:160] if raw else output.strip()[:160])
+    check_code = int(code.group(1)) if code else -1
+    check_log = raw.group(1).strip()[:160] if raw else output.strip()[:160]
+
+    # A sync broadcast reports the ante handler's verdict, nothing more. A
+    # message that pays its fee and carries a valid signature reaches code 0
+    # here and then fails in its module handler, so trusting this number marks
+    # a documented example that does not work as one that does. The delivered
+    # result is the assertion worth making, and it only exists after inclusion.
+    if check_code != 0:
+        return check_code, check_log
+    found = re.search(r'"?txhash"?:\s*"?([0-9A-Fa-f]{64})', output)
+    if not found:
+        return check_code, f"accepted, but no txhash to confirm delivery: {check_log}"
+    return delivered(simd, node, found.group(1), home)
+
+
+def delivered(simd, node, txhash, home, attempts: int = 20) -> tuple[int, str]:
+    """The result the chain recorded for a transaction, once it is in a block.
+
+    Polled rather than waited on, because inclusion takes a block and the query
+    reports not found until then.
+    """
+    import time
+
+    for _ in range(attempts):
+        out = subprocess.run(
+            [simd, "query", "tx", txhash, "--node", node, "--home", home, "--output", "json"],
+            capture_output=True, text=True,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            try:
+                result = json.loads(out.stdout)
+            except json.JSONDecodeError:
+                time.sleep(1)
+                continue
+            return int(result.get("code", 0)), str(result.get("raw_log", ""))[:160]
+        time.sleep(1)
+    return -1, f"broadcast accepted but {txhash[:12]} was not in a block within {attempts}s"
 
 
 def main() -> int:
@@ -252,7 +289,14 @@ def main() -> int:
         if args.only and args.only not in name:
             continue
         page, entry = pages[name], entries.get(name, {})
-        expect = entry.get("expect", "success")
+        # A page that tells a reader the governance module account signs is
+        # telling them they cannot send this directly. Assert what the page
+        # claims, unless the manifest states otherwise for a stated reason, so
+        # a message that becomes governance gated upstream classifies itself.
+        if page.get("governance_gated") and name not in entries:
+            expect = "unauthorized"
+        else:
+            expect = entry.get("expect", "success")
 
         try:
             body = pagefill.fill(page["example"], page["page"], fixtures, page["fields"])
@@ -289,8 +333,26 @@ def main() -> int:
             continue
 
         if expect == "skip":
-            counts["skip"] += 1
-            print(f"  SKIP        {name:52} {entry.get('note', '')[:60]}")
+            # Probed anyway. A skip states that something cannot be attempted
+            # here; if it turns out it can, the entry is stale and saying so is
+            # the whole point of recording it. Both this file's header and
+            # DESIGN.md promise this, so the promise has to be true.
+            signer = signer_for(entry)
+            before = current_sequence(args.rest, address_of(signer))
+            code, log = broadcast(args.simd, args.home, args.chain_id, signer, args.node, body,
+                                  fixtures["denom"])
+            if code == 0:
+                wait_for_sequence(args.rest, address_of(signer), before)
+                items.append(findings.Finding(
+                    page=page["page"]["name"], anchor=page["anchor"], method=name,
+                    claim=findings.claim_for(page["fields"], body), sent=body,
+                    response="recorded as skip, but it succeeded; delete the entry",
+                    verdict="stale-manifest-entry", manifest_entry=name,
+                ))
+                print(f"  STALE       {name:52} recorded skip, but it succeeded")
+            else:
+                counts["skip"] += 1
+                print(f"  SKIP        {name:52} {entry.get('note', '')[:60]}")
             continue
 
         signer = signer_for(entry)

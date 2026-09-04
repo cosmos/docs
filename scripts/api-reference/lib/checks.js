@@ -149,3 +149,30 @@ export function checkTxEnvelopeDocumented(types, outputRoot) {
   }
   return missing;
 }
+
+/**
+ * Modules whose every method is deprecated.
+ *
+ * A deprecated method among live ones stays documented: a reader who meets it
+ * in reflection output needs to identify it, and the page carries a warning.
+ * A module with nothing else is different. It becomes a sidebar entry and a
+ * page whose entire content is something nobody should call.
+ *
+ * Requires at least one method, so a module that defines only types is kept
+ * rather than dropped on a vacuous truth.
+ */
+export function dropFullyDeprecatedModules(modules) {
+  const kept = [];
+  const dropped = [];
+
+  for (const module of modules) {
+    const methods = module.services.flatMap((service) => service.methods);
+    if (methods.length && methods.every((method) => method.deprecated)) {
+      dropped.push(module.name);
+    } else {
+      kept.push(module);
+    }
+  }
+
+  return { kept, dropped };
+}

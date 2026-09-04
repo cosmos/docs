@@ -35,6 +35,7 @@ import { renderModulePage, buildMethodHeadings } from './lib/render.js';
 import { buildInventory } from './lib/inventory.js';
 import {
   checkScalarAnnotationsDocumented,
+  dropFullyDeprecatedModules,
   pruneRemovedModulePages,
   checkWellKnownTypesHandled,
   checkTxEnvelopeDocumented,
@@ -158,13 +159,21 @@ async function main() {
   const descriptor = buildDescriptor(repository, sha);
   const { modules, types } = parseDescriptor(descriptor);
 
-  const selected = args.modules
+  let selected = args.modules
     ? modules.filter((m) => args.modules.includes(m.name))
     : modules;
   if (args.modules && selected.length !== args.modules.length) {
     const found = selected.map((m) => m.name);
     throw new Error(`unknown modules: ${args.modules.filter((m) => !found.includes(m)).join(', ')}`);
   }
+  const { kept, dropped: fullyDeprecated } = dropFullyDeprecatedModules(selected);
+  if (fullyDeprecated.length) {
+    console.log(
+      `  dropped ${fullyDeprecated.length} module(s) whose every method is deprecated: ${fullyDeprecated.join(', ')}`,
+    );
+  }
+  selected = kept;
+
   console.log(`  ${selected.length} modules, ${types.messages.size} message types`);
 
   // One source of truth for method headings, shared by the module pages and
@@ -278,7 +287,7 @@ async function main() {
   console.log(`  ${Object.keys(joined.paths).length} REST paths`);
 
   const pruned = pruneRemovedModulePages(outputRoot, selected.map((m) => m.name));
-  if (pruned.length) console.log(`  pruned ${pruned.length} pages for modules no longer upstream: ${pruned.join(', ')}`);
+  if (pruned.length) console.log(`  pruned ${pruned.length} page(s) for modules no longer documented: ${pruned.join(', ')}`);
 
   updateDocsJson(args.version, selected.map((m) => m.name));
   console.log(`\nWrote ${outputRoot}`);

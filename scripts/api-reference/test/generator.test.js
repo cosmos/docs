@@ -29,6 +29,7 @@ import {
   pruneRemovedModulePages,
   checkScalarAnnotationsDocumented,
   checkWellKnownTypesHandled,
+  dropFullyDeprecatedModules,
 } from '../lib/checks.js';
 import {
   baseDescriptor,
@@ -572,5 +573,37 @@ describe('inventory', () => {
     service.methods.push({ name: 'Deposit', inputType: 'cosmos.gov.v1.MsgDeposit', outputType: 'cosmos.gov.v1.MsgDepositResponse' });
 
     assert.equal(buildInventory(modules).messages.length, before + 1);
+  });
+});
+
+describe('fully deprecated modules', () => {
+  const moduleWith = (name, methods) => ({ name, services: [{ methods }] });
+
+  test('drops a module whose every method is deprecated', () => {
+    const { kept, dropped } = dropFullyDeprecatedModules([
+      moduleWith('app', [{ name: 'Config', deprecated: true }]),
+    ]);
+    assert.deepEqual(dropped, ['app']);
+    assert.equal(kept.length, 0);
+  });
+
+  test('keeps a module with a deprecated method beside a live one', () => {
+    const { kept, dropped } = dropFullyDeprecatedModules([
+      moduleWith('upgrade', [
+        { name: 'UpgradedConsensusState', deprecated: true },
+        { name: 'CurrentPlan' },
+      ]),
+    ]);
+    assert.deepEqual(dropped, []);
+    assert.equal(kept[0].services[0].methods.length, 2);
+  });
+
+  // A module defining only types has no methods, so "every method is
+  // deprecated" is vacuously true. Dropping it would delete a page for a
+  // reason that does not apply.
+  test('keeps a module that defines no methods at all', () => {
+    const { kept, dropped } = dropFullyDeprecatedModules([moduleWith('typesonly', [])]);
+    assert.deepEqual(dropped, []);
+    assert.equal(kept.length, 1);
   });
 });

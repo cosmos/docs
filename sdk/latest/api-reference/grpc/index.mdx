@@ -24,98 +24,78 @@ cosmos.bank.v1beta1  .  Query  /  AllBalances
 
 The `google.api.http` option on the method is what produces the REST route on port 1317. Methods without that option are reachable over gRPC only.
 
-## Two kinds of service
+Modules define `Query` services and `Msg` services:
 
-Modules define `Query` services and `Msg` services, and the SDK routes them differently.
-
-`Query` services are registered into the gRPC query router and served on port 9090.
-
-`Msg` services are registered into the message service router, which is consulted only while a transaction is being delivered. Their methods are not reachable on port 9090. The module pages list them under Transaction messages, with the type URL you place in a transaction rather than a `grpcurl` command.
-
-A handful of services are named neither `Query` nor `Msg`, such as `cosmos.tx.v1beta1.Service` and the reflection services. Those are ordinary callable services and appear alongside queries.
+- `Query` services are registered into the gRPC query router and served on port 9090.
+- `Msg` services are registered into the message service router, which is consulted only while a transaction is being delivered. 
 
 ## Scalar encodings
 
-Field tables note an encoding on some fields, as `Encoded as cosmos.Dec`. These are not protobuf types, they are conventions the SDK layers on top of `string` and `bytes`, and getting them wrong produces wrong answers rather than errors.
+Some fields use SDK encoding conventions layered on protobuf `string` or `bytes` types.
 
-| Annotation | Meaning |
-| --- | --- |
-| `cosmos.Int` | Arbitrary-precision integer sent as a base-10 string. `"8821829649"` is 8,821,829,649. |
-| `cosmos.Dec` | A fixed-point decimal, in one of three forms. The field table says which. |
-| `cosmos.AddressString` | Bech32 account address carrying the chain's prefix, `cosmos1...` on the Hub. |
-| `cosmos.ValidatorAddressString` | Bech32 validator operator address, `cosmosvaloper1...` on the Hub. |
-| `cosmos.ConsensusAddressString` | Bech32 validator consensus address, `cosmosvalcons1...` on the Hub. Derived from the validator's consensus key, so it is a different address from its operator address, not a reformatting of it. |
+| Annotation                      | Meaning                                                                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `cosmos.Int`                    | Arbitrary-precision integer encoded as a base-10 string. `"8821829649"` means 8,821,829,649.                                       |
+| `cosmos.Dec`                    | Fixed-point decimal. Its encoding depends on the codec.                                                                            |
+| `cosmos.AddressString`          | Bech32 account address, such as `cosmos1...` on the Cosmos Hub.                                                                    |
+| `cosmos.ValidatorAddressString` | Bech32 validator operator address, such as `cosmosvaloper1...`.                                                                    |
+| `cosmos.ConsensusAddressString` | Bech32 consensus address, such as `cosmosvalcons1...`. It is derived from the consensus key and differs from the operator address. |
 
-Account and validator addresses are separate address spaces. Passing an account address where a validator operator address is expected fails with `hrp does not match bech32 prefix`. The prefix is chain-specific: query `cosmos.auth.v1beta1.Query/Bech32Prefix` to find it.
+Account, operator, and consensus addresses belong to separate address spaces. Using the wrong type fails with `hrp does not match bech32 prefix`. Prefixes are chain-specific; query `cosmos.auth.v1beta1.Query/Bech32Prefix` to find them.
 
-### cosmos.Dec depends on which codec reads it
+### `cosmos.Dec` encodings
 
-A `cosmos.Dec` is a fixed-point decimal, and the string that carries it means different things on different surfaces. The same value, 0.05, is written and read four ways:
+The value 0.05 appears differently depending on where it is read or written:
 
-| Where | Form | Example |
-| --- | --- | --- |
-| Writing, transaction JSON: the CLI, and `POST /cosmos/tx/v1beta1/encode` | a decimal string | `"0.05"` |
-| Writing, protobuf JSON: `grpcurl`, generated clients, `Service/TxEncode` | an integer string scaled by 10^18 | `"50000000000000000"` |
-| Reading over gRPC | scaled, or base64 of the scaled digits for a `bytes` field | `"50000000000000000"`, `"MTAwMDAwMDAwMDAwMDAwMDAw"` |
-| Reading over REST | a decimal string | `"0.050000000000000000"` |
+| Where                                                          | Form                                                      | Example                                               |
+| -------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------- |
+| Write through the CLI or `POST /cosmos/tx/v1beta1/encode`      | Decimal string                                            | `"0.05"`                                              |
+| Write with `grpcurl`, generated clients, or `Service/TxEncode` | Integer scaled by 10^18                                   | `"50000000000000000"`                                 |
+| Read through gRPC                                              | Scaled integer, or its base64 encoding for `bytes` fields | `"50000000000000000"` or `"MTAwMDAwMDAwMDAwMDAwMDAw"` |
+| Read through REST                                              | Decimal string                                            | `"0.050000000000000000"`                              |
 
-The field tables name the read form for each field, because that is the one that varies by field. The write form varies by codec rather than by field: transaction JSON takes the decimal, protobuf JSON takes the scaled integer.
+Field tables identify each field’s read encoding. When writing, transaction JSON uses decimal strings and protobuf JSON uses scaled integers.
 
-Getting this wrong does not always error. Passing `"50000000000000000"` where a decimal is expected is read as fifty quadrillion, so a commission rate is rejected as over 100%, and a vote weight comes back as `1000000000000000000.000000000000000000`. Passing `"0.05"` where the scaled form is expected fails to parse.
+The wrong encoding may produce a valid but incorrect value. For example, `"50000000000000000"` in transaction JSON means fifty quadrillion, while the same value returned by `staking` as a scaled integer means 5%.
 
-Read as a plain integer, a scaled value is out by 10^18 with no error at all. `staking` `Params.min_commission_rate` returning `"50000000000000000"` is 5%, and `Delegation` returning `shares` of `"8821829649000000000000000000"` beside a `balance` of `"8821829649"` is the same number in both conventions.
+## Other encodings
 
-Fields typed `bytes` are base64 in JSON. Passing hex will not error: it decodes as base64 and yields a valid-looking, wrong value.
+JSON encodes `bytes` fields as base64. Hex input may decode successfully as base64 and produce the wrong value.
 
-A `pagination.next_key` in a response is already base64. Over gRPC, paste it back verbatim. In a REST query string, percent-encode it first: standard base64 emits `+`, which a query string reads as a space, and the key is then rejected as malformed.
+A response’s `pagination.next_key` is already base64. Pass it back unchanged over gRPC. In a REST query string, percent-encode it so `+` is not interpreted as a space.
 
-A `bytes` value that appears in a REST path segment rather than a query parameter needs base64url, with `-` and `_` in place of `+` and `/`. A `/` in standard base64 breaks the path even when percent-encoded.
+An `Any` field contains an `@type` discriminator and the concrete message’s fields. For example, `cosmos.auth.v1beta1.Query/Account` may return a `BaseAccount`, `ModuleAccount`, or vesting account.
 
-Amounts are always in the chain's base denomination, never the display one. On the Hub the base denom is `uatom` and 1 ATOM is `1000000uatom`. Find a chain's denominations with `cosmos.staking.v1beta1.Query/Params` for `bond_denom`, or by paging `cosmos.bank.v1beta1.Query/DenomsMetadata`.
+Protobuf JSON usually omits fields with default values. A successful query with no matches may therefore return `{}` instead of an empty list.
 
-A field typed `Any` carries an `@type` discriminator naming the concrete message, with that message's fields inline beside it. `cosmos.auth.v1beta1.Query/Account` returns one, and what comes back depends on the account: `BaseAccount`, `ModuleAccount`, or a vesting account type.
+## List available services
 
-Protocol buffers version 3 omits fields holding their default value, so a successful query that matched nothing returns `{}` rather than an empty list. An empty result and a mistaken query look identical.
-
-## Listing what a node actually serves
-
-These pages document the standard modules at one SDK version. A specific chain registers its own set. gRPC reflection asks the node directly, and is the authoritative answer for that node:
+These pages cover the standard modules for one SDK version. Each chain registers its own services. When enabled, gRPC reflection gives the authoritative list:
 
 ```bash
-# Every service the node serves
+# List every service
 grpcurl -plaintext localhost:9090 list
 
-# Every method on one service
-grpcurl -plaintext localhost:9090 list cosmos.bank.v1beta1.Query
-
-# The full request and response schema for one method
-grpcurl -plaintext localhost:9090 describe cosmos.bank.v1beta1.Query.AllBalances
-
-# The fields of a request message
-grpcurl -plaintext localhost:9090 describe cosmos.bank.v1beta1.QueryAllBalancesRequest
+# Describe one method
+grpcurl -plaintext localhost:9090 describe \
+  cosmos.bank.v1beta1.Query.AllBalances
 ```
 
-## Calling a method
+If reflection is disabled, provide local proto files with `-import-path` and `-proto`.
 
-Pass the request as JSON with `-d`. Field names accept either the protobuf name or its JSON form, so `resolve_denom` and `resolveDenom` both work:
+## Call a method
+
+Pass the request as JSON with `-d`. Fields accept either protobuf names such as `resolve_denom` or JSON names such as `resolveDenom`.
 
 ```bash
-grpcurl -plaintext -d '{"address": "cosmos1..."}' \
+grpcurl -plaintext \
+  -d '{"address": "cosmos1..."}' \
   localhost:9090 cosmos.bank.v1beta1.Query/AllBalances
 ```
 
-Against a TLS endpoint, drop `-plaintext` and use port 443:
-
-```bash
-grpcurl -d '{"address": "cosmos1..."}' \
-  cosmos-grpc.example.com:443 cosmos.bank.v1beta1.Query/AllBalances
-```
-
-If reflection is disabled on the node, `grpcurl` needs the protos locally and the `-import-path` and `-proto` flags instead.
-
 ## Pagination
 
-Queries returning a list take a `pagination` field and return one alongside their results. Request either an offset or a key, never both:
+List queries accept and return a `pagination` field. Use either an offset or a key:
 
 ```bash
 grpcurl -plaintext \
@@ -123,4 +103,4 @@ grpcurl -plaintext \
   localhost:9090 cosmos.bank.v1beta1.Query/AllBalances
 ```
 
-The response carries `pagination.next_key`. Pass it back as `pagination.key` for the following page. Key-based paging is cheaper than offset paging and is the right choice for walking a large result set.
+Pass the returned `pagination.next_key` as `pagination.key` to request the next page. Key-based pagination is more efficient for large result sets.

@@ -87,4 +87,6 @@ Every defect found in this reference was a class rather than an instance, becaus
 
 Live execution is exhaustive: `query-onchain` runs all 123 documented queries and `tx-onchain` all 48 transaction messages, filled from what each page states. A command that cannot be used as written fails there, and the exceptions that genuinely cannot work are recorded in the manifests with a reason.
 
+A transaction is asserted on the result the chain delivered, not on the broadcast's return. `--broadcast-mode sync` reports the ante handler's verdict, so a message that pays its fee and carries a valid signature reads as success even when its module handler rejects it. Reading the result back by transaction hash is what separates the chain accepting an example from the example working, and it moved 27 of 48 messages out of the success column when it was introduced.
+
 The limit worth knowing: no automated check distinguishes a wrong documented value from missing chain state. A commission rate documented in the wrong encoding fails with a business error, indistinguishable from a chain that has no validator. That judgment needs a person, or an agent reading the findings file, and is worth re-running when the SDK version changes.

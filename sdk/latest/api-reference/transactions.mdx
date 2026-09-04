@@ -1,13 +1,13 @@
 ---
 title: "Sending Transactions"
-description: "How a transaction message becomes a signed transaction on chain, end to end."
+description: "The envelope around a transaction message, and the three steps that put it on chain."
 ---
 
-The module pages list transaction messages: what fields each one carries, which field must sign, and the JSON form it takes. This page covers the part that is the same for all of them, turning one of those messages into a transaction the chain accepts.
+The module pages give each transaction message its fields, its signer, and its JSON body. This page covers the envelope those bodies go into, which is the same for all of them.
 
-## What a transaction is
+## The envelope
 
-A transaction is a wrapper around one or more messages, plus everything needed to authorize and pay for them:
+A transaction is a wrapper around one or more messages and includes the information needed to authorize and pay for them:
 
 ```json
 {
@@ -21,141 +21,77 @@ A transaction is a wrapper around one or more messages, plus everything needed t
       }
     ],
     "memo": "",
-    "timeout_height": "0"
+    "timeout_height": "0",
+    "unordered": false,
+    "timeout_timestamp": null,
+    "extension_options": [],
+    "non_critical_extension_options": []
   },
   "auth_info": {
     "signer_infos": [],
     "fee": {
       "amount": [{ "denom": "uatom", "amount": "5000" }],
-      "gas_limit": "200000"
-    }
+      "gas_limit": "200000",
+      "payer": "",
+      "granter": ""
+    },
+    "tip": null
   },
   "signatures": []
 }
 ```
 
-The `messages` array holds exactly what the module pages show under In a transaction. The `@type` field is the type URL, and it is how the chain knows which handler to route to. Everything else is envelope.
+The `messages` array holds exactly what a module page shows under In a transaction. The `@type` field is the type URL, and it selects the handler. Everything else is envelope, and defaults are correct unless stated otherwise: `payer` and `granter` apply to fee grants, `unordered` and `timeout_timestamp` to unordered transactions.
 
-Several messages can go in one transaction. They execute in order and atomically: if the third fails, the first two are rolled back.
+Several messages can go in one transaction. They execute in order and atomically.
 
-Amounts are always in the chain's base denomination. On the Hub that is `uatom`, and 1 ATOM is `1000000uatom`. Sending `"amount": "1"` sends a millionth of an ATOM, successfully and silently.
-
-The example above is abridged. A transaction produced by the CLI also carries `extension_options`, `non_critical_extension_options`, `unordered`, `timeout_timestamp`, `tip`, and a `fee` with `payer` and `granter`. Leave them at their defaults unless you are using a fee grant.
+Amounts are in the chain's base denomination. On the Cosmos Hub that is `uatom`, and 1 ATOM is `1000000uatom`.
 
 ## The three steps
 
-Building, signing, and broadcasting are separate operations. The CLI runs all three by default, but separating them is what lets you sign offline or with a hardware wallet.
-
-The examples below use `simd`, the SDK's own demo binary. Substitute your chain's binary: on the Cosmos Hub it is `gaiad`.
-
-### 1. Build
-
-`--generate-only` produces the unsigned transaction and stops:
+Building, signing, and broadcasting are separate operations. Separating them is what allows offline signing. The examples use `simd`, the SDK's demo binary; substitute your chain's.
 
 ```bash
+# 1. Build
 simd tx bank send mykey cosmos1recipient... 1000000uatom \
-  --node https://your-rpc-endpoint:443 \
-  --chain-id cosmoshub-4 \
-  --gas auto --gas-adjustment 1.5 \
-  --gas-prices 0.005uatom \
-  --keyring-backend os \
+  --chain-id cosmoshub-4 --node https://your-rpc-endpoint:443 \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom \
   --generate-only > unsigned.json
-```
 
-The sender is given as a key name rather than an address. `--gas auto` simulates the transaction first, and building that simulation needs the key itself, so passing a bech32 address here fails with `no key name or address provided` even though an address was provided.
-
-Simulation also needs a reachable node, even though this step signs nothing. Without `--node` the CLI tries `tcp://localhost:26657` and fails to connect.
-
-The adjustment multiplies the estimate, because the simulation does not include signature verification and execution therefore costs more than it predicts. `1.3` is not enough for a plain `MsgSend`: it produces `code: 11`, `out of gas`, and the fee is still charged. Start at `1.5`.
-
-Query a node's own minimum with `cosmos.base.node.v1beta1.Service/Config`, which returns `minimum_gas_price`. On the Hub that is currently `0.005uatom`. A transaction priced below a validator's minimum is not included.
-
-### 2. Sign
-
-Signing needs the chain ID, the account number, and the sequence, because all three are part of what gets signed. This is what stops a signature from being replayed on another chain or a second time:
-
-```bash
-simd tx sign unsigned.json \
-  --from mykey \
-  --node https://your-rpc-endpoint:443 \
-  --chain-id cosmoshub-4 \
-  --keyring-backend os \
+# 2. Sign
+simd tx sign unsigned.json --from mykey \
+  --chain-id cosmoshub-4 --node https://your-rpc-endpoint:443 \
   --output-document signed.json
-```
 
-Given a node, `sign` fetches the account number and sequence itself. You only supply them by hand when signing offline, and all three are discoverable:
-
-```bash
-# chain ID, in default_node_info.network
-grpcurl -plaintext localhost:9090 \
-  cosmos.base.tendermint.v1beta1.Service/GetNodeInfo
-
-# account number and sequence
-grpcurl -plaintext -d '{"address":"cosmos1..."}' localhost:9090 \
-  cosmos.auth.v1beta1.Query/AccountInfo
-```
-
-Both are documented here: [`GetNodeInfo`](/sdk/latest/api-reference/grpc/base) and [`AccountInfo`](/sdk/latest/api-reference/grpc/auth).
-
-Two things will trip you up reading those responses. `grpcurl` prints protobuf JSON names, so the fields appear as `defaultNodeInfo` and `accountNumber` rather than the `default_node_info` and `account_number` of the field tables; the REST gateway uses the table spelling. And an account whose number is 0, which the first account on a chain has, shows no `account_number` field at all, because protobuf omits fields holding their default. A missing account number means zero, not missing.
-
-The key must control the address in the message's signer field. The module pages name that field for every message. For `MsgSend` it is `from_address`; for `MsgVote` it is `voter`; for `MsgWithdrawDelegatorReward` it is `delegator_address`. Signing with a key that controls a different address is caught locally by `sign`, which refuses with `tx intended signer does not match the given signer`, so this one never costs you a fee.
-
-If the account is offline, add `--offline` along with `--account-number` and `--sequence`.
-
-### 3. Broadcast
-
-```bash
+# 3. Broadcast
 simd tx broadcast signed.json --broadcast-mode sync
 ```
 
-`sync` returns once the node has run `CheckTx`, which catches malformed transactions and insufficient fees but does not mean the transaction is in a block. `async` returns immediately, without even that.
+Signing covers the chain ID, account number, and sequence, which is what binds a signature to one chain and one use. Given a node, `sign` fetches the account number and sequence itself; offline signing supplies them with `--offline --account-number --sequence`.
 
-Neither tells you the transaction succeeded. Both return a transaction hash, and confirming execution means querying for it:
+The key must control the address in the message's signer field. The module pages name that field for every message.
+
+Broadcasting returns a transaction hash, not a result. Query for it:
 
 ```bash
 simd query tx <hash>
 ```
 
-A `code` of 0 means success. Anything else is a failure, and `raw_log` says why.
+A `code` of 0 is success.
 
-A message's response, such as the `proposal_id` returned by `MsgSubmitProposal`, comes back in the transaction's `data` field as a hex-encoded protobuf blob. Decoding it is possible but awkward; in practice the same values are emitted as transaction events, which `simd query tx` prints in readable form.
+The API surfaces broadcast directly through `cosmos.tx.v1beta1.Service/BroadcastTx` on gRPC or `POST /cosmos/tx/v1beta1/txs` on REST. Both take the signed transaction as bytes, so building and signing still happen first.
 
-You can also broadcast over the API surfaces directly, with `cosmos.tx.v1beta1.Service/BroadcastTx` on gRPC or `POST /cosmos/tx/v1beta1/txs` on REST. Both take the signed transaction as bytes, so the building and signing above still has to happen first.
+## Governance-gated messages
 
-## Signing modes
+Some messages take `authority` as their signer, meaning the governance module account, which no one holds a key for. They execute only through a passed governance proposal, wrapped in `MsgSubmitProposal`. The module pages flag every one. `MsgUpdateParams` on each module is the common case.
 
-Two formats exist for the bytes that actually get signed.
-
-`SIGN_MODE_DIRECT` signs the protobuf transaction bytes. It is the default and what you should use unless something forces otherwise.
-
-`SIGN_MODE_LEGACY_AMINO_JSON` converts the transaction to a specific JSON form and signs that. Signers that display a transaction for human approval use it, hardware wallets in particular, because such a device can render JSON on its screen but cannot meaningfully display raw protobuf. This mode identifies each message by a registered Amino name rather than its type URL, and those names are frozen for signature compatibility, so many do not follow from the message name. The module pages list the Amino name for every transaction message, and flag the ones with no registered name, which cannot be signed in this mode at all.
-
-## Fees and gas
-
-Gas measures the work a transaction does. The fee is what you pay for it, and validators apply their own minimum gas price when deciding whether to include a transaction.
-
-Set the fee directly with `--fees 5000uatom`, or set a price per unit of gas with `--gas-prices 0.025uatom` and let the CLI compute the total from the gas limit. The second is usually better, because it scales with the actual size of the transaction.
-
-Running out of gas is not free. The transaction fails, it still lands in a block, and the fee is still taken.
-
-## Messages you cannot send
-
-Some messages have `authority` as their signer, meaning the governance module account. No one holds a key for it. Those messages execute only when a governance proposal containing them passes, and the module pages flag every one of them. `MsgUpdateParams` on each module is the common case.
-
-Submitting one means wrapping it in `MsgSubmitProposal` and going through the deposit and voting period, not signing and broadcasting it yourself.
-
-Sending one directly is not inert. It passes `CheckTx`, lands in a block, and fails there with `code: 4` and `invalid authority: expected ..., got ...: unauthorized`. The fee is charged.
-
-The `authority` value the message needs is the governance module account address, which you can look up rather than copy out of an error:
+The address the message needs:
 
 ```bash
 grpcurl -plaintext -d '{"name":"gov"}' localhost:9090 \
   cosmos.auth.v1beta1.Query/ModuleAccountByName
 ```
 
-A proposal also has to clear the deposit threshold to reach a voting period at all. `initial_deposit` below the module's `min_deposit`, from `cosmos.gov.v1.Query/Params`, leaves the proposal in a deposit period rather than rejecting it.
+## Related
 
-## Where to look next
-
-The module pages under [gRPC Services](/sdk/latest/api-reference/grpc/index) carry the message list, the field tables, the signer, and the JSON body for every transaction message. This page is the envelope around them.
+The module pages under [gRPC Services](/sdk/latest/api-reference/grpc/index) carry the message list, field tables, signer, and JSON body for every transaction message.
