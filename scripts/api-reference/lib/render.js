@@ -631,7 +631,11 @@ export function renderModulePage(module, types, context, headings) {
     out.push('- REST on port 1317, if the method has an HTTP binding');
     out.push('');
     out.push(
-      'Run `grpcurl -plaintext localhost:9090 list` to see what a node serves.',
+      `Run \`grpcurl -plaintext localhost:9090 list\` to see what a node serves.`,
+    );
+    out.push('');
+    out.push(
+      `Queries are read-only and never pass through consensus. See [Queries](/sdk/${context.version}/learn/concepts/transactions#queries).`,
     );
     out.push('');
     // Search engines land readers directly on a module page, so the examples
@@ -668,7 +672,7 @@ export function renderModulePage(module, types, context, headings) {
     out.push('## Transaction messages');
     out.push('');
     out.push(
-      `These messages are included in signed transactions, not called as endpoints. See [Sending transactions](/sdk/${context.version}/api-reference/transactions).`,
+      `These messages are included in signed transactions, not called as endpoints. See [Transactions](/sdk/${context.version}/learn/concepts/transactions#transactions) for the execution model, and [Sending transactions](/sdk/${context.version}/api-reference/transactions) for the envelope they go into.`,
     );
     out.push('');
     // The Dec sentence is the most expensive prose in this reference: the
