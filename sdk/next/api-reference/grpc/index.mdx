@@ -1,0 +1,106 @@
+---
+title: "gRPC Services"
+description: "How Cosmos SDK gRPC services are named, and how to list and call them against a running node."
+---
+
+Each module defines its API in protobuf. A `service` block groups related methods, and each `rpc` inside it declares one method with exactly one request message and one response message.
+
+```proto
+package cosmos.bank.v1beta1;
+
+service Query {
+  rpc AllBalances(QueryAllBalancesRequest) returns (QueryAllBalancesResponse) {
+    option (google.api.http).get = "/cosmos/bank/v1beta1/balances/{address}";
+  }
+}
+```
+
+Three parts combine into the name a node answers to:
+
+```text
+cosmos.bank.v1beta1  .  Query  /  AllBalances
+      package           service      method
+```
+
+The `google.api.http` option on the method is what produces the REST route on port 1317. Methods without that option are reachable over gRPC only.
+
+Modules define `Query` services and `Msg` services:
+
+- `Query` services are registered into the gRPC query router and served on port 9090.
+- `Msg` services are registered into the message service router, which is consulted only while a transaction is being delivered. 
+
+## Scalar encodings
+
+Some fields use SDK encoding conventions layered on protobuf `string` or `bytes` types.
+
+| Annotation                      | Meaning                                                                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `cosmos.Int`                    | Arbitrary-precision integer encoded as a base-10 string. `"8821829649"` means 8,821,829,649.                                       |
+| `cosmos.Dec`                    | Fixed-point decimal. Its encoding depends on the codec.                                                                            |
+| `cosmos.AddressString`          | Bech32 account address, such as `cosmos1...` on the Cosmos Hub.                                                                    |
+| `cosmos.ValidatorAddressString` | Bech32 validator operator address, such as `cosmosvaloper1...`.                                                                    |
+| `cosmos.ConsensusAddressString` | Bech32 consensus address, such as `cosmosvalcons1...`. It is derived from the consensus key and differs from the operator address. |
+
+Account, operator, and consensus addresses belong to separate address spaces. Using the wrong type fails with `hrp does not match bech32 prefix`. Prefixes are chain-specific; query `cosmos.auth.v1beta1.Query/Bech32Prefix` to find them.
+
+### `cosmos.Dec` encodings
+
+The value 0.05 appears differently depending on where it is read or written:
+
+| Where                                                          | Form                                                      | Example                                               |
+| -------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------- |
+| Write through the CLI or `POST /cosmos/tx/v1beta1/encode`      | Decimal string                                            | `"0.05"`                                              |
+| Write with `grpcurl`, generated clients, or `Service/TxEncode` | Integer scaled by 10^18                                   | `"50000000000000000"`                                 |
+| Read through gRPC                                              | Scaled integer, or its base64 encoding for `bytes` fields | `"50000000000000000"` or `"MTAwMDAwMDAwMDAwMDAwMDAw"` |
+| Read through REST                                              | Decimal string                                            | `"0.050000000000000000"`                              |
+
+Field tables identify each field’s read encoding. When writing, transaction JSON uses decimal strings and protobuf JSON uses scaled integers.
+
+The wrong encoding may produce a valid but incorrect value. For example, `"50000000000000000"` in transaction JSON means fifty quadrillion, while the same value returned by `staking` as a scaled integer means 5%.
+
+## Other encodings
+
+JSON encodes `bytes` fields as base64. Hex input may decode successfully as base64 and produce the wrong value.
+
+A response’s `pagination.next_key` is already base64. Pass it back unchanged over gRPC. In a REST query string, percent-encode it so `+` is not interpreted as a space.
+
+An `Any` field contains an `@type` discriminator and the concrete message’s fields. For example, `cosmos.auth.v1beta1.Query/Account` may return a `BaseAccount`, `ModuleAccount`, or vesting account.
+
+Protobuf JSON usually omits fields with default values. A successful query with no matches may therefore return `{}` instead of an empty list.
+
+## List available services
+
+These pages cover the standard modules for one SDK version. Each chain registers its own services. When enabled, gRPC reflection gives the authoritative list:
+
+```bash
+# List every service
+grpcurl -plaintext localhost:9090 list
+
+# Describe one method
+grpcurl -plaintext localhost:9090 describe \
+  cosmos.bank.v1beta1.Query.AllBalances
+```
+
+If reflection is disabled, provide local proto files with `-import-path` and `-proto`.
+
+## Call a method
+
+Pass the request as JSON with `-d`. Fields accept either protobuf names such as `resolve_denom` or JSON names such as `resolveDenom`.
+
+```bash
+grpcurl -plaintext \
+  -d '{"address": "cosmos1..."}' \
+  localhost:9090 cosmos.bank.v1beta1.Query/AllBalances
+```
+
+## Pagination
+
+List queries accept and return a `pagination` field. Use either an offset or a key:
+
+```bash
+grpcurl -plaintext \
+  -d '{"address": "cosmos1...", "pagination": {"limit": 10, "count_total": true}}' \
+  localhost:9090 cosmos.bank.v1beta1.Query/AllBalances
+```
+
+Pass the returned `pagination.next_key` as `pagination.key` to request the next page. Key-based pagination is more efficient for large result sets.

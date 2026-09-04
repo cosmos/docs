@@ -1,0 +1,167 @@
+# Exceptions for the on-chain transaction runner.
+#
+# The runner derives everything it can. The message list, the signer, and the
+# governance-gated classification all come from the descriptor, so a message
+# added upstream is exercised with no entry here. This file records only what
+# cannot be derived: which messages need state set up first, which cannot
+# succeed on a fresh chain, which fields a reader cannot fill from the page,
+# and why.
+#
+# Every run diffs this file against the descriptor and reports entries with no
+# matching message, so a removed message leaves a visible orphan rather than a
+# silent no-op.
+#
+# expect:
+#   success       code 0. The strong assertion: a wrong documented value fails here.
+#   unauthorized  rejected because the signer is the governance module account.
+#                 Derived from the signer field; stated anyway so a change shows up.
+#   state-error   the encoding is checked but the chain lacks what the message needs.
+#                 Use sparingly: it is the weak assertion, since it passes on any
+#                 failure after the ante handler rather than a specific one.
+#   success       means the chain executed it, not that it accepted it. The runner
+#                 broadcasts with --broadcast-mode sync and then reads the delivered
+#                 result back by transaction hash, so a message that pays its fee,
+#                 passes signature checks, and then fails in its module handler is
+#                 a failure here, as it should be.
+#   skip          not attempted, with a reason. Still probed, and an unexpected
+#                 success is reported, so a skip cannot quietly go stale.
+#   unfillable    the page cannot give a reader a usable value for some field, so the
+#                 message is never broadcast: a case that cannot be filled never
+#                 reaches the point where its outcome matters.
+#
+# signer:
+#   "validator"   the account operating the chain's validator, which the runner
+#                 resolves from --validator-key. A key name out of one machine's
+#                 keyring would make this file work only on that machine.
+#
+# An entry is a statement that we know this cannot work as written. Where the
+# reason is fixable it should be fixed instead of recorded.
+
+[cases."cosmos.authz.v1beta1.MsgExec"]
+requires = ["cosmos.authz.v1beta1.MsgGrant"]
+note = "executes a message on behalf of a granter, so a grant must exist first"
+
+[cases."cosmos.authz.v1beta1.MsgRevoke"]
+expect = "unfillable"
+requires = ["cosmos.authz.v1beta1.MsgGrant"]
+note = "revokes an existing grant, but msg_type_url has no example upstream to fill it from"
+
+[cases."cosmos.feegrant.v1beta1.MsgRevokeAllowance"]
+requires = ["cosmos.feegrant.v1beta1.MsgGrantAllowance"]
+note = "revokes an existing allowance; granter and grantee must differ, which the page does not state, as for the grant message"
+expect = "state-error"
+
+[cases."cosmos.staking.v1beta1.MsgUndelegate"]
+requires = ["cosmos.staking.v1beta1.MsgDelegate"]
+note = "needs an existing delegation"
+
+[cases."cosmos.staking.v1beta1.MsgBeginRedelegate"]
+expect = "state-error"
+note = "needs two validators with a delegation on the source; a single-validator chain cannot"
+
+[cases."cosmos.staking.v1beta1.MsgCancelUnbondingDelegation"]
+expect = "state-error"
+requires = ["cosmos.staking.v1beta1.MsgUndelegate"]
+note = "needs an unbonding entry at a known creation height"
+
+[cases."cosmos.staking.v1beta1.MsgCreateValidator"]
+expect = "unfillable"
+note = "needs a consensus keypair this harness does not generate, and pubkey has no cosmos.crypto.PubKey implementation registered in the descriptor to fill it with"
+
+[cases."cosmos.staking.v1beta1.MsgRotateConsPubKey"]
+expect = "unfillable"
+note = "needs a new consensus key, and the rotation fee, on an existing validator; new_pubkey has the same missing cosmos.crypto.PubKey implementation as MsgCreateValidator's pubkey"
+
+[cases."cosmos.slashing.v1beta1.MsgUnjail"]
+expect = "state-error"
+note = "the validator is not jailed on a healthy test chain, so the message is well formed and fails in execution. The encoding is what this asserts"
+
+[cases."cosmos.evidence.v1beta1.MsgSubmitEvidence"]
+expect = "unfillable"
+note = "needs real equivocation evidence, and cosmos.evidence.v1beta1.Evidence has no implementations registered in the descriptor to construct one from"
+
+[cases."cosmos.gov.v1.MsgDeposit"]
+requires = ["cosmos.gov.v1.MsgSubmitProposal"]
+expect = "state-error"
+note = "needs an existing proposal in a deposit period; none can be created here because MsgSubmitProposal is unfillable"
+
+[cases."cosmos.gov.v1.MsgVote"]
+requires = ["cosmos.gov.v1.MsgSubmitProposal"]
+expect = "state-error"
+note = "needs a proposal in a voting period; proposal 1 does not exist on a fresh chain"
+
+[cases."cosmos.gov.v1.MsgVoteWeighted"]
+requires = ["cosmos.gov.v1.MsgSubmitProposal"]
+expect = "state-error"
+note = "the chain requires option weights to sum to 1.00 and no field description says so, so a reader filling one option with any single weight is rejected. An upstream comment gap"
+
+[cases."cosmos.gov.v1.MsgCancelProposal"]
+requires = ["cosmos.gov.v1.MsgSubmitProposal"]
+note = "only the proposer may cancel, and only before voting ends; needs an existing proposal, which cannot be created here"
+expect = "state-error"
+
+[cases."cosmos.gov.v1beta1.MsgDeposit"]
+note = "v1beta1 proposals are submitted through v1 on a modern chain; needs an existing proposal in a deposit period, as for the v1 message"
+expect = "state-error"
+
+[cases."cosmos.gov.v1beta1.MsgVote"]
+expect = "state-error"
+note = "needs a proposal in a voting period, as for the v1 message"
+
+[cases."cosmos.gov.v1beta1.MsgVoteWeighted"]
+expect = "state-error"
+note = "weights must sum to 1.00, unstated on the page, as for the v1 message"
+
+[cases."cosmos.gov.v1beta1.MsgSubmitProposal"]
+note = "v1beta1 content is registered on simapp, so this succeeds; the legacy message accepts only registered legacy content types, and the page's Any example names CommunityPoolSpend, which is not one"
+expect = "state-error"
+
+[cases."cosmos.gov.v1.MsgExecLegacyContent"]
+expect = "unfillable"
+note = "signer is the governance authority, and this page does not say how to find that address (the transactions page does)"
+
+[cases."cosmos.distribution.v1beta1.MsgWithdrawValidatorCommission"]
+signer = "validator"
+note = "signed by the account behind the validator operator address, not an arbitrary account"
+
+[cases."cosmos.distribution.v1beta1.MsgDepositValidatorRewardsPool"]
+note = "requires an existing validator rewards pool"
+
+[cases."cosmos.counter.v1.MsgIncreaseCounter"]
+expect = "skip"
+note = "test module, not registered by simapp's interface registry"
+
+[cases."cosmos.vesting.v1beta1.MsgCreatePermanentLockedAccount"]
+expect = "unfillable"
+note = "creates an account, so the recipient must not already exist; from_address and to_address both leave their description empty upstream with no address annotation to fill them from"
+
+[cases."cosmos.vesting.v1beta1.MsgCreatePeriodicVestingAccount"]
+expect = "unfillable"
+note = "creates an account, so the recipient must not already exist, and from_address leaves its description empty upstream with no address annotation to fill it from"
+
+[cases."cosmos.vesting.v1beta1.MsgCreateVestingAccount"]
+note = "creates an account, so the recipient must not already exist; creates an account, so the recipient must not already exist; every address the page can supply does"
+expect = "state-error"
+
+[cases."cosmos.staking.v1beta1.MsgEditValidator"]
+signer = "validator"
+note = "only the validator's own account may edit it; commission cannot change more than once in 24h, and the harness edits the validator it just created"
+
+# ---------------------------------------------------------------------------
+# Messages with no precondition of their own above: the only thing known about
+# them is that the page cannot fill a field they need. Where the reason is
+# upstream, it is worth raising with cosmos-sdk.
+# ---------------------------------------------------------------------------
+expect = "state-error"
+
+[cases."cosmos.authz.v1beta1.MsgGrant"]
+expect = "unfillable"
+note = "expiration's placeholder names RFC 3339 but the page gives no example timestamp"
+
+[cases."cosmos.gov.v1.MsgSubmitProposal"]
+expect = "unfillable"
+note = "messages accepts any Msg; the page states the interface but names no example type URL"
+
+[cases."cosmos.feegrant.v1beta1.MsgGrantAllowance"]
+expect = "state-error"
+note = "granter and grantee must differ, which the page does not state; the only address a reader is given for both is their own. An upstream comment gap"

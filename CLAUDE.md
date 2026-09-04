@@ -128,75 +128,9 @@ Reusable components — import with absolute paths (e.g. `/snippets/icons.mdx`),
 
 ## Releasing a New Version
 
-When a product is ready to release, complete these steps in order.
+The procedure lives in [`.claude/skills/release-version/SKILL.md`](.claude/skills/release-version/SKILL.md). It covers the ordered pre-freeze checks, the freeze, and the `docs.json` edits the script does not make for you.
 
-### 1. Update the Changelog
-
-Update the changelog in `next/` first, so it carries over when the freeze copies `next/` to `latest/`. If the new version is still listed as `## Unreleased` in the upstream `CHANGELOG.md`, use `--unreleased-as` to label it correctly.
-
-```bash
-# If the version is released in CHANGELOG.md
-cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --current-only
-
-# If the version is still listed as Unreleased in CHANGELOG.md
-cd scripts/versioning && npm run changelogs -- --product <product> --target next --source <tag> --unreleased-as <version> --current-only
-```
-
-### 2. Update Version-Pinned Content in `next/`
-
-Do this before freezing, not after. The freeze copies `next/` to `latest/`, so anything fixed in `next/` first lands in both directories in one pass. Fixing it afterwards means editing `latest/` and then syncing every file back to `next/`.
-
-Two things are version-pinned and do not follow the freeze on their own:
-
-**Version label in front matter (SDK only).** Five pages render the version under the page title via their `description`:
-
-```bash
-grep -rn 'description: "Version: v' sdk/next --include='*.mdx'
-```
-
-**GitHub links pinned to the previous release branch.** Pages link into the product repo at `release/v0.<N>.x` (SDK) or `v0.<N>.x` (CometBFT), and those refs keep pointing at the old version. Use the checker rather than a find-and-replace:
-
-```bash
-node scripts/versioning/check-github-refs.js --product <product> --targets next --json /tmp/flags.json
-```
-
-Review the report, then apply the safe rewrites with `--fix`. It bumps only what it can prove is safe and flags the rest.
-
-Do not blind-replace these by hand. Pinned tags and commit SHAs are deliberate historical citations, and bumping a ref under a `#L` line anchor can leave the link working while pointing at unrelated code. See the GitHub link section in [`scripts/versioning/CLAUDE.md`](scripts/versioning/CLAUDE.md) for the rules and the measured failure rates.
-
-Hand the `--json` output to the [`update-stale-refs`](.claude/skills/update-stale-refs/SKILL.md) skill, which decides whether a flagged link means the page's prose needs a correction.
-
-A stale ref is often a symptom rather than the problem. A link that 404s at its current ref usually means the prose describes something upstream deleted, so check what the page claims before repointing the URL.
-
-### 3. Freeze the Version
-
-Run the freeze script from `scripts/versioning/`. This promotes `next/` to `latest/`, rewrites all internal links, injects `noindex` into `next/` pages, and updates `versions.json`.
-
-```bash
-cd scripts/versioning
-NON_INTERACTIVE=1 SUBDIR=<product> NEW_DISPLAY_VERSION=<version> npm run freeze
-```
-
-Then manually update `docs.json` for the product's dropdown:
-
-- Add a new version entry cloned from `next/`, with all paths rewritten from `<product>/next/` to `<product>/latest/`
-- Set `"tag": "Latest"` and `"default": true` on the `latest/` entry
-- Set `"tag": "Unreleased"` on the `next/` entry
-- Order: `latest` first, then `next`, then archived versions newest-first
-
-If the product has pre-existing archived version directories (e.g. `v0.53/`, `v10.1.x/`), tag them with `noindex` and `canonical`:
-
-```bash
-node tag-archived.js --product <product> --all
-```
-
-### 4. Check for Broken Links
-
-```bash
-npx mint broken-links
-```
-
-Fix any broken links before committing. Note that this checks internal page paths only. It does not validate heading anchors and it does not check external URLs, so nothing here catches a dead or misdirected GitHub link.
+Two things worth knowing without opening it: version-pinned content is fixed in `next/` before the freeze rather than in `latest/` after, and the SDK API reference has a blocking gate (`scripts/api-reference` `npm run release-check`) that executes every documented query and transaction against a chain built from the release commit.
 
 ## Scripts
 
@@ -216,3 +150,5 @@ npm run reset          # clean + reinstall
 The Cosmos SDK example chain tutorials (`sdk/next/tutorials/example/`, files `00-overview.mdx` through `05-run-and-test.mdx`) are kept in sync with the `cosmos/example` repo via a bidirectional GitHub Actions workflow. When either side merges a change, a PR is opened on the other repo with content transformed between formats.
 
 The transform script lives at `scripts/docs-sync/transform.py` and is tracked in git. When editing these tutorial pages, `title:` is owned by the sync — other front matter (e.g. `description:`) is preserved.
+
+These pages are the one exception to the version freeze: they say `git checkout main`, so `latest/` must track `next/` rather than stay frozen. Carry changes across with `node scripts/sync-next-to-latest.js`. `sync-latest-to-next.js` refuses these paths, and the generated API reference, because it runs the wrong way for both.

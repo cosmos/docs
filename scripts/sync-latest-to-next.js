@@ -27,6 +27,30 @@ const REPO_ROOT = path.join(__dirname, '..');
 
 const PRODUCTS = ['evm', 'sdk', 'hub', 'cometbft', 'ibc', 'skip-go', 'enterprise'];
 
+// Paths, relative to <product>/latest/, where next/ is the canonical copy and
+// syncing into it destroys content. Each refusal fired for real once.
+const REFUSED = [
+  {
+    prefix: 'tutorials/example/',
+    why: 'a bot syncs these from cosmos/example into next/, so next/ is canonical',
+    instead: 'node scripts/sync-next-to-latest.js <path>',
+  },
+  {
+    prefix: 'api-reference/grpc/',
+    why: 'generated per version from a different upstream commit, so latest/ content under next/\'s version stamp would document the wrong version',
+    instead: 'cd scripts/api-reference && npm run sync -- --version next',
+  },
+  {
+    prefix: 'api-reference/rest/',
+    why: 'generated per version from a different upstream commit',
+    instead: 'cd scripts/api-reference && npm run sync -- --version next',
+  },
+];
+
+function refusalFor(subPath) {
+  return REFUSED.find((entry) => subPath.startsWith(entry.prefix));
+}
+
 function usage() {
   console.error('Usage: node scripts/sync-latest-to-next.js <file> [file2 ...]');
   console.error('  Files must be paths relative to the repo root, e.g.:');
@@ -73,6 +97,16 @@ function syncFile(relPath) {
   if (!PRODUCTS.includes(product)) {
     console.error(`✗ ${relPath}`);
     console.error(`  Unknown product "${product}". Expected one of: ${PRODUCTS.join(', ')}`);
+    return false;
+  }
+
+  const refusal = refusalFor(subPath);
+  if (refusal) {
+    console.error(`✗ ${relPath}`);
+    console.error(`  Refusing: this script runs the wrong way for these files.`);
+    console.error(`  ${refusal.why}.`);
+    console.error(`  Copying latest/ over next/ here reverts whatever next/ has that latest/ does not.`);
+    console.error(`  Instead: ${refusal.instead}`);
     return false;
   }
 

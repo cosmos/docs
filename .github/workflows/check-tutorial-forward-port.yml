@@ -1,0 +1,63 @@
+name: Check example tutorials are forward-ported
+
+# The example chain tutorials are synced from cosmos/example into
+# sdk/next/tutorials/example/ by a bot in that repo. Nothing carries them into
+# sdk/latest/, so latest/ silently falls behind: it sat two syncs stale for
+# months, telling readers localnet runs several validators when it runs one
+# validator and three full nodes.
+#
+# These pages are the one exception to the version freeze. They instruct
+# `git clone https://github.com/cosmos/example` and `git checkout main`, so they
+# document whatever main is now rather than a released version. A frozen copy
+# protects nothing; it just describes code the reader is not running.
+#
+# So this fails a PR that changes next/ without the matching latest/ change, and
+# names the command that fixes it. It does not push the fix itself: the incoming
+# sync PR is opened by the other repo's workflow, and a bot editing a bot's PR is
+# harder to reason about than a red check with one command in it.
+
+on:
+  pull_request:
+    paths:
+      - "sdk/next/tutorials/example/**"
+      - "sdk/latest/tutorials/example/**"
+
+jobs:
+  forward-port:
+    name: latest/ matches next/
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Forward-port into a scratch copy and diff
+        run: |
+          set -o pipefail
+
+          # Run the real script, then ask git whether it changed anything. If it
+          # did, latest/ was behind and this PR would publish a stale tutorial.
+          node scripts/sync-next-to-latest.js sdk/next/tutorials/example/
+
+          if git diff --quiet -- sdk/latest/tutorials/example/; then
+            echo "latest/ already matches next/."
+            exit 0
+          fi
+
+          echo
+          echo "sdk/latest/tutorials/example/ is behind sdk/next/tutorials/example/."
+          echo
+          git --no-pager diff --stat -- sdk/latest/tutorials/example/
+          echo
+          echo "These pages tell the reader to check out cosmos/example main, so a"
+          echo "frozen latest/ copy documents code they are not running. Run:"
+          echo
+          echo "    node scripts/sync-next-to-latest.js sdk/next/tutorials/example/"
+          echo
+          echo "and commit the result to this PR."
+          exit 1
