@@ -17,12 +17,15 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SECURITY_REPO = 'cosmos/security';
+// The disclosure policy is an org default community health file, so it lives in
+// the .github repo and is served automatically by every repo in the org.
+const POLICY_REPO = 'cosmos/.github';
 const SECURITY_BRANCH = 'main';
 const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'latest', 'security');
 
 // Fetch content from GitHub
-async function fetchFromGitHub(filePath) {
-  const url = `https://raw.githubusercontent.com/${SECURITY_REPO}/${SECURITY_BRANCH}/${filePath}`;
+async function fetchFromGitHub(filePath, repo = SECURITY_REPO) {
+  const url = `https://raw.githubusercontent.com/${repo}/${SECURITY_BRANCH}/${filePath}`;
   console.log(`Fetching: ${url}`);
 
   try {
@@ -141,7 +144,7 @@ async function fetchReports() {
 }
 
 // Transform markdown to MDX with info box
-function transformToMDX(content, sourceFile, title) {
+function transformToMDX(content, sourceFile, title, repo = SECURITY_REPO) {
   const date = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -201,7 +204,7 @@ function transformToMDX(content, sourceFile, title) {
     }
 
     // Convert to GitHub blob URL
-    const githubUrl = `https://github.com/${SECURITY_REPO}/blob/${SECURITY_BRANCH}/${absolutePath}`;
+    const githubUrl = `https://github.com/${repo}/blob/${SECURITY_BRANCH}/${absolutePath}`;
     return `[${text}](${githubUrl})`;
   });
 
@@ -211,9 +214,9 @@ description: "Security and maintenance policy documentation for the Cosmos Stack
 ---
 
 <Info>
-This content is sourced from the official [Cosmos Security](https://github.com/${SECURITY_REPO}) repository. 
+This content is sourced from the official [Cosmos Security](https://github.com/${repo}) repository. 
 
-**Last sync:** ${date} | [View source](https://github.com/${SECURITY_REPO}/blob/${SECURITY_BRANCH}/${sourceFile})
+**Last sync:** ${date} | [View source](https://github.com/${repo}/blob/${SECURITY_BRANCH}/${sourceFile})
 </Info>
 
 ${sanitized}
@@ -238,8 +241,8 @@ async function generateSecurityPolicyPage() {
 // Generate the Bug Bounty page
 async function generateBugBountyPage() {
   console.log('\n📄 Generating Bug Bounty page...');
-  const content = await fetchFromGitHub('SECURITY.md');
-  const mdx = transformToMDX(content, 'SECURITY.md', 'Bug Bounty Program');
+  const content = await fetchFromGitHub('SECURITY.md', POLICY_REPO);
+  const mdx = transformToMDX(content, 'SECURITY.md', 'Bug Bounty Program', POLICY_REPO);
 
   const outputPath = path.join(OUTPUT_DIR, 'bug-bounty.mdx');
   fs.writeFileSync(outputPath, mdx, 'utf8');
