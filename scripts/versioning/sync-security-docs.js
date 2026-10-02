@@ -21,7 +21,56 @@ const SECURITY_REPO = 'cosmos/security';
 // the .github repo and is served automatically by every repo in the org.
 const POLICY_REPO = 'cosmos/.github';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'latest', 'security');
+const SDK_ROOT = path.join(__dirname, '..', '..', 'sdk');
+
+// latest/ is the stable release every visitor sees; next/ is active development.
+// CLAUDE.md says a change to latest/ is applied to next/ as well, and the
+// security pages are one current policy rather than versioned content, so both
+// are written on every sync. Archived versions are deliberately left alone:
+// they are frozen snapshots carrying noindex and a canonical back to latest/,
+// and tag-archived.js owns that front matter.
+const OUTPUT_VERSIONS = ['latest', 'next'];
+
+function outputDirs() {
+  const dirs = [];
+  for (const version of OUTPUT_VERSIONS) {
+    const dir = path.join(SDK_ROOT, version, 'security');
+    if (fs.existsSync(dir)) {
+      dirs.push(dir);
+    } else {
+      // Say so rather than skipping quietly: a missing directory here means that
+      // version stops receiving the policy and nothing reports it.
+      console.warn(`\u26a0 No security directory for sdk/${version}, skipping it.`);
+    }
+  }
+  return dirs;
+}
+
+// Front matter differs per version: next/ carries noindex. Keep whatever the
+// existing page declares and replace only the body.
+function preserveFrontMatter(existingPath, mdx) {
+  if (!fs.existsSync(existingPath)) return mdx;
+  const existing = fs.readFileSync(existingPath, 'utf8');
+  const oldFm = existing.match(/^---\n([\s\S]*?)\n---\n/);
+  const newFm = mdx.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!oldFm || !newFm) return mdx;
+  const keep = oldFm[1]
+    .split('\n')
+    .filter((line) => /^(noindex|canonical):/.test(line.trim()));
+  if (keep.length === 0) return mdx;
+  return mdx.replace(newFm[0], `---\n${keep.join('\n')}\n${newFm[1]}\n---\n`);
+}
+
+function writeToAllVersions(filename, mdx) {
+  const written = [];
+  for (const dir of outputDirs()) {
+    const outputPath = path.join(dir, filename);
+    fs.writeFileSync(outputPath, preserveFrontMatter(outputPath, mdx), 'utf8');
+    console.log(`\u2713 Written: ${outputPath}`);
+    written.push(outputPath);
+  }
+  return written;
+}
 
 // Fetch content from GitHub
 async function fetchFromGitHub(filePath, repo = SECURITY_REPO) {
@@ -160,6 +209,11 @@ function transformToMDX(content, sourceFile, title, repo = SECURITY_REPO) {
   // Remove HTML comments
   sanitized = sanitized.replace(/<!--[\s\S]*?-->/g, '');
 
+  // The source is GitHub markdown, where bold is ordinary. The docs style guide
+  // allows no bold or italic in documentation content, so drop the emphasis and
+  // keep the text. Bounded to one line so a stray ** cannot swallow a paragraph.
+  sanitized = sanitized.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+
   // Transform relative links to absolute GitHub URLs
   // Get the directory of the source file for resolving relative paths
   const sourceDir = sourceFile.includes('/')
@@ -167,8 +221,11 @@ function transformToMDX(content, sourceFile, title, repo = SECURITY_REPO) {
     : '';
 
   sanitized = sanitized.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    // Skip if already an absolute URL (http://, https://, //, #anchor)
-    if (url.match(/^(https?:\/\/|\/\/|#)/)) {
+    // Skip anything already absolute: a scheme, a protocol-relative URL, or an
+    // anchor. mailto: belongs here. Without it, [x](mailto:a@b) was treated as a
+    // relative path and rewritten to a GitHub blob URL, so the appeal address in
+    // the disclosure policy pointed at a source file that does not exist.
+    if (url.match(/^(https?:\/\/|mailto:|tel:|\/\/|#)/i)) {
       return match;
     }
 
@@ -216,7 +273,7 @@ description: "Security and maintenance policy documentation for the Cosmos Stack
 <Info>
 This content is sourced from the official [Cosmos Security](https://github.com/${repo}) repository. 
 
-**Last sync:** ${date} | [View source](https://github.com/${repo}/blob/${SECURITY_BRANCH}/${sourceFile})
+Last sync: ${date} | [View source](https://github.com/${repo}/blob/${SECURITY_BRANCH}/${sourceFile})
 </Info>
 
 ${sanitized}
@@ -231,11 +288,7 @@ async function generateSecurityPolicyPage() {
   const content = await fetchFromGitHub('POLICY.md');
   const mdx = transformToMDX(content, 'POLICY.md', 'Security and Maintenance Policy');
 
-  const outputPath = path.join(OUTPUT_DIR, 'security-policy.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('security-policy.mdx', mdx);
 }
 
 // Generate the Bug Bounty page
@@ -244,11 +297,7 @@ async function generateBugBountyPage() {
   const content = await fetchFromGitHub('SECURITY.md', POLICY_REPO);
   const mdx = transformToMDX(content, 'SECURITY.md', 'Bug Bounty Program', POLICY_REPO);
 
-  const outputPath = path.join(OUTPUT_DIR, 'bug-bounty.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('bug-bounty.mdx', mdx);
 }
 
 // Generate the Audits page
@@ -363,7 +412,7 @@ description: "Security audits and transparency reports for Cosmos Stack componen
 <Info>
 This page is auto-generated from the [cosmos/security](https://github.com/${SECURITY_REPO}) repository.
 
-**Last synced:** ${date} | [View all audits](https://github.com/${SECURITY_REPO}/tree/${SECURITY_BRANCH}/audits)
+Last synced: ${date} | [View all audits](https://github.com/${SECURITY_REPO}/tree/${SECURITY_BRANCH}/audits)
 </Info>
 
 Cosmos Labs maintains a comprehensive security program for all Cosmos Stack components. This page provides links to third-party security audits and transparency reports.
@@ -377,11 +426,7 @@ ${auditsContent}
 - [cosmos/security Repository](https://github.com/${SECURITY_REPO}) - Complete security documentation
 `;
 
-  const outputPath = path.join(OUTPUT_DIR, 'audits.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('audits.mdx', mdx);
 }
 
 // Main execution
@@ -389,13 +434,7 @@ async function main() {
   console.log('🔒 Cosmos Security Documentation Sync');
   console.log('=====================================\n');
   console.log(`Source: github.com/${SECURITY_REPO}`);
-  console.log(`Output: ${OUTPUT_DIR}\n`);
-
-  // Ensure output directory exists
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-    console.log(`✓ Created output directory: ${OUTPUT_DIR}\n`);
-  }
+  console.log(`Output: ${outputDirs().join(', ')}\n`);
 
   try {
     // Generate all pages
@@ -404,10 +443,6 @@ async function main() {
     await generateAuditsPage();
 
     console.log('\n✅ Security documentation sync completed successfully!');
-    console.log(`\nGenerated files:`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'security-policy.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'bug-bounty.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'audits.mdx')}`);
 
   } catch (error) {
     console.error('\n❌ Sync failed:', error.message);
