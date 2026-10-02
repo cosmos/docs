@@ -1,14 +1,14 @@
 # Security Documentation Sync
 
-Automated system for syncing security documentation from the [`cosmos/security`](https://github.com/cosmos/security) repository into the Cosmos SDK v0.53 documentation.
+Automated system for syncing security documentation from the [`cosmos/security`](https://github.com/cosmos/security) repository into `sdk/latest/` and `sdk/next/`.
 
 ## Overview
 
-This system maintains three security-related pages in the SDK v0.53 documentation that are automatically synced from the official cosmos/security repository:
+This system maintains three security-related pages in `sdk/latest/` and `sdk/next/`, automatically synced from the official cosmos/security repository:
 
-- **Security Policy** (`sdk/v0.53/security/security-policy.mdx`) - Release families, maintenance policy, EOL timelines
-- **Bug Bounty Program** (`sdk/v0.53/security/bug-bounty.mdx`) - Vulnerability reporting, severity tiers, disclosure timeline
-- **Security Audits** (`sdk/v0.53/security/audits.mdx`) - Auto-generated links to all security audits and transparency reports
+- **Security Policy** (`sdk/latest/security/security-policy.mdx`) - Release families, maintenance policy, EOL timelines
+- **Bug Bounty Program** (`sdk/latest/security/bug-bounty.mdx`) - Vulnerability reporting, severity tiers, disclosure timeline
+- **Security Audits** (`sdk/latest/security/audits.mdx`) - Auto-generated links to all security audits and transparency reports
 
 ## Quick Start
 
@@ -133,10 +133,12 @@ Edit constants at the top of `sync-security-docs.js`:
 ```javascript
 const SECURITY_REPO = 'cosmos/security';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'v0.53', 'security');
+const OUTPUT_VERSIONS = ['latest', 'next'];
 ```
 
-**To sync to a different SDK version:**
+**To sync to another version:** add it to `OUTPUT_VERSIONS`. Archived versions are excluded deliberately: they are frozen snapshots carrying `noindex` and a `canonical` back to `latest/`, and `tag-archived.js` owns that front matter.
+
+**Previously:**
 - Change `OUTPUT_DIR` to point to the desired version (e.g., `sdk/v0.54/security`)
 - Update navigation in `docs.json` to include the new security section
 

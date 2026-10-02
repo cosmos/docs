@@ -21,7 +21,47 @@ const SECURITY_REPO = 'cosmos/security';
 // the .github repo and is served automatically by every repo in the org.
 const POLICY_REPO = 'cosmos/.github';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'latest', 'security');
+const SDK_ROOT = path.join(__dirname, '..', '..', 'sdk');
+
+// latest/ is the stable release every visitor sees; next/ is active development.
+// CLAUDE.md says a change to latest/ is applied to next/ as well, and the
+// security pages are one current policy rather than versioned content, so both
+// are written on every sync. Archived versions are deliberately left alone:
+// they are frozen snapshots carrying noindex and a canonical back to latest/,
+// and tag-archived.js owns that front matter.
+const OUTPUT_VERSIONS = ['latest', 'next'];
+
+function outputDirs() {
+  return OUTPUT_VERSIONS.map((v) => path.join(SDK_ROOT, v, 'security')).filter((dir) =>
+    fs.existsSync(dir)
+  );
+}
+
+// Front matter differs per version: next/ carries noindex. Keep whatever the
+// existing page declares and replace only the body.
+function preserveFrontMatter(existingPath, mdx) {
+  if (!fs.existsSync(existingPath)) return mdx;
+  const existing = fs.readFileSync(existingPath, 'utf8');
+  const oldFm = existing.match(/^---\n([\s\S]*?)\n---\n/);
+  const newFm = mdx.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!oldFm || !newFm) return mdx;
+  const keep = oldFm[1]
+    .split('\n')
+    .filter((line) => /^(noindex|canonical):/.test(line.trim()));
+  if (keep.length === 0) return mdx;
+  return mdx.replace(newFm[0], `---\n${keep.join('\n')}\n${newFm[1]}\n---\n`);
+}
+
+function writeToAllVersions(filename, mdx) {
+  const written = [];
+  for (const dir of outputDirs()) {
+    const outputPath = path.join(dir, filename);
+    fs.writeFileSync(outputPath, preserveFrontMatter(outputPath, mdx), 'utf8');
+    console.log(`\u2713 Written: ${outputPath}`);
+    written.push(outputPath);
+  }
+  return written;
+}
 
 // Fetch content from GitHub
 async function fetchFromGitHub(filePath, repo = SECURITY_REPO) {
@@ -231,11 +271,7 @@ async function generateSecurityPolicyPage() {
   const content = await fetchFromGitHub('POLICY.md');
   const mdx = transformToMDX(content, 'POLICY.md', 'Security and Maintenance Policy');
 
-  const outputPath = path.join(OUTPUT_DIR, 'security-policy.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('security-policy.mdx', mdx);
 }
 
 // Generate the Bug Bounty page
@@ -244,11 +280,7 @@ async function generateBugBountyPage() {
   const content = await fetchFromGitHub('SECURITY.md', POLICY_REPO);
   const mdx = transformToMDX(content, 'SECURITY.md', 'Bug Bounty Program', POLICY_REPO);
 
-  const outputPath = path.join(OUTPUT_DIR, 'bug-bounty.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('bug-bounty.mdx', mdx);
 }
 
 // Generate the Audits page
@@ -377,11 +409,7 @@ ${auditsContent}
 - [cosmos/security Repository](https://github.com/${SECURITY_REPO}) - Complete security documentation
 `;
 
-  const outputPath = path.join(OUTPUT_DIR, 'audits.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('audits.mdx', mdx);
 }
 
 // Main execution
@@ -389,13 +417,7 @@ async function main() {
   console.log('🔒 Cosmos Security Documentation Sync');
   console.log('=====================================\n');
   console.log(`Source: github.com/${SECURITY_REPO}`);
-  console.log(`Output: ${OUTPUT_DIR}\n`);
-
-  // Ensure output directory exists
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-    console.log(`✓ Created output directory: ${OUTPUT_DIR}\n`);
-  }
+  console.log(`Output: ${outputDirs().join(', ')}\n`);
 
   try {
     // Generate all pages
@@ -404,10 +426,6 @@ async function main() {
     await generateAuditsPage();
 
     console.log('\n✅ Security documentation sync completed successfully!');
-    console.log(`\nGenerated files:`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'security-policy.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'bug-bounty.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'audits.mdx')}`);
 
   } catch (error) {
     console.error('\n❌ Sync failed:', error.message);
