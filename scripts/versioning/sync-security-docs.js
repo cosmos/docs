@@ -32,9 +32,18 @@ const SDK_ROOT = path.join(__dirname, '..', '..', 'sdk');
 const OUTPUT_VERSIONS = ['latest', 'next'];
 
 function outputDirs() {
-  return OUTPUT_VERSIONS.map((v) => path.join(SDK_ROOT, v, 'security')).filter((dir) =>
-    fs.existsSync(dir)
-  );
+  const dirs = [];
+  for (const version of OUTPUT_VERSIONS) {
+    const dir = path.join(SDK_ROOT, version, 'security');
+    if (fs.existsSync(dir)) {
+      dirs.push(dir);
+    } else {
+      // Say so rather than skipping quietly: a missing directory here means that
+      // version stops receiving the policy and nothing reports it.
+      console.warn(`\u26a0 No security directory for sdk/${version}, skipping it.`);
+    }
+  }
+  return dirs;
 }
 
 // Front matter differs per version: next/ carries noindex. Keep whatever the
