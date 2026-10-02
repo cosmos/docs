@@ -200,6 +200,11 @@ function transformToMDX(content, sourceFile, title, repo = SECURITY_REPO) {
   // Remove HTML comments
   sanitized = sanitized.replace(/<!--[\s\S]*?-->/g, '');
 
+  // The source is GitHub markdown, where bold is ordinary. The docs style guide
+  // allows no bold or italic in documentation content, so drop the emphasis and
+  // keep the text. Bounded to one line so a stray ** cannot swallow a paragraph.
+  sanitized = sanitized.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+
   // Transform relative links to absolute GitHub URLs
   // Get the directory of the source file for resolving relative paths
   const sourceDir = sourceFile.includes('/')
@@ -207,8 +212,11 @@ function transformToMDX(content, sourceFile, title, repo = SECURITY_REPO) {
     : '';
 
   sanitized = sanitized.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    // Skip if already an absolute URL (http://, https://, //, #anchor)
-    if (url.match(/^(https?:\/\/|\/\/|#)/)) {
+    // Skip anything already absolute: a scheme, a protocol-relative URL, or an
+    // anchor. mailto: belongs here. Without it, [x](mailto:a@b) was treated as a
+    // relative path and rewritten to a GitHub blob URL, so the appeal address in
+    // the disclosure policy pointed at a source file that does not exist.
+    if (url.match(/^(https?:\/\/|mailto:|tel:|\/\/|#)/i)) {
       return match;
     }
 
@@ -256,7 +264,7 @@ description: "Security and maintenance policy documentation for the Cosmos Stack
 <Info>
 This content is sourced from the official [Cosmos Security](https://github.com/${repo}) repository. 
 
-**Last sync:** ${date} | [View source](https://github.com/${repo}/blob/${SECURITY_BRANCH}/${sourceFile})
+Last sync: ${date} | [View source](https://github.com/${repo}/blob/${SECURITY_BRANCH}/${sourceFile})
 </Info>
 
 ${sanitized}
@@ -395,7 +403,7 @@ description: "Security audits and transparency reports for Cosmos Stack componen
 <Info>
 This page is auto-generated from the [cosmos/security](https://github.com/${SECURITY_REPO}) repository.
 
-**Last synced:** ${date} | [View all audits](https://github.com/${SECURITY_REPO}/tree/${SECURITY_BRANCH}/audits)
+Last synced: ${date} | [View all audits](https://github.com/${SECURITY_REPO}/tree/${SECURITY_BRANCH}/audits)
 </Info>
 
 Cosmos Labs maintains a comprehensive security program for all Cosmos Stack components. This page provides links to third-party security audits and transparency reports.

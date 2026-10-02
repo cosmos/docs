@@ -138,9 +138,8 @@ const OUTPUT_VERSIONS = ['latest', 'next'];
 
 **To sync to another version:** add it to `OUTPUT_VERSIONS`. Archived versions are excluded deliberately: they are frozen snapshots carrying `noindex` and a `canonical` back to `latest/`, and `tag-archived.js` owns that front matter.
 
-**Previously:**
-- Change `OUTPUT_DIR` to point to the desired version (e.g., `sdk/v0.54/security`)
-- Update navigation in `docs.json` to include the new security section
+A version also needs a security section in `docs.json` navigation before the
+pages it receives are reachable.
 
 ## GitHub Actions Workflow
 
