@@ -1,10 +1,10 @@
 # Security Documentation Sync
 
-Automated system for syncing security documentation from the [`cosmos/security`](https://github.com/cosmos/security) repository into the Cosmos SDK v0.53 documentation.
+Automated system for syncing security documentation from the [`cosmos/security`](https://github.com/cosmos/security) repository into the Cosmos SDK documentation, for every version that has a security section.
 
 ## Overview
 
-This system maintains three security-related pages in the SDK v0.53 documentation that are automatically synced from the official cosmos/security repository:
+This system maintains three security-related pages in each versioned SDK documentation set, automatically synced from the official cosmos/security repository:
 
 - **Security Policy** (`sdk/v0.53/security/security-policy.mdx`) - Release families, maintenance policy, EOL timelines
 - **Bug Bounty Program** (`sdk/v0.53/security/bug-bounty.mdx`) - Vulnerability reporting, severity tiers, disclosure timeline
@@ -133,7 +133,7 @@ Edit constants at the top of `sync-security-docs.js`:
 ```javascript
 const SECURITY_REPO = 'cosmos/security';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'v0.53', 'security');
+// Output directories are discovered: every sdk/*/security that exists.
 ```
 
 **To sync to a different SDK version:**

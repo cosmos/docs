@@ -21,7 +21,33 @@ const SECURITY_REPO = 'cosmos/security';
 // the .github repo and is served automatically by every repo in the org.
 const POLICY_REPO = 'cosmos/.github';
 const SECURITY_BRANCH = 'main';
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'sdk', 'latest', 'security');
+const SDK_ROOT = path.join(__dirname, '..', '..', 'sdk');
+
+// The security pages are one current policy, not versioned content. A version
+// freeze copies latest/ into an archive directory, so writing only to latest/
+// leaves every frozen copy to drift the moment the policy changes. On
+// 2026-10-02 that had sdk/next, sdk/v0.53 and sdk/v0.54 still publishing a
+// silent-patch model that was retired five days earlier. Write to every version
+// that has a security section.
+function outputDirs() {
+  return fs
+    .readdirSync(SDK_ROOT, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(SDK_ROOT, d.name, 'security'))
+    .filter((dir) => fs.existsSync(dir));
+}
+
+// Write one generated page to every version.
+function writeToAllVersions(filename, mdx) {
+  const written = [];
+  for (const dir of outputDirs()) {
+    const outputPath = path.join(dir, filename);
+    fs.writeFileSync(outputPath, mdx, 'utf8');
+    console.log(`\u2713 Written: ${outputPath}`);
+    written.push(outputPath);
+  }
+  return written;
+}
 
 // Fetch content from GitHub
 async function fetchFromGitHub(filePath, repo = SECURITY_REPO) {
@@ -231,11 +257,7 @@ async function generateSecurityPolicyPage() {
   const content = await fetchFromGitHub('POLICY.md');
   const mdx = transformToMDX(content, 'POLICY.md', 'Security and Maintenance Policy');
 
-  const outputPath = path.join(OUTPUT_DIR, 'security-policy.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('security-policy.mdx', mdx);
 }
 
 // Generate the Bug Bounty page
@@ -244,11 +266,7 @@ async function generateBugBountyPage() {
   const content = await fetchFromGitHub('SECURITY.md', POLICY_REPO);
   const mdx = transformToMDX(content, 'SECURITY.md', 'Bug Bounty Program', POLICY_REPO);
 
-  const outputPath = path.join(OUTPUT_DIR, 'bug-bounty.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('bug-bounty.mdx', mdx);
 }
 
 // Generate the Audits page
@@ -377,11 +395,7 @@ ${auditsContent}
 - [cosmos/security Repository](https://github.com/${SECURITY_REPO}) - Complete security documentation
 `;
 
-  const outputPath = path.join(OUTPUT_DIR, 'audits.mdx');
-  fs.writeFileSync(outputPath, mdx, 'utf8');
-  console.log(`✓ Written: ${outputPath}`);
-
-  return outputPath;
+  return writeToAllVersions('audits.mdx', mdx);
 }
 
 // Main execution
@@ -389,13 +403,15 @@ async function main() {
   console.log('🔒 Cosmos Security Documentation Sync');
   console.log('=====================================\n');
   console.log(`Source: github.com/${SECURITY_REPO}`);
-  console.log(`Output: ${OUTPUT_DIR}\n`);
 
-  // Ensure output directory exists
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-    console.log(`✓ Created output directory: ${OUTPUT_DIR}\n`);
+  const dirs = outputDirs();
+  if (dirs.length === 0) {
+    console.error('❌ No sdk/*/security directories found. Nothing to sync.');
+    process.exit(1);
   }
+  console.log(`Output: ${dirs.length} version(s)`);
+  dirs.forEach((d) => console.log(`  - ${d}`));
+  console.log('');
 
   try {
     // Generate all pages
@@ -404,10 +420,6 @@ async function main() {
     await generateAuditsPage();
 
     console.log('\n✅ Security documentation sync completed successfully!');
-    console.log(`\nGenerated files:`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'security-policy.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'bug-bounty.mdx')}`);
-    console.log(`  - ${path.join(OUTPUT_DIR, 'audits.mdx')}`);
 
   } catch (error) {
     console.error('\n❌ Sync failed:', error.message);
