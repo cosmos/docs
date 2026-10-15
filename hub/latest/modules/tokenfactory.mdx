@@ -1,0 +1,112 @@
+---
+title: "Tokenfactory module"
+description: "Create and administer factory denoms on the Cosmos Hub: creation fee, which admin capabilities the Hub enables, the commands, and how to secure the admin key."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+This page is for builders who want to issue a token on the Cosmos Hub and for operators who need to read `osmosis.tokenfactory.v1beta1` messages in blocks. It assumes `gaiad` is configured for the Hub and a funded key ([Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli#point-gaiad-at-the-hub)). At the end you have a denom named `factory/<your address>/<subdenom>` that you can mint, burn and hand over to a multisig or to governance.
+
+## What the Hub runs
+
+The Hub uses [cosmos/tokenfactory](https://github.com/cosmos/tokenfactory), a fork of the Strangelove implementation with the sudo mint capability removed. Maintained by the Cosmos Hub team. No tagged releases; gaia v28.3.1 pins v0.53.5. Repository active. Checked 2026-10-15. Module documentation: [x/tokenfactory README](https://github.com/cosmos/tokenfactory/blob/main/x/tokenfactory/README.md).
+
+Any account can create a denom; the creator becomes its admin. The module is wired with two capabilities in `app/keepers/keepers.go`:
+
+- `EnableSetMetadata`: admins can set the bank denom metadata (symbol, exponent, description).
+- `EnableCommunityPoolFeeFunding`: the creation fee goes to the community pool rather than being burned.
+
+`EnableBurnFrom` and `EnableForceTransfer` are not enabled. The CLI still has `burn-from` and `force-transfer` subcommands because they are part of the module, but the Hub rejects those messages. An admin can therefore mint, mint to others, burn from its own balance, change the admin, and modify metadata, and nothing else. Smart contracts reach the same messages through the module's CosmWasm bindings.
+
+## Parameters
+
+Creation fee: 10 ATOM, paid to the community pool.
+
+```bash
+gaiad q tokenfactory params --node https://cosmos-rpc.publicnode.com:443
+```
+
+`denom_creation_fee: 10000000uatom`; `denom_creation_gas_consume: "2000000"`. Creating a denom also consumes 2,000,000 gas on top of the fee, so the create transaction needs `--gas` of at least about 2,200,000, or `--gas auto`.
+
+## Create a denom
+
+```bash
+gaiad tx tokenfactory create-denom mytoken --from mykey \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The message is `MsgCreateDenom` with `subdenom: mytoken`. The resulting denom is `factory/<cosmos1 address of mykey>/mytoken`, which is what every later command and every transfer uses. Confirm who created and who administers it:
+
+```bash
+gaiad q tokenfactory denoms-from-creator $(gaiad keys show mykey -a)
+gaiad q tokenfactory denom-authority-metadata factory/cosmos1.../mytoken
+```
+
+The first lists the denom; the second returns `authority_metadata.admin` with the creator's address.
+
+## Mint, burn and metadata
+
+Mint to yourself or to another account, in base units:
+
+```bash
+gaiad tx tokenfactory mint 1000000factory/cosmos1.../mytoken --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+gaiad tx tokenfactory mint-to cosmos1RECIPIENT... 1000000factory/cosmos1.../mytoken --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+Burn from the admin's own balance only:
+
+```bash
+gaiad tx tokenfactory burn 500000factory/cosmos1.../mytoken --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+Set the display metadata so wallets and explorers show a symbol and decimals. The arguments are denom, ticker symbol, description, exponent:
+
+```bash
+gaiad tx tokenfactory modify-metadata factory/cosmos1.../mytoken MYT "Example token" 6 --from mykey \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+gaiad q bank denom-metadata factory/cosmos1.../mytoken
+```
+
+The bank query returns the metadata with `symbol: MYT` and a denom unit with `exponent: 6`; the uatom entry on the Hub has the same shape (`symbol: ATOM`, exponent 6).
+
+## Secure the admin key
+
+A compromised admin key can mint without limit and change the admin to lock you out, even with burn-from and force-transfer disabled. Three ways to narrow that, from least to most restrictive:
+
+1. Use a multisig as the admin. Create the denom from a multisig account ([multisig accounts](/hub/latest/delegators/delegator-guide-cli#multisig-accounts)) or hand it over with `change-admin`.
+2. Grant a limited operator through `authz`. An operator account can be allowed to execute only `MsgMint`, with an expiry:
+
+```bash
+gaiad tx authz grant cosmos1OPERATOR... generic --msg-type /osmosis.tokenfactory.v1beta1.MsgMint \
+  --expiration 1800000000 --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+3. Transfer admin to the governance module account, after which every mint or metadata change needs a passed proposal:
+
+```bash
+gaiad tx tokenfactory change-admin factory/cosmos1.../mytoken cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn --from mykey \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+`change-admin` is immediate and has no undo; the new admin is the only account that can change it again. `gaiad q tokenfactory denoms-from-admin <address>` lists what an address administers.
+
+<Warning>
+A `change-admin` to a mistyped address is permanent. Check the destination with `gaiad keys parse <address>` before signing, and prefer moving admin to a multisig you have already tested with a small transfer.
+</Warning>
+
+## Verify
+
+```bash
+gaiad q bank total-supply-of factory/cosmos1.../mytoken --node https://cosmos-rpc.publicnode.com:443
+gaiad q tokenfactory denoms-from-admin $(gaiad keys show mykey -a) --node https://cosmos-rpc.publicnode.com:443
+```
+
+The supply matches what you minted minus what you burned, and the admin listing shows the denom until you change its admin, after which it moves to the new admin's listing.
+
+## Next
+
+- [Modules on the Hub](/hub/latest/modules/README) for the other modules and their parameters.
+- [Parameter change proposals](/hub/latest/governance/proposal-types/param-change) to change the creation fee (`osmosis.tokenfactory.v1beta1.MsgUpdateParams`).
+- [Community pool spend](/hub/latest/governance/proposal-types/community-pool-spend) for where the creation fees end up.

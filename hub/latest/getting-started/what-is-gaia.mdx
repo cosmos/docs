@@ -1,25 +1,71 @@
 ---
-title: What is Gaia?
-description: >-
-  The Cosmos Hub is a public Proof-of-Stake chain that uses ATOM as its native
-  staking token. It is the first blockchain launched in the Cosmos Network and
-  developed using the cosmos-sdk development framework and ibc-go.
+title: What is gaia
+description: For anyone about to run a Cosmos Hub node, this page explains what gaia and gaiad are, what the Hub runs today, and which old features are gone.
 ---
-The Cosmos Hub is a public Proof-of-Stake chain that uses ATOM as its native staking token. It is the first blockchain launched in the Cosmos Network and developed using the [cosmos-sdk](/) development framework and [ibc-go](/ibc/latest/intro).
 
-Cosmos hub is also the first security aggregation platform that leverages the [interchain-security](https://cosmos.github.io/interchain-security/) protocol ([ICS-28](https://github.com/cosmos/ibc/tree/main/spec/app/ics-028-cross-chain-validation)) to facilitate the launch of cosmos-sdk blockchain projects.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-<Tip>
-Interchain security features deployed on the Cosmos Hub blockchain allow anyone to launch a blockchain using a subset, or even the entire validator set of the Cosmos Hub blockchain.
-</Tip>
+<HubVerified reviewed date="2026-10-15" />
 
-<Info>
+The Cosmos Hub is a public proof of stake blockchain that uses ATOM as its staking token. It was the first chain launched in the Cosmos network and it is built with the Cosmos SDK, CometBFT, and ibc-go. This page is the orientation stop before you look at the [Versions](/hub/latest/start/versions) page and install anything.
 
-* `gaia` is the name of the Cosmos SDK application for the Cosmos Hub.
+## gaia and gaiad
 
-* `gaiad` is the daemon and command-line interface (CLI) that operates the `gaia` blockchain application.
-</Info>
+gaia is the name of the Cosmos SDK application that implements the Cosmos Hub. gaiad is the single binary that runs it: the node daemon (`gaiad start`), the CLI for queries and transactions (`gaiad query`, `gaiad tx`), and the operator tools (`gaiad init`, `gaiad config`, `gaiad keys`, `gaiad snapshots`, `gaiad comet`). Source and releases live at [github.com/cosmos/gaia](https://github.com/cosmos/gaia).
 
-For a full list of modules used on the Cosmos Hub follow this [link](/hub/latest/modules/README).
+The current mainnet chain is `cosmoshub-4`, launched on 2021-02-18 at height 5200791 from the exported state of `cosmoshub-3` (the `genesis_time` field keeps the `cosmoshub-3` date of 2019-12-11). Earlier chain ids and their genesis files are kept in the [cosmos/mainnet](https://github.com/cosmos/mainnet) repository and described on the [Archives](/hub/latest/resources/archives) page.
 
-Next, learn how to [install Gaia](/hub/latest/getting-started/installation).
+## What the Hub does
+
+- Secures ATOM staking and delegation with a set of 180 active validators and a 21 day unbonding period.
+- Runs on-chain governance for parameter changes, software upgrades, community pool spending, and signaling.
+- Routes IBC transfers and packets between chains, with packet forward middleware and rate limiting on transfers.
+- Hosts CosmWasm contracts through wasmd. Code upload permission is currently `Everybody` (checked 2026-10-15 with `curl -s <rest>/cosmwasm/wasm/v1/codes/params`).
+- Prices transactions with the feemarket module, which sets a dynamic minimum gas price with a floor of 0.005uatom.
+- Offers liquid staking through the x/liquid module, with caps on how much stake may be liquid.
+
+The module list, with links to each module's page, is on [Modules](/hub/latest/modules/README).
+
+## The stack the Hub runs today
+
+The Hub currently runs gaia v28.3.1, which is built on Cosmos SDK v0.53.4, CometBFT v0.38.23, ibc-go v10.7.0, wasmd v0.60.9, and Go 1.25.7. Every page in this section was checked against that release. The [Versions](/hub/latest/start/versions) page keeps the exact table and tells you which Cosmos SDK and CometBFT documentation version matches.
+
+## Features that were removed
+
+Older guides, forum posts, and search results still describe features that no longer exist in gaia. If you meet one of these, it is history, not a step you skipped.
+
+<Note>
+Interchain Security provider module: removed in gaia v28.0.0. The Hub no longer runs consumer chains, and `gaiad query provider` and `gaiad tx provider` commands are gone. Pages about joining a consumer chain as a Hub validator no longer apply.
+
+Liquid staking module validator bond: replaced by the x/liquid module in gaia v25.0.0. Validators no longer post a validator bond; see [Liquid staking](/hub/latest/modules/liquid).
+
+globalfee module: replaced by feemarket. The minimum gas price is dynamic, with a floor of 0.005uatom; see [Feemarket](/hub/latest/modules/feemarket).
+
+crisis module: removed. `gaiad start --x-crisis-skip-assert-invariants` is not a flag on gaia v28 and the node refuses to start with it. Start the node with `gaiad start`.
+</Note>
+
+## What a node looks like on disk
+
+`gaiad init` creates a home directory, `~/.gaia` by default, with two folders. Everything an operator configures or backs up lives in one of them.
+
+| Path | What it holds |
+| --- | --- |
+| `config/config.toml` | CometBFT settings: peers, state sync, database backend, RPC listen address, Prometheus |
+| `config/app.toml` | Application settings: minimum gas prices, pruning, API and gRPC servers, snapshot interval |
+| `config/client.toml` | CLI defaults such as chain-id and the node the CLI queries |
+| `config/genesis.json` | The `cosmoshub-4` genesis file |
+| `config/node_key.json` | Peer to peer identity, no on-chain state |
+| `config/priv_validator_key.json` | Consensus signing key, matters only on a validator |
+| `data/` | Block store, application state, and `priv_validator_state.json` (the double sign guard) |
+
+Default ports: 26656 (p2p), 26657 (RPC), 1317 (REST, disabled by default), 9090 (gRPC), 26660 (Prometheus, disabled by default). The [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) page sets each file with `gaiad config set` instead of hand editing.
+
+## The three validator keys
+
+A validator has three keys and on the Hub today none of them can be rotated. The operator key (the `cosmosvaloper` address, kept in the keyring) signs validator transactions and can never be changed or replaced; retiring it means creating a new validator and asking delegators to move. The consensus key (`priv_validator_key.json`) signs blocks; gaia v28.3.1 has no command to rotate it, so protect it and back it up. The node key (`node_key.json`) is the peer to peer identity; it carries no on-chain state and can be regenerated freely. The [Validator setup](/hub/latest/validators/validator-setup) and [Security](/hub/latest/validators/security) pages cover how to handle each one.
+
+## Where to go next
+
+- Read [Versions](/hub/latest/start/versions) to confirm the stack and the testnet version.
+- Check [System requirements](/hub/latest/getting-started/system-requirements) before buying or renting hardware.
+- Then [install gaiad](/hub/latest/getting-started/installation).

@@ -1,0 +1,124 @@
+---
+title: "Relaying"
+description: "Run an IBC relayer against the Cosmos Hub: relayer choice, Hub-specific Hermes settings, rate limits, and how IBC v2 relaying is permissioned."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+This page is for operators who want to relay IBC packets to and from the Cosmos Hub. It assumes you have a Hub RPC and gRPC endpoint to point the relayer at (your own, see [Run public endpoints](/hub/latest/infrastructure/endpoints), or a public one from the chain registry) and a funded relayer account. At the end a relayer clears packets on at least one Hub channel and you know which Hub rules can make a relay transaction fail.
+
+The Hub runs ibc-go v10.7.0, so it carries both classic IBC (clients, connections, channels) and IBC v2 (client to client, no connections or channel handshakes). Both are live on cosmoshub-4.
+
+## Choose a relayer
+
+Hermes is the relayer the Hub team tests against. Maintained by Informal Systems. Latest release v1.13.3 (2025-09-03). Repository active. Checked 2026-10-15. Hermes v1.13.1 added support for ibc-go v10 and Cosmos SDK 0.53 chains, which is what the Hub runs. Documentation is at [hermes.informal.systems](https://hermes.informal.systems), installation at [Quick start](https://hermes.informal.systems/quick-start/installation.html).
+
+The Go relayer (`cosmos/relayer`) is archived. Maintained by Strangelove until 2025. Latest release v2.6.0 (2025-01-10). Repository archived on 2025-04-16. Checked 2026-10-15. Do not start new deployments on it.
+
+The general relayer guide, which covers paths, clients and packet flow for any chain, is [IBC relayer](/ibc/latest/ibc/relayer). This page only adds what is specific to the Hub.
+
+## Hub chain entry for Hermes
+
+The chain block in `~/.hermes/config.toml` for cosmoshub-4, with the values that depend on Hub parameters:
+
+```toml
+[[chains]]
+id = "cosmoshub-4"
+rpc_addr = "https://rpc.example.com:443"
+grpc_addr = "https://grpc.example.com:443"
+event_source = { mode = "push", url = "wss://rpc.example.com:443/websocket", batch_delay = "500ms" }
+account_prefix = "cosmos"
+key_name = "hub-relayer"
+store_prefix = "ibc"
+gas_price = { price = 0.005, denom = "uatom" }
+gas_multiplier = 1.2
+max_gas = 3000000
+default_gas = 200000
+clock_drift = "5s"
+max_block_time = "10s"
+trusting_period = "14days"
+trust_threshold = { numerator = "1", denominator = "3" }
+address_type = { derivation = "cosmos" }
+
+[chains.packet_filter]
+policy = "allow"
+list = [
+  ["transfer", "channel-141"],
+]
+```
+
+Why these values:
+
+- `gas_price`: the Hub's feemarket module sets a floor of 0.005 uatom per gas, and the fee market raises it under load. Hermes `dynamic_gas_price = { enabled = true, multiplier = 1.1, max = 0.6 }` makes Hermes query the current price instead of using the fixed one; see [Fee market](/hub/latest/modules/feemarket) for the queries.
+- `trusting_period`: must be below the unbonding period of 21 days. 14 days is the usual two thirds.
+- `max_gas`: the Hub's block gas limit is 75,000,000; a single relay transaction that asks for more than that is rejected by the mempool.
+- `packet_filter`: relay only the channels you intend to. Clearing every channel on the Hub is expensive.
+
+The full key reference is in the Hermes [configuration docs](https://hermes.informal.systems/documentation/configuration/configure-hermes.html).
+
+## Keys and funding
+
+Hermes needs a Hub account with uatom for fees:
+
+```bash
+hermes keys add --chain cosmoshub-4 --mnemonic-file ./hub-relayer.mnemonic --key-name hub-relayer
+```
+
+The key is a normal secp256k1 wallet key at HD path `m/44'/118'/0'/0/0`, the same as `gaiad keys add`, so a relayer address can be checked with `gaiad keys parse` or funded from any wallet. Relaying on the Hub is not reimbursed by the protocol: ICS-29 fee middleware is not wired in gaia v28.3.1, so every relay transaction costs the relayer. Budget on the order of 0.01 ATOM per packet at the floor price and more when the base fee rises.
+
+## Find channels and check the counterparty
+
+Hub channels are documented in the chain registry [_IBC](https://github.com/cosmos/chain-registry/tree/master/_IBC) directory, one file per chain pair. For Osmosis, `cosmoshub-osmosis.json` gives `channel-141` on the Hub side, `channel-0` on Osmosis. Confirm from the chain before relaying:
+
+```bash
+gaiad q ibc channel end transfer channel-141 --node https://cosmos-rpc.publicnode.com:443 --output json | jq '{state: .channel.state, counterparty: .channel.counterparty, connection: .channel.connection_hops[0]}'
+gaiad q ibc connection end connection-257 --node https://cosmos-rpc.publicnode.com:443 --output json | jq '.connection.client_id'
+```
+
+On 2026-10-15 the channel is `STATE_OPEN`, counterparty `channel-0`, connection `connection-257`, client `07-tendermint-259`. Pending packets to clear are listed with `hermes query packet pending --chain cosmoshub-4 --port transfer --channel channel-141`.
+
+## Rate limits can reject your packet
+
+The Hub runs the rate limiting middleware. A transfer that would push a channel past its quota is rejected on the Hub side with a rate limit error, and the relayer sees the receive or acknowledgement fail. It is not a relayer bug; the packet goes through once the window moves.
+
+```bash
+gaiad q ratelimit list-rate-limits --node https://cosmos-rpc.publicnode.com:443
+gaiad q ratelimit rate-limit channel-141 --denom uatom --node https://cosmos-rpc.publicnode.com:443
+```
+
+On 2026-10-15 there are seven limits: uatom on `channel-141` at 5 percent of supply per 24 hours in each direction, and uatom on channels 190, 220, 235, 343, 391 and 569 at 1 percent per 24 hours. The second query shows how much of the quota is used in the current window. Middleware details are at [Rate limit middleware](/ibc/latest/middleware/rate-limit-middleware/overview).
+
+## IBC v2 clients are permissioned
+
+The Hub has IBC v2 clients, for example an Ethereum light client as `08-wasm-1369`. Relaying on a v2 client is restricted to an allow list that the client's creator set:
+
+```bash
+gaiad q ibc client counterparty-info 08-wasm-1369 --node https://cosmos-rpc.publicnode.com:443
+gaiad q ibc client config 08-wasm-1369 --node https://cosmos-rpc.publicnode.com:443
+gaiad q ibc channelv2 next-sequence-send 08-wasm-1369 --node https://cosmos-rpc.publicnode.com:443
+```
+
+The first returns the counterparty client id, the second returns `allowed_relayers` with the addresses that may submit packets on that client (six on 2026-10-15), and the third returns the next sequence (11342). An address not on the list gets its relay transaction rejected. Running a v2 relayer against the Hub therefore starts with the team that owns the client, not with a config file. Protocol background: [IBC v2 spec](/ibc/latest/spec/IBC_V2/README) and the [IBC v2 announcement](https://ibcprotocol.dev/blog/ibc-v2-announcement).
+
+## Verify
+
+Start Hermes with the Hub chain and one counterparty configured and check both health and a cleared packet:
+
+```bash
+hermes health-check
+hermes clear packets --chain cosmoshub-4 --port transfer --channel channel-141
+```
+
+`health-check` reports `cosmoshub-4: performed health check` with no warnings about the gRPC or websocket endpoints; a `trusting_period` warning means the value is above two thirds of the unbonding period. `clear packets` ends with a summary of relayed `RecvPacket` and `AcknowledgePacket` messages, or `No pending packets` on an idle channel. The transactions appear under the relayer address:
+
+```bash
+gaiad q txs --query "message.sender='cosmos1...'" --limit 5 --node https://rpc.example.com:443
+```
+
+## Next
+
+- [Fee market](/hub/latest/modules/feemarket) for how the gas price moves.
+- [Packet forward middleware](/ibc/latest/middleware/packet-forward-middleware/overview) and [Callbacks](/ibc/latest/middleware/callbacks/callbacks-IBCv2) for the other middleware on the Hub's transfer stack.
+- [Hermes troubleshooting](https://hermes.informal.systems/advanced/troubleshooting/index.html) and [telemetry](https://hermes.informal.systems/documentation/telemetry/index.html).

@@ -1,0 +1,92 @@
+---
+title: Remote signing
+description: How a validator operator moves the consensus key off the validator host into a remote signer, how CometBFT talks to that signer, and the rules that prevent a double sign.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+This page is for an operator whose validator exists on chain ([Create and manage a validator](/hub/latest/validators/validator-setup)) and who wants the consensus key off the validator host. At the end the validator signs through a separate signer process, the key never touches the node, and you know the handful of rules that keep one key from signing twice.
+
+## Why a remote signer
+
+The consensus key signs every prevote, precommit and proposal. Whoever holds it can sign a conflicting block, and the chain punishes that with a 5 percent slash and a permanent tombstone of the validator ([Validator overview](/hub/latest/validators/overview#live-constraints)). The key cannot be rotated on gaia v28.3.1, so a leaked key means retiring the validator.
+
+By default `gaiad init` writes the key to `config/priv_validator_key.json` on the node host, the same host that holds open TCP connections to peers and runs a large codebase. A remote signer moves the key to a separate host, or an HSM, that exposes nothing but the signing protocol, and the node asks it for signatures over an authenticated connection. The validator host can then be rebuilt, snapshotted or compromised without the key leaving the signer.
+
+## How CometBFT privval works
+
+CometBFT asks the signer for signatures over a small protocol called privval. One `config.toml` key switches it on:
+
+```bash
+gaiad config set config priv_validator_laddr tcp://127.0.0.1:26659 --skip-validate
+```
+
+`priv_validator_laddr` (default empty) is the address the node listens on for a signer. It accepts `tcp://` or `unix://`. When it is set, the node ignores `priv_validator_key_file` for signing and waits at startup until a signer connects and answers a public key request; until then the node does not start consensus. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`; confirm with `gaiad config get config priv_validator_laddr`.
+
+The signer dials in. The connection is a CometBFT SecretConnection, encrypted and authenticated with an Ed25519 identity on each side. On the node side that identity is generated fresh at every start (`privval/utils.go` in CometBFT v0.38), so the node does not pin the signer and the signer cannot pin the node across restarts; the network boundary is the control. Bind the listener to a private interface (the example uses loopback for a signer on the same host; use the private network address when the signer is elsewhere) and firewall the port to the signer host.
+
+Double-sign protection is a state file. A local signer keeps `data/priv_validator_state.json`:
+
+```json
+{"height":"0","round":0,"step":0}
+```
+
+Before every signature the signer compares the request's height, round and step with the file. It refuses anything equal or lower, writes the new values, then signs. This is the only thing standing between a restart and a double sign, which is why the file must never be restored from a backup or shared. A remote signer keeps its own equivalent file and the node's local file stops advancing; after the switch, the local `priv_validator_state.json` stays frozen at the last locally signed height.
+
+One behaviour to know: a CometBFT v0.38 node logs `SignerListener: Error accepting connection ... i/o timeout` with an increasing `failures` counter while a signer is connected. It is the listener's periodic accept timeout, not a lost connection; watch the `signed vote` lines on the signer and the height instead.
+
+## Cosmos KMS
+
+[Cosmos KMS](https://github.com/cosmos/kms) is the remote signer maintained under the Cosmos organisation. Status: Maintained by Cosmos. Latest release v0.1.0 (2026-07-27), source build only. Repository active, last push 2026-10-13. Checked 2026-10-15.
+
+<Note>
+PLACEHOLDER: recommendation wording pending the security review and the CometBFT v0.38 devnet test
+</Note>
+
+What the README and the v0.1.0 release state:
+
+- Build: Go 1.26 (`go.mod`), `git clone https://github.com/cosmos/kms`, then `make build` (binary at `build/kms`) or `make install`. There are no release binaries. A Dockerfile is included.
+- Commands: `kms init --home <dir>` writes a `kms.yaml` stub and an identity key; `kms start --home <dir>` runs the signer; `kms state init --chain <id> --height <h> [--round <r>] [--step <s>]` seeds the double-sign floor; `kms peer-id` prints the identity; `kms version`.
+- Transports: `tcp://` (CometBFT SecretConnection, what a CometBFT v0.38 node accepts) and `noise://` (libp2p Noise, which needs a node that supports it; gaia v28.3.1 does not).
+- Key backends: `file` (reads a CometBFT `priv_validator_key.json`; the README says this is not for production custody), `pkcs11` (an HSM module, with `token_label` or `slot`, `key_label` or `key_id`, and `pin`, `pin_env` or `pin_file`), and `awskms` (an `ECC_NIST_EDWARDS25519` key by `key_id`, `region`, `profile`). Only `ed25519` applies to the Hub.
+- Configuration (`kms.yaml`): a `chains` list (chain id and a state file, default `<home>/state/<chain-id>.json`), a `validators` list (chain id, the node's `priv_validator_laddr` address, the identity key file, reconnect settings), and a `keys` list (chain ids, backend, algorithm). An optional `grpc` block exposes a signer service that has no caller authentication, so it must sit behind TLS or stay off.
+- Double-sign protection reuses the CometBFT state-file format per chain. `kms start` refuses to run with a missing state file unless you pass `--allow-fresh-state <chain-id>`, and `state init` refuses to overwrite an existing floor.
+- Existing validators: kms does not import keys. Moving a running Hub validator onto the `file` backend is a copy of `priv_validator_key.json`; moving it into an HSM means importing that Ed25519 key with the HSM vendor's tooling. AWS KMS cannot import an Ed25519 private key, so an existing Hub validator cannot adopt the `awskms` backend without a new consensus key, which the Hub cannot rotate to.
+
+The configuration and backend detail lives in the SDK docs: [Remote signing with Cosmos KMS](/sdk/latest/kms/remote-signing), [Configure a backend](/sdk/latest/kms/configure-backend), [Configuration reference](/sdk/latest/kms/configuration-reference), [Best practices](/sdk/latest/kms/best-practices), and [Migrate from TMKMS](/sdk/latest/kms/migrate-from-tmkms). Those pages were written against the CometBFT release kms pins; the Hub currently runs CometBFT v0.38.23, so use the `tcp://` transport and treat anything `noise://` or `--libp2p` as not applicable.
+
+## Operational rules for any remote signer
+
+These apply whichever signer you run.
+
+- One signer instance per consensus key, ever. Not an active and a standby, not a container that might restart twice. High-availability setups need a signer built for it, with a shared or threshold state, or a strict manual failover.
+- Never restore the signer's state file from a backup, a snapshot or a cloned disk. If the file is lost, stop the node, wait until the chain is several heights past the last signed block, and seed the state at the current height (`kms state init`, or the equivalent for your signer) before starting.
+- Never place the consensus key where an unauthenticated service can use it: no unauthenticated gRPC signer endpoints, no key file readable by the node's user, no shared volumes.
+- Pin the peer identity where the signer supports it, and pin the network path everywhere: the signer dials exactly one node address, and the node's privval port accepts connections from the signer host alone. One node, one signer.
+- Put the state file on durable local storage that survives a crash (not tmpfs, not an ephemeral container layer) and fsyncs.
+- Test the whole switch on the [testnet](/hub/latest/hub-tutorials/join-testnet) first, including stopping and restarting the signer, before touching mainnet.
+- When you switch from local signing, start the signer first, then the node, and seed the signer's state at or above the height in the node's `data/priv_validator_state.json`. Remove or replace the key in the node's `priv_validator_key.json` once the signer is confirmed working so the node can never fall back to it.
+
+## External signers
+
+Two other signers are widely used on the Hub. Neither is maintained under the Cosmos organisation, so Cosmos does not support them; status and maintenance are as their repositories showed on the date checked.
+
+TMKMS: Maintained by iqlusion. Latest release v0.15.0 (2025-11-07). Repository active, last push 2026-09-17. Checked 2026-10-15. Rust, built with `cargo install tmkms --features=yubihsm` (or `--features=ledger`, `--features=softsign`). Backends: YubiHSM 2, Ledger, Fortanix DSM, software keys. Dials the node's `priv_validator_laddr` over `tcp://` or `unix://` and keeps a per-chain state file; a single-instance signer. [Repository](https://github.com/iqlusioninc/tmkms).
+
+Horcrux: Maintained by amygdala-labs (formerly strangelove-ventures). Latest release v3.3.2 (2025-03-07). Repository archived on 2026-08-17. Checked 2026-10-15. Go, a threshold signer that splits the key across several cosigners so no single host holds it and one host can fail without stopping signing. The archive means no further releases or fixes; existing deployments keep working, but plan a migration. [Repository](https://github.com/amygdala-labs/horcrux).
+
+## Verify
+
+After switching to any remote signer:
+
+- The node starts and `curl -s localhost:26657/status | jq .result.validator_info.pub_key` prints the key held by the signer.
+- The signer logs a signature for every block, and its state file height advances with the chain.
+- `data/priv_validator_state.json` on the node stops advancing.
+- `gaiad query slashing signing-info $(gaiad comet show-validator)` shows `missed_blocks_counter` flat. If you replaced the local key with a throwaway, pass the signer's public key or the `cosmosvalcons` address instead of `show-validator`.
+- Stopping the signer on the testnet stops your votes within a block, and starting it resumes them without a `rejected` or `panic` line in either log.
+
+## Next
+
+Put the validator behind sentries and close the ports: [Validator security](/hub/latest/validators/security).

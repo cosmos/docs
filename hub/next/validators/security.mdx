@@ -6,55 +6,107 @@ description: >-
   diverse setups increase the resilience of the network. Validator candidates
   should commence their setup phase now in order to be on time for launch.
 ---
-Each validator candidate is encouraged to run its operations independently, as diverse setups increase the resilience of the network. Validator candidates should commence their setup phase now in order to be on time for launch.
 
-## Key Management - HSM
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-It is mission critical that an attacker cannot steal a validator's key. If this is possible, it puts the entire stake delegated to the compromised validator at risk. Hardware security modules are an important strategy for mitigating this risk.
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-HSM modules must support `ed25519` signatures for the hub. The YubiHSM2 supports `ed25519` and [this yubikey library is available](https://github.com/iqlusioninc/yubihsm.rs). The YubiHSM can protect a private key but cannot ensure in a secure setting that it won't sign the same block twice.
+This page is for an operator with a validator created on chain ([Create and manage a validator](/hub/next/validators/validator-setup)) and the consensus key in a [remote signer](/hub/next/validators/remote-signing). At the end the validator host is unreachable from the public internet, every host exposes only the ports its job needs, and each key sits on the host where losing it does the least damage.
 
-The CometBFT team is also working on extending our Ledger Nano S application to support validator signing. This app can store recent blocks and mitigate double signing attacks.
+Diverse setups make the network stronger. Treat what follows as the minimum, not a template to copy exactly.
 
-We will update this page when more key storage solutions become available.
+## Where each key lives
 
-## Sentry Nodes (DDOS Protection)
+Each of the three keys goes on a different host, and none of them can be rotated on gaia v28.3.1, so placement is the only protection you get.
 
-Validators are responsible for ensuring that the network can sustain denial of service attacks.
+- Operator key: never on a server. Keep it on a [Ledger](/hub/next/resources/ledger) or in an `os` or `file` keyring on a machine you sign from, and consider a multisig (`gaiad keys add <name> --multisig <k1>,<k2> --multisig-threshold 2`). Losing it loses the funds on the account and control of the validator forever, because the `cosmosvaloper` address cannot be replaced. A thief with it can change your commission, withdraw commission and unjail, but cannot sign blocks.
+- Consensus key: on the signer host or inside an HSM, never on the validator host. A copy on two running hosts is the usual cause of double signing, which slashes 5 percent and tombstones the validator.
+- Node key: on the validator host, in `config/node_key.json`. It is only the peer identity. If it leaks, delete the file, restart, and update `private_peer_ids` and `unconditional_peer_ids` on the sentries with the new id from `gaiad comet show-node-id`.
 
-One recommended way to mitigate these risks is for validators to carefully structure their network topology in a so-called sentry node architecture.
+## Sentry topology
 
-Validator nodes should only connect to full-nodes they trust because they operate them themselves or are run by other validators they know socially. A validator node will typically run in a data center. Most data centers provide direct links to the networks of major cloud providers. The validator can use those links to connect to sentry nodes in the cloud. This shifts the burden of denial-of-service from the validator's node directly to its sentry nodes, and may require new sentry nodes be spun up or activated to mitigate attacks on existing ones.
+A validator that peers directly with the internet can be found and flooded. The sentry pattern puts public full nodes in front of it: the validator peers only with your sentries, over private addresses, and the sentries peer with everyone else. A sentry under attack can be dropped and replaced without the validator missing a block.
 
-Sentry nodes can be quickly spun up or change their IP addresses. Because the links to the sentry nodes are in private IP space, an internet based attack cannot disturb them directly. This will ensure validator block proposals and votes always make it to the rest of the network.
+Run at least two sentries in different networks or providers. The [CometBFT validator guide](/cometbft/latest/docs/core/Validators) has the full configuration tables; the keys below are the ones that matter, with the `gaiad config` command and the `config.toml` key for each. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`, because the binary's confix validator does not know the CometBFT schema; the values are still written and read correctly.
 
-To setup your sentry node architecture you can follow the instructions below:
-
-Validators nodes should edit their config.toml:
-
-```bash
-# Do not add private peers to this list if you don't want them advertised
-persistent_peers =[list of sentry nodes]
-
-# Set true to enable the peer-exchange reactor
-pex = false
-```
-
-Sentry Nodes should edit their config.toml:
+On the validator:
 
 ```bash
-# Comma separated list of peer IDs to keep private (will not be gossiped to other peers)
-# Example ID: 3e16af0cead27979e1fc3dac57d03df3c7a77acc@3.87.179.235:26656
-
-private_peer_ids = "node_ids_of_private_peers"
+gaiad config set config p2p.pex false --skip-validate
+gaiad config set config p2p.persistent_peers "<sentry1-id>@<sentry1-private-ip>:26656,<sentry2-id>@<sentry2-private-ip>:26656" --skip-validate
+gaiad config set config p2p.unconditional_peer_ids "<sentry1-id>,<sentry2-id>" --skip-validate
+gaiad config set config p2p.addr_book_strict false --skip-validate
+gaiad config set config consensus.double_sign_check_height 10 --skip-validate
 ```
 
-## Environment Variables
+- `pex = false`: the validator stops gossiping and learning peers, so it only ever talks to the sentries you listed.
+- `persistent_peers`: the sentries, by node id and private address. Get each id with `gaiad comet show-node-id` on that sentry.
+- `unconditional_peer_ids`: the sentries keep their slot even when the peer limits are full.
+- `addr_book_strict = false`: allows private addresses in the address book.
+- `double_sign_check_height = 10`: on restart the node refuses to start if its consensus key signed any of the last 10 blocks, which catches a second instance still running somewhere.
 
-By default, uppercase environment variables with the following prefixes will replace lowercase command-line flags:
+On each sentry:
 
-* `GA` (for Gaia flags)
-* `TM` (for Tendermint/CometBFT flags)
-* `BC` (for democli or basecli flags)
+```bash
+gaiad config set config p2p.pex true --skip-validate
+gaiad config set config p2p.persistent_peers "<validator-id>@<validator-private-ip>:26656,<other-sentry-id>@<other-sentry-ip>:26656" --skip-validate
+gaiad config set config p2p.private_peer_ids "<validator-id>" --skip-validate
+gaiad config set config p2p.unconditional_peer_ids "<validator-id>" --skip-validate
+gaiad config set config p2p.addr_book_strict false --skip-validate
+```
 
-For example, the environment variable `GA_CHAIN_ID` will map to the command line flag `--chain-id`. Note that while explicit command-line flags will take precedence over environment variables, environment variables will take precedence over any of your configuration files. For this reason, it's imperative that you lock down your environment such that any critical parameters are defined as flags on the CLI or prevent modification of any environment variables.
+- `private_peer_ids`: the sentry never gossips the validator's address to anyone.
+- `unconditional_peer_ids`: the validator always gets a slot on the sentry.
+- `persistent_peers`: the validator plus the other sentries, so the sentries also form a mesh among themselves.
+- `pex = true` and the default `max_num_inbound_peers = 40`, `max_num_outbound_peers = 10` keep the sentry well connected to the public network.
+
+Every one of these is a plain `config.toml` key (`[p2p]` and `[consensus]` tables). Confirm with `gaiad config get config p2p.pex` and the other keys, then restart the service. Flags beat environment variables (`GAIAD_P2P_PEX`), and environment variables beat the file, so a stray export in the service unit silently overrides what you just set.
+
+## Firewall per host
+
+The validator host should accept only three kinds of inbound connection, all from addresses you own:
+
+- 26656 (p2p) from the sentries' addresses only.
+- The privval port (26659 in these docs) from the signer host only, when the signer dials in.
+- SSH from your management network only.
+
+Nothing else. Leave 26657 (RPC), 1317 (API), 9090 (gRPC) and 26660 (Prometheus) bound to localhost or a private interface, and query them over a VPN or an SSH tunnel. The defaults in `config.toml` already bind RPC to `tcp://127.0.0.1:26657` and p2p to `tcp://0.0.0.0:26656`.
+
+Sentries open 26656 to the world. If a sentry also serves RPC or API, run that on a separate node; a public RPC behind the same process as a sentry invites the load you built sentries to avoid.
+
+The signer host accepts nothing inbound except SSH from the management network. It dials out to the validator's privval port.
+
+Use a private network, VPN or cloud VPC between validator, sentries and signer so the private addresses in `persistent_peers` never traverse the public internet.
+
+## DDoS
+
+With sentries in place, the validator has no public address to attack. What remains:
+
+- Keep sentries replaceable: image them, keep a synced spare, and script replacing one and updating `persistent_peers`.
+- Spread sentries across providers and regions so one provider's outage or filtering does not take all of them.
+- Watch `cometbft_p2p_peers` on the validator; if it falls to zero the validator is isolated even though it is up. See [Monitoring](/hub/next/validators/monitoring).
+- Do not publish the validator's IP anywhere, including the chain registry, Discord, or your website. Publish sentry or dedicated seed addresses instead.
+
+## Host hygiene
+
+<Warning>
+Never copy `priv_validator_key.json` or a signer's state file onto a second host "as a backup that is also running". Two signers with one key double sign within minutes. Back up the key encrypted and offline; back up state files never.
+</Warning>
+
+- Run gaiad as an unprivileged user with the service hardening in [Run gaiad as a service](/hub/next/node/service).
+- Keep the OS patched on a schedule that does not coincide with upgrade heights.
+- Disable password SSH; use keys and a bastion.
+- Keep system time accurate (chrony or systemd-timesyncd). Clock drift causes dropped votes.
+- When the node restarts after the same key signed recent blocks, `double_sign_check_height` makes it panic on purpose. Stop, wait ten or more blocks, and start again rather than lowering the setting.
+
+## Verify
+
+- From a machine outside your network, `nc -vz <validator-ip> 26656` and `26657` time out; the same against each sentry's 26656 connects.
+- On the validator, `curl -s localhost:26657/net_info | jq '.result.peers[].node_info.id'` lists exactly your sentry ids.
+- On each sentry, `curl -s localhost:26657/net_info | jq '.result.n_peers'` shows a healthy count (tens), and `/dump_consensus_state` on any public node never shows the validator's address.
+- `gaiad config get config p2p.pex` prints `false` on the validator and `true` on the sentries.
+- On the validator host, `config/priv_validator_key.json` holds a throwaway key, not the live one, and `curl -s localhost:26657/status | jq .result.validator_info.pub_key` shows the key held by the remote signer.
+
+## Next
+
+Enable metrics and alerts: [Monitoring](/hub/next/validators/monitoring).

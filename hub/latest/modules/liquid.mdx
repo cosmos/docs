@@ -1,21 +1,113 @@
 ---
-title: x/liquid
-description: >-
-  The x/liquid module used by the Hub includes types and APIs that enable liquid
-  staking. You can read more about it in our module documentation.
+title: "Liquid staking module"
+description: "The Hub's x/liquid module: tokenized delegation shares, the global and per validator caps, account locks, the commands, and what changed when the SDK LSM was replaced."
 ---
-The `x/liquid` module used by the Hub includes types and APIs that enable liquid staking.
-You can read more about it in our [module documentation](https://github.com/cosmos/gaia/tree/main/x/liquid/README.md).
 
-## What are LSM shares
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-LSM shares are derivatives of the delegation shares. They are tied to a delegator and a validator pair and they represent the underlying delegation shares.
-By issuing LSM shares, the underlying staked ATOM can become "liquid" while still being slashable. The LSM shares are tokens that can be used in various DeFi protocols and transferred between users or between chains via IBC.
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-LSM shares are not fungible (as they are tied to a delegator/validator pair) and are issued by the Hub directly and thus don't depend on the security of any entity other than the Cosmos Hub itself.
+This page is for delegators who want to tokenize staked ATOM or protect their account from tokenization, for liquid staking providers integrating with the Hub, and for operators who need to understand the `gaia.liquid.v1beta1` messages they see in blocks. It assumes `gaiad` is configured for the Hub ([Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli)). Parameter values are from mainnet on 2026-10-15.
 
-## Benefits
+## What the module does
 
-By tokenizing your staked ATOM into LSM shares, you maintain the benefits of staking while gaining flexibility in using these shares in DeFi protocols and platforms.
+`x/liquid` lets a delegator convert a delegation into tokenized shares: a bank denom of the form `<validator address>/<record id>` that represents a claim on that delegation. The shares are transferable, including over IBC, and can be redeemed back into a normal delegation by whoever holds them. The underlying ATOM stays bonded and slashable the whole time, and the Hub issues the shares itself, so they depend on no party other than the Hub. Liquid staking providers accept these shares and issue their own liquid tokens against them, which is how already staked ATOM moves into liquid staking without a 21 day unbonding.
 
-The LSM shares issued by the Hub are powering liquid staking derivatives like stATOM or dATOM and they are the backbone of the Hydro platform.
+Shares from different validators (and different records) are different denoms, so they are not fungible with each other.
+
+Source and full specification: [x/liquid README](https://github.com/cosmos/gaia/blob/v28.3.1/x/liquid/README.md).
+
+## Parameters
+
+Two caps limit how much of the network can be tokenized, and both are set by governance.
+
+Global cap: 25 percent of bonded ATOM.
+
+```bash
+gaiad q liquid params --node https://cosmos-rpc.publicnode.com:443
+```
+
+`global_liquid_staking_cap: "0.250000000000000000"`. Tokenization fails once total tokenized shares would exceed this fraction of all bonded stake.
+
+Validator cap: 100 percent.
+
+`validator_liquid_staking_cap: "1.000000000000000000"` in the same output. The fraction of a single validator's shares that may be tokenized; at 1.0 there is no per validator limit on the Hub.
+
+Current use against the caps:
+
+```bash
+gaiad q liquid total-liquid-staked --node https://cosmos-rpc.publicnode.com:443
+gaiad q liquid liquid-validators --node https://cosmos-rpc.publicnode.com:443
+gaiad q liquid last-tokenize-share-record-id --node https://cosmos-rpc.publicnode.com:443
+```
+
+`93816159624` uatom tokenized against a bonded pool of about 338 million ATOM; `liquid-validators` lists `liquid_shares` per validator; the last record id was 122253.
+
+## Tokenize and redeem
+
+Tokenize part of a delegation. The last argument is who will own the shares, usually your own address:
+
+```bash
+gaiad tx liquid tokenize-share cosmosvaloper1... 10000000uatom $(gaiad keys show mykey -a) --from mykey \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The transaction creates a tokenize share record and mints shares to the owner. Find them:
+
+```bash
+gaiad q liquid tokenize-share-records-owned $(gaiad keys show mykey -a)
+gaiad q bank balances $(gaiad keys show mykey -a)
+```
+
+The record shows `id`, `owner`, `module_account` and `validator`; the balance shows a denom like `cosmosvaloper1.../122254`. Rewards on tokenized shares accrue to the record and are withdrawn with `gaiad tx liquid withdraw-tokenize-share-rewards <record-id>` or `withdraw-all-tokenize-share-rewards`.
+
+Redeem shares back into a delegation under your own address:
+
+```bash
+gaiad tx liquid redeem-tokens 10000000cosmosvaloper1.../122254 --from mykey \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The delegation reappears in `gaiad q staking delegations`. A record's ownership (and with it the reward stream) can be handed over with `gaiad tx liquid transfer-tokenize-share-record <record-id> <new-owner>`.
+
+## Lock an account against tokenization
+
+Without liquid staking, staked ATOM behind a stolen key cannot move for 21 days. Tokenization removes that delay, so an account that does not use liquid staking should lock itself:
+
+```bash
+gaiad tx liquid disable-tokenize-shares --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+gaiad q liquid tokenize-share-lock-info $(gaiad keys show mykey -a)
+```
+
+The query returns `status: TOKENIZE_SHARE_LOCK_STATUS_LOCKED`. Unlocking is deliberately slow:
+
+```bash
+gaiad tx liquid enable-tokenize-shares --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+After this the status is `LOCK_EXPIRING` with a `expiration_time` 21 days out, and only then `UNLOCKED`. A thief who re-enables tokenization still has to wait the unbonding period, which is the point.
+
+## Changes from the SDK liquid staking module
+
+Until gaia v24 the Hub ran liquid staking inside a forked `x/staking` and `x/distribution` (the "SDK LSM"). v24 moved it into `x/liquid`, and v28.3.1 has no trace of the fork. Integrators updating from that era need to know:
+
+- Protobuf types moved from `cosmos.staking.v1beta1` and `cosmos.distribution.v1beta1` to `gaia.liquid.v1beta1.*`; REST paths moved to `/gaia/liquid/v1beta1/`; CLI commands moved to `gaiad tx liquid` and `gaiad q liquid`.
+- `MsgValidatorBond` and `MsgUnbondValidator` were removed, together with the validator bond requirement and its APIs. The `min_self_delegation` field on validators is back to its upstream meaning. A validator created while the field was deprecated may show self delegation 0 against `min_self_delegation: 1`; a minimal self delegation fixes any `edit-validator` or unjail error that causes.
+- The global and validator caps are now enforced only on tokenized shares through `x/liquid`. Delegations through interchain accounts no longer count toward them.
+- The `liquid_shares` field on `Validator` in staking queries is no longer maintained; use `gaiad q liquid liquid-validator <valoper>` instead.
+- Existing records, share denoms and rewards were migrated unchanged, so share denoms issued before v24 remain valid.
+
+## Verify
+
+```bash
+gaiad q liquid total-tokenize-share-assets --node https://cosmos-rpc.publicnode.com:443
+gaiad q liquid tokenize-share-record-by-denom cosmosvaloper1.../122254 --node https://cosmos-rpc.publicnode.com:443
+```
+
+The first returns the total value of outstanding shares in uatom; the second resolves a share denom to its record and validator, which is how an explorer or a wallet tells a genuine Hub share from a look-alike denom.
+
+## Next
+
+- [Delegator FAQ](/hub/latest/delegators/delegator-faq#liquid-staking) for the delegator view.
+- [Delegator security](/hub/latest/delegators/delegator-security) on why to lock an account.
+- [Parameter change proposals](/hub/latest/governance/proposal-types/param-change) to change the caps through governance.

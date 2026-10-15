@@ -1,0 +1,93 @@
+---
+title: Versions
+description: For operators who need to know exactly what the Cosmos Hub runs today and which Cosmos SDK, CometBFT, and IBC documentation applies to it.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+This page answers one question before every other page: which versions am I dealing with. Read it before you install, and come back to it whenever a page in the Cosmos SDK or CometBFT sections looks different from what your node does.
+
+## Mainnet
+
+The Cosmos Hub mainnet, chain-id `cosmoshub-4`, currently runs gaia v28.3.1.
+
+```bash
+curl -s https://cosmos-rpc.polkachu.com/abci_info | jq -r '.result.response.version'
+```
+
+Any public RPC returns the application version its node runs; compare two providers if the answer surprises you. On 2026-10-15 this returned `v28.3.1` at height 33424490.
+
+| Component | Version in gaia v28.3.1 | Where it is pinned |
+| --- | --- | --- |
+| gaia | v28.3.1 (released 2026-10-01) | [release page](https://github.com/cosmos/gaia/releases/tag/v28.3.1) |
+| Cosmos SDK | v0.53.4 (go.mod requires v0.53.6 and replaces it with v0.53.4) | `go.mod` |
+| CometBFT | v0.38.23 | `go.mod` |
+| cometbft-db | v1.0.4, with cockroachdb/pebble v1.1.5 | `go.mod` |
+| ibc-go | v10.7.0, with 08-wasm v10.5.0 | `go.mod` |
+| wasmd | v0.60.9, with wasmvm v2.3.5 | `go.mod` |
+| feemarket | v1.1.2 pre-release | `go.mod` |
+| confix (the `gaiad config` command) | v0.1.2 | `go.mod` |
+| Go | 1.25.7 | `go.mod` and the release Dockerfile |
+
+Confirm the same numbers from your own binary:
+
+```bash
+gaiad version --long | grep -E '^(version|cosmos_sdk_version|go):'
+gaiad version --long | grep -E 'cometbft/cometbft@|cockroachdb/pebble@|ibc-go/v10@|CosmWasm/wasmd@'
+```
+
+The first command prints the gaia, Cosmos SDK, and Go versions. The second lists the dependency lines that carry the CometBFT, PebbleDB, ibc-go, and wasmd versions.
+
+## Testnet
+
+The public testnet, chain-id `provider`, runs the release candidate that will reach mainnet next. On 2026-10-15 it ran gaia v29.0.0-rc0, upgraded at height 19412200 on 2026-10-13.
+
+```bash
+curl -s https://rpc.provider-sentry-01.hub-testnet.polypore.xyz/abci_info | jq -r '.result.response.version'
+```
+
+The testnet is where operators rehearse upgrades. The current state of the testnet, the next planned upgrade, and the join scripts are in the [cosmos/testnets provider README](https://github.com/cosmos/testnets/blob/master/provider/README.md). The [Join testnet](/hub/latest/hub-tutorials/join-testnet) page walks through it.
+
+## Facts that depend on the version
+
+- The Hub currently runs Cosmos SDK v0.53 staking. gaia v28.3.1 has no command to rotate a validator key: `gaiad tx staking --help` lists `cancel-unbond`, `create-validator`, `delegate`, `edit-validator`, `redelegate`, and `unbond` only. The operator key can never be changed, the consensus key has no rotation path on the Hub, and the node key is simply regenerated when needed.
+- `gaiad config` is confix v0.1.2. Setting a `config.toml` key needs `gaiad config set config <key> <value> -s`; without `-s` confix answers `cometbft config is not supported`. App keys work without it: `gaiad config set app <key> <value>`.
+- The database backend defaults to goleveldb. PebbleDB is built in (`pebbledb`), see [Database backends](/hub/latest/node/database).
+- `--x-crisis-skip-assert-invariants` is gone. `pruning-keep-every` is gone. Both still appear in old guides.
+- The upgrade handlers compiled into v28.3.1 cover `v28_2_0` only; older upgrades require older binaries, see [Upgrade history](/hub/latest/upgrade/history).
+
+## Which upstream docs apply
+
+The Cosmos SDK and CometBFT sections of this site document their newest releases, which are ahead of what the Hub runs. The table says which copy to read for each operator topic. Concept pages are safe on the newest copy; configuration references are not, so they point at the archived copy that matches the Hub.
+
+| Topic | Read this | Why |
+| --- | --- | --- |
+| Cosmovisor | [Cosmovisor](/sdk/latest/guides/upgrades/cosmovisor) | Cosmovisor v1.7.3 is independent of the SDK version. Skip anything about `--verbose_log_level` or ML-DSA keys |
+| confix (`gaiad config`) | [confix](/sdk/latest/guides/tooling/confix) | Same tool, same commands |
+| Keyring | [Keyring](/sdk/latest/node/keyring) | Backends and flags unchanged |
+| Running a node | [Run a node](/sdk/latest/node/run-node) | Concepts apply; use the Hub pages for the exact commands |
+| Production checklist | [Run in production](/sdk/latest/node/run-production) | Concepts apply |
+| Remote signing with Cosmos KMS | [Remote signing](/sdk/latest/kms/remote-signing) | Cosmos KMS v0.1.0 has one copy; see also [Remote signing on the Hub](/hub/latest/validators/remote-signing) |
+| Upgrade module | [Upgrade module](/sdk/latest/modules/upgrade/README) | Plan, applied, and module-versions queries are the same on v0.53 |
+| Validator key rotation pages | None | Those pages describe features the Hub does not run |
+| CometBFT configuration reference | [Configuration (v0.38)](/cometbft/v0.38/docs/core/configuration) | The newest copy documents a different config file |
+| CometBFT mempool | [Mempool (v0.38)](/cometbft/v0.38/docs/core/mempool) | Same reason |
+| CometBFT running in production | [Running in production](/cometbft/latest/docs/core/Running-in-production) | Concepts apply |
+| CometBFT validators and sentries | [Validators](/cometbft/latest/docs/core/Validators) | Concepts apply |
+| CometBFT state sync | [State sync](/cometbft/latest/docs/core/state-sync) | Concepts apply; Hub values are on [Sync a node](/hub/latest/node/sync) |
+| CometBFT metrics | [Metrics](/cometbft/latest/docs/core/metrics) | Metric names match v0.38 closely; see [Monitoring](/hub/latest/validators/monitoring) |
+| IBC relayers | [Relayer](/ibc/latest/ibc/relayer) | ibc-go v10 is current; see [Relaying](/hub/latest/infrastructure/relaying) |
+
+## Verify
+
+```bash
+gaiad version
+```
+
+Prints `v28.3.1` for a mainnet binary built from the current tag. If your binary prints a different version, it is either an older release or a testnet release candidate.
+
+## Next
+
+[System requirements](/hub/latest/getting-started/system-requirements), then [Install gaiad](/hub/latest/getting-started/installation).

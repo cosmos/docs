@@ -1,15 +1,75 @@
 ---
-title: Validators
-description: >-
-  This folder contains documentation relevant to validators of the Cosmos Hub
-  and other gaia blockchains.
+title: Validator onboarding checklist
+description: The pages a new Cosmos Hub validator works through in order, from a synced node to a monitored validator that survives its first upgrade.
 ---
-This folder contains documentation relevant to validators of the Cosmos Hub and other `gaia` blockchains.
 
-* [Validator Overview](/hub/latest/validators/overview)
-* [Setting Up a Validator for Cosmos Hub Mainnet](/hub/latest/validators/validator-setup)
-* [Validator FAQ](/hub/latest/validators/validator-faq)
-* [Validator Security Notice](/hub/latest/validators/security)
-* Key Management Systems
-  * [Intro to KMS](/hub/latest/validators/kms/kms)
-  * [KMS + Ledger](/hub/latest/validators/kms/kms_ledger)
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified reviewed date="2026-10-15" />
+
+This checklist is for an operator who has read the [Validator overview](/hub/latest/validators/overview) and decided to run a Cosmos Hub validator. Each step links the page that does the work. Done in order, you end with a validator in the active set, signing from a remote signer behind sentries, with alerts, and with an upgrade already rehearsed.
+
+Every page on the path carries a box stating which gaia version its commands were run on and when. Commands that need a live chain were run on a local devnet of that version; parameter values were read from cosmoshub-4 on the date shown. If the box shows an older gaia version than the one on [GitHub releases](https://github.com/cosmos/gaia/releases), check the release notes before trusting a command.
+
+## Before the first step
+
+Do the whole path once on the [testnet](/hub/latest/hub-tutorials/join-testnet), with the same remote signer, sentries and monitoring you will use on mainnet. Testnet mistakes cost nothing. Mainnet mistakes cost 0.01 percent of stake for downtime and 5 percent plus permanent removal for a double sign.
+
+Hardware comes first: read [Hardware and system requirements](/hub/latest/getting-started/system-requirements) and plan for the validator host, at least two sentry hosts in different locations, and a signer host.
+
+## What each host runs
+
+Three kinds of host, three different jobs:
+
+- Validator host: gaiad with `pex` off and peers limited to your sentries, no public ports, and `priv_validator_laddr` pointing at the signer. It holds the node key and nothing else of value.
+- Sentry hosts: gaiad with the public peer-to-peer port open, the validator listed as a private and unconditional peer, and no keys of value. Two or more, in different networks.
+- Signer host: the remote signer process and the consensus key (or the HSM that holds it), reachable only from the validator host on the privval port.
+
+The operator key stays off all of them, in a hardware wallet or an offline keyring, and is only used when you send a transaction.
+
+## The path
+
+<Steps>
+  <Step title="Join mainnet with a full node">
+    Follow [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) to install gaiad, restore from a snapshot or state sync, and catch up to the chain head. Do not create the validator until `catching_up` is `false`. This node becomes your validator; your sentries are built the same way.
+  </Step>
+  <Step title="Run gaiad as a service">
+    Follow [Run gaiad as a service](/hub/latest/node/service) so the node restarts on failure and on reboot, has a file descriptor limit high enough for the peer count, and logs to journald. Everything that follows assumes the service is in place.
+  </Step>
+  <Step title="Create the validator">
+    Follow [Create and manage a validator](/hub/latest/validators/validator-setup): fund the operator key, write `validator.json`, send `create-validator`, and confirm the validator appears on chain. The same page covers editing the description and commission, unjailing, rewards, and a clean exit.
+  </Step>
+  <Step title="Move the consensus key to a remote signer">
+    Follow [Remote signing](/hub/latest/validators/remote-signing). The consensus key should never sit on the host that peers can reach. This is also the one step where a mistake (two signers with one key) ends the validator permanently, so read the operational rules before switching.
+  </Step>
+  <Step title="Put the validator behind sentries">
+    Follow [Validator security](/hub/latest/validators/security): sentry topology, the `config.toml` keys on each side, the firewall rules per host, and which key lives where.
+  </Step>
+  <Step title="Add monitoring and alerts">
+    Follow [Monitoring](/hub/latest/validators/monitoring): enable the CometBFT Prometheus endpoint, scrape it, and alert on the signals that matter (not signing, height stalled, no peers, voting power 0). Add a second signal from another machine that queries the chain.
+  </Step>
+  <Step title="Rehearse an upgrade">
+    Follow [Upgrade with Cosmovisor](/hub/latest/hub-tutorials/upgrade-node). Hub upgrades are governance proposals with a fixed height; missing one means jail. Run Cosmovisor on the testnet first and know how to roll back a failed binary swap.
+  </Step>
+</Steps>
+
+## After onboarding
+
+- Vote on every governance proposal. See [Governance process](/hub/latest/governance/process).
+- Watch the validator announcement channels on the [Interchain Discord](https://discord.gg/interchain) and the [gaia releases page](https://github.com/cosmos/gaia/releases).
+- Re-read the live parameters on the [Validator overview](/hub/latest/validators/overview) after each governance round. Slashing and staking parameters change by proposal.
+- Keep the [Validator FAQ](/hub/latest/validators/validator-faq) handy for the questions delegators ask.
+
+## Verify
+
+Your validator is onboarded when all of these are true:
+
+- `gaiad query staking validator <cosmosvaloper>` shows `status: BOND_STATUS_BONDED` and `jailed: false`.
+- `curl -s localhost:26657/status | jq .result.validator_info` on the validator host shows the public key held by your remote signer, and that host has no `priv_validator_key.json` with a live key.
+- The validator host accepts peer connections only from your sentries, and the sentries carry the public address.
+- A missed-blocks alert fires when you stop the signer on the testnet, and clears when you start it again.
+- You have upgraded the testnet node through at least one governance upgrade height with Cosmovisor.
+
+## Next
+
+Start at [Join mainnet](/hub/latest/hub-tutorials/join-mainnet).

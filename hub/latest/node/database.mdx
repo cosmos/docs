@@ -1,0 +1,101 @@
+---
+title: Database backends
+description: For operators choosing between goleveldb and PebbleDB on a Cosmos Hub node, this page sets the backend, shows how to tell which one a data directory uses, and explains how to switch.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+gaia v28.3.1 stores the block store and the application state in an embedded key value database. Two backends are compiled in: goleveldb, the default, and PebbleDB. You choose once, before the first sync, because the two write different file formats and a node changes backend only by restoring a data directory written with the other one. This page assumes a node from [Join mainnet](/hub/latest/hub-tutorials/join-mainnet).
+
+## Which backends the binary has
+
+```bash
+gaiad version --long | grep -E 'cometbft-db@|cockroachdb/pebble@'
+```
+
+This prints `github.com/cometbft/cometbft-db@v1.0.4` and `github.com/cockroachdb/pebble@v1.1.5`. cometbft-db v1.0.4 registers the `pebbledb` backend unconditionally, so every v28.3.1 build has it, whichever install method you used. The `--db_backend` help text on `gaiad start` lists `goleveldb | cleveldb | boltdb | rocksdb | badgerdb` and omits pebbledb; the help string is stale, the backend works. `gaiad prune --help` names the three app backends the Cosmos SDK side accepts: `goleveldb`, `rocksdb`, `pebbledb`.
+
+## Two settings, one choice
+
+CometBFT and the application open their stores separately, so there are two keys, and they must agree.
+
+<Tabs>
+  <Tab title="PebbleDB">
+    ```bash
+    gaiad config set config db_backend pebbledb -s
+    gaiad config set app app-db-backend pebbledb
+    gaiad config get config db_backend
+    gaiad config get app app-db-backend
+    ```
+
+    `db_backend` at the top of `config.toml` covers the CometBFT stores (`blockstore.db`, `state.db`, `tx_index.db`, `evidence.db`). `app-db-backend` in `app.toml` covers `application.db`; when it is empty the application falls back to `db_backend`, so setting both is belt and braces. `-s` is needed on the `config.toml` write, see [Join mainnet](/hub/latest/hub-tutorials/join-mainnet). Then restore a PebbleDB snapshot from the [Sync a node](/hub/latest/node/sync) table, or state sync into an empty data directory.
+  </Tab>
+  <Tab title="goleveldb">
+    ```bash
+    gaiad config set config db_backend goleveldb -s
+    gaiad config set app app-db-backend ""
+    gaiad config get config db_backend
+    ```
+
+    These are the defaults written by `gaiad init`. Most snapshot providers still publish goleveldb archives, so this is the path of least resistance when you restore from one of them.
+  </Tab>
+</Tabs>
+
+The settings are read at startup only. Changing them on a node with existing data does not convert anything; the node fails to open its stores, or opens empty ones and refuses to sync. Set them, then put the matching data in place, then start.
+
+## Tell which backend a data directory uses
+
+Look at any store directory, `data/application.db` is the largest:
+
+```bash
+ls ~/.gaia/data/application.db | head
+```
+
+Both backends write `CURRENT` and `MANIFEST-<number>` files, so look past those. A PebbleDB directory has an `OPTIONS-<number>` file and stores tables as `*.sst`; a goleveldb directory has a `LOG` file and stores tables as `*.ldb`. A freshly created PebbleDB store on v28.3.1 contained `000002.log`, `CURRENT`, `LOCK`, `MANIFEST-000001`, and `OPTIONS-000003`; a goleveldb store contained `000002.ldb`, `000003.log`, `CURRENT`, `LOCK`, `LOG`, and `MANIFEST-000004`. Run the same check on a downloaded archive before extracting it, as shown on [Sync a node](/hub/latest/node/sync).
+
+## Why operators switch
+
+PebbleDB is the backend that most of the current Hub snapshot providers who state a backend have moved to, and it is the one the Hub's own infrastructure work focuses on. The practical differences operators report are shorter compaction pauses on large stores and steadier disk throughput; the disk ratio between the two was not measured for this page, so do not plan capacity on a claimed saving. If your node is healthy on goleveldb there is no requirement to switch.
+
+## Switch an existing node
+
+The only supported switch is to replace the data directory.
+
+<Warning>
+On a validator, keep `data/priv_validator_state.json` through the switch. It is the double sign guard, and a reset or a restored archive overwrites it with a copy from another node.
+</Warning>
+
+1. Stop the node and copy `~/.gaia/data/priv_validator_state.json` somewhere safe.
+2. Set `db_backend` and `app-db-backend` to the target backend, as above.
+3. Reset the data directory with `gaiad comet unsafe-reset-all --keep-addr-book`.
+4. Restore a snapshot made with the target backend, or configure state sync, following [Sync a node](/hub/latest/node/sync).
+5. Put `priv_validator_state.json` back and start the node.
+
+A validator should do this on a sentry or a standby machine first, then swap, so it never misses blocks while a 15 GB archive downloads.
+
+## Prune offline
+
+`gaiad prune` applies a pruning strategy to the application store while the node is stopped, which is how you reclaim disk on a node that ran with `nothing` or a generous `custom` setting for a while.
+
+```bash
+sudo systemctl stop gaiad
+gaiad prune default --app-db-backend pebbledb
+```
+
+The argument takes the same values as the `pruning` setting (`default`, `nothing`, `everything`, `custom` with `--pruning-keep-recent`). Pass `--app-db-backend` to match your store; without it the command assumes goleveldb. It prunes application state only; the block store is not pruned by this command.
+
+## Verify
+
+```bash
+gaiad config get config db_backend
+gaiad config get app app-db-backend
+ls ~/.gaia/data/application.db | grep -m 1 -E '^OPTIONS-|\.ldb$'
+```
+
+The two settings must name the same backend, and the last command prints an `OPTIONS-` file for pebbledb or a `.ldb` file for goleveldb.
+
+## Next
+
+[Run gaiad as a service](/hub/latest/node/service), or [Sync a node](/hub/latest/node/sync) to put data in place.

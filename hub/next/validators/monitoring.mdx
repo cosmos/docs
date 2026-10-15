@@ -1,0 +1,162 @@
+---
+title: Monitoring
+description: How a validator operator turns on the CometBFT Prometheus endpoint, alerts on the metrics that mean missed blocks, keeps logs under control, and checks signing after every restart.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
+
+This page is for an operator whose validator is signing behind sentries ([Validator security](/hub/next/validators/security)). At the end Prometheus scrapes the validator, a short set of alert rules pages you before the downtime window closes, journald keeps logs bounded, and you have a fixed checklist to run after every restart.
+
+## Enable the CometBFT metrics endpoint
+
+```bash
+gaiad config set config instrumentation.prometheus true --skip-validate
+```
+
+The `config.toml` key is `prometheus` in the `[instrumentation]` table (default `false`). The listener is `prometheus_listen_addr = ":26660"` and the metric namespace is `cometbft`, so every metric below is exported as `cometbft_<subsystem>_<name>`. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`; confirm with `gaiad config get config instrumentation.prometheus`, then restart the service.
+
+```bash
+curl -s localhost:26660/metrics | grep '^cometbft_consensus_height'
+```
+
+Prints `cometbft_consensus_height{chain_id="cosmoshub-4"} <height>`. The endpoint binds all interfaces by default; firewall 26660 to your Prometheus host or set `prometheus_listen_addr` to a private address.
+
+Application metrics (bank, staking, Cosmos SDK telemetry) are separate and optional. They need `gaiad config set app telemetry.enabled true`, `gaiad config set app telemetry.prometheus-retention-time 60` and `gaiad config set app api.enable true`, and are served by the API server at `http://localhost:1317/metrics?format=prometheus`. Keep the API bound to localhost on a validator.
+
+## Metrics that matter for a validator
+
+All names carry the `cometbft_` prefix and a `chain_id` label. The full list is in the [CometBFT metrics reference](/cometbft/latest/docs/core/metrics).
+
+| Metric | What it tells you |
+| --- | --- |
+| `cometbft_consensus_height` | The height this node has committed. Compare with a public node or your sentries; a gap means you are behind. |
+| `cometbft_consensus_validator_last_signed_height` | The last height this node's consensus key signed. Should trail `height` by at most a block or two. |
+| `cometbft_consensus_validator_missed_blocks` | Blocks this node was expected to sign and did not, counted since start. Any increase is a missed signature. |
+| `cometbft_consensus_validator_power` | This node's voting power. `0` means not in the active set, or signing with a key that is not the validator's. |
+| `cometbft_consensus_validators` and `cometbft_consensus_missing_validators` | Validators in the set and how many missed the last block. A rising missing count network-wide points at a chain-level problem, not yours. |
+| `cometbft_consensus_rounds` | Rounds needed to commit the last block. More than 0 for several blocks means the network is struggling to reach quorum. |
+| `cometbft_consensus_block_interval_seconds` | Time between blocks, a histogram. The 2026-10-15 average was 5.7 seconds. |
+| `cometbft_p2p_peers` | Connected peers. On the validator this should equal your sentry count; `0` means isolated. |
+| `cometbft_mempool_size` | Pending transactions. Sustained growth with no decrease means the node cannot keep up. |
+| `cometbft_blocksync_syncing` and `cometbft_statesync_syncing` | `1` while syncing. A validator that flips to `1` has fallen behind and is not signing. |
+| `cometbft_state_block_processing_time` | Time to execute a block. Rising values warn of disk or CPU pressure before you start missing blocks. |
+
+Add [node_exporter](https://github.com/prometheus/node_exporter) on every host for disk, memory and clock drift; a full disk is the most common reason a healthy validator stops.
+
+## Scrape and alert
+
+A minimal Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: cosmoshub-validator
+    static_configs:
+      - targets: ['<validator-private-ip>:26660']
+        labels: {role: validator}
+      - targets: ['<sentry1-private-ip>:26660', '<sentry2-private-ip>:26660']
+        labels: {role: sentry}
+```
+
+Alert rules, tuned to the Hub's 10,000-block window with the 5 percent floor. The window closes about 15 hours after signing stops, so page on minutes, not hours.
+
+```yaml
+groups:
+  - name: cosmoshub-validator
+    rules:
+      - alert: ValidatorNotSigning
+        expr: (cometbft_consensus_height{role="validator"} - cometbft_consensus_validator_last_signed_height{role="validator"}) > 5
+        for: 1m
+        labels: {severity: page}
+        annotations: {summary: "Validator has not signed for more than 5 blocks"}
+      - alert: ValidatorMissedBlocks
+        expr: increase(cometbft_consensus_validator_missed_blocks{role="validator"}[10m]) > 10
+        for: 0m
+        labels: {severity: page}
+        annotations: {summary: "More than 10 blocks missed in 10 minutes"}
+      - alert: HeightStalled
+        expr: increase(cometbft_consensus_height[2m]) == 0
+        for: 2m
+        labels: {severity: page}
+        annotations: {summary: "No new block committed in 2 minutes"}
+      - alert: VotingPowerZero
+        expr: cometbft_consensus_validator_power{role="validator"} == 0
+        for: 5m
+        labels: {severity: page}
+        annotations: {summary: "Validator has no voting power (jailed, unbonded, or wrong key)"}
+      - alert: ValidatorFewPeers
+        expr: cometbft_p2p_peers{role="validator"} < 2
+        for: 5m
+        labels: {severity: page}
+        annotations: {summary: "Validator connected to fewer than 2 sentries"}
+      - alert: NodeDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: page}
+        annotations: {summary: "Metrics endpoint unreachable"}
+      - alert: MempoolBacklog
+        expr: cometbft_mempool_size > 5000
+        for: 10m
+        labels: {severity: warn}
+        annotations: {summary: "Mempool backlog, node may be falling behind"}
+      - alert: DiskLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.10
+        for: 15m
+        labels: {severity: warn}
+        annotations: {summary: "Less than 10 percent disk free"}
+```
+
+`HeightStalled` on the validator alone means your node stopped; on validator and sentries together it means the chain halted (an upgrade height, usually). Route `page` alerts to something that wakes you. See the Prometheus [alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/) and [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) docs for routing and silences, and [Grafana](https://grafana.com/docs/grafana/latest/) for dashboards.
+
+## A second signal from outside
+
+Metrics from the validator cannot tell you the validator is down when the whole host is gone, and `up == 0` cannot tell you whether you are also being slashed. From a machine that is not part of the validator setup, poll the chain:
+
+```bash
+gaiad query slashing signing-info <cosmosvalcons> --node https://cosmos-rpc.publicnode.com:443 --output json
+```
+
+`missed_blocks_counter` is the chain's own count inside the current 10,000-block window; alert when it rises over a few minutes. `jailed_until` in the future means you are already jailed. Get your `cosmosvalcons` address with `gaiad comet show-address` on the host that holds the key, or from `gaiad query staking validator <cosmosvaloper>` (`consensus_pubkey`). Many operators also use a third-party validator alerting bot for the same data; treat it as the third signal, not the first.
+
+## Logs with journald
+
+A systemd service ([Run gaiad as a service](/hub/next/node/service)) sends gaiad output to journald.
+
+```bash
+journalctl -u gaiad -f
+journalctl -u gaiad --since "1 hour ago" | grep -iE 'error|panic|missed|double'
+```
+
+Keep the journal bounded in `/etc/systemd/journald.conf`, then `systemctl restart systemd-journald`:
+
+```ini
+[Journal]
+SystemMaxUse=4G
+MaxRetentionSec=14day
+```
+
+`journalctl --disk-usage` shows what the journal holds and `journalctl --vacuum-size=2G` trims it immediately. See [journald.conf(5)](https://man7.org/linux/man-pages/man5/journald.conf.5.html) and [journalctl(1)](https://man7.org/linux/man-pages/man1/journalctl.1.html).
+
+Log volume is set in `config.toml`: `log_level = "info"` (default; `*:error,consensus:info,p2p:error` cuts noise while keeping what you need) and `log_format = "plain"` or `"json"` for a log shipper. Set them with `gaiad config set config log_level "<value>" --skip-validate`.
+
+## After every restart
+
+Run these in order each time gaiad or the signer restarts, before you walk away:
+
+1. `curl -s localhost:26657/status | jq '.result.sync_info.catching_up'` is `false`.
+2. `curl -s localhost:26657/status | jq '.result.validator_info'` shows the expected `pub_key` and a non-zero `voting_power`.
+3. The signer's state file (or `data/priv_validator_state.json` for a local key) shows a `height` that increases every few seconds.
+4. `curl -s localhost:26660/metrics | grep -E '^cometbft_consensus_(height|validator_last_signed_height) '` shows the two values within a block or two of each other.
+5. `gaiad query slashing signing-info <cosmosvalcons> --output json | jq .val_signing_info.missed_blocks_counter` prints `null` (the JSON output omits zero fields) or a number that stops increasing.
+6. `journalctl -u gaiad --since "5 minutes ago" | grep -ci panic` prints `0`. A panic about `double_sign_check_height` means the key signed recently somewhere; stop and find out where before starting again.
+
+## Verify
+
+- Prometheus shows the validator and sentry targets as `UP`.
+- Stopping the signer on the testnet fires `ValidatorNotSigning` within two minutes and the chain-side `missed_blocks_counter` rises; starting it again clears both.
+- `journalctl --disk-usage` stays under the limit you set after a week.
+
+## Next
+
+Rehearse a governance upgrade: [Upgrade with Cosmovisor](/hub/next/hub-tutorials/upgrade-node). Keep the [Validator FAQ](/hub/next/validators/validator-faq) for the questions delegators ask.

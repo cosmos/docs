@@ -1,42 +1,91 @@
 ---
-title: Cosmos Hub Archives
-description: >-
-  With each breaking upgrade of the Cosmos Hub, the network is restarted at
-  height 0. During this process, an export of the last state of the previous
-  network is made to produce the genesis state of the new one.
+title: "Archive nodes and chain archives"
+description: "Where the cosmoshub-1 through cosmoshub-3 archives live, and how to run and size a full archive node for cosmoshub-4."
 ---
-With each breaking upgrade of the Cosmos Hub, the network is restarted at height 0. During this process, an export of the last state of the previous network is made to produce the genesis state of the new one.
 
-As a result, the blocks of the previous networks are not downloaded by new clients (as they sync from the new genesis state), and may be deleted by existing full-nodes.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-## Archive Snapshots
+<HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-Legacy chain snapshots and binaries (linux-amd64) are provided by [CCValidators](https://ccvalidators.com/). Always do your own research before trusting a third-party snapshot provider.
+This page is for operators who need the full history of the Cosmos Hub, either the archived earlier chains or an unpruned cosmoshub-4 node. It assumes a working gaia install ([Join mainnet](/hub/latest/hub-tutorials/join-mainnet)). At the end you know where each chain's data is and what a cosmoshub-4 archive node costs to run.
 
-### Cosmos Hub 1
+## The four Hub chains
 
-* [Snapshot](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-1/cosmoshub-1.tar.zst)
-* [gaiad](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-1/bin/gaiad)
+The Cosmos Hub has had four chain IDs. Each upgrade before cosmoshub-4 was a new genesis exported from the previous chain, so the earlier chains' state is only available from archives.
 
-### Cosmos Hub 2
+| Chain ID | Period | Where the data is |
+| --- | --- | --- |
+| cosmoshub-1 | 2019-03-13 to 2019-04-22 | [data archive](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-1/cosmoshub-1.tar.zst) (about 9.4 GiB) and [gaiad binary](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-1/bin/gaiad); explorer [cosmoshub-1.bigdipper.live](https://cosmoshub-1.bigdipper.live/) |
+| cosmoshub-2 | 2019-04-22 to 2019-12-11 | [data archive](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-2/cosmoshub-2.tar.zst) (about 61 GiB) and [gaiad binary](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-2/bin/gaiad); explorer [cosmoshub-2.bigdipper.live](https://cosmoshub-2.bigdipper.live/) |
+| cosmoshub-3 | 2019-12-11 to 2021-02-18 | [data archive](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/cosmoshub-3.tar.zst) (about 1.1 TiB), [gaiad binary](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/bin/gaiad) and [gaiacli binary](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/bin/gaiacli); explorer [cosmoshub-3.bigdipper.live](https://cosmoshub-3.bigdipper.live/) |
+| cosmoshub-4 | 2021-02-18 to now | live chain; archive nodes below |
 
-* [Snapshot](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-2/cosmoshub-2.tar.zst)
-* [gaiad](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-2/bin/gaiad)
+The legacy archives and linux-amd64 binaries are hosted by [CCValidators](https://ccvalidators.com/). Each tar.zst holds a complete node data directory at the chain's final height, and the binary next to it is the gaia release that chain ended on. To query one, extract it and run that binary with `--home` pointing at the directory; the old binaries and their flags are not covered by these docs. Sizes are the download sizes on 2026-10-15. Verify downloads before use, as with any third party archive. The genesis files for every chain are listed on [Genesis files](/hub/latest/resources/genesis).
 
-### Cosmos Hub 3
+cosmoshub-4 itself has gone through many in-place software upgrades. A cosmoshub-4 archive node therefore needs every binary from the chain's start to replay from genesis, which is covered under sync options below.
 
-* [Snapshot](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/cosmoshub-3.tar.zst)
-* [gaiad](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/bin/gaiad)
-* [gaiacli](https://dl-eu1.ccvalidators.com/SNAPSHOTS/archive/cosmoshub-legacy/cosmoshub-3/bin/gaiacli)
+## What an archive node is
 
-## Explorers
+An archive node keeps the application state at every height:
 
-If you would like to search explorers for previous hub data, these are some links where you can find the information:
+```toml
+[pruning]
+pruning = "nothing"
+```
 
-### Big Dipper
+```bash
+gaiad config set app pruning nothing
+```
 
-* [Cosmos Hub 1](https://cosmoshub-1.bigdipper.live/)
-* [Cosmos Hub 2](https://cosmoshub-2.bigdipper.live/)
-* [Cosmos Hub 3](https://cosmoshub-3.bigdipper.live/)
+With `pruning = "nothing"` the node answers `--height` queries and historical REST calls for any height it has stored. Nothing else distinguishes it from a full node; it runs the same binary and syncs the same way. The `min-retain-blocks` key in `app.toml` must stay `0` so CometBFT keeps every block as well, and `indexer = "kv"` in `config.toml` keeps transactions searchable.
 
-If you want to make archives available to the community, feel free to open a PR to this file and add them.
+Pruning modes and what each keeps are on [Database and pruning](/hub/latest/node/database).
+
+## Sizing
+
+An unpruned cosmoshub-4 node holds every IAVL version since 2021 and is measured in terabytes, not gigabytes; the exact figure depends on the backend and on when the node was synced, and it grows with every block. For comparison, the pruned snapshots that providers publish (`pruning = "custom"`, keep 100) were 9 to 16 GiB compressed on 2026-10-15, and a pruned data directory is a few times that once extracted. Nobody publishes a maintained archive size, so measure before committing hardware:
+
+```bash
+du -sh ~/.gaia/data ~/.gaia/wasm
+```
+
+Plan for the following regardless of the number:
+
+- NVMe storage attached to the host, not network block storage; archive queries and compaction are latency bound.
+- Headroom for growth of at least a year of blocks, and a filesystem that can be extended without a resync.
+- At least 64 GiB of RAM so that compaction and historical queries do not stall block processing.
+- The same backend from the first block onward. Switching from goleveldb to PebbleDB means a full resync of all history, since there is no in-place conversion of historical IAVL versions.
+
+CPU and network requirements otherwise match a normal full node; see [System requirements](/hub/latest/getting-started/system-requirements).
+
+## Sync options for a cosmoshub-4 archive
+
+There are three ways to get the data, and only two of them are practical:
+
+1. Copy an existing archive. A few operators publish full archive data directories; they are multi-terabyte downloads and are not listed in the chain registry. Ask on the [Cosmos Hub forum](https://forum.cosmos.network) or in operator channels for a current source, verify the checksum, and confirm the backend matches your `app-db-backend` before extracting. Restore steps are the same as on [Snapshots](/hub/latest/infrastructure/snapshots).
+2. Replay from genesis. The node starts from the cosmoshub-4 genesis with the gaia version that was current in 2021 and runs every upgrade in sequence through Cosmovisor. This takes weeks to months and requires building each historical release with its own Go version. The upgrade heights and binaries are on [Upgrade history](/hub/latest/upgrade/history).
+3. State sync or a pruned snapshot. Neither produces an archive; both give the node state from one recent height only. Use them for everything except archives.
+
+## Serving an archive node
+
+Archive nodes mostly exist to serve historical queries to explorers, indexers and auditors. The RPC and REST setup is the same as for any public endpoint ([Run public endpoints](/hub/latest/infrastructure/endpoints)), with two additions: rate limit `/block_search`, `/tx_search` and `abci_query` at historical heights harder, because each of those can read gigabytes, and keep the P2P peer count low (10 outbound, 20 inbound), since the node does not need to help others sync.
+
+## Verify
+
+Query an old height. Proposal 1000's upgrade executed at height 26131400; an archive node can answer state queries at that height, a pruned node cannot:
+
+```bash
+gaiad q bank balances cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn --height 26131400 --node http://127.0.0.1:26657
+```
+
+An archive node returns the gov module account's balances at that height. A pruned node returns an error containing `version does not exist` or `failed to load state at height`. Check the configured pruning setting if the archive node also fails:
+
+```bash
+gaiad config get app pruning
+```
+
+## Next
+
+- [Database and pruning](/hub/latest/node/database) for backends and pruning settings.
+- [Upgrade history](/hub/latest/upgrade/history) for the binaries a genesis replay needs.
+- [Genesis files](/hub/latest/resources/genesis) for each chain's genesis.
