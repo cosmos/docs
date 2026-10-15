@@ -53,7 +53,7 @@ Look at any store directory, `data/application.db` is the largest:
 ls ~/.gaia/data/application.db | head
 ```
 
-Both backends write `CURRENT` and `MANIFEST-<number>` files, so look past those. A PebbleDB directory has an `OPTIONS-<number>` file and stores tables as `*.sst`; a goleveldb directory has a `LOG` file and stores tables as `*.ldb`. A freshly created PebbleDB store on v28.3.1 contained `000002.log`, `CURRENT`, `LOCK`, `MANIFEST-000001`, and `OPTIONS-000003`; a goleveldb store contained `000002.ldb`, `000003.log`, `CURRENT`, `LOCK`, `LOG`, and `MANIFEST-000004`. Run the same check on a downloaded archive before extracting it, as shown on [Sync a node](/hub/latest/node/sync).
+Both backends write `CURRENT` and `MANIFEST-<number>` files, so look past those. A PebbleDB directory has an `OPTIONS-<number>` file and stores tables as `*.sst`; a goleveldb directory stores tables as `*.ldb` and has no `OPTIONS-` file. `LOG` can appear in either directory (a goleveldb-configured open leaves one behind in a PebbleDB directory), so do not use it as the tell. A freshly created PebbleDB store on v28.3.1 contained `000002.log`, `CURRENT`, `LOCK`, `MANIFEST-000001`, and `OPTIONS-000003`; a goleveldb store contained `000002.ldb`, `000003.log`, `CURRENT`, `LOCK`, `LOG`, and `MANIFEST-000004`. Run the same check on a downloaded archive before extracting it, as shown on [Sync a node](/hub/latest/node/sync).
 
 ## Why operators switch
 
@@ -77,14 +77,16 @@ A validator should do this on a sentry or a standby machine first, then swap, so
 
 ## Prune offline
 
-`gaiad prune` applies a pruning strategy to the application store while the node is stopped, which is how you reclaim disk on a node that ran with `nothing` or a generous `custom` setting for a while.
+`gaiad prune` is meant to apply a pruning strategy to the application store while the node is stopped. On gaia v28.3.1 it does not work: `prune default` and `prune custom`, with or without `--app-db-backend`, panic before touching the store with `panic: failed to read genesis from file <home>: is a directory`, because the prune command carries no chain-id and the gaia app falls back to reading the home directory as the genesis file. There is no workaround on this release; `--chain-id` is not a `prune` flag and `GAIAD_CHAIN_ID` is ignored. Should the command run at all, `prune custom` additionally requires `--pruning-interval`, and `--app-db-backend` must name your store because it assumes goleveldb otherwise.
+
+Control history with the `pruning` setting in `app.toml` instead and let the running node prune:
 
 ```bash
-sudo systemctl stop gaiad
-gaiad prune default --app-db-backend pebbledb
+gaiad config set app pruning default
+gaiad config get app pruning
 ```
 
-The argument takes the same values as the `pruning` setting (`default`, `nothing`, `everything`, `custom` with `--pruning-keep-recent`). Pass `--app-db-backend` to match your store; without it the command assumes goleveldb. It prunes application state only; the block store is not pruned by this command.
+This writes `pruning` in `app.toml` (`default`, `nothing`, `everything`, or `custom` with `pruning-keep-recent` and `pruning-interval`) and takes effect at the next start. To reclaim disk on a node that ran with `nothing` for a long time, restore a pruned snapshot as in [Switch an existing node](#switch-an-existing-node).
 
 ## Verify
 

@@ -43,7 +43,7 @@ gaiad config set config consensus.double_sign_check_height 10 --skip-validate
 - `persistent_peers`: the sentries, by node id and private address. Get each id with `gaiad comet show-node-id` on that sentry.
 - `unconditional_peer_ids`: the sentries keep their slot even when the peer limits are full.
 - `addr_book_strict = false`: allows private addresses in the address book.
-- `double_sign_check_height = 10`: on restart the node refuses to start if its consensus key signed any of the last 10 blocks, which catches a second instance still running somewhere.
+- `double_sign_check_height = 10`: on restart the node exits with `Error: failed to start ConsensusReactor: found signature from the same key` if its consensus key signed any of the last 10 blocks, which catches a second instance still running somewhere.
 
 On each sentry:
 
@@ -97,13 +97,13 @@ Never copy `priv_validator_key.json` or a signer's state file onto a second host
 - Keep the OS patched on a schedule that does not coincide with upgrade heights.
 - Disable password SSH; use keys and a bastion.
 - Keep system time accurate (chrony or systemd-timesyncd). Clock drift causes dropped votes.
-- When the node restarts after the same key signed recent blocks, `double_sign_check_height` makes it panic on purpose. Stop, wait ten or more blocks, and start again rather than lowering the setting.
+- When the node restarts after the same key signed recent blocks, `double_sign_check_height` makes it exit on purpose with `found signature from the same key`. Stop, wait ten or more blocks (about a minute on mainnet), and start again rather than lowering the setting.
 
 ## Verify
 
 - From a machine outside your network, `nc -vz <validator-ip> 26656` and `26657` time out; the same against each sentry's 26656 connects.
 - On the validator, `curl -s localhost:26657/net_info | jq '.result.peers[].node_info.id'` lists exactly your sentry ids.
-- On each sentry, `curl -s localhost:26657/net_info | jq '.result.n_peers'` shows a healthy count (tens), and `/dump_consensus_state` on any public node never shows the validator's address.
+- On each sentry, `curl -s localhost:26657/net_info | jq '.result.n_peers'` shows a healthy count (tens), and `/dump_consensus_state` on a public node that peers only with your sentries never shows the validator's address. Keep the sentries' own RPC ports closed to the public or bound to localhost, because `/net_info` and `/dump_consensus_state` on a sentry do list the validator's id and address.
 - `gaiad config get config p2p.pex` prints `false` on the validator and `true` on the sentries.
 - On the validator host, `config/priv_validator_key.json` holds a throwaway key, not the live one, and `curl -s localhost:26657/status | jq .result.validator_info.pub_key` shows the key held by the remote signer.
 

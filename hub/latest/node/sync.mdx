@@ -50,10 +50,10 @@ Both practical methods leave the node without history before the snapshot height
 
     Checked 2026-10-15. Every page above returned HTTP 200 that day. The list is not an endorsement and carries no ranking; it is the set of providers whose snapshot was recent, whose metadata could be verified, and whose download responded. Providers change their backend, pruning, and cadence without notice, so read the page before every restore.
 
-    To confirm a backend before extracting, list the archive and look at `data/application.db`. A PebbleDB directory has an `OPTIONS-*` file and `.sst` tables; a goleveldb directory has a `LOG` file and `.ldb` tables (both have `CURRENT` and `MANIFEST-*`):
+    To confirm a backend before extracting, list the archive and look at `data/application.db`. A PebbleDB directory has an `OPTIONS-*` file and `.sst` tables; a goleveldb directory has `.ldb` tables and no `OPTIONS-` file (both have `CURRENT` and `MANIFEST-*`, and either can hold a `LOG` file, so ignore it):
 
     ```bash
-    lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -t | grep -m 3 -E 'application\.db/(OPTIONS-|LOG$|.*\.(sst|ldb)$)'
+    lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -t | grep -m 3 -E 'application\.db/(OPTIONS-|.*\.(sst|ldb)$)'
     ```
 
     Replace `lz4 -dc` with `zstd -dc` or `gzip -dc` to match the archive. Then set `db_backend` and `app-db-backend` to match, as on [Database backends](/hub/latest/node/database).
@@ -134,7 +134,7 @@ Start the node and watch for `Discovered new snapshot`, then `Applied snapshot c
 
 ## Serve snapshots to others
 
-Every node takes state sync snapshots by default: `snapshot-interval = 1000` and `snapshot-keep-recent = 10` in the `[state-sync]` section of `app.toml`. Leave the interval at 1000 so your snapshots line up with everyone else's and peers can find them. The local snapshot store is managed with `gaiad snapshots list`, `export`, `restore`, and `delete`; an exported snapshot can bootstrap another node of your own without a provider. Publishing full data directory archives for the public is covered on [Snapshots](/hub/latest/infrastructure/snapshots).
+Every node takes state sync snapshots by default: `snapshot-interval = 1000` and `snapshot-keep-recent = 10` in the `[state-sync]` section of `app.toml`. Leave the interval at 1000 so your snapshots line up with everyone else's and peers can find them. The local snapshot store is managed with `gaiad snapshots list`, `dump`, `load`, `restore`, and `delete`. On v28.3.1 a `dump`, `load`, `restore` round trip into a fresh home fills the application store only; the node then panics on start with `state.AppHash does not match AppHash after replay` because CometBFT has no state or blocks yet. Those commands serve peers; to bootstrap your own second node, state sync it from the first one as above. Publishing full data directory archives for the public is covered on [Snapshots](/hub/latest/infrastructure/snapshots).
 
 ## Verify
 
@@ -142,7 +142,7 @@ Every node takes state sync snapshots by default: `snapshot-interval = 1000` and
 gaiad status | jq '{height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up, earliest: .sync_info.earliest_block_height}'
 ```
 
-`earliest` is the snapshot height, `height` climbs toward the public height, and `catching_up` becomes `false` at the tip.
+`earliest` is one above the snapshot height, the first block the node applied itself (a snapshot at 400 gives `401`), `height` climbs toward the public height, and `catching_up` becomes `false` at the tip.
 
 ## Next
 

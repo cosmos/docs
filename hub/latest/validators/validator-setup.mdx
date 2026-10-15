@@ -56,7 +56,7 @@ gaiad tx staking create-validator validator.json \
   --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-This sends `MsgCreateValidator`, bonds `amount` from the operator address, and registers the description and commission. Use `--generate-only` first to inspect the unsigned transaction without broadcasting it. The response code must be `0`; a non-zero code prints the reason (insufficient funds, commission below minimum, duplicate consensus key).
+This sends `MsgCreateValidator`, bonds `amount` from the operator address, and registers the description and commission. Use `--generate-only` first to inspect the unsigned transaction without broadcasting it. With `--gas auto` a rejected transaction fails during simulation and is never broadcast; the reason is in the `Error:` line (insufficient funds, commission below minimum, duplicate consensus key). If you set `--gas` by hand instead, the broadcast returns code `0` and the failure shows up as a non-zero `code` in `gaiad query tx <hash>`.
 
 ## Verify
 
@@ -76,7 +76,7 @@ curl -s localhost:26657/status | jq '.result.validator_info'
 gaiad query slashing signing-info $(gaiad comet show-validator)
 ```
 
-Once bonded, `index_offset` increases every block and `missed_blocks_counter` stays flat (with `--output json` the field is omitted while it is zero, as are `tombstoned` and `jailed_until` when unset). Explorers such as [Mintscan](https://www.mintscan.io/cosmos/validators) list the validator within a few minutes.
+Once bonded, `index_offset` increases every block and `missed_blocks_counter` stays flat (with `--output json` the field is omitted while it is zero, as is `tombstoned` while false; `jailed_until` prints `1970-01-01T00:00:00Z` until the first jailing). Explorers such as [Mintscan](https://www.mintscan.io/cosmos/validators) list the validator within a few minutes.
 
 ## Edit the validator
 
@@ -95,7 +95,7 @@ gaiad tx staking edit-validator \
 
 Two flags carry rules enforced by the chain:
 
-- `--commission-rate`: at most one change per 24 hours, never above your `commission-max-rate`, never moving more than `commission-max-change-rate` at once, never below the chain minimum 0.05. A second change inside 24 hours fails with `commission cannot be changed more than once in 24h`.
+- `--commission-rate`: at most one change per 24 hours, never above your `commission-max-rate`, never moving more than `commission-max-change-rate` at once, never below the chain minimum 0.05. The clock starts at `create-validator`, so any change in the first 24 hours, or a second change inside 24 hours, fails with `commission cannot be changed more than once in 24h`.
 - `--min-self-delegation`: can only go up, and not above your current self-delegation.
 
 Confirm with the same `gaiad query staking validator` call; the `description` and `commission` fields update in the next block.
@@ -111,7 +111,7 @@ gaiad tx slashing unjail --from <operator-key-name> \
 
 The chain rejects the transaction while `jailed_until` (10 minutes after the jailing) has not passed, if self-delegation is below `min-self-delegation`, or if the validator was tombstoned for a double sign. A tombstoned validator cannot be unjailed by anyone.
 
-`gaiad query staking validator <cosmosvaloper>` shows `jailed: false` and the validator re-enters the set at the next block if its power qualifies.
+`gaiad query staking validator <cosmosvaloper>` shows `jailed: false` (with `--output json` the field is omitted while false) and the validator re-enters the set at the next block if its power qualifies.
 
 ## Rewards and withdraw address
 

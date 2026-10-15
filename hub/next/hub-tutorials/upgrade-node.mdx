@@ -18,7 +18,7 @@ The Hub uses two patterns and the release notes say which one applies.
 
 A governance upgrade is a passed `MsgSoftwareUpgrade` proposal with a plan name and a plan height. At that height the old binary stops with `ERR UPGRADE "<name>" NEEDED at height: <height>`, and the new binary's upgrade handler runs the migrations. v28.0.0 (plan `v28.0.0`, height 32785900) and v28.2.0 (plan `v28.2.0`, height 33073000) were governance upgrades. Cosmovisor handles the swap on its own if the binary is in place.
 
-A halt-height upgrade is a coordinated restart without a plan: every operator sets `halt-height` to the announced height, the node stops there with `CONSENSUS FAILURE!!! err="failed to apply block; error halt per configuration height <height>"`, and the operator starts the new binary. v28.1.1 (height 32830000) and v28.3.1 (height 33086740) were halt-height upgrades. Cosmovisor does not switch on its own unless you register the height with `add-upgrade --upgrade-height`.
+A halt-height upgrade is a coordinated restart without a plan: every operator sets `halt-height` to the announced height, the node stops there with `CONSENSUS FAILURE!!! err="failed to apply block; error halt per configuration height <height> time 0"`, and the operator starts the new binary. v28.1.1 (height 32830000) and v28.3.1 (height 33086740) were halt-height upgrades. Cosmovisor does not switch on its own unless you register the height with `add-upgrade --upgrade-height`.
 
 [Upgrade history](/hub/next/upgrade/history) lists every upgrade since genesis with its pattern.
 
@@ -30,7 +30,7 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     gaiad query upgrade plan
     ```
 
-    For a governance upgrade this prints the plan name, height, and info once the proposal has passed, and `no upgrade scheduled` before that. For a halt-height upgrade it stays empty; the height comes from the release notes. On 2026-10-15 there was no plan scheduled.
+    For a governance upgrade this prints the plan name, height, and info once the proposal has passed, and an empty `{}` before that. For a halt-height upgrade it stays `{}`; the height comes from the release notes. On 2026-10-15 there was no plan scheduled.
   </Step>
 
   <Step title="Rehearse on the testnet">
@@ -64,11 +64,11 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     For a halt-height upgrade, add `--upgrade-height`:
 
     ```bash
-    sudo -u gaia env DAEMON_NAME=gaiad DAEMON_HOME=/var/lib/gaia/.gaia cosmovisor add-upgrade v28.3.1 /tmp/gaiad-new --upgrade-height 33086740
+    sudo -u gaia env DAEMON_NAME=gaiad DAEMON_HOME=/var/lib/gaia/.gaia cosmovisor add-upgrade v28.3.1 /tmp/gaiad-new --upgrade-height 33086740 --force
     cat /var/lib/gaia/.gaia/data/upgrade-info.json
     ```
 
-    This also writes `data/upgrade-info.json` with the name and height, so Cosmovisor switches binaries at that height on its own. Do not set `halt-height` as well when you use this; the two mechanisms stop the node for different reasons and Cosmovisor only restarts for its own. If a plan from a governance upgrade is still pending, `--force` is needed to overwrite the file, and that would discard the pending plan; check `show-upgrade-info` first.
+    This also writes `data/upgrade-info.json` with the name and height, so Cosmovisor switches binaries at that height on its own. Do not set `halt-height` as well when you use this; the two mechanisms stop the node for different reasons and Cosmovisor only restarts for its own. On a node that has already been through a governance upgrade under Cosmovisor, `data/upgrade-info.json` still holds that old plan and the command fails with `Error: file already exists at .../data/upgrade-info.json`; `--force` overwrites it and the height-based switch then works. Run `cosmovisor show-upgrade-info` first, because `--force` also discards a plan that is still pending.
   </Step>
 
   <Step title="Or set the halt height without Cosmovisor">
@@ -121,7 +121,7 @@ sudo systemctl stop cosmovisor
 gaiad rollback --home /var/lib/gaia/.gaia
 ```
 
-It removes no blocks; on restart the node re-executes the block with the correct binary. Run it once per bad height. On a validator, the restart does not change `priv_validator_state.json`, so there is no double sign risk from the rollback itself.
+It removes no blocks; on restart the node re-executes the block with the correct binary. Run it once per bad height. On a validator, the restart does not change `priv_validator_state.json`, so there is no double sign risk from the rollback itself. The validator will not sign the rolled-back height again at the same round (`error signing vote: step regression at height <height> round 0`); on mainnet it misses that one signature and signs from the next round or height.
 
 `gaiad start --unsafe-skip-upgrades <height>` tells the node to ignore a scheduled plan at that height. It exists for coordinated recovery from a broken upgrade and nothing else; using it alone forks your node off the network.
 

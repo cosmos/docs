@@ -1,0 +1,110 @@
+---
+title: What changed and why
+description: Review copy for the Cosmos Hub operator docs proposal, with the audit findings, the design decisions behind the new structure, and links to example pages.
+noindex: true
+---
+
+<Note>
+This page exists only on the review site. It is not part of the proposed change to docs.cosmos.network and is removed before the pull request.
+</Note>
+
+This site shows a proposed rewrite of the Cosmos Hub section of the Cosmos docs. Only the Cosmos Hub product changed; the SDK, EVM, IBC, CometBFT and Skip Go sections are as published today. Everything below links to pages on this site so you can judge the result rather than the description.
+
+## Why this started
+
+Operators keep asking the same setup questions in Discord and Telegram, and the answers are not on the docs site. The Hub pages were imported into the docs hub in October 2025 and had not had a content change since; the underlying text dates from 2019 to mid 2025, across many gaia releases. No page said which gaia version it was written for, so a reader could not tell what still applied.
+
+The first step was an audit, not a rewrite.
+
+## What the audit found
+
+Every page a Hub operator touches was checked against gaia v28.3.1, the version mainnet runs today: 54 pages in the Hub section plus 37 pages in other products that Hub operators are sent to (Cosmovisor, keyring, CometBFT configuration, state sync, the relayer page). 452 published command lines were collected for verification.
+
+| Verdict | Hub section | Cross product | Total |
+| --- | --- | --- | --- |
+| Keep as is | 4 | 12 | 16 |
+| Fix in place | 26 | 23 | 49 |
+| Merge into another page | 9 | 1 | 10 |
+| Cut and redirect | 15 | 1 | 16 |
+
+The problems that mattered most for a new operator:
+
+- The bootstrap path did not work end to end. The quickstart published a `gaiad start` flag that v28.3.1 does not register, set a minimum gas price below the live fee market floor so every example transaction was rejected, pinned gaia v18, and pointed state sync at a 2022 trust height and two RPC endpoints that no longer answer.
+- `create-validator` was shown in the pre SDK 0.50 flag form. The current binary takes a single `validator.json` argument and rejects the flags. The live 5 percent minimum commission was not mentioned.
+- The gaiad CLI reference was truncated mid sentence on the live site and carried command forms the current CLI rejects.
+- The validator FAQ described a module that no longer exists (the LSM validator bond, replaced by `x/liquid` in v25.0.0), and another page on the same site contradicted it.
+- Interchain Security was documented as live on six pages. The provider module was removed in v28.0.0.
+- Governance pages carried old numbers: 250 ATOM minimum deposit (live 500), a 14 day voting period (live 7 days), quorum defined against the wrong base. Expedited proposals and the minimum stake to vote were missing.
+- Remote signing was explained three different ways across three products, and the Hub pages documented only a third party signer with a wrong build feature and a 2019 walkthrough.
+- The testnet page described a chain that halted in December 2024. The live testnet had no chain id, endpoints, faucet or version on the page.
+- Upgrade guidance contradicted itself across four pages, including a relaunch procedure that would wipe a mainnet node.
+- Headings sometimes promised more than the text delivered. One example: a section titled "Which keys rotate" followed by a list of all three validator keys, when only one of them has a rotation path, and none on the Hub today. A reader skimming headings would take away the wrong fact.
+
+None of this is unusual for docs that outlive several major releases. The point of listing it is to show why a fix in place was not enough and why every command on the new pages is now tied to a version and a test.
+
+## Design decisions
+
+Organize by the job, not by the module. The Hub navigation now reads Start here, Run a node, Upgrade a node, Run a validator, Run public infrastructure, Delegate and stake, Governance, Reference. A new validator can read top to bottom; an endpoint operator or a relayer can skip to their door. See the [landing page](/hub/latest/index).
+
+Give validators a complete onboarding path with prerequisites in order. The [validator onboarding checklist](/hub/latest/validators/README) walks join mainnet, run as a service, create the validator, remote signing, security, monitoring, upgrades, in the order the steps depend on each other. For example, [Create and manage a validator](/hub/latest/validators/validator-setup) has the operator funding the account before the create transaction, because the account must exist on chain for the transaction to be accepted.
+
+Pin every page to a version and say how it was checked. Every page opens with a box stating the gaia, SDK and CometBFT versions it was verified against, the date, and whether its commands were run or the page was reviewed. See the top of [Join mainnet](/hub/latest/hub-tutorials/join-mainnet). A new [Versions](/hub/latest/start/versions) page states the exact stack the Hub runs and which upstream docs apply to it.
+
+Teach the why, then show how to check. Each command is followed by what it changes and a way to confirm it worked, and every page ends with a Verify section. No scripts to paste blind. [Sync a node](/hub/latest/node/sync) and [Run gaiad as a service](/hub/latest/node/service) are typical.
+
+Live parameters come with the query that fetched them. Where a page states a number such as the minimum deposit or the commission floor, the query that returns it sits next to it, so the page stays checkable after the next parameter change. See [Governance process](/hub/latest/governance/process) and [Validator overview](/hub/latest/validators/overview).
+
+Make headings answer their own question. Any heading that asks a question has the answer in its first sentence, before any list. [Validator overview](/hub/latest/validators/overview) states which keys can change on the Hub today before describing the three keys.
+
+Cut by redirecting, never by deleting. Fourteen pages that duplicated or predated the current chain are removed and their URLs redirect to the page that absorbed them. The table at the end lists every one. Nothing was deleted from the archived v25 section.
+
+Promote what Cosmos maintains, disclose what it does not. [Remote signing](/hub/latest/validators/remote-signing) documents Cosmos KMS with its real status (early release, verified by us on a devnet, not yet run on the Hub testnet by its maintainers) and lists the two external signers with their maintenance status, including the archive of one of them.
+
+Fill the gaps operators actually hit. New pages: [Versions](/hub/latest/start/versions), [Sync a node](/hub/latest/node/sync) with checked snapshot providers, [Database backends](/hub/latest/node/database), [Run gaiad as a service](/hub/latest/node/service), [Upgrade history](/hub/latest/upgrade/history), [Remote signing](/hub/latest/validators/remote-signing), [Monitoring](/hub/latest/validators/monitoring) with tested alert rules, [Endpoints](/hub/latest/infrastructure/endpoints), [Snapshots](/hub/latest/infrastructure/snapshots), [Peering](/hub/latest/infrastructure/peering), [Relaying](/hub/latest/infrastructure/relaying) covering IBC classic and IBC v2, [tokenfactory](/hub/latest/modules/tokenfactory), [feemarket](/hub/latest/modules/feemarket), and [Submitting a proposal](/hub/latest/governance/submitting).
+
+Keep delegators. [Delegate and stake](/hub/latest/delegators/README) stays, rewritten to the current CLI, because the audience is still the Hub's.
+
+## How the result was validated
+
+- Audit: agents checked every page against the gaia v28.3.1 binary, the live chain parameters, and the upstream repositories, and recorded the findings per page.
+- Writing: every command on the new pages was either run against the v28.3.1 binary or checked against its help output before the page was written. Writers kept a run note per page.
+- Devnet pass: agents started temporary Cosmos Hub networks on the current binary (a single validator, a validator behind a sentry, a second validator, a state syncing node, and a node under Cosmovisor) and ran every command that needs a live chain: creating a validator and the rejection cases, jail and unjail, commission changes, remote signing with Cosmos KMS, halt heights, a governance upgrade end to end, state sync, snapshot export and restore, the database switch, and the monitoring alert rules in a real Prometheus. 78 commands passed as written. 22 page statements turned out wrong in detail and were corrected, for example offline pruning does not work on this release, two alert rules needed different expressions, and a Cosmovisor height based upgrade needs a flag on a node that already upgraded once.
+- Links: every internal link resolves and the Mintlify link checker is clean.
+
+Logs for every run exist and can be shared.
+
+## Examples to click
+
+| Live page today | Proposed page |
+| --- | --- |
+| [Quickstart](https://docs.cosmos.network/hub/latest/getting-started/quickstart) | [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) |
+| [Validator setup](https://docs.cosmos.network/hub/latest/validators/validator-setup) | [Create and manage a validator](/hub/latest/validators/validator-setup) |
+| [Validator FAQ](https://docs.cosmos.network/hub/latest/validators/validator-faq) | [Validator FAQ](/hub/latest/validators/validator-faq) |
+| [KMS](https://docs.cosmos.network/hub/latest/validators/kms/kms) | [Remote signing](/hub/latest/validators/remote-signing) |
+| [Join testnet](https://docs.cosmos.network/hub/latest/hub-tutorials/join-testnet) | [Join the testnet](/hub/latest/hub-tutorials/join-testnet) |
+| [Upgrade node](https://docs.cosmos.network/hub/latest/hub-tutorials/upgrade-node) | [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) |
+| [Governance README](https://docs.cosmos.network/hub/latest/governance/README) | [Governance process](/hub/latest/governance/process) |
+| [gaiad](https://docs.cosmos.network/hub/latest/hub-tutorials/gaiad) | [gaiad reference](/hub/latest/hub-tutorials/gaiad) |
+| No page | [Monitoring](/hub/latest/validators/monitoring) |
+| No page | [Snapshots](/hub/latest/infrastructure/snapshots) |
+
+## Pages removed and where they go
+
+| Old URL | Now |
+| --- | --- |
+| getting-started/README | [Landing page](/hub/latest/index) |
+| getting-started/quickstart | [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) |
+| hub-tutorials/README | [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) |
+| hub-tutorials/live-upgrade-tutorial | [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) |
+| validators/kms/kms and kms_ledger | [Remote signing](/hub/latest/validators/remote-signing) |
+| resources/service-providers | [Endpoints](/hub/latest/infrastructure/endpoints) |
+| modules/lsm-migration | [Liquid staking](/hub/latest/modules/liquid) |
+| governance/README | [Governance process](/hub/latest/governance/process) |
+| governance/formatting and best-practices | [Submitting a proposal](/hub/latest/governance/submitting) |
+| interchain-security/README | [What is gaia](/hub/latest/getting-started/what-is-gaia) |
+| telemetry/telemetry | [Monitoring](/hub/latest/validators/monitoring) |
+| resources/README | [gaiad reference](/hub/latest/hub-tutorials/gaiad) |
+
+## What happens next
+
+Read the pages, click the commands, and send feedback. Once the structure has agreement, the change goes to the docs maintainers as a pull request from this branch, with this page removed, so the exact wording can be pulled into the published site.
