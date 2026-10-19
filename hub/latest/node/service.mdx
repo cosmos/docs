@@ -7,7 +7,7 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-You have a node that starts cleanly in the foreground from [Join mainnet](/hub/latest/hub-tutorials/join-mainnet). At the end the node runs as a dedicated user under systemd, restarts on failure, survives reboots, and logs to the journal. Pick the Cosmovisor unit if the node will follow Hub upgrades, which is most mainnet nodes; the plain unit is for containers, test machines, and nodes you upgrade by hand.
+You have a node that starts cleanly in the foreground from [Join mainnet](/hub/latest/hub-tutorials/join-mainnet). At the end the node runs as a dedicated user under systemd, restarts on failure, survives reboots, and logs to the journal. Pick the Cosmovisor unit if the node will follow Hub upgrades, which is most mainnet nodes. The plain unit is for containers, test machines, and nodes you upgrade by hand.
 
 ## Create a service user
 
@@ -16,13 +16,13 @@ sudo useradd --system --create-home --home-dir /var/lib/gaia --shell /usr/sbin/n
 sudo install -d -o gaia -g gaia -m 0750 /var/lib/gaia/.gaia
 ```
 
-A system user with no login shell owns the node home and nothing else. If you initialized the node as your own user, move `~/.gaia` to `/var/lib/gaia/.gaia` and `chown -R gaia:gaia` it. The two key files deserve stricter modes than the rest:
+A system user with no login shell owns the node home and nothing else. If you initialized the node as your own user, move `~/.gaia` to `/var/lib/gaia/.gaia`. Then run `chown -R gaia:gaia` on it. The two key files deserve stricter modes than the rest:
 
 ```bash
 sudo chmod 0600 /var/lib/gaia/.gaia/config/priv_validator_key.json /var/lib/gaia/.gaia/config/node_key.json
 ```
 
-`priv_validator_key.json` is the consensus key. It cannot be rotated on the Hub today, so the service user is the only account that should be able to read it, and a validator should move signing off this machine entirely with [remote signing](/hub/latest/validators/remote-signing). `node_key.json` carries no on-chain state and can be regenerated if lost, but a stable node id keeps your peers' persistent peer lists valid.
+The `priv_validator_key.json` file is the consensus key. It cannot be rotated on the Hub today, so the service user is the only account that should be able to read it. A validator should move signing off this machine entirely with [remote signing](/hub/latest/validators/remote-signing). The `node_key.json` file holds no on-chain state and can be regenerated if lost. However, a stable node id keeps your peers' persistent peer lists valid.
 
 ## Plain gaiad unit
 
@@ -48,11 +48,11 @@ WantedBy=multi-user.target
 EOT
 ```
 
-`ExecStart` uses absolute paths because systemd has no shell `PATH`. `LimitNOFILE=50000` is what the gaia upgrade guide uses; the old 4096 default runs out under peer load and the node dies with `too many open files`. `KillSignal=SIGINT` with a two minute stop timeout lets gaiad flush its stores instead of being killed mid write. `Restart=on-failure` brings the node back after a crash but not after a clean stop, so a stop you asked for stays stopped.
+The `ExecStart` line uses absolute paths because systemd has no shell `PATH`. The value `LimitNOFILE=50000` is what the gaia upgrade guide uses. The old 4096 default runs out under peer load, and the node crashes with `too many open files`. The `KillSignal=SIGINT` setting with a two minute stop timeout lets gaiad flush its stores instead of being killed mid write. The `Restart=on-failure` setting brings the node back after a crash but not after a clean stop, so a stop you asked for stays stopped.
 
 ## Cosmovisor unit
 
-Cosmovisor is the Cosmos SDK process manager that watches for an upgrade height and swaps the `gaiad` binary. Install it and lay out the directories once; [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) covers what happens at each upgrade.
+Cosmovisor is the Cosmos SDK process manager that watches for an upgrade height and swaps the `gaiad` binary. Install it and lay out the directories once. [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) covers what happens at each upgrade.
 
 ```bash
 go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v1.7.3
@@ -60,7 +60,7 @@ sudo install -m 0755 "$(go env GOPATH)/bin/cosmovisor" /usr/local/bin/cosmovisor
 sudo -u gaia env DAEMON_NAME=gaiad DAEMON_HOME=/var/lib/gaia/.gaia cosmovisor init /usr/local/bin/gaiad
 ```
 
-`go install` needs Go 1.25 on the machine; release archives for linux-amd64 and linux-arm64 are on the [cosmovisor v1.7.3 release](https://github.com/cosmos/cosmos-sdk/releases/tag/cosmovisor%2Fv1.7.3) if you would rather not. `cosmovisor init` copies the current binary to `cosmovisor/genesis/bin/gaiad`, points the `cosmovisor/current` symlink at `genesis`, and writes `cosmovisor/config.toml`. Cosmovisor v1.7.3 prints `v1.7.3` for `cosmovisor version` and errors if `DAEMON_NAME` and `DAEMON_HOME` are unset, which is why the environment is passed inline.
+The `go install` step needs Go 1.25 on the machine. Release archives for linux-amd64 and linux-arm64 are on the [cosmovisor v1.7.3 release](https://github.com/cosmos/cosmos-sdk/releases/tag/cosmovisor%2Fv1.7.3) if you would rather not build it. The `cosmovisor init` command copies the current binary to `cosmovisor/genesis/bin/gaiad`, points the `cosmovisor/current` symlink at `genesis`, and writes `cosmovisor/config.toml`. Cosmovisor v1.7.3 prints `v1.7.3` for `cosmovisor version`. It errors if `DAEMON_NAME` and `DAEMON_HOME` are unset, which is why the environment is passed inline.
 
 ```bash
 sudo tee /etc/systemd/system/cosmovisor.service > /dev/null <<'EOT'
@@ -89,7 +89,7 @@ WantedBy=multi-user.target
 EOT
 ```
 
-`cosmovisor run start` is the command; `cosmovisor start` from older guides no longer exists. `Restart=no` is deliberate and comes from the gaia upgrade guide: Cosmovisor itself restarts gaiad after a successful upgrade, and a systemd restart loop on a failed upgrade would keep relaunching a binary that cannot apply the block. `DAEMON_ALLOW_DOWNLOAD_BINARIES=false` means you place every upgrade binary yourself and verify it; auto download trusts whatever URL the proposal carried. `UNSAFE_SKIP_BACKUP=true` skips the pre upgrade copy of `data/`, which on a Hub node would take longer than the upgrade and double the disk; take your own backup before upgrade day instead.
+The command is `cosmovisor run start`. The `cosmovisor start` form from older guides no longer exists. The `Restart=no` setting is deliberate and comes from the gaia upgrade guide. Cosmovisor itself restarts gaiad after a successful upgrade. A systemd restart loop on a failed upgrade would keep relaunching a binary that cannot apply the block. Setting `DAEMON_ALLOW_DOWNLOAD_BINARIES=false` means you place every upgrade binary yourself and verify it. Auto download trusts whatever URL the proposal named. Setting `UNSAFE_SKIP_BACKUP=true` skips the pre upgrade copy of `data/`, which on a Hub node would take longer than the upgrade and double the disk. Take your own backup before upgrade day instead.
 
 Confirm the environment Cosmovisor sees:
 
@@ -109,7 +109,7 @@ sudo systemctl enable --now cosmovisor
 sudo systemctl status cosmovisor --no-pager
 ```
 
-`daemon-reload` makes systemd read the new unit, `enable --now` starts it and arranges a start at boot, and `status` shows `active (running)` with the last log lines. Substitute `gaiad` for the plain unit.
+The `daemon-reload` command makes systemd read the new unit. The `enable --now` command starts it and arranges a start at boot. The `status` command shows `active (running)` with the last log lines. Substitute `gaiad` for the plain unit.
 
 ## Logs
 
@@ -127,7 +127,7 @@ sudo systemctl stop cosmovisor
 sudo systemctl start cosmovisor
 ```
 
-A stop sends SIGINT and waits up to `TimeoutStopSec`; let it finish. A restart on a validator costs the blocks missed while the node reconnects to peers, typically under a minute, which is why configuration changes get batched into one restart.
+A stop sends SIGINT and waits up to `TimeoutStopSec`. Let it finish. A restart on a validator costs the blocks missed while the node reconnects to peers, typically under a minute. That is why configuration changes get batched into one restart.
 
 ## Verify
 

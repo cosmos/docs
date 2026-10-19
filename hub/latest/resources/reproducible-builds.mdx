@@ -7,7 +7,7 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for operators who want proof that the `gaiad` they run is the one the gaia maintainers published, or who build it themselves. [Installation](/hub/latest/getting-started/installation) covers the quick path; this page covers what sits behind each option.
+This page is for operators who want proof that the `gaiad` they run is the one the gaia maintainers published, or who build it themselves. [Installation](/hub/latest/getting-started/installation) covers the quick path. This page covers what is behind each option.
 
 ## Release artifacts
 
@@ -35,9 +35,9 @@ tar -xzf gaiad-linux-amd64.tar.gz
 sha256sum -c --ignore-missing SHA256SUMS-v28.3.1.txt
 ```
 
-`--show-keys` prints the fingerprint of the downloaded key; compare it against the one above before importing. `gpg --verify` must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` with that fingerprint; the `WARNING: This key is not certified with a trusted signature` line that follows only means your local GPG has not been told to trust the key, and is not a failure. `sha256sum -c` prints `./gaiad-linux-amd64/gaiad: OK`. Do not run a binary whose signature fails, is from another key, or whose checksum does not match. The bare binaries verify the same way with their own `.asc`.
+The `--show-keys` flag prints the fingerprint of the downloaded key. Compare it against the one above before importing. The `gpg --verify` command must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` with that fingerprint. The `WARNING: This key is not certified with a trusted signature` line that follows is not a failure. It only means your local GNU Privacy Guard (GPG) has not been told to trust the key. The `sha256sum -c` command prints `./gaiad-linux-amd64/gaiad: OK`. Do not run a binary whose signature fails, is from another key, or whose checksum does not match. The bare binaries verify the same way with their own `.asc`.
 
-The extracted binary is a static PIE executable (`file gaiad` reports `static-pie linked`), so it runs on any x86-64 Linux without extra libraries.
+The extracted binary is a static position-independent executable (PIE), so it runs on any x86-64 Linux without extra libraries. The `file gaiad` command reports `static-pie linked`.
 
 ## Docker image
 
@@ -48,7 +48,7 @@ docker pull ghcr.io/cosmos/gaia:v28.3.1
 docker run --rm ghcr.io/cosmos/gaia:v28.3.1 version --long
 ```
 
-The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.25.7-alpine` with a statically linked musl wasmvm, copies only the binary into an Alpine base, runs as user `nonroot` (uid 1025), exposes 26656, 26657, 1317 and 9090, and has `gaiad start` as its entrypoint, so arguments to `docker run` are `gaiad` subcommands. Mount the home directory at a path the `nonroot` user can write and pass `--home`; the [service page](/hub/latest/node/service) covers running it under systemd or compose.
+The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.25.7-alpine` with a statically linked musl wasmvm. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are `gaiad` subcommands. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/latest/node/service) covers running it under systemd or compose.
 
 ## Build from source
 
@@ -58,13 +58,13 @@ cd gaia && git checkout v28.3.1
 make install
 ```
 
-`make install` runs `go install` with the repository's build flags and places `gaiad` in `$GOPATH/bin`; `make build` puts it in `build/` instead. The Makefile refuses Go older than 1.25 (`check_version`), and v28.3.1 was released with Go 1.25.7. Default build tags are `netgo` and `ledger`; `ledger` needs `gcc`, and `LEDGER_ENABLED=false make install` drops it on hosts without a compiler. The linker flags stamp the version, commit, build tags and CometBFT version into the binary, which is what `gaiad version --long` prints, and `-trimpath` strips local paths. `GAIA_BUILD_OPTIONS=nostrip` keeps debug symbols; `LINK_STATICALLY=true` with `BUILD_TAGS=muslc` and a musl wasmvm produces the static binary the Docker image uses.
+The `make install` target runs `go install` with the repository's build flags and places `gaiad` in `$GOPATH/bin`. The `make build` target puts it in `build/` instead. The Makefile refuses Go older than 1.25 (`check_version`). Version v28.3.1 was released with Go 1.25.7. Default build tags are `netgo` and `ledger`. The `ledger` tag needs `gcc`, and `LEDGER_ENABLED=false make install` drops it on hosts without a compiler. The linker flags stamp the version, commit, build tags, and CometBFT version into the binary. That is what `gaiad version --long` prints. The `-trimpath` flag strips local paths. Setting `GAIA_BUILD_OPTIONS=nostrip` keeps debug symbols. Setting `LINK_STATICALLY=true` with `BUILD_TAGS=muslc` and a musl wasmvm produces the static binary the Docker image uses.
 
-A source build on your own machine gives the same version and commit as the release but not a byte-identical file, because the release is cross compiled in a container with a static wasmvm. Treat source builds as trusted because you built them from a checked out tag, and release downloads as trusted because the signature verifies.
+A source build on your own machine gives the same version and commit as the release but not a byte-identical file, because the release is cross compiled in a container with a static wasmvm. Treat source builds as trusted because you built them from a checked-out tag. Treat release downloads as trusted because the signature verifies.
 
 ## How releases are built
 
-Releases are produced by `.github/workflows/release.yml` running goreleaser inside the `goreleaser-cross` image, with the configuration in `.goreleaser.yml`: `CGO_ENABLED=1`, tags `netgo,ledger,static_wasm`, `-trimpath -mod=readonly`, a `mod_timestamp` fixed to the commit time, and the same version ldflags as the Makefile. `make goreleaser-build-local` runs that configuration on a workstation with Docker (`release --snapshot --skip=publish`) and is the way to reproduce the release build environment; expect it to run for a long time.
+Releases are produced by `.github/workflows/release.yml`, which runs goreleaser inside the `goreleaser-cross` image. The configuration is in `.goreleaser.yml`: `CGO_ENABLED=1`, tags `netgo,ledger,static_wasm`, `-trimpath -mod=readonly`, a `mod_timestamp` fixed to the commit time, and the same version ldflags as the Makefile. The `make goreleaser-build-local` target runs that configuration on a workstation with Docker (`release --snapshot --skip=publish`). It is the way to reproduce the release build environment. Expect it to run for a long time.
 
 ## Verify
 
@@ -77,5 +77,5 @@ Expect `version: v28.3.1`, `commit: b7f8b81b` followed by the full hash, `build_
 ## Next
 
 - [Installation](/hub/latest/getting-started/installation) to put the verified binary in place.
-- [Versions](/hub/latest/start/versions) for the dependency versions a Hub release carries.
+- [Versions](/hub/latest/start/versions) for the dependency versions in a Hub release.
 - [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) for verifying the next release before Cosmovisor switches to it.

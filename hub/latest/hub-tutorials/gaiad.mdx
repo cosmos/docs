@@ -7,19 +7,19 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is the reference for `gaiad`, the single binary that runs a Cosmos Hub node and acts as its command line client. It assumes `gaiad` v28.3.1 is installed ([Installation](/hub/latest/getting-started/installation)). Task pages elsewhere (delegating, validating, governance) link here for the details of a command; this page lists what exists and the flags that matter, in the order a new operator meets them.
+This page is the reference for `gaiad`, the single binary that runs a Cosmos Hub node and acts as its command line client. It assumes `gaiad` v28.3.1 is installed ([Installation](/hub/latest/getting-started/installation)). Task pages elsewhere (delegating, validating, governance) link here for the details of a command. This page lists what exists and the flags that matter, in the order a new operator meets them.
 
 ```bash
 gaiad version --long
 ```
 
-Prints `version: v28.3.1`, `commit: b7f8b81b...`, `cosmos_sdk_version: v0.53.4`, `go: go1.25.7` and the full dependency list, which is how to confirm a binary before trusting anything else on this page. Every command has `--help`; the help text is generated from the same binary and is authoritative when it disagrees with a document.
+This prints `version: v28.3.1`, `commit: b7f8b81b...`, `cosmos_sdk_version: v0.53.4`, `go: go1.25.7`, and the full dependency list. That output is how to confirm a binary before trusting anything else on this page. Every command has `--help`. The help text is generated from the same binary and is authoritative when it disagrees with a document.
 
 ## Home directory and configuration
 
-`gaiad` keeps everything under `--home`, default `~/.gaia`: `config/` (`config.toml`, `app.toml`, `client.toml`, `genesis.json`, `node_key.json`, `priv_validator_key.json`), `data/` (databases and `priv_validator_state.json`) and `wasm/`. `gaiad init <moniker> --chain-id cosmoshub-4` creates the layout with default files.
+The binary keeps everything under `--home`, default `~/.gaia`: `config/` (`config.toml`, `app.toml`, `client.toml`, `genesis.json`, `node_key.json`, `priv_validator_key.json`), `data/` (databases and `priv_validator_state.json`), and `wasm/`. Running `gaiad init <moniker> --chain-id cosmoshub-4` creates the layout with default files.
 
-Client defaults live in `client.toml` and are managed with `gaiad config`:
+Client defaults are stored in `client.toml` and are managed with `gaiad config`:
 
 ```bash
 gaiad config set client chain-id cosmoshub-4
@@ -30,15 +30,15 @@ gaiad config get client node
 gaiad config view client
 ```
 
-`set` writes the key, `get` reads one, `view` prints the file, `diff` shows what differs from defaults, `home` prints the directory. The same command manages `app.toml` with dotted keys (`gaiad config set app minimum-gas-prices 0.005uatom`, `gaiad config set app api.enable true`, `gaiad config set app app-db-backend pebbledb`). It does not manage `config.toml`: `gaiad config set config ...` returns `cometbft config is not supported`, so CometBFT settings are edited by hand or with `sed`.
+The `set` subcommand writes the key, `get` reads one, `view` prints the file, `diff` shows what differs from defaults, and `home` prints the directory. The same command manages `app.toml` with dotted keys (`gaiad config set app minimum-gas-prices 0.005uatom`, `gaiad config set app api.enable true`, `gaiad config set app app-db-backend pebbledb`). It manages `config.toml` too, but only with the `-s` flag (`--skip-validate`), for example `gaiad config set config p2p.seeds "<list>" -s`. Without the flag, `gaiad config set config ...` returns `cometbft config is not supported` on v28.3.1.
 
-Every client flag can also be an environment variable with the `GAIAD_` prefix and underscores: `GAIAD_KEYRING_BACKEND=test gaiad keys list` and `GAIAD_NODE`, `GAIAD_CHAIN_ID`, `GAIAD_OUTPUT` work the same way. `GAIAD_HOME` is not honoured by every subcommand on v28.3.1; pass `--home` explicitly in scripts.
+Every client flag can also be an environment variable with the `GAIAD_` prefix and underscores. For example, `GAIAD_KEYRING_BACKEND=test gaiad keys list` works, and `GAIAD_NODE`, `GAIAD_CHAIN_ID`, and `GAIAD_OUTPUT` work the same way. The `GAIAD_HOME` variable is not honoured by every subcommand on v28.3.1, so pass `--home` explicitly in scripts.
 
 ## Keys
 
-`gaiad keys` manages wallet keys: secp256k1 keys derived from a BIP-39 phrase, used to sign transactions. These are the only keys this command touches. A validator's consensus key (`priv_validator_key.json`, ed25519, signs blocks) and node key (`node_key.json`, P2P identity) are files, not keyring entries, and are read with `gaiad comet` commands described below. A validator's operator address is the `cosmosvaloper` form of one wallet key and is fixed for the life of the validator.
+The `gaiad keys` command manages wallet keys: secp256k1 keys derived from a BIP-39 phrase, used to sign transactions. These are the only keys this command touches. A validator's consensus key (`priv_validator_key.json`, ed25519, signs blocks) and node key (`node_key.json`, the peer to peer (P2P) identity) are files, not keyring entries. They are read with the `gaiad comet` commands described below. A validator's operator address is the `cosmosvaloper` form of one wallet key. It is fixed for the life of the validator.
 
-Keyring backends: `os` (system keychain), `file` (encrypted file, password prompt), `test` (unencrypted, for devnets only), `kwallet`, `pass`, `memory`. Set it once with `gaiad config set client keyring-backend` or per command with `--keyring-backend`. Details: [Keyring](/sdk/latest/node/keyring).
+Keyring backends: `os` (system keychain), `file` (encrypted file, password prompt), `test` (unencrypted, for devnets only), `kwallet`, `pass`, and `memory`. Set it once with `gaiad config set client keyring-backend` or per command with `--keyring-backend`. Details: [Keyring](/sdk/latest/node/keyring).
 
 ```bash
 gaiad keys add mykey
@@ -49,7 +49,7 @@ gaiad keys add bob --pubkey '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A
 gaiad keys add council --multisig alice,bob,carol --multisig-threshold 2
 ```
 
-`add` prints the address and a 24 word phrase once. `--recover` prompts for a phrase. `--account` and `--index` pick another path under `m/44'/118'/<account>'/0/<index>` (see [HD wallets](/hub/latest/resources/hd-wallets)); `--hd-path` sets it explicitly; `--coin-type` defaults to 118. `--ledger` stores a reference to a key on a connected device ([Ledger](/hub/latest/resources/ledger)). `--pubkey` stores a public key only, which is how multisig members' keys are collected on one machine; `--multisig` with `--multisig-threshold` then builds the multisig entry (type `multi`). `--dry-run` shows what would be created without saving.
+The `add` subcommand prints the address and a 24 word phrase once. The `--recover` flag prompts for a phrase. The `--account` and `--index` flags pick another path under `m/44'/118'/<account>'/0/<index>` (see [HD wallets](/hub/latest/resources/hd-wallets)). The `--hd-path` flag sets it explicitly, and `--coin-type` defaults to 118. The `--ledger` flag stores a reference to a key on a connected device ([Ledger](/hub/latest/resources/ledger)). The `--pubkey` flag stores a public key only, which is how multisig members' keys are collected on one machine. Then `--multisig` with `--multisig-threshold` builds the multisig entry (type `multi`). The `--dry-run` flag shows what would be created without saving.
 
 ```bash
 gaiad keys list
@@ -62,7 +62,7 @@ gaiad keys show mykey -d
 gaiad keys show alice bob carol --multisig-threshold 2
 ```
 
-`-a` prints only the address, `-p` only the public key. `--bech val` prints the `cosmosvaloper` form and `--bech cons` the `cosmosvalcons` form of the same key; these are encodings of one address, not different keys. `-d` shows the address on a Ledger screen. Passing several names with `--multisig-threshold` prints the multisig address those keys would form without saving it.
+The `-a` flag prints only the address, and `-p` prints only the public key. The `--bech val` flag prints the `cosmosvaloper` form, and `--bech cons` prints the `cosmosvalcons` form of the same key. These are encodings of one address, not different keys. The `-d` flag shows the address on a Ledger screen. Passing several names with `--multisig-threshold` prints the multisig address those keys would form without saving it.
 
 ```bash
 gaiad keys rename mykey oldkey
@@ -74,7 +74,7 @@ gaiad keys mnemonic
 gaiad keys migrate
 ```
 
-`export` writes an ASCII armored, passphrase encrypted private key; `import` reads one; `import-hex` reads a raw hex key. `parse` converts an address between bech32 and hex and shows every prefix. `mnemonic` generates a phrase from system entropy without creating a key. `migrate` moves entries from a legacy keyring format. Deleting a key does not touch the chain; funds stay at the address and the phrase restores it.
+The `export` subcommand writes an ASCII armored, passphrase encrypted private key. The `import` subcommand reads one, and `import-hex` reads a raw hex key. The `parse` subcommand converts an address between bech32 and hex and shows every prefix. The `mnemonic` subcommand generates a phrase from system entropy without creating a key. The `migrate` subcommand moves entries from a legacy keyring format. Deleting a key does not touch the chain. Funds stay at the address, and the phrase restores it.
 
 ## Fees and gas
 
@@ -90,7 +90,7 @@ Use the returned price with gas estimation on every `tx` command:
 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-`--gas auto` simulates the transaction against the node to estimate gas; `--gas-adjustment` multiplies the estimate; `--gas-prices` sets the price. `--fees 5000uatom` sets a fixed fee instead and needs `--gas` as a number. A transaction that runs out of gas fails and still pays. Other flags on every `tx` command: `--from` (key name or address), `--note` (the transaction memo), `--timeout-duration` (`--timeout-height` still works but is deprecated), `--broadcast-mode sync|async` (`sync` waits for the mempool check, the default), `--yes` to skip the confirmation prompt, `--dry-run` to simulate only, `--generate-only` to write the unsigned transaction and send nothing.
+The `--gas auto` flag simulates the transaction against the node to estimate gas. The `--gas-adjustment` flag multiplies the estimate, and `--gas-prices` sets the price. Passing `--fees 5000uatom` sets a fixed fee instead and needs `--gas` as a number. A transaction that runs out of gas fails and still pays. Other flags on every `tx` command: `--from` (key name or address), `--note` (the transaction memo), `--timeout-duration` (`--timeout-height` still works but is deprecated), `--broadcast-mode sync|async` (`sync` waits for the mempool check, the default), `--yes` to skip the confirmation prompt, `--dry-run` to simulate only, `--generate-only` to write the unsigned transaction and send nothing.
 
 ## Transactions by module
 
@@ -113,7 +113,7 @@ Usage and examples: [Delegator CLI guide](/hub/latest/delegators/delegator-guide
 
 ## Queries
 
-Queries need `--node` (or the `client.toml` default) and no key. `--output json` (or `-o json`) gives machine readable output; `--height <h>` queries a past height on an archive node. Most list queries page with `--page-limit`, `--page-key`, `--page-offset`, `--page-reverse` and `--page-count-total`; `gaiad q staking validators` has no `--limit` flag.
+Queries need `--node` (or the `client.toml` default) and no key. The `--output json` flag (or `-o json`) gives machine readable output, and `--height <h>` queries a past height on an archive node. Most list queries page with `--page-limit`, `--page-key`, `--page-offset`, `--page-reverse`, and `--page-count-total`. The `gaiad q staking validators` query has no `--limit` flag.
 
 ```bash
 gaiad status
@@ -155,11 +155,11 @@ gaiad q tokenfactory params
 gaiad q wasm params
 ```
 
-`gaiad status` prints the node's id, network, latest height and `catching_up`; it is the only query that reads CometBFT rather than application state. `q txs --query` takes a CometBFT event query and only works against nodes with the transaction indexer on. `q auth account` returns the account inside `.account.value` in JSON for base and module accounts; `account_number` and `sequence` from it are what offline signing needs.
+The `gaiad status` query prints the node's id, network, latest height, and `catching_up`. It is the only query that reads CometBFT rather than application state. The `q txs --query` form takes a CometBFT event query and only works against nodes with the transaction indexer on. The `q auth account` query returns the account inside `.account.value` in JSON for base and module accounts. The `account_number` and `sequence` from it are what offline signing needs.
 
-## Offline signing
+## Sign offline
 
-Build, sign and broadcast as three steps so that the signing machine never needs a network:
+Build, sign, and broadcast as three steps so that the signing machine never needs a network:
 
 ```bash
 gaiad tx bank send cosmos1FROM... cosmos1TO... 1000000uatom --generate-only --gas 200000 --gas-prices 0.005uatom --chain-id cosmoshub-4 > unsigned.json
@@ -168,11 +168,11 @@ gaiad tx validate-signatures signed.json --offline --chain-id cosmoshub-4 --acco
 gaiad tx broadcast signed.json
 ```
 
-`--offline` makes `sign` skip every node lookup, so `--account-number` and `--sequence` are required (`gaiad q auth account` provides them). `--signature-only` outputs just the signature; `--sign-mode` picks `direct`, `amino-json` or `textual` (Ledger requires `amino-json` or `textual`). `validate-signatures` prints `[OK]` per signer. `tx encode` and `tx decode` convert between the JSON and the base64 wire form; `sign-batch` and `multisign-batch` handle files with one transaction per line.
+The `--offline` flag makes `sign` skip every node lookup, so `--account-number` and `--sequence` are required (`gaiad q auth account` provides them). The `--signature-only` flag outputs just the signature. The `--sign-mode` flag picks `direct`, `amino-json`, or `textual` (Ledger requires `amino-json` or `textual`). The `validate-signatures` subcommand prints `[OK]` per signer. The `tx encode` and `tx decode` subcommands convert between the JSON and the base64 wire form. The `sign-batch` and `multisign-batch` subcommands handle files with one transaction per line.
 
 ## Multisig
 
-A multisig account is a public key made of N member public keys and a threshold. Each signer produces a signature file against the same unsigned transaction, and anyone combines them:
+A multisig account is a public key made of N member public keys and a threshold. Each signer produces a signature file against the same unsigned transaction. Anyone then combines them:
 
 ```bash
 gaiad keys add council --multisig alice,bob,carol --multisig-threshold 2
@@ -183,7 +183,7 @@ gaiad tx multi-sign unsigned.json council alice-sig.json bob-sig.json --offline 
 gaiad tx broadcast signed.json
 ```
 
-`--multisig` on `sign` names the multisig entry so the signature is made for the multisig address while `--from` picks the member key. `multi-sign` (alias `multisign`) assembles the threshold number of signatures; order among members does not matter, but every machine must have created the multisig from the same member keys in the same order (or all with `--nosort`), or the addresses differ. The Hub accepts at most 7 signatures per transaction (`gaiad q auth params`, `tx_sig_limit`), so 7 is the largest practical multisig.
+The `--multisig` flag on `sign` names the multisig entry, so the signature is made for the multisig address. The `--from` flag picks the member key. The `multi-sign` subcommand (alias `multisign`) assembles the threshold number of signatures. Order among members does not matter. However, every machine must have created the multisig from the same member keys in the same order (or all with `--nosort`), or the addresses differ. The Hub accepts at most 7 signatures per transaction (`gaiad q auth params`, `tx_sig_limit`), so 7 is the largest practical multisig.
 
 ## Node commands
 
@@ -216,7 +216,7 @@ gaiad debug addr cosmos1...
 gaiad debug pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"..."}'
 ```
 
-`comet` (alias `tendermint`) reads the node's own keys: `show-node-id` prints the P2P id from `node_key.json`, `show-validator` the consensus public key from `priv_validator_key.json`, `show-address` the `cosmosvalcons` address of that key. None of these keys can be changed in place on v28.3.1: there is no consensus key rotation on the Hub's current gaia, the node key is regenerated (a new file means a new node id) rather than rotated, and the operator key can never change. `comet version` reports the CometBFT version string compiled in. `unsafe-reset-all` deletes `data/` and resets `priv_validator_state.json`, which is why it is unsafe on a validator; `--keep-addr-book` keeps `addrbook.json`. `bootstrap-state` prepares the CometBFT state after an application level state sync. `snapshots` manages state sync snapshots ([Snapshots](/hub/latest/infrastructure/snapshots)); `prune` prunes a stopped node's application store ([Database and pruning](/hub/latest/node/database)); `rollback` reverts one block of application and CometBFT state after a failed upgrade ([Upgrade a node](/hub/latest/hub-tutorials/upgrade-node)); `export` writes the application state as a genesis file; `module-hash-by-height` prints per module state hashes for comparing nodes after an upgrade. `start` flags that matter: `--home`, `--x-crisis-skip-assert-invariants`, `--unsafe-skip-upgrades <height>`, `--halt-height`, and `--p2p.seeds`, `--p2p.persistent_peers`, `--rpc.laddr` as overrides for `config.toml`.
+The `comet` command (alias `tendermint`) reads the node's own keys. Its `show-node-id` prints the P2P id from `node_key.json`, `show-validator` prints the consensus public key from `priv_validator_key.json`, and `show-address` prints the `cosmosvalcons` address of that key. None of these keys can be changed in place on v28.3.1. There is no consensus key rotation on the Hub's current gaia, the node key is regenerated (a new file means a new node id) rather than rotated, and the operator key can never change. The `comet version` subcommand reports the CometBFT version string compiled in. The `unsafe-reset-all` subcommand deletes `data/` and resets `priv_validator_state.json`, which is why it is unsafe on a validator. The `--keep-addr-book` flag keeps `addrbook.json`. The `bootstrap-state` subcommand prepares the CometBFT state after an application level state sync. The `snapshots` command manages state sync snapshots ([Snapshots](/hub/latest/infrastructure/snapshots)). The `prune` command prunes a stopped node's application store ([Database and pruning](/hub/latest/node/database)). The `rollback` command reverts one block of application and CometBFT state after a failed upgrade ([Upgrade a node](/hub/latest/hub-tutorials/upgrade-node)). The `export` command writes the application state as a genesis file. The `module-hash-by-height` command prints per module state hashes for comparing nodes after an upgrade. The `start` flags that matter: `--home`, `--x-crisis-skip-assert-invariants`, `--unsafe-skip-upgrades <height>`, `--halt-height`, and `--p2p.seeds`, `--p2p.persistent_peers`, `--rpc.laddr` as overrides for `config.toml`. The `prune` command panics on v28.3.1 before it touches the store, so leave pruning to the running node. See [Prune offline](/hub/latest/node/database#prune-offline).
 
 ## Shell completion
 
@@ -225,7 +225,7 @@ gaiad completion > /etc/bash_completion.d/gaiad
 gaiad completion --zsh > "${fpath[1]}/_gaiad"
 ```
 
-`gaiad completion` writes a bash completion script; `--zsh` writes the zsh one. Open a new shell afterwards. Tab completion covers subcommands and flags, not key names or addresses.
+The `gaiad completion` command writes a bash completion script, and `--zsh` writes the zsh one. Open a new shell afterwards. Tab completion covers subcommands and flags, not key names or addresses.
 
 ## Verify
 
@@ -235,7 +235,7 @@ gaiad config get client node
 gaiad status --output json | jq '{network: .node_info.network, height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up}'
 ```
 
-`version` prints `v28.3.1`; `status` prints `cosmoshub-4` and a height within a few blocks of any explorer. If `status` fails with a connection error, the `node` in `client.toml` is wrong or unreachable.
+The `version` command prints `v28.3.1`. The `status` command prints `cosmoshub-4` and a height within a few blocks of any explorer. If `status` fails with a connection error, the `node` in `client.toml` is wrong or unreachable.
 
 ## Next
 

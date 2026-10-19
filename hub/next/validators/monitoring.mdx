@@ -7,7 +7,7 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for an operator whose validator is signing behind sentries ([Validator security](/hub/next/validators/security)). At the end Prometheus scrapes the validator, a short set of alert rules pages you before the downtime window closes, journald keeps logs bounded, and you have a fixed checklist to run after every restart.
+This page is for an operator whose validator is signing behind sentries ([Validator security](/hub/next/validators/security)). At the end Prometheus scrapes the validator, and a short set of alert rules pages you before the downtime window closes. Journald keeps logs bounded, and you have a fixed checklist to run after every restart.
 
 ## Enable the CometBFT metrics endpoint
 
@@ -15,19 +15,19 @@ This page is for an operator whose validator is signing behind sentries ([Valida
 gaiad config set config instrumentation.prometheus true --skip-validate
 ```
 
-The `config.toml` key is `prometheus` in the `[instrumentation]` table (default `false`). The listener is `prometheus_listen_addr = ":26660"` and the metric namespace is `cometbft`, so every metric below is exported as `cometbft_<subsystem>_<name>`. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`; confirm with `gaiad config get config instrumentation.prometheus`, then restart the service.
+The `config.toml` key is `prometheus` in the `[instrumentation]` table (default `false`). The listener is `prometheus_listen_addr = ":26660"`. The metric namespace is `cometbft`, so every metric below is exported as `cometbft_<subsystem>_<name>`. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`. Confirm with `gaiad config get config instrumentation.prometheus`, then restart the service.
 
 ```bash
 curl -s localhost:26660/metrics | grep '^cometbft_consensus_height'
 ```
 
-Prints `cometbft_consensus_height{chain_id="cosmoshub-4"} <height>`. The endpoint binds all interfaces by default; firewall 26660 to your Prometheus host or set `prometheus_listen_addr` to a private address.
+The command prints `cometbft_consensus_height{chain_id="cosmoshub-4"} <height>`. The endpoint binds all interfaces by default. Firewall 26660 to your Prometheus host, or set `prometheus_listen_addr` to a private address.
 
-Application metrics (bank, staking, Cosmos SDK telemetry) are separate and optional. They need `gaiad config set app telemetry.enabled true`, `gaiad config set app telemetry.prometheus-retention-time 60` and `gaiad config set app api.enable true`, and are served by the API server at `http://localhost:1317/metrics?format=prometheus`. Keep the API bound to localhost on a validator.
+Application metrics (bank, staking, Cosmos SDK telemetry) are separate and optional. They need `gaiad config set app telemetry.enabled true`, `gaiad config set app telemetry.prometheus-retention-time 60`, and `gaiad config set app api.enable true`. They are served by the API server at `http://localhost:1317/metrics?format=prometheus`. Keep the API bound to localhost on a validator.
 
 ## Metrics that matter for a validator
 
-All names carry the `cometbft_` prefix and a `chain_id` label. The full list is in the [CometBFT metrics reference](/cometbft/latest/docs/core/metrics).
+All names have the `cometbft_` prefix and a `chain_id` label. The full list is in the [CometBFT metrics reference](/cometbft/latest/docs/core/metrics).
 
 | Metric | What it tells you |
 | --- | --- |
@@ -43,7 +43,7 @@ All names carry the `cometbft_` prefix and a `chain_id` label. The full list is 
 | `cometbft_blocksync_syncing` and `cometbft_statesync_syncing` | Listed in the CometBFT reference as `1` while syncing, but gaia v28.3.1 did not export either series on any node checked, including one that state synced. Use `catching_up` from `curl -s localhost:26657/status` to see whether a node has fallen behind. |
 | `cometbft_state_block_processing_time` | Time to execute a block. Rising values warn of disk or CPU pressure before you start missing blocks. |
 
-Add [node_exporter](https://github.com/prometheus/node_exporter) on every host for disk, memory and clock drift; a full disk is the most common reason a healthy validator stops.
+Add [node_exporter](https://github.com/prometheus/node_exporter) on every host for disk, memory, and clock drift. A full disk is the most common reason a healthy validator stops.
 
 ## Scrape and alert
 
@@ -107,17 +107,17 @@ groups:
         annotations: {summary: "Less than 10 percent disk free"}
 ```
 
-Two of the expressions look odd on purpose. `ValidatorNotSigning` needs `ignoring(validator_address)` because `cometbft_consensus_validator_last_signed_height` carries a `validator_address` label that `cometbft_consensus_height` does not, and without it the subtraction returns nothing. `VotingPowerZero` tests for an absent gauge instead of `== 0` because CometBFT stops exporting `cometbft_consensus_validator_power` (and `validator_last_signed_height`) when the validator leaves the set, so `== 0` never matches; for the same reason `ValidatorNotSigning` only covers a node that is up and still in the set. `HeightStalled` on the validator alone means your node stopped; on validator and sentries together it means the chain halted (an upgrade height, usually). Route `page` alerts to something that wakes you. See the Prometheus [alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/) and [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) docs for routing and silences, and [Grafana](https://grafana.com/docs/grafana/latest/) for dashboards.
+Two of the expressions look odd on purpose. The `ValidatorNotSigning` rule needs `ignoring(validator_address)` because `cometbft_consensus_validator_last_signed_height` has a `validator_address` label that `cometbft_consensus_height` does not. Without it the subtraction returns nothing. The `VotingPowerZero` rule tests for an absent gauge instead of `== 0` because CometBFT stops exporting `cometbft_consensus_validator_power` (and `validator_last_signed_height`) when the validator leaves the set. As a result, `== 0` never matches. For the same reason `ValidatorNotSigning` only covers a node that is up and still in the set. The `HeightStalled` rule firing on the validator alone means your node stopped. Firing on validator and sentries together, it means the chain halted (an upgrade height, usually). Route `page` alerts to something that wakes you. See the Prometheus [alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/) and [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) docs for routing and silences, and [Grafana](https://grafana.com/docs/grafana/latest/) for dashboards.
 
 ## A second signal from outside
 
-Metrics from the validator cannot tell you the validator is down when the whole host is gone, and `up == 0` cannot tell you whether you are also being slashed. From a machine that is not part of the validator setup, poll the chain:
+Metrics from the validator cannot tell you the validator is down when the whole host is gone. Nor can `up == 0` tell you whether you are also being slashed. From a machine that is not part of the validator setup, poll the chain:
 
 ```bash
 gaiad query slashing signing-info <cosmosvalcons> --node https://cosmos-rpc.publicnode.com:443 --output json
 ```
 
-`missed_blocks_counter` is the chain's own count inside the current 10,000-block window; alert when it rises over a few minutes. `jailed_until` in the future means you are already jailed. Get your `cosmosvalcons` address with `gaiad comet show-address` on the host that holds the key, or from `gaiad query staking validator <cosmosvaloper>` (`consensus_pubkey`). Many operators also use a third-party validator alerting bot for the same data; treat it as the third signal, not the first.
+The `missed_blocks_counter` field is the chain's own count inside the current 10,000-block window. Alert when it rises over a few minutes. A `jailed_until` in the future means you are already jailed. Get your `cosmosvalcons` address with `gaiad comet show-address` on the host that holds the key, or from `gaiad query staking validator <cosmosvaloper>` (`consensus_pubkey`). Many operators also use a third-party validator alerting bot for the same data. Treat it as the third signal, not the first.
 
 ## Logs with journald
 
@@ -136,25 +136,25 @@ SystemMaxUse=4G
 MaxRetentionSec=14day
 ```
 
-`journalctl --disk-usage` shows what the journal holds and `journalctl --vacuum-size=2G` trims it immediately. See [journald.conf(5)](https://man7.org/linux/man-pages/man5/journald.conf.5.html) and [journalctl(1)](https://man7.org/linux/man-pages/man1/journalctl.1.html).
+The `journalctl --disk-usage` command shows what the journal holds. The `journalctl --vacuum-size=2G` command trims it immediately. See [journald.conf(5)](https://man7.org/linux/man-pages/man5/journald.conf.5.html) and [journalctl(1)](https://man7.org/linux/man-pages/man1/journalctl.1.html).
 
-Log volume is set in `config.toml`: `log_level = "info"` (default; `*:error,consensus:info,p2p:error` cuts noise while keeping what you need) and `log_format = "plain"` or `"json"` for a log shipper. Set them with `gaiad config set config log_level "<value>" --skip-validate`.
+Log volume is set in `config.toml`. The default is `log_level = "info"`. The value `*:error,consensus:info,p2p:error` cuts noise while keeping what you need. Use `log_format = "plain"`, or `"json"` for a log shipper. Set them with `gaiad config set config log_level "<value>" --skip-validate`.
 
 ## After every restart
 
 Run these in order each time gaiad or the signer restarts, before you walk away:
 
-1. `curl -s localhost:26657/status | jq '.result.sync_info.catching_up'` is `false`.
-2. `curl -s localhost:26657/status | jq '.result.validator_info'` shows the expected `pub_key` and a non-zero `voting_power`.
+1. Run `curl -s localhost:26657/status | jq '.result.sync_info.catching_up'`. It prints `false`.
+2. Run `curl -s localhost:26657/status | jq '.result.validator_info'`. It shows the expected `pub_key` and a non-zero `voting_power`.
 3. The signer's state file (or `data/priv_validator_state.json` for a local key) shows a `height` that increases every few seconds.
-4. `curl -s localhost:26660/metrics | grep -E '^cometbft_consensus_(height|validator_last_signed_height)[{ ]'` shows the two values within a block or two of each other.
-5. `gaiad query slashing signing-info <cosmosvalcons> --output json | jq .val_signing_info.missed_blocks_counter` prints `null` (the JSON output omits zero fields) or a number that stops increasing.
-6. `journalctl -u gaiad --since "5 minutes ago" | grep -ciE 'panic|found signature from the same key'` prints `0`. An exit with `found signature from the same key` (the `double_sign_check_height` check) means the key signed recently somewhere; stop and find out where before starting again.
+4. Run `curl -s localhost:26660/metrics | grep -E '^cometbft_consensus_(height|validator_last_signed_height)[{ ]'`. The two values are within a block or two of each other.
+5. Run `gaiad query slashing signing-info <cosmosvalcons> --output json | jq .val_signing_info.missed_blocks_counter`. It prints `null` (the JSON output omits zero fields) or a number that stops increasing.
+6. Run `journalctl -u gaiad --since "5 minutes ago" | grep -ciE 'panic|found signature from the same key'`. It prints `0`. An exit with `found signature from the same key` (the `double_sign_check_height` check) means the key signed recently somewhere. Stop and find out where before starting again.
 
 ## Verify
 
 - Prometheus shows the validator and sentry targets as `UP`.
-- Stopping the node on the testnet fires `NodeDown` within two minutes and the chain-side `missed_blocks_counter` rises; `ValidatorMissedBlocks` fires once the node is back, because the node counts the blocks it was expected to sign while it catches up. Stopping only the signer, with the node up and in the set, is the case `ValidatorNotSigning` is written for. Starting everything again clears the alerts.
+- Stopping the node on the testnet fires `NodeDown` within two minutes, and the chain-side `missed_blocks_counter` rises. The `ValidatorMissedBlocks` alert fires once the node is back, because the node counts the blocks it was expected to sign while it catches up. Stopping only the signer, with the node up and in the set, is the case `ValidatorNotSigning` is written for. Starting everything again clears the alerts.
 - `journalctl --disk-usage` stays under the limit you set after a week.
 
 ## Next

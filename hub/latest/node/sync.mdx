@@ -22,12 +22,12 @@ Both practical methods leave the node without history before the snapshot height
 ## Restore a snapshot
 
 <Warning>
-`unsafe-reset-all` deletes `data/` including `priv_validator_state.json`. On a validator, copy that file out first and put it back after extracting, or the node can double sign on the next block it sees. On a full node it only costs a resync.
+On a validator, copy `priv_validator_state.json` out before `unsafe-reset-all` and put it back after extracting. Without it, the node can double sign on the next block it sees. The reset deletes all of `data/`, including that file. On a full node it only costs a resync.
 </Warning>
 
 <Steps>
   <Step title="Pick a provider and check the backend">
-    Providers below publish pruned `cosmoshub-4` snapshots. Backend, cadence, compression, and checksum are what each provider's page or API stated when checked on 2026-10-15; cadence was confirmed by observing two consecutive files where "observed" is noted. Sizes were 9 to 19 GB compressed.
+    Providers below publish pruned `cosmoshub-4` snapshots. Backend, cadence, compression, and checksum are what each provider's page or API stated when checked on 2026-10-15. Cadence was confirmed by observing two consecutive files where "observed" is noted. Sizes were 9 to 19 GB compressed.
 
     PebbleDB snapshots (stated by the provider in the page, file name, or API):
 
@@ -48,9 +48,9 @@ Both practical methods leave the node without history before the snapshot height
     | NodeStake | Not stated | tar.lz4, goleveldb stated on the page | none | [nodestake.org](https://nodestake.org/networks/cosmoshub/mainnet) |
     | Polkachu | Daily | tar.lz4, backend not stated | none | [polkachu.com](https://polkachu.com/tendermint_snapshots/cosmos) |
 
-    Checked 2026-10-15. Every page above returned HTTP 200 that day. The list is not an endorsement and carries no ranking; it is the set of providers whose snapshot was recent, whose metadata could be verified, and whose download responded. Providers change their backend, pruning, and cadence without notice, so read the page before every restore.
+    Checked 2026-10-15. Every page above returned HTTP 200 that day. The list is not an endorsement and has no ranking. It is the set of providers whose snapshot was recent, whose metadata could be verified, and whose download responded. Providers change their backend, pruning, and cadence without notice, so read the page before every restore.
 
-    To confirm a backend before extracting, list the archive and look at `data/application.db`. A PebbleDB directory has an `OPTIONS-*` file and `.sst` tables; a goleveldb directory has `.ldb` tables and no `OPTIONS-` file (both have `CURRENT` and `MANIFEST-*`, and either can hold a `LOG` file, so ignore it):
+    To confirm a backend before extracting, list the archive and look at `data/application.db`. A PebbleDB directory has an `OPTIONS-*` file and `.sst` tables. A goleveldb directory has `.ldb` tables and no `OPTIONS-` file. Both have `CURRENT` and `MANIFEST-*`. Either can hold a `LOG` file, so ignore it:
 
     ```bash
     lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -t | grep -m 3 -E 'application\.db/(OPTIONS-|.*\.(sst|ldb)$)'
@@ -67,7 +67,7 @@ Both practical methods leave the node without history before the snapshot height
     sha256sum --check *.sha256
     ```
 
-    This fetches the archive and its sha256 sidecar and compares them; the output must end in `OK`. Providers that publish no checksum give you nothing to compare, which is the caveat in the second table. The exact URL comes from the provider page; several publish a `latest` alias next to dated files.
+    This fetches the archive and its sha256 sidecar and compares them. The output must end in `OK`. Providers that publish no checksum give you nothing to compare, which is the caveat in the second table. The exact URL comes from the provider page. Several publish a `latest` alias next to dated files.
   </Step>
 
   <Step title="Stop the node and reset the data directory">
@@ -77,7 +77,7 @@ Both practical methods leave the node without history before the snapshot height
     gaiad comet unsafe-reset-all --keep-addr-book
     ```
 
-    `unsafe-reset-all` empties `data/` and writes a fresh `priv_validator_state.json` with height 0. `--keep-addr-book` keeps the peer address book. Skip the `systemctl` line on a node that has never run.
+    The `unsafe-reset-all` command empties `data/` and writes a fresh `priv_validator_state.json` with height 0. The `--keep-addr-book` flag keeps the peer address book. Skip the `systemctl` line on a node that has never run.
   </Step>
 
   <Step title="Extract into the home directory">
@@ -87,7 +87,7 @@ Both practical methods leave the node without history before the snapshot height
     ls ~/.gaia/data
     ```
 
-    Most archives contain a top level `data/` directory, so `-C ~/.gaia` lands it in place; check the provider's page if theirs is laid out differently. Some include `wasm/` as well, which the node needs. Restoring `priv_validator_state.json` on a validator is the step that prevents double signing. The listing should show `application.db`, `blockstore.db`, `state.db`, and the other CometBFT stores.
+    Most archives contain a top level `data/` directory, so `-C ~/.gaia` puts it in place. Check the provider's page if theirs is laid out differently. Some include `wasm/` as well, which the node needs. Restoring `priv_validator_state.json` on a validator is the step that prevents double signing. The listing should show `application.db`, `blockstore.db`, `state.db`, and the other CometBFT stores.
   </Step>
 
   <Step title="Start and watch it catch up">
@@ -96,13 +96,13 @@ Both practical methods leave the node without history before the snapshot height
     journalctl -u gaiad -f -o cat | grep -E 'executed block|committed state' | head
     ```
 
-    The node applies blocks from the snapshot height to the tip. If the node fails while opening `application.db` or `blockstore.db` on the first start, the archive's backend does not match `db_backend` in `config.toml`; fix the setting and restart.
+    The node applies blocks from the snapshot height to the tip. If the node fails while opening `application.db` or `blockstore.db` on the first start, the archive's backend does not match `db_backend` in `config.toml`. Fix the setting and restart.
   </Step>
 </Steps>
 
 ## State sync
 
-State sync fetches a recent application snapshot from peers and verifies it against a block header you trust. It needs two RPC servers for the light client and a trust height and hash that you fetch yourself from a source you trust.
+State sync fetches a recent application snapshot from peers. It verifies the snapshot against a block header you trust. It needs two remote procedure call (RPC) servers for the light client and a trust height and hash that you fetch yourself from a source you trust.
 
 Fetch the values. Pick a height about 2000 blocks below the tip so the snapshot at the nearest multiple of 1000 already exists:
 
@@ -115,7 +115,7 @@ echo "$TRUST_HEIGHT $TRUST_HASH"
 curl -s "https://rpc.cosmoshub-main.ccvalidators.com/block?height=$TRUST_HEIGHT" | jq -r .result.block_id.hash
 ```
 
-The last line asks a second provider for the same height; the two hashes must match. On 2026-10-15 height 33422000 returned `92B8B6B8580D1AF937129A6D019E02883B1655F6FC3CBE237FD748008C1CC5C5` from both. Any block within the trust period works, but a stale height makes every peer's snapshot unusable.
+The last line asks a second provider for the same height. The two hashes must match. On 2026-10-15 height 33422000 returned `92B8B6B8580D1AF937129A6D019E02883B1655F6FC3CBE237FD748008C1CC5C5` from both. Any block within the trust period works, but a stale height makes every peer's snapshot unusable.
 
 Write the configuration:
 
@@ -128,13 +128,13 @@ gaiad config set config statesync.trust_period 336h0m0s -s
 gaiad config get config statesync.trust_height
 ```
 
-These are the `[statesync]` keys in `config.toml`. `trust_period` is two thirds of the Hub's 21 day unbonding time, which is the longest a header can be trusted before a validator who signed it could have unbonded; the default 168h also works but leaves less room. The two RPC servers above were live on 2026-10-15 (the polkachu node is an archive, the ccvalidators node serves from height 5200791); swap in any providers you trust.
+These are the `[statesync]` keys in `config.toml`. The `trust_period` value is two thirds of the Hub's 21 day unbonding time, which is the longest a header can be trusted before a validator who signed it could have unbonded. The default 168h also works but leaves less room. The two RPC servers above were live on 2026-10-15 (the polkachu node is an archive, the ccvalidators node serves from height 5200791). Swap in any providers you trust.
 
-Start the node and watch for `Discovered new snapshot`, then `Applied snapshot chunk` lines, then normal block execution. If it stops with `State sync failed err="state sync aborted"`, the usual causes are a trust height outside the peers' snapshot window or too few peers serving snapshots; refetch the height and hash and restart. Once synced, set `statesync.enable` back to `false` so a later restart does not try again.
+Start the node. Watch for `Discovered new snapshot`, then `Applied snapshot chunk` lines, then normal block execution. If it stops with `State sync failed err="state sync aborted"`, the usual causes are a trust height outside the peers' snapshot window or too few peers serving snapshots. Refetch the height and hash, then restart. Once synced, set `statesync.enable` back to `false` so a later restart does not try again.
 
 ## Serve snapshots to others
 
-Every node takes state sync snapshots by default: `snapshot-interval = 1000` and `snapshot-keep-recent = 10` in the `[state-sync]` section of `app.toml`. Leave the interval at 1000 so your snapshots line up with everyone else's and peers can find them. The local snapshot store is managed with `gaiad snapshots list`, `dump`, `load`, `restore`, and `delete`. On v28.3.1 a `dump`, `load`, `restore` round trip into a fresh home fills the application store only; the node then panics on start with `state.AppHash does not match AppHash after replay` because CometBFT has no state or blocks yet. Those commands serve peers; to bootstrap your own second node, state sync it from the first one as above. Publishing full data directory archives for the public is covered on [Snapshots](/hub/latest/infrastructure/snapshots).
+Every node takes state sync snapshots by default: `snapshot-interval = 1000` and `snapshot-keep-recent = 10` in the `[state-sync]` section of `app.toml`. Leave the interval at 1000 so your snapshots line up with everyone else's and peers can find them. The local snapshot store is managed with `gaiad snapshots list`, `dump`, `load`, `restore`, and `delete`. On v28.3.1 a `dump`, `load`, `restore` round trip into a fresh home fills the application store only. The node then panics on start with `state.AppHash does not match AppHash after replay` because CometBFT has no state or blocks yet. Those commands serve peers. To bootstrap your own second node, state sync it from the first one as above. Publishing full data directory archives for the public is covered on [Snapshots](/hub/latest/infrastructure/snapshots).
 
 ## Verify
 
@@ -142,7 +142,7 @@ Every node takes state sync snapshots by default: `snapshot-interval = 1000` and
 gaiad status | jq '{height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up, earliest: .sync_info.earliest_block_height}'
 ```
 
-`earliest` is one above the snapshot height, the first block the node applied itself (a snapshot at 400 gives `401`), `height` climbs toward the public height, and `catching_up` becomes `false` at the tip.
+The `earliest` field is one above the snapshot height, the first block the node applied itself (a snapshot at 400 gives `401`). The `height` field climbs toward the public height, and `catching_up` becomes `false` at the tip.
 
 ## Next
 

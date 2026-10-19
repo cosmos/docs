@@ -13,7 +13,7 @@ This page is for anyone whose transaction was rejected with an insufficient fee 
 
 The Hub uses Skip's `x/feemarket` instead of a fixed minimum gas price. Maintained by Skip. Latest release v1.1.1 (2024-08-26); gaia v28.3.1 pins a later commit of the v1.1 line. Repository active. Checked 2026-10-15. Specification: [feemarket SPEC](https://github.com/skip-mev/feemarket/blob/main/docs/SPEC.md).
 
-Every block the module computes a base gas price from how full the previous block was. The price never goes below a floor, and it goes up when blocks are fuller than the target, so fees rise when the Hub is busy and come back down when it is not. A transaction must pay at least the base price times its gas limit, in the fee denom, or it is rejected in the mempool and at block execution.
+Every block, the module computes a base gas price from how full the previous block was. The price never goes below a floor. It goes up when blocks are fuller than the target, so fees rise when the Hub is busy and come back down when it is not. A transaction must pay at least the base price times its gas limit, in the fee denom. Otherwise it is rejected in the mempool and at block execution.
 
 ## Parameters
 
@@ -23,13 +23,13 @@ Floor price: 0.005 uatom per gas.
 gaiad q feemarket params --node https://cosmos-rpc.publicnode.com:443
 ```
 
-`min_base_gas_price: "0.005000000000000000"`; the base price can never be lower than this.
+The output shows `min_base_gas_price: "0.005000000000000000"`. The base price can never be lower than this.
 
 Block target: 75,000,000 gas.
 
-`max_block_utilization: "75000000"` in the same output, equal to the consensus `max_gas`. With `alpha: 0`, `beta: 1`, `gamma: 0`, `delta: 0`, `window: 1`, `min_learning_rate` and `max_learning_rate` both `0.125`, the module behaves as an EIP-1559 style controller whose learning rate is fixed at 12.5 percent per block. `fee_denom: uatom`, `enabled: true`, `distribute_fees: false` (fees go through the normal fee collector to validators and delegators, not to a separate pool).
+The same output shows `max_block_utilization: "75000000"`, equal to the consensus `max_gas`. With `alpha: 0`, `beta: 1`, `gamma: 0`, `delta: 0`, `window: 1`, and `min_learning_rate` and `max_learning_rate` both `0.125`, the module behaves as an EIP-1559 (Ethereum Improvement Proposal 1559) style controller. Its learning rate is fixed at 12.5 percent per block. The output also shows `fee_denom: uatom`, `enabled: true`, and `distribute_fees: false`. With `distribute_fees: false`, fees go through the normal fee collector to validators and delegators, not to a separate pool.
 
-All of these are changed by governance through `/feemarket.feemarket.v1.MsgParams` (the module names its update message `MsgParams`, not `MsgUpdateParams`); proposal 970 is the last one that touched them.
+All of these are changed by governance through `/feemarket.feemarket.v1.MsgParams`. The module names its update message `MsgParams`, not `MsgUpdateParams`. Proposal 970 is the last one that touched them.
 
 ## Read the current price
 
@@ -41,7 +41,7 @@ gaiad q feemarket gas-prices --node https://cosmos-rpc.publicnode.com:443
 gaiad q feemarket state --node https://cosmos-rpc.publicnode.com:443
 ```
 
-`gas-price uatom` returns `price: amount: "0.005000000000000000"`; `gas-prices` returns the same for every accepted denom (only uatom on the Hub); `state` returns `base_gas_price`, `learning_rate`, `window` and `index`. On an idle chain all three show the floor. The REST path is `/feemarket/v1/gas_price/uatom`, which is what wallets and relayers poll.
+The `gas-price uatom` query returns `price: amount: "0.005000000000000000"`. The `gas-prices` query returns the same for every accepted denom (only uatom on the Hub). The `state` query returns `base_gas_price`, `learning_rate`, `window`, and `index`. On an idle chain all three show the floor. The REST path is `/feemarket/v1/gas_price/uatom`. That path is what wallets and relayers poll.
 
 ## Set fees in gaiad
 
@@ -51,11 +51,11 @@ Use the current price with gas estimation rather than a fixed `--fees`:
 gaiad tx bank send mykey cosmos1... 1000000uatom --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-The fee charged is gas limit times price; unused gas is not refunded, which is why `--gas-adjustment` should stay modest. If the transaction is rejected with `insufficient fee` or `fee is below base gas price`, re-run the `gas-price` query and raise `--gas-prices` to at least the value it returns. A `--fees` amount works too, as long as it is at least gas times the current base price.
+The fee charged is gas limit times price. Unused gas is not refunded, which is why `--gas-adjustment` should stay modest. If the transaction is rejected with `insufficient fee` or `fee is below base gas price`, re-run the `gas-price` query. Then raise `--gas-prices` to at least the value it returns. A `--fees` amount works too, as long as it is at least gas times the current base price.
 
 ## Node operators
 
-The `minimum-gas-prices` setting in `app.toml` still exists and still applies to the node's own mempool, but the fee market sets the effective floor on chain. Set the node's value at or below the floor so the node does not reject transactions the chain would accept:
+The `minimum-gas-prices` setting in `app.toml` still exists and still applies to the node's own mempool. The fee market, however, sets the effective floor on chain. Set the node's value at or below the floor, so the node does not reject transactions the chain would accept:
 
 ```bash
 gaiad config set app minimum-gas-prices 0.005uatom
@@ -65,11 +65,11 @@ gaiad config set app minimum-gas-prices 0.005uatom
 minimum-gas-prices = "0.005uatom"
 ```
 
-A node with an empty `minimum-gas-prices` refuses to start; a node set higher than the chain's current base price silently drops transactions that every other node accepts.
+A node with an empty `minimum-gas-prices` refuses to start. A node set higher than the chain's current base price silently drops transactions that every other node accepts.
 
 ## Relayers and wallets
 
-Relayers should query the price rather than hardcode it. Hermes does this with `dynamic_gas_price = { enabled = true, multiplier = 1.1, max = 0.6 }` in the Hub chain block ([Relaying](/hub/next/infrastructure/relaying)). The chain registry lists `fixed_min_gas_price: 0.005`, `low: 0.01`, `average: 0.025`, `high: 0.03` for cosmoshub-4; wallets that use the registry's `average` pay five times the floor on a quiet chain, which is harmless but not necessary.
+Relayers should query the price rather than hardcode it. Hermes does this with `dynamic_gas_price = { enabled = true, multiplier = 1.1, max = 0.6 }` in the Hub chain block ([Relaying](/hub/next/infrastructure/relaying)). The chain registry lists `fixed_min_gas_price: 0.005`, `low: 0.01`, `average: 0.025`, and `high: 0.03` for cosmoshub-4. Wallets that use the registry's `average` pay five times the floor on a quiet chain. That is harmless but not necessary.
 
 ## Verify
 
@@ -79,7 +79,7 @@ Submit any transaction at the floor price and read its fee back:
 gaiad q tx <txhash> --output json | jq '{code, gas_wanted, gas_used, fee: .tx.auth_info.fee.amount}'
 ```
 
-`code: 0` with a fee equal to `gas_wanted` times 0.005 uatom shows the floor was accepted. A mainnet example at height 33424479: `gas_wanted: 873264`, fee `10916uatom`, which is 0.0125 uatom per gas, above the floor as the sender chose.
+A result of `code: 0` with a fee equal to `gas_wanted` times 0.005 uatom shows the floor was accepted. A mainnet example at height 33424479 has `gas_wanted: 873264` and fee `10916uatom`. That is 0.0125 uatom per gas, above the floor as the sender chose.
 
 ## Next
 

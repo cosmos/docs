@@ -7,11 +7,11 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for operators whose node finds too few peers, falls behind, or who want to run a seed node or sentry layer. It assumes gaia is installed and initialized ([Join mainnet](/hub/next/hub-tutorials/join-mainnet)). At the end the node keeps a stable set of inbound and outbound peers and other nodes can find it.
+This page is for operators whose node finds too few peers, falls behind, or who want to run a seed node or sentry layer. It assumes gaia is installed and initialized ([Join mainnet](/hub/next/hub-tutorials/join-mainnet)). At the end the node keeps a stable set of inbound and outbound peers, and other nodes can find it.
 
 ## How a node finds peers
 
-A new node needs at least one address to start from. It dials the `seeds`, receives addresses from them through peer exchange (PEX), stores them in `config/addrbook.json`, and from then on dials from the address book. `persistent_peers` are dialed regardless and redialed when the connection drops. Everything is in `config.toml` under `[p2p]`; `gaiad init` writes these defaults:
+A new node needs at least one address to start from. It dials the `seeds` and receives addresses from them through peer exchange (PEX). It stores those addresses in `config/addrbook.json` and from then on dials from the address book. Entries in `persistent_peers` are dialed regardless and redialed when the connection drops. Everything is in `config.toml` under `[p2p]`. The `gaiad init` command writes these defaults:
 
 ```toml
 [p2p]
@@ -31,43 +31,43 @@ Each peer entry has the form `<node-id>@<host>:<port>`. The node ID is the hash 
 gaiad comet show-node-id
 ```
 
-The output is a 40 character hex string. There is no rotation for the node key: deleting `node_key.json` and restarting generates a new one, and the node gets a new ID that other operators' `persistent_peers` entries no longer match.
+The output is a 40 character hex string. There is no rotation for the node key. Deleting `node_key.json` and restarting generates a new one. The node then gets a new ID that other operators' `persistent_peers` entries no longer match.
 
 ## Seeds and persistent peers for cosmoshub-4
 
-The maintained list lives in the [chain registry](https://github.com/cosmos/chain-registry/blob/master/cosmoshub/chain.json) under `peers.seeds` and `peers.persistent_peers` (10 seeds and 8 persistent peers on 2026-10-15). Pull the seeds from there rather than copying a list that goes stale:
+The maintained list is in the [chain registry](https://github.com/cosmos/chain-registry/blob/master/cosmoshub/chain.json) under `peers.seeds` and `peers.persistent_peers` (ten seeds and eight persistent peers on 2026-10-15). Pull the seeds from there rather than copying a list that goes stale:
 
 ```bash
 curl -s https://raw.githubusercontent.com/cosmos/chain-registry/master/cosmoshub/chain.json \
   | jq -r '[.peers.seeds[] | "\(.id)@\(.address)"] | join(",")'
 ```
 
-Paste the result into `seeds`. `gaiad config set config` does not work on v28.3.1, so use `sed` or an editor:
+Write the result into `seeds`. The `-s` flag (`--skip-validate`) is required for every `config.toml` key on v28.3.1. Without it the command fails with `cometbft config is not supported`.
 
 ```bash
 SEEDS="$(curl -s https://raw.githubusercontent.com/cosmos/chain-registry/master/cosmoshub/chain.json | jq -r '[.peers.seeds[] | "\(.id)@\(.address)"] | join(",")')"
-sed -i "s|^seeds = .*|seeds = \"$SEEDS\"|" ~/.gaia/config/config.toml
+gaiad config set config p2p.seeds "$SEEDS" -s
 ```
 
-Keep `persistent_peers` short. Put your own sentries or a few nodes you trust there; a long list of public persistent peers only wastes dial attempts when they are full. Testnet seeds for chain-id `provider` are in the [cosmos/testnets provider README](https://github.com/cosmos/testnets/blob/master/interchain-security/provider/README.md).
+Keep `persistent_peers` short. Put your own sentries or a few nodes you trust there. A long list of public persistent peers only wastes dial attempts when they are full. Testnet seeds for chain-id `provider` are in the [cosmos/testnets provider README](https://github.com/cosmos/testnets/blob/master/provider/README.md).
 
 ## Peer limits and addresses
 
-`max_num_inbound_peers = 40` and `max_num_outbound_peers = 10` suit a normal full node. An endpoint node that many others want to dial can raise inbound to 80 or more if it has the bandwidth; outbound rarely needs to go above 20. Each peer costs memory and a steady few KiB/s.
+The defaults `max_num_inbound_peers = 40` and `max_num_outbound_peers = 10` suit a normal full node. An endpoint node that many others want to dial can raise inbound to 80 or more if it has the bandwidth. Outbound rarely needs to go above 20. Each peer costs memory and a steady few KiB/s.
 
-`external_address` must be set when the node is behind NAT or a cloud public IP that the interface does not carry, otherwise peers learn the private address and cannot dial back:
+The `external_address` key must be set when the node is behind network address translation (NAT) or a cloud public IP that the interface does not have. Otherwise peers receive the private address and cannot dial back:
 
 ```toml
 external_address = "203.0.113.10:26656"
 ```
 
-Open TCP 26656 inbound in the firewall. The RPC port 26657 stays closed; see [Run public endpoints](/hub/next/infrastructure/endpoints) for the proxy setup if the node also serves RPC.
+Open TCP 26656 inbound in the firewall. The remote procedure call (RPC) port 26657 stays closed. See [Run public endpoints](/hub/next/infrastructure/endpoints) for the proxy setup if the node also serves RPC.
 
-Sentry nodes set `private_peer_ids` to the validator's node ID so the validator address is never gossiped, and the validator sets `pex = false` with only its sentries in `persistent_peers`. The full layout is on [Validator security](/hub/next/validators/security).
+Sentry nodes set `private_peer_ids` to the validator's node ID so the validator address is never gossiped. The validator sets `pex = false` with only its sentries in `persistent_peers`. The full layout is on [Validator security](/hub/next/validators/security).
 
 ## Run a seed node
 
-A seed node answers address requests and disconnects; it does not keep peers or relay blocks. It is a normal full node with:
+A seed node answers address requests and disconnects. It does not keep peers or relay blocks. It is a normal full node with:
 
 ```toml
 seed_mode = true
@@ -75,7 +75,7 @@ pex = true
 max_num_inbound_peers = 200
 ```
 
-It still needs to sync and stay synced, because it validates the addresses it hands out by having talked to them. Publish `<node-id>@<host>:26656` in the chain registry `peers.seeds` list once it has run stably. A seed that goes away leaves every node that copied it dialing a dead address at startup, so remove the entry before decommissioning.
+It still needs to sync and stay synced, because it validates the addresses it hands out by having connected to them. Publish `<node-id>@<host>:26656` in the chain registry `peers.seeds` list once it has run stably. A seed that goes offline leaves every node that copied it dialing a dead address at startup. Remove the entry before decommissioning.
 
 ## Verify
 
@@ -85,7 +85,7 @@ Count connected peers through the local RPC:
 curl -s http://127.0.0.1:26657/net_info | jq '{n_peers, listening, outbound: [.result.peers[] | select(.is_outbound)] | length}'
 ```
 
-`n_peers` should sit near `max_num_outbound_peers` plus whatever inbound traffic arrives, and `listening` is `true`. If `n_peers` stays at 0, the seeds entry is empty or malformed; the log line `Dialing peer` followed by `auth failure` means the node ID in an entry does not match the peer's key. The current node's own ID is `gaiad comet show-node-id`; compare it with what a remote operator put in their config if they cannot reach you.
+The `n_peers` count should stay near `max_num_outbound_peers` plus whatever inbound traffic arrives. The `listening` field is `true`. If `n_peers` stays at 0, the seeds entry is empty or malformed. The log line `Dialing peer` followed by `auth failure` means the node ID in an entry does not match the peer's key. The node's own ID comes from `gaiad comet show-node-id`. Compare it with what a remote operator put in their config if they cannot reach you.
 
 ## Next
 

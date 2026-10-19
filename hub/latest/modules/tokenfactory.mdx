@@ -7,18 +7,18 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for builders who want to issue a token on the Cosmos Hub and for operators who need to read `osmosis.tokenfactory.v1beta1` messages in blocks. It assumes `gaiad` is configured for the Hub and a funded key ([Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli#point-gaiad-at-the-hub)). At the end you have a denom named `factory/<your address>/<subdenom>` that you can mint, burn and hand over to a multisig or to governance.
+This page is for builders who want to issue a token on the Cosmos Hub and for operators who need to read `osmosis.tokenfactory.v1beta1` messages in blocks. It assumes `gaiad` is configured for the Hub and a funded key ([Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli#point-gaiad-at-the-hub)). At the end you have a denom named `factory/<your address>/<subdenom>` that you can mint, burn, and hand over to a multisig or to governance.
 
 ## What the Hub runs
 
 The Hub uses [cosmos/tokenfactory](https://github.com/cosmos/tokenfactory), a fork of the Strangelove implementation with the sudo mint capability removed. Maintained by the Cosmos Hub team. No tagged releases; gaia v28.3.1 pins v0.53.5. Repository active. Checked 2026-10-15. Module documentation: [x/tokenfactory README](https://github.com/cosmos/tokenfactory/blob/main/x/tokenfactory/README.md).
 
-Any account can create a denom; the creator becomes its admin. The module is wired with two capabilities in `app/keepers/keepers.go`:
+Any account can create a denom. The creator becomes its admin. The module is wired with two capabilities in `app/keepers/keepers.go`:
 
 - `EnableSetMetadata`: admins can set the bank denom metadata (symbol, exponent, description).
 - `EnableCommunityPoolFeeFunding`: the creation fee goes to the community pool rather than being burned.
 
-`EnableBurnFrom` and `EnableForceTransfer` are not enabled. The CLI still has `burn-from` and `force-transfer` subcommands because they are part of the module, but the Hub rejects those messages. An admin can therefore mint, mint to others, burn from its own balance, change the admin, and modify metadata, and nothing else. Smart contracts reach the same messages through the module's CosmWasm bindings.
+The `EnableBurnFrom` and `EnableForceTransfer` capabilities are not enabled. The CLI still has `burn-from` and `force-transfer` subcommands because they are part of the module. The Hub rejects those messages. An admin can therefore mint, mint to others, burn from its own balance, change the admin, and modify metadata. It can do nothing else. Smart contracts can use the same messages through the module's CosmWasm bindings.
 
 ## Parameters
 
@@ -28,7 +28,7 @@ Creation fee: 10 ATOM, paid to the community pool.
 gaiad q tokenfactory params --node https://cosmos-rpc.publicnode.com:443
 ```
 
-`denom_creation_fee: 10000000uatom`; `denom_creation_gas_consume: "2000000"`. Creating a denom also consumes 2,000,000 gas on top of the fee, so the create transaction needs `--gas` of at least about 2,200,000, or `--gas auto`.
+The output shows `denom_creation_fee: 10000000uatom` and `denom_creation_gas_consume: "2000000"`. Creating a denom also consumes 2,000,000 gas on top of the fee. The create transaction therefore needs `--gas` of at least about 2,200,000, or `--gas auto`.
 
 ## Create a denom
 
@@ -37,16 +37,16 @@ gaiad tx tokenfactory create-denom mytoken --from mykey \
   --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-The message is `MsgCreateDenom` with `subdenom: mytoken`. The resulting denom is `factory/<cosmos1 address of mykey>/mytoken`, which is what every later command and every transfer uses. Confirm who created and who administers it:
+The message is `MsgCreateDenom` with `subdenom: mytoken`. The resulting denom is `factory/<cosmos1 address of mykey>/mytoken`. Every later command and every transfer uses that denom. Confirm who created and who administers it:
 
 ```bash
 gaiad q tokenfactory denoms-from-creator $(gaiad keys show mykey -a)
 gaiad q tokenfactory denom-authority-metadata factory/cosmos1.../mytoken
 ```
 
-The first lists the denom; the second returns `authority_metadata.admin` with the creator's address.
+The first lists the denom. The second returns `authority_metadata.admin` with the creator's address.
 
-## Mint, burn and metadata
+## Mint, burn, and metadata
 
 Mint to yourself or to another account, in base units:
 
@@ -61,7 +61,7 @@ Burn from the admin's own balance only:
 gaiad tx tokenfactory burn 500000factory/cosmos1.../mytoken --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-Set the display metadata so wallets and explorers show a symbol and decimals. The arguments are denom, ticker symbol, description, exponent:
+Set the display metadata so wallets and explorers show a symbol and decimals. The arguments are denom, ticker symbol, description, and exponent:
 
 ```bash
 gaiad tx tokenfactory modify-metadata factory/cosmos1.../mytoken MYT "Example token" 6 --from mykey \
@@ -69,13 +69,13 @@ gaiad tx tokenfactory modify-metadata factory/cosmos1.../mytoken MYT "Example to
 gaiad q bank denom-metadata factory/cosmos1.../mytoken
 ```
 
-The bank query returns the metadata with `symbol: MYT` and a denom unit with `exponent: 6`; the uatom entry on the Hub has the same shape (`symbol: ATOM`, exponent 6).
+The bank query returns the metadata with `symbol: MYT` and a denom unit with `exponent: 6`. The uatom entry on the Hub has the same shape (`symbol: ATOM`, exponent 6).
 
 ## Secure the admin key
 
-A compromised admin key can mint without limit and change the admin to lock you out, even with burn-from and force-transfer disabled. Three ways to narrow that, from least to most restrictive:
+Even with burn-from and force-transfer disabled, a compromised admin key can mint without limit. It can also change the admin to lock you out. Three ways narrow that risk, from least to most restrictive:
 
-1. Use a multisig as the admin. Create the denom from a multisig account ([multisig accounts](/hub/latest/delegators/delegator-guide-cli#multisig-accounts)) or hand it over with `change-admin`.
+1. Use a multisig as the admin. Create the denom from a multisig account ([multisig accounts](/hub/latest/delegators/delegator-guide-cli#multisig-accounts)) or transfer it with `change-admin`.
 2. Grant a limited operator through `authz`. An operator account can be allowed to execute only `MsgMint`, with an expiry:
 
 ```bash
@@ -83,17 +83,17 @@ gaiad tx authz grant cosmos1OPERATOR... generic --msg-type /osmosis.tokenfactory
   --expiration 1800000000 --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-3. Transfer admin to the governance module account, after which every mint or metadata change needs a passed proposal:
+3. Transfer admin to the governance module account. After that, every mint or metadata change needs a passed proposal:
 
 ```bash
 gaiad tx tokenfactory change-admin factory/cosmos1.../mytoken cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn --from mykey \
   --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-`change-admin` is immediate and has no undo; the new admin is the only account that can change it again. `gaiad q tokenfactory denoms-from-admin <address>` lists what an address administers.
+The `change-admin` command is immediate and has no undo. The new admin is the only account that can change it again. The query `gaiad q tokenfactory denoms-from-admin <address>` lists what an address administers.
 
 <Warning>
-A `change-admin` to a mistyped address is permanent. Check the destination with `gaiad keys parse <address>` before signing, and prefer moving admin to a multisig you have already tested with a small transfer.
+Check the destination with `gaiad keys parse <address>` before signing a `change-admin`. A `change-admin` to a mistyped address is permanent. Prefer moving admin to a multisig you have already tested with a small transfer.
 </Warning>
 
 ## Verify
@@ -103,7 +103,7 @@ gaiad q bank total-supply-of factory/cosmos1.../mytoken --node https://cosmos-rp
 gaiad q tokenfactory denoms-from-admin $(gaiad keys show mykey -a) --node https://cosmos-rpc.publicnode.com:443
 ```
 
-The supply matches what you minted minus what you burned, and the admin listing shows the denom until you change its admin, after which it moves to the new admin's listing.
+The supply matches what you minted minus what you burned. The admin listing shows the denom until you change its admin. After that, it moves to the new admin's listing.
 
 ## Next
 

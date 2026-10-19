@@ -7,20 +7,20 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for an operator with a node that is fully synced to cosmoshub-4 and running as a service ([Join mainnet](/hub/latest/hub-tutorials/join-mainnet), [Run gaiad as a service](/hub/latest/node/service)). At the end you have a validator registered on chain and know every operator-key transaction you will send over its life.
+This page is for an operator with a node that is fully synced to cosmoshub-4 and running as a service ([Join mainnet](/hub/latest/hub-tutorials/join-mainnet), [Run gaiad as a service](/hub/latest/node/service)). At the end you have a validator registered on chain. You also know every operator-key transaction you will send over its life.
 
-All transactions below are signed by the operator key and cost a fee in `uatom`. Add `--chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom` to each; 0.005 uatom per gas was the fee market floor on 2026-10-15 (`gaiad query feemarket gas-prices`). Test every command on the [testnet](/hub/latest/hub-tutorials/join-testnet) first with the testnet chain-id.
+All transactions below are signed by the operator key and cost a fee in `uatom`. Add `--chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom` to each. The fee market floor on 2026-10-15 was 0.005 uatom per gas (`gaiad query feemarket gas-prices`). Test every command on the [testnet](/hub/latest/hub-tutorials/join-testnet) first with the testnet chain-id.
 
 ## Prerequisites
 
 - An operator key in the keyring. Create one with `gaiad keys add <name>`, or `gaiad keys add <name> --ledger` to keep it on a [Ledger](/hub/latest/resources/ledger). Use the `os` or `file` keyring backend on a server, never `test`. See [Keyring](/sdk/latest/node/keyring).
-- ATOM on the operator address for the self-delegation plus fees. `gaiad keys show <name> -a` prints the `cosmos` address; `gaiad keys show <name> --bech val -a` prints the `cosmosvaloper` address you will query later.
-- The consensus public key. On the node host, `gaiad comet show-validator` prints it from `config/priv_validator_key.json`. If you already moved the key to a [remote signer](/hub/latest/validators/remote-signing), take the key from `curl -s localhost:26657/status | jq .result.validator_info.pub_key` instead; `show-validator` always reads the local file.
+- ATOM on the operator address for the self-delegation plus fees. Print the `cosmos` address with `gaiad keys show <name> -a`. Print the `cosmosvaloper` address you will query later with `gaiad keys show <name> --bech val -a`.
+- The consensus public key. On the node host, `gaiad comet show-validator` prints it from `config/priv_validator_key.json`. If you already moved the key to a [remote signer](/hub/latest/validators/remote-signing), take the key from `curl -s localhost:26657/status | jq .result.validator_info.pub_key` instead. The `show-validator` command always reads the local file.
 - The node reports `"catching_up": false` in `curl -s localhost:26657/status | jq .result.sync_info`. A validator created while behind the head misses blocks immediately.
 
 ## Write validator.json
 
-On gaia v28.3.1, `create-validator` takes a JSON file, not flags. `gaiad tx staking create-validator --help` prints the schema.
+On gaia v28.3.1, `create-validator` takes a JSON file, not flags. Print the schema with `gaiad tx staking create-validator --help`.
 
 ```json
 {
@@ -41,11 +41,11 @@ On gaia v28.3.1, `create-validator` takes a JSON file, not flags. `gaiad tx stak
 Field by field:
 
 - `pubkey`: the exact output of `gaiad comet show-validator` (or the `/status` key, converted to the same `@type` form). A wrong key creates a validator that can never sign.
-- `amount`: the initial self-delegation. 1,000,000 uatom is 1 ATOM. The active set cutoff is far higher; see [Live constraints](/hub/latest/validators/overview#live-constraints).
+- `amount`: the initial self-delegation. An amount of 1,000,000 uatom is 1 ATOM. The active set cutoff is far higher. See [Live constraints](/hub/latest/validators/overview#live-constraints).
 - `identity`: a 16-character Keybase PGP fingerprint, used by explorers for your logo. Optional.
-- `commission-rate`: at least 0.05, the chain minimum. The binary does not check this; a lower value is rejected when the transaction executes.
+- `commission-rate`: at least 0.05, the chain minimum. The binary does not check this. A lower value is rejected when the transaction executes.
 - `commission-max-rate` and `commission-max-change-rate`: fixed forever at creation. You can never raise commission above the max, or move it by more than the max change in one day.
-- `min-self-delegation`: whole uatom, at least 1. Can only be increased later. Dropping your self-delegation below it jails the validator.
+- `min-self-delegation`: whole uatom, at least 1. It can only be increased later. Dropping your self-delegation below it jails the validator.
 
 ## Create the validator
 
@@ -56,7 +56,7 @@ gaiad tx staking create-validator validator.json \
   --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-This sends `MsgCreateValidator`, bonds `amount` from the operator address, and registers the description and commission. Use `--generate-only` first to inspect the unsigned transaction without broadcasting it. With `--gas auto` a rejected transaction fails during simulation and is never broadcast; the reason is in the `Error:` line (insufficient funds, commission below minimum, duplicate consensus key). If you set `--gas` by hand instead, the broadcast returns code `0` and the failure shows up as a non-zero `code` in `gaiad query tx <hash>`.
+This sends `MsgCreateValidator`. It bonds `amount` from the operator address and registers the description and commission. Use `--generate-only` first to inspect the unsigned transaction without broadcasting it. With `--gas auto` a rejected transaction fails during simulation and is never broadcast. The reason is in the `Error:` line (insufficient funds, commission below minimum, or duplicate consensus key). If you set `--gas` by hand instead, the broadcast returns code `0`. The failure then shows up as a non-zero `code` in `gaiad query tx <hash>`.
 
 ## Verify
 
@@ -70,17 +70,17 @@ A new validator with less stake than the 180th seat shows `status: BOND_STATUS_U
 curl -s localhost:26657/status | jq '.result.validator_info'
 ```
 
-`voting_power` is `0` until the validator is bonded, then equals bonded ATOM. `pub_key` must match the key in `validator.json`.
+The `voting_power` field is `0` until the validator is bonded, then equals bonded ATOM. The `pub_key` field must match the key in `validator.json`.
 
 ```bash
 gaiad query slashing signing-info $(gaiad comet show-validator)
 ```
 
-Once bonded, `index_offset` increases every block and `missed_blocks_counter` stays flat (with `--output json` the field is omitted while it is zero, as is `tombstoned` while false; `jailed_until` prints `1970-01-01T00:00:00Z` until the first jailing). Explorers such as [Mintscan](https://www.mintscan.io/cosmos/validators) list the validator within a few minutes.
+Once bonded, `index_offset` increases every block and `missed_blocks_counter` stays flat. With `--output json` the `missed_blocks_counter` field is omitted while it is zero, as is `tombstoned` while false. The `jailed_until` field prints `1970-01-01T00:00:00Z` until the first jailing. Explorers such as [Mintscan](https://www.mintscan.io/cosmos/validators) list the validator within a few minutes.
 
 ## Edit the validator
 
-`edit-validator` is flag based. Only the flags you pass change; everything else keeps its value.
+The `edit-validator` command is flag based. Only the flags you pass change. Everything else keeps its value.
 
 ```bash
 gaiad tx staking edit-validator \
@@ -93,25 +93,25 @@ gaiad tx staking edit-validator \
   --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-Two flags carry rules enforced by the chain:
+Two flags have rules enforced by the chain:
 
 - `--commission-rate`: at most one change per 24 hours, never above your `commission-max-rate`, never moving more than `commission-max-change-rate` at once, never below the chain minimum 0.05. The clock starts at `create-validator`, so any change in the first 24 hours, or a second change inside 24 hours, fails with `commission cannot be changed more than once in 24h`.
 - `--min-self-delegation`: can only go up, and not above your current self-delegation.
 
-Confirm with the same `gaiad query staking validator` call; the `description` and `commission` fields update in the next block.
+Confirm with the same `gaiad query staking validator` call. The `description` and `commission` fields update in the next block.
 
 ## Unjail
 
-If the validator is jailed for downtime, fix the cause first (signer down, node stopped, missed upgrade), confirm the node is at the chain head and signing is possible, then:
+If the validator is jailed for downtime, fix the cause first (signer down, node stopped, or missed upgrade). Confirm the node is at the chain head and signing is possible, then:
 
 ```bash
 gaiad tx slashing unjail --from <operator-key-name> \
   --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-The chain rejects the transaction while `jailed_until` (10 minutes after the jailing) has not passed, if self-delegation is below `min-self-delegation`, or if the validator was tombstoned for a double sign. A tombstoned validator cannot be unjailed by anyone.
+The chain rejects the transaction in three cases: `jailed_until` (10 minutes after the jailing) has not passed, self-delegation is below `min-self-delegation`, or the validator was tombstoned for a double sign. A tombstoned validator cannot be unjailed by anyone.
 
-`gaiad query staking validator <cosmosvaloper>` shows `jailed: false` (with `--output json` the field is omitted while false) and the validator re-enters the set at the next block if its power qualifies.
+The query `gaiad query staking validator <cosmosvaloper>` then shows `jailed: false` (with `--output json` the field is omitted while false). The validator re-enters the set at the next block if its power qualifies.
 
 ## Rewards and withdraw address
 
@@ -130,7 +130,7 @@ gaiad tx distribution set-withdraw-addr <cosmos-address> --from <operator-key-na
   --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-`gaiad query distribution commission <cosmosvaloper>` shows the unclaimed commission.
+The query `gaiad query distribution commission <cosmosvaloper>` shows the unclaimed commission.
 
 ## Liquid staking
 
@@ -151,12 +151,12 @@ For maintenance you cannot script otherwise, make the node stop itself at a bloc
 gaiad config set app halt-height <height>
 ```
 
-The TOML key is `halt-height` in `app.toml`; `gaiad start --halt-height <height>` does the same for one run. Reset it to `0` before the restart or the node stops again. Remember the downtime window: about 15 hours of missed blocks jails you (see [Validator overview](/hub/latest/validators/overview#live-constraints)).
+The TOML key is `halt-height` in `app.toml`. Running `gaiad start --halt-height <height>` does the same for one run. Reset it to `0` before the restart, or the node stops again. Remember the downtime window: about 15 hours of missed blocks jails you (see [Validator overview](/hub/latest/validators/overview#live-constraints)).
 
 ## Leave the set cleanly
 
 <Warning>
-There is no "unbond validator" transaction on gaia v28.3.1. Stopping the node and walking away jails you for downtime after about 15 hours and slashes 0.01 percent of all stake delegated to you, including your delegators'. Exit by reducing self-delegation instead.
+Exit by reducing self-delegation, because there is no "unbond validator" transaction on gaia v28.3.1. Stopping the node and walking away jails you for downtime after about 15 hours. It also slashes 0.01 percent of all stake delegated to you, including your delegators'.
 </Warning>
 
 Undelegating your own stake below `min-self-delegation` jails the validator at once, without a slash, and removes it from the set at the end of the block:
@@ -166,13 +166,13 @@ gaiad tx staking unbond <cosmosvaloper> <amount>uatom --from <operator-key-name>
   --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-Keep the node and signer running until `gaiad query staking validator <cosmosvaloper>` shows `jailed: true` and `status` other than `BOND_STATUS_BONDED`. Tell your delegators ahead of time so they can redelegate; their stake, and your remaining self-delegation, unbonds over 21 days and stays slashable for evidence from before the exit. The `cosmosvaloper` address is permanent, so a later return means `unjail` on the same validator, not a new one.
+Keep the node and signer running until `gaiad query staking validator <cosmosvaloper>` shows `jailed: true` and `status` other than `BOND_STATUS_BONDED`. Tell your delegators ahead of time so they can redelegate. Their stake, and your remaining self-delegation, unbonds over 21 days. It stays slashable for evidence from before the exit. The `cosmosvaloper` address is permanent, so a later return means `unjail` on the same validator, not a new one.
 
 ## Common problems
 
 - `voting_power: 0` in `/status` long after creation: the validator is below the 180th seat, or the `pubkey` in `validator.json` is not the key the node signs with. Compare `gaiad query staking validator` `consensus_pubkey` with `/status` `validator_info.pub_key`.
 - `create-validator` fails with a commission error: `commission-rate` below 0.05 or above `commission-max-rate`.
-- `jailed: true` right after a commission change: unrelated; check `gaiad query slashing signing-info` for `jailed_until` and the node logs for the gap.
+- `jailed: true` right after a commission change: unrelated. Check `gaiad query slashing signing-info` for `jailed_until` and the node logs for the gap.
 - Too many open files or peer drops under load: raise the service file descriptor limit; see [Run gaiad as a service](/hub/latest/node/service).
 
 ## Next

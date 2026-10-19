@@ -10,15 +10,15 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-You have a node running as a service from [Run gaiad as a service](/hub/next/node/service). At the end the node runs the new gaia version from the exact height the network switched, without missing more blocks than the upgrade itself costs. Every upgrade is announced on the [gaia releases page](https://github.com/cosmos/gaia/releases) and in the validator announcements channel on [Discord](https://discord.gg/interchain); the release notes name the pattern, the height, and the binary.
+You have a node running as a service from [Run gaiad as a service](/hub/next/node/service). At the end the node runs the new gaia version from the exact height the network switched, without missing more blocks than the upgrade itself costs. Every upgrade is announced on the [gaia releases page](https://github.com/cosmos/gaia/releases) and in the validator announcements channel on [Discord](https://discord.gg/interchain). The release notes name the pattern, the height, and the binary.
 
 ## Two upgrade patterns
 
 The Hub uses two patterns and the release notes say which one applies.
 
-A governance upgrade is a passed `MsgSoftwareUpgrade` proposal with a plan name and a plan height. At that height the old binary stops with `ERR UPGRADE "<name>" NEEDED at height: <height>`, and the new binary's upgrade handler runs the migrations. v28.0.0 (plan `v28.0.0`, height 32785900) and v28.2.0 (plan `v28.2.0`, height 33073000) were governance upgrades. Cosmovisor handles the swap on its own if the binary is in place.
+A governance upgrade is a passed `MsgSoftwareUpgrade` proposal with a plan name and a plan height. At that height the old binary stops with `ERR UPGRADE "<name>" NEEDED at height: <height>`. The new binary's upgrade handler then runs the migrations. Releases v28.0.0 (plan `v28.0.0`, height 32785900) and v28.2.0 (plan `v28.2.0`, height 33073000) were governance upgrades. Cosmovisor handles the swap on its own if the binary is in place.
 
-A halt-height upgrade is a coordinated restart without a plan: every operator sets `halt-height` to the announced height, the node stops there with `CONSENSUS FAILURE!!! err="failed to apply block; error halt per configuration height <height> time 0"`, and the operator starts the new binary. v28.1.1 (height 32830000) and v28.3.1 (height 33086740) were halt-height upgrades. Cosmovisor does not switch on its own unless you register the height with `add-upgrade --upgrade-height`.
+A halt-height upgrade is a coordinated restart without a plan. Every operator sets `halt-height` to the announced height. The node stops there with `CONSENSUS FAILURE!!! err="failed to apply block; error halt per configuration height <height> time 0"`, and the operator starts the new binary. Releases v28.1.1 (height 32830000) and v28.3.1 (height 33086740) were halt-height upgrades. Cosmovisor does not switch on its own unless you register the height with `add-upgrade --upgrade-height`.
 
 [Upgrade history](/hub/next/upgrade/history) lists every upgrade since genesis with its pattern.
 
@@ -30,11 +30,11 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     gaiad query upgrade plan
     ```
 
-    For a governance upgrade this prints the plan name, height, and info once the proposal has passed, and an empty `{}` before that. For a halt-height upgrade it stays `{}`; the height comes from the release notes. On 2026-10-15 there was no plan scheduled.
+    For a governance upgrade this prints the plan name, height, and info once the proposal has passed. Before that it prints an empty `{}`. For a halt-height upgrade it stays `{}`. The height comes from the release notes. On 2026-10-15 there was no plan scheduled.
   </Step>
 
   <Step title="Rehearse on the testnet">
-    The testnet runs the release candidate a week or more ahead of mainnet. Upgrading a [testnet node](/hub/next/hub-tutorials/join-testnet) through the same height is the only way to find out that your machine lacks RAM for a migration or that your unit file is wrong while it is cheap.
+    The testnet runs the release candidate one or two weeks ahead of mainnet. Upgrading a [testnet node](/hub/next/hub-tutorials/join-testnet) through the same height is the only way to find out, while it is still cheap, that your machine lacks RAM for a migration or that your unit file is wrong.
   </Step>
 
   <Step title="Get and verify the new binary">
@@ -48,7 +48,7 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
   </Step>
 
   <Step title="Check memory, disk, and a backup">
-    Migrations can need far more memory than steady state. Confirm 32 GB or swap from [System requirements](/hub/next/getting-started/system-requirements), confirm free disk of at least the size of `data/`, and take a snapshot or filesystem backup of `data/` the day before. With `UNSAFE_SKIP_BACKUP=true` in the unit, Cosmovisor does not do this for you.
+    Migrations can need far more memory than steady state. Confirm 32 GB or swap from [System requirements](/hub/next/getting-started/system-requirements). Confirm free disk of at least the size of `data/`. Take a snapshot or filesystem backup of `data/` the day before. With `UNSAFE_SKIP_BACKUP=true` in the unit, Cosmovisor does not do this for you.
   </Step>
 
   <Step title="Stage the binary for Cosmovisor">
@@ -59,7 +59,7 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     ls -l /var/lib/gaia/.gaia/cosmovisor/upgrades/v28.2.0/bin/gaiad
     ```
 
-    `add-upgrade` copies the binary to `cosmovisor/upgrades/<name>/bin/gaiad` and makes it executable; it is the same as creating the directory and copying by hand. Cosmovisor reads the plan name from `data/upgrade-info.json`, which the running node writes at the upgrade height, and switches `current` to that directory.
+    The `add-upgrade` subcommand copies the binary to `cosmovisor/upgrades/<name>/bin/gaiad` and makes it executable. It is the same as creating the directory and copying by hand. Cosmovisor reads the plan name from `data/upgrade-info.json`, which the running node writes at the upgrade height. It then switches `current` to that directory.
 
     For a halt-height upgrade, add `--upgrade-height`:
 
@@ -68,7 +68,7 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     cat /var/lib/gaia/.gaia/data/upgrade-info.json
     ```
 
-    This also writes `data/upgrade-info.json` with the name and height, so Cosmovisor switches binaries at that height on its own. Do not set `halt-height` as well when you use this; the two mechanisms stop the node for different reasons and Cosmovisor only restarts for its own. On a node that has already been through a governance upgrade under Cosmovisor, `data/upgrade-info.json` still holds that old plan and the command fails with `Error: file already exists at .../data/upgrade-info.json`; `--force` overwrites it and the height-based switch then works. Run `cosmovisor show-upgrade-info` first, because `--force` also discards a plan that is still pending.
+    This also writes `data/upgrade-info.json` with the name and height, so Cosmovisor switches binaries at that height on its own. Do not set `halt-height` as well when you use this. The two mechanisms stop the node for different reasons, and Cosmovisor only restarts for its own. On a node that has already been through a governance upgrade under Cosmovisor, `data/upgrade-info.json` still holds that old plan. The command then fails with `Error: file already exists at .../data/upgrade-info.json`. The `--force` flag overwrites it, and the height-based switch then works. Run `cosmovisor show-upgrade-info` first, because `--force` also discards a plan that is still pending.
   </Step>
 
   <Step title="Or set the halt height without Cosmovisor">
@@ -78,14 +78,14 @@ A halt-height upgrade is a coordinated restart without a plan: every operator se
     sudo systemctl restart gaiad
     ```
 
-    This writes `halt-height` in `app.toml`; the running process reads it at start, so restart the node. At that height the node commits the block, logs the consensus failure quoted above, and stops. Set it back to `0` after the upgrade or the node refuses to pass that height again.
+    This writes `halt-height` in `app.toml`. The running process reads it at start, so restart the node. At that height the node commits the block, logs the consensus failure quoted above, and stops. Set it back to `0` after the upgrade, or the node refuses to pass that height again.
   </Step>
 </Steps>
 
 ## On upgrade day
 
 <Warning>
-Do not start the new binary before the network reaches the height. A node that applies a migration early produces a different app hash, stops with `wrong Block.Header.AppHash`, and must be rolled back or restored. A validator in that state misses blocks until it is fixed and risks jail for downtime.
+Do not start the new binary before the network reaches the height. A node that applies a migration early produces a different app hash and stops with `wrong Block.Header.AppHash`. It must then be rolled back or restored. A validator in that state misses blocks until it is fixed and risks jail for downtime.
 </Warning>
 
 With Cosmovisor and a staged binary there is nothing to do at the height except watch:
@@ -94,7 +94,7 @@ With Cosmovisor and a staged binary there is nothing to do at the height except 
 journalctl -u cosmovisor -f -o cat
 ```
 
-Expect `UPGRADE "v28.2.0" NEEDED at height: 33073000` (governance) or the halt per configuration line (halt-height), then Cosmovisor's own lines about the upgrade and the binary switch, and the new binary's `applying upgrade` line followed by block execution. Upgrades with migrations can sit in `applying upgrade` for minutes; a quiet log is not a hung node until memory or CPU drop to zero.
+Expect `UPGRADE "v28.2.0" NEEDED at height: 33073000` (governance) or the halt per configuration line (halt-height). Then come Cosmovisor's own lines about the upgrade and the binary switch. Then the new binary prints its `applying upgrade` line, followed by block execution. Upgrades with migrations can sit in `applying upgrade` for minutes. A quiet log is not a hung node until memory or CPU drop to zero.
 
 Without Cosmovisor, at the height:
 
@@ -106,24 +106,24 @@ gaiad config set app halt-height 0
 sudo systemctl start gaiad
 ```
 
-The stop is clean because the node has already halted. `install` replaces the binary atomically, `gaiad version` proves which one is on the path, and resetting `halt-height` lets the node continue. With the container image the same sequence is `docker stop`, change the image tag, `docker run` as on [Install gaiad](/hub/next/getting-started/installation).
+The stop is clean because the node has already halted. The `install` command replaces the binary atomically. Running `gaiad version` proves which one is on the path. Resetting `halt-height` lets the node continue. With the container image the same sequence is `docker stop`, change the image tag, then `docker run` as on [Install gaiad](/hub/next/getting-started/installation).
 
 ## If something goes wrong
 
-The node stopped at the height but Cosmovisor did not switch: check `ls -l cosmovisor/upgrades/` for a directory name that matches the plan name exactly, check `cat data/upgrade-info.json`, and check `journalctl` for a permissions error on the binary. Fix the directory, then `systemctl start cosmovisor`; Cosmovisor reads `upgrade-info.json` on start and switches.
+The node stopped at the height but Cosmovisor did not switch: check `ls -l cosmovisor/upgrades/` for a directory name that matches the plan name exactly. Check `cat data/upgrade-info.json`. Check `journalctl` for a permissions error on the binary. Fix the directory, then run `systemctl start cosmovisor`. Cosmovisor reads `upgrade-info.json` on start and switches.
 
-The new binary panics during the migration: the usual cause is memory. Stop, add swap, start again; the migration restarts from the beginning. If it panics on something else, the chain's Discord channel is where the fix is coordinated, and your `data/` backup is what you restore if a patched binary requires it.
+The new binary panics during the migration: the usual cause is memory. Stop, add swap, and start again. The migration restarts from the beginning. If it panics on something else, the chain's Discord channel is where the fix is coordinated. Your `data/` backup is what you restore if a patched binary requires it.
 
-The node reports an app hash mismatch after the upgrade: a binary was started one height early or a wrong patch was used. `gaiad rollback` undoes the last committed height on both CometBFT and the application:
+The node reports an app hash mismatch after the upgrade: a binary was started one height early or a wrong patch was used. The `gaiad rollback` command undoes the last committed height on both CometBFT and the application:
 
 ```bash
 sudo systemctl stop cosmovisor
 gaiad rollback --home /var/lib/gaia/.gaia
 ```
 
-It removes no blocks; on restart the node re-executes the block with the correct binary. Run it once per bad height. On a validator, the restart does not change `priv_validator_state.json`, so there is no double sign risk from the rollback itself. The validator will not sign the rolled-back height again at the same round (`error signing vote: step regression at height <height> round 0`); on mainnet it misses that one signature and signs from the next round or height.
+It removes no blocks. On restart the node re-executes the block with the correct binary. Run it once per bad height. On a validator, the restart does not change `priv_validator_state.json`, so there is no double sign risk from the rollback itself. The validator will not sign the rolled-back height again at the same round (`error signing vote: step regression at height <height> round 0`). On mainnet it misses that one signature and signs from the next round or height.
 
-`gaiad start --unsafe-skip-upgrades <height>` tells the node to ignore a scheduled plan at that height. It exists for coordinated recovery from a broken upgrade and nothing else; using it alone forks your node off the network.
+Running `gaiad start --unsafe-skip-upgrades <height>` tells the node to ignore a scheduled plan at that height. It exists for coordinated recovery from a broken upgrade and nothing else. Using it alone forks your node off the network.
 
 ## After the upgrade
 
@@ -134,9 +134,9 @@ gaiad status | jq '{height: .sync_info.latest_block_height, catching_up: .sync_i
 ls -l /var/lib/gaia/.gaia/cosmovisor/current
 ```
 
-`version` prints the new tag. `upgrade applied <name>` prints the block header at which a governance plan was executed, which is the proof the handler ran; it knows nothing about halt-height upgrades, where `version` plus a climbing height is the proof. `current` now points at `upgrades/<name>`. A validator also checks that it is signing again on an explorer or with the queries on [Monitoring](/hub/next/validators/monitoring).
+The `version` command prints the new tag. The `upgrade applied <name>` query prints the block header at which a governance plan was executed, which is the proof the handler ran. It has no record of halt-height upgrades. For those, `version` plus a climbing height is the proof. The `current` symlink now points at `upgrades/<name>`. A validator also checks that it is signing again on an explorer or with the queries on [Monitoring](/hub/next/validators/monitoring).
 
-Clean up when the node is stable: remove binaries under `cosmovisor/upgrades/` older than the previous upgrade, and if you set `halt-height`, confirm it is `0` again.
+Clean up when the node is stable. Remove binaries under `cosmovisor/upgrades/` older than the previous upgrade. If you set `halt-height`, confirm it is `0` again.
 
 ## Verify
 
@@ -145,7 +145,7 @@ gaiad version
 gaiad query upgrade module-versions | head
 ```
 
-The first prints the version the release notes named. The second lists each module's consensus version after the upgrade, which is what a migration changes; compare it with another operator's output if you suspect a partial migration.
+The first prints the version the release notes named. The second lists each module's consensus version after the upgrade, which is what a migration changes. Compare it with another operator's output if you suspect a partial migration.
 
 ## Next
 

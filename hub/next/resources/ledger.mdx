@@ -7,39 +7,39 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified reviewed date="2026-10-15" />
 
-This page is for ATOM holders and operators who want their wallet key on a Ledger device so that signing happens on the device and the private key never reaches the computer. It covers Ledger with Keplr and with `gaiad` v28.3.1. It is about wallet keys only: a validator's consensus key is not a Ledger key, and signing blocks from a hardware module is covered on [Remote signing](/hub/next/validators/remote-signing).
+This page is for ATOM holders and operators who want their wallet key on a Ledger device. With the key on the device, signing happens on the device and the private key never reaches the computer. It covers Ledger with Keplr and with `gaiad` v28.3.1. It is about wallet keys only: a validator's consensus key is not a Ledger key. Signing blocks from a hardware module is covered on [Remote signing](/hub/next/validators/remote-signing).
 
 ## What the device holds
 
-A Ledger generates a 24 word mnemonic at setup and derives keys from it on the device ([HD wallets](/hub/next/resources/hd-wallets)). The Cosmos app on the device derives Cosmos Hub keys at `m/44'/118'/<account>'/0/<index>`, shows the address on screen, and signs transactions after you review them on screen. The computer only sees public keys and signatures. The same mnemonic restored on another Ledger, or typed into `gaiad keys add --recover`, yields the same addresses, which is the recovery path if the device is lost.
+A Ledger generates a 24-word mnemonic at setup and derives keys from it on the device ([HD wallets](/hub/next/resources/hd-wallets)). The Cosmos app on the device derives Cosmos Hub keys at `m/44'/118'/<account>'/0/<index>`. It shows the address on screen, and it signs transactions after you review them on screen. The computer only sees public keys and signatures. The same mnemonic restored on another Ledger, or typed into `gaiad keys add --recover`, yields the same addresses. That is the recovery path if the device is lost.
 
-Keep the device firmware and the Cosmos app current through Ledger Live; signing newer message types fails on an old app.
+Keep the device firmware and the Cosmos app current through Ledger Live. Signing newer message types fails on an old app.
 
 ## Install the Cosmos app
 
-The Cosmos app is installed from Ledger Live's catalog in four steps and is required before either Keplr or `gaiad` can talk to the device.
+The Cosmos app is installed from Ledger Live's catalog in four steps. It is required before either Keplr or `gaiad` can talk to the device.
 
-1. Install Ledger Live (`https://www.ledger.com/ledger-live`) and set up or restore the device following Ledger's guide (`https://support.ledger.com/article/360007988874-zd`).
+1. Install Ledger Live (`https://www.ledger.com/ledger-live`). Set up or restore the device following Ledger's guide (`https://support.ledger.com/article/360007988874-zd`).
 2. Update the firmware if Ledger Live offers it (`https://support.ledger.com/article/360013713840-zd`).
-3. Open My Ledger in Ledger Live, connect and unlock the device, and allow the connection on the device.
-4. Search the app catalog for Cosmos and install it. The Cosmos app is in the public catalog and no developer mode is needed.
+3. Open My Ledger in Ledger Live. Connect and unlock the device, then allow the connection on the device.
+4. Search the app catalog for Cosmos and install it. The Cosmos app is in the public catalog, so no developer mode is needed.
 
 The app is maintained in `https://github.com/cosmos/ledger-cosmos`. Ledger's own page for the Cosmos app is `https://support.ledger.com/article/4411149814417-zd`.
 
 ## Keplr with Ledger
 
-Keplr connects to the device directly from its hardware wallet import flow; the only check worth doing afterwards is comparing the address on the device with the one Keplr shows.
+Keplr connects to the device directly from its hardware wallet import flow. The only check worth doing afterwards is comparing the address on the device with the one Keplr shows.
 
 1. Connect and unlock the device and open the Cosmos app on it.
-2. Install the Keplr extension (`https://www.keplr.app/`), choose to connect a hardware wallet, and pick Ledger.
-3. Follow the prompts; Keplr reads the public key from the device and shows the `cosmos1...` address.
-4. Confirm the address on the device: in the Cosmos app choose Show Address, account 0 and index 0, and compare it with what Keplr shows. A mismatch means Keplr is using another path; check its advanced import settings.
+2. Install the Keplr extension (`https://www.keplr.app/`). Choose to connect a hardware wallet, and pick Ledger.
+3. Follow the prompts. Keplr reads the public key from the device and shows the `cosmos1...` address.
+4. Confirm the address on the device. In the Cosmos app choose Show Address with account 0 and index 0, and compare it with what Keplr shows. A mismatch means Keplr is using another path. Check its advanced import settings.
 
 Every transaction Keplr sends afterwards needs approval on the device. Keplr's documentation (`https://docs.keplr.app`) covers the wallet side, including delegating and voting from the extension.
 
 ## gaiad with Ledger
 
-`gaiad` must be built with the `ledger` build tag, which release binaries and default source builds include (`gaiad version --long` lists `ledger` under `build_tags`). Connect and unlock the device, open the Cosmos app, then store a reference to the device key in the keyring:
+The `gaiad` binary must be built with the `ledger` build tag. Release binaries and default source builds include it (`gaiad version --long` lists `ledger` under `build_tags`). Connect and unlock the device and open the Cosmos app. Then store a reference to the device key in the keyring:
 
 ```bash
 gaiad keys add myledger --ledger
@@ -48,27 +48,27 @@ gaiad keys list
 gaiad keys show myledger -d
 ```
 
-`--ledger` asks the device for the public key at the default path and stores it as a key of type `ledger`; no private material is written. `--account` and `--index` select other paths. `keys show -d` displays the address on the device screen so you can confirm the keyring entry matches. If the command fails with `failed to generate ledger key`, the device is locked, the Cosmos app is not open, or another program (Ledger Live, a browser extension) holds the USB connection.
+The `--ledger` flag asks the device for the public key at the default path. It stores that public key as a key of type `ledger`. No private material is written. The `--account` and `--index` flags select other paths. The `keys show -d` command displays the address on the device screen so you can confirm the keyring entry matches. If the command fails with `failed to generate ledger key`, the device is locked, the Cosmos app is not open, or another program (Ledger Live or a browser extension) holds the USB connection.
 
-Signing works like any other key; `gaiad` detects the key type and sends the transaction to the device in the amino JSON form the Cosmos app displays:
+Signing works like any other key. The `gaiad` command detects the key type and sends the transaction to the device in the amino JSON form the Cosmos app displays:
 
 ```bash
 gaiad tx staking delegate cosmosvaloper1... 1000000uatom --from myledger --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom --chain-id cosmoshub-4
 ```
 
-The command prints the transaction and waits for confirmation on the device. Review the chain id, the message type, the amounts and the fee on the screen before approving. Offline signing (`--generate-only`, `tx sign`) and multisig membership work with a Ledger key the same way as with a local key ([gaiad reference](/hub/next/hub-tutorials/gaiad)); pass `--sign-mode amino-json` to `tx sign` if it reports an unsupported sign mode for the device.
+The command prints the transaction and waits for confirmation on the device. Review the chain id, the message type, the amounts, and the fee on the screen before approving. Offline signing (`--generate-only`, `tx sign`) and multisig membership work with a Ledger key the same way as with a local key ([gaiad reference](/hub/next/hub-tutorials/gaiad)). Pass `--sign-mode amino-json` to `tx sign` if it reports an unsupported sign mode for the device.
 
 ## What the device shows
 
-The Cosmos app displays the fields of the signed document: `chain_id`, `account_number`, `sequence`, `fee`, `memo`, and each message with its type and fields (for a delegation: delegator, validator and amount). The device can show either the full expanded view or a short view; approve only after the message fields match what you intended to send.
+The Cosmos app displays the fields of the signed document: `chain_id`, `account_number`, `sequence`, `fee`, `memo`, and each message with its type and fields (for a delegation: delegator, validator, and amount). The device can show either the full expanded view or a short view. Approve only after the message fields match what you intended to send.
 
-## Troubleshooting
+## Troubleshoot
 
 Nearly every failure comes from the device being locked, the Cosmos app being closed or old, or a path mismatch between tools.
 
-- `failed to generate ledger key` or `LedgerHID device not found`: unlock the device, open the Cosmos app, and close Ledger Live and browser tabs that may be holding the USB connection, then retry.
-- `ERR_UNKNOWN_DATA` or the app rejects the transaction: the Cosmos app on the device is older than the message type being signed; update it in Ledger Live and retry.
-- Keplr shows a different address than `gaiad keys show`: the two tools used different paths; compare `--account` and `--index` with the account settings in Keplr.
+- `failed to generate ledger key` or `LedgerHID device not found`: unlock the device, open the Cosmos app, and close Ledger Live and browser tabs that may be holding the USB connection. Then retry.
+- `ERR_UNKNOWN_DATA` or the app rejects the transaction: the Cosmos app on the device is older than the message type being signed. Update it in Ledger Live and retry.
+- Keplr shows a different address than `gaiad keys show`: the two tools used different paths. Compare `--account` and `--index` with the account settings in Keplr.
 - A transaction sent with `--generate-only` on another machine will not sign: the device needs the amino JSON form, so sign with `--sign-mode amino-json`.
 
 ## Verify
@@ -78,7 +78,7 @@ gaiad keys list --output json | jq '.[] | select(.type=="ledger") | {name, addre
 gaiad keys show myledger -d
 ```
 
-The first command lists the Ledger backed entries; the second shows the same address on the device. Any difference means the keyring entry was created at another path than the one the device is showing.
+The first command lists the Ledger-backed entries. The second shows the same address on the device. Any difference means the keyring entry was created at another path than the one the device is showing.
 
 ## Next
 

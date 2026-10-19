@@ -7,7 +7,7 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for the teams that maintain gaia and submit upgrade proposals, and for validators who want to read one before voting. It assumes the process on [Submitting a proposal](/hub/latest/governance/submitting). A passed upgrade proposal stores a plan in the upgrade module; at the plan height every node halts, and operators (or Cosmovisor) switch to the new binary. What validators do at that point is on [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node).
+This page is for the teams that maintain gaia and submit upgrade proposals, and for validators who want to read one before voting. It assumes the process on [Submitting a proposal](/hub/latest/governance/submitting). A passed upgrade proposal stores a plan in the upgrade module. At the plan height every node halts. Operators (or Cosmovisor) then switch to the new binary. What validators do at that point is on [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node).
 
 ## The message
 
@@ -37,15 +37,15 @@ The proposal carries `/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade` with a `plan`:
 ```
 
 - `name` must equal the upgrade handler name registered in the release (`gaiad` refuses to start past the height if its binary has no handler of that name). The Hub names handlers after the version.
-- `height` is the halt height. `time` is unused on the Hub and stays at the zero value.
-- `info` is a string containing JSON with a `binaries` map. Cosmovisor with `DAEMON_ALLOW_DOWNLOAD_BINARIES=true` downloads from it; the Hub docs recommend leaving that false and installing binaries by hand, but the map is still the canonical pointer to the release and its checksums. Each URL carries `?checksum=sha256:<hash>` from the release's `SHA256SUMS-<version>.txt`.
-- `expedited: true` needs 501 ATOM, votes for 3 days and passes at 66.7 percent; proposal 1055 (v28.2.0) used it. Non-expedited upgrades use 500 ATOM and 7 days.
+- `height` is the halt height. The `time` field is unused on the Hub and stays at the zero value.
+- `info` is a string containing JSON with a `binaries` map. Cosmovisor with `DAEMON_ALLOW_DOWNLOAD_BINARIES=true` downloads from it. The Hub docs recommend leaving that false and installing binaries by hand. But the map is still the canonical pointer to the release and its checksums. Each URL carries `?checksum=sha256:<hash>` from the release's `SHA256SUMS-<version>.txt`.
+- `expedited: true` needs 501 ATOM, votes for 3 days, and passes at 66.7 percent. Proposal 1055 (v28.2.0) used it. Non-expedited upgrades use 500 ATOM and 7 days.
 
-The values above are proposal 1055's, read with `gaiad q gov proposal 1055`; the v28.2.0 upgrade executed at height 33073000, which `gaiad q upgrade applied v28.2.0` confirms.
+The values above are proposal 1055's, read with `gaiad q gov proposal 1055`. The v28.2.0 upgrade executed at height 33073000, which `gaiad q upgrade applied v28.2.0` confirms.
 
 ## Build the proposal
 
-`gaiad tx upgrade software-upgrade` builds the whole proposal from flags and validates the `info` JSON against the release before submitting:
+The `gaiad tx upgrade software-upgrade` command builds the whole proposal from flags. It validates the `info` JSON against the release before submitting:
 
 ```bash
 gaiad tx upgrade software-upgrade v28.2.0 \
@@ -56,13 +56,13 @@ gaiad tx upgrade software-upgrade v28.2.0 \
   --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-The command downloads each binary in `--upgrade-info` and checks its checksum unless `--no-validate` is passed; it also checks the `--daemon-name` (default `gaiad`) matches. It has no expedited flag and always writes `"expedited": false`. To expedite, add `--generate-only` to write the unsigned transaction to a file, change `expedited` to `true` and the deposit to at least 501 ATOM in the file, then sign and broadcast it ([offline signing](/hub/latest/delegators/delegator-guide-cli#offline-signing)); this is also how a multisig proposer prepares it. `gaiad tx gov draft-proposal` with the `software-upgrade` type produces the same proposal JSON interactively, asks for the `authority`, and lets you set `expedited` before `submit-proposal`.
+The command downloads each binary in `--upgrade-info` and checks its checksum unless `--no-validate` is passed. It also checks that the `--daemon-name` (default `gaiad`) matches. It has no expedited flag and always writes `"expedited": false`. To expedite, add `--generate-only` to write the unsigned transaction to a file. In the file, change `expedited` to `true` and the deposit to at least 501 ATOM. Then sign and broadcast it ([offline signing](/hub/latest/delegators/delegator-guide-cli#offline-signing)). This is also how a multisig proposer prepares it. The `gaiad tx gov draft-proposal` command with the `software-upgrade` type produces the same proposal JSON interactively, asks for the `authority`, and lets you set `expedited` before `submit-proposal`.
 
-Pick the height from the current block rate. The Hub produces a block about every 6 seconds; `gaiad status` on a synced node gives the current height, and the plan height should leave at least a week after the vote ends for validators to prepare.
+Pick the height from the current block rate. The Hub produces a block about every 6 seconds. The `gaiad status` command on a synced node gives the current height. The plan height should leave at least a week after the vote ends for validators to prepare.
 
 ## Cancel a scheduled upgrade
 
-A plan that must not execute (a bug found after the vote, a missed binary) is removed with `/cosmos.upgrade.v1beta1.MsgCancelUpgrade`, which `gaiad tx upgrade cancel-software-upgrade` builds. It is itself a proposal and has to pass before the plan height, so it is usually expedited. If there is no time for that, validators coordinate out of band to skip the height with `--unsafe-skip-upgrades <height>`; see [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node).
+A plan that must not execute (a bug found after the vote, a missed binary) is removed with `/cosmos.upgrade.v1beta1.MsgCancelUpgrade`, which `gaiad tx upgrade cancel-software-upgrade` builds. It is itself a proposal and has to pass before the plan height. For that reason it is usually expedited. If there is no time for that, validators coordinate out of band to skip the height with `--unsafe-skip-upgrades <height>`. See [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node).
 
 ## Verify
 
@@ -73,7 +73,7 @@ gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com
 gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq -r '.proposal.messages[0].plan.info' | jq .binaries
 ```
 
-`name` matches a published gaia release tag, `height` is in the future, and each binary URL's checksum matches `SHA256SUMS-<version>.txt` on the release page.
+The `name` matches a published gaia release tag. The `height` is in the future. Each binary URL's checksum matches `SHA256SUMS-<version>.txt` on the release page.
 
 After a pass:
 
@@ -81,7 +81,7 @@ After a pass:
 gaiad q upgrade plan --node https://cosmos-rpc.publicnode.com:443
 ```
 
-The plan is listed with its `name` and `height` until the upgrade executes; after that the query is empty and `gaiad q upgrade applied <name>` returns the height it ran at.
+The plan is listed with its `name` and `height` until the upgrade executes. After that the query is empty, and `gaiad q upgrade applied <name>` returns the height it ran at.
 
 ## Next
 

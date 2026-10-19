@@ -15,9 +15,9 @@ This page explains the genesis file for operators who need to place the right on
 
 ## What the file is
 
-The genesis file is a JSON document that defines the state of the chain before its first block: the chain id, the start time, the consensus parameters, and the state of every application module (accounts, balances, validators, parameters). The first block builds on it. `gaiad init <moniker> --chain-id <id>` writes a default one to `~/.gaia/config/genesis.json`; a node joining an existing network replaces that file with the network's published copy.
+The genesis file is a JSON document that defines the state of the chain before its first block. That state includes the chain id, the start time, the consensus parameters, and the state of every application module (accounts, balances, validators, and parameters). The first block builds on it. Running `gaiad init <moniker> --chain-id <id>` writes a default one to `~/.gaia/config/genesis.json`. A node joining an existing network replaces that file with the network's published copy.
 
-A node reads the file at first start. Once it has state in `data/`, it keeps using that state and compares the stored genesis against the file, so the file must stay in place and must be the exact published one, not a reformatted copy.
+A node reads the file at first start. Once it has state in `data/`, it keeps using that state and compares the stored genesis against the file. The file must therefore stay in place. It must also be the exact published one, not a reformatted copy.
 
 ## The cosmoshub-4 genesis
 
@@ -30,7 +30,7 @@ sha256sum genesis.cosmoshub-4.json
 mv genesis.cosmoshub-4.json ~/.gaia/config/genesis.json
 ```
 
-The uncompressed file is 121 MB and its SHA-256 is `6ad715c1ab5637e505e7248bb4366e79d5dec1a24f4fac7db33fead567041633`. Its header reads:
+The uncompressed file is 121 MB. Its SHA-256 is `6ad715c1ab5637e505e7248bb4366e79d5dec1a24f4fac7db33fead567041633`. Its header reads:
 
 ```json
 "chain_id": "cosmoshub-4",
@@ -38,13 +38,13 @@ The uncompressed file is 121 MB and its SHA-256 is `6ad715c1ab5637e505e7248bb436
 "initial_height": "5200791",
 ```
 
-cosmoshub-4 started from an export of cosmoshub-3, so `initial_height` is 5200791 rather than 1 and `genesis_time` is carried over from the earlier chain. The consensus parameters in the file (`max_bytes` 200000, `max_gas` 2000000) are the 2021 values; governance has changed them since, and the live values come from the chain, not the file:
+The cosmoshub-4 chain started from an export of cosmoshub-3. That is why `initial_height` is 5200791 rather than 1, and why `genesis_time` is carried over from the earlier chain. The consensus parameters in the file (`max_bytes` 200000, `max_gas` 2000000) are the 2021 values. Governance has changed them since. The live values come from the chain, not the file:
 
 ```bash
 gaiad q consensus params
 ```
 
-`gaiad genesis validate` on this file fails on v28.3.1 with `section is missing in the app_state` for modules added after 2021 (liquid, packet forward middleware, feemarket and others). That is expected: a node joining today does not replay genesis, it starts from a [snapshot](/hub/next/infrastructure/snapshots) or [state sync](/hub/next/node/sync), and only needs the file's chain id, start height and consensus section to match the network.
+Running `gaiad genesis validate` on this file fails on v28.3.1 with `section is missing in the app_state` for modules added after 2021 (liquid, packet forward middleware, feemarket, and others). That is expected. A node joining today does not replay genesis. It starts from a [snapshot](/hub/next/infrastructure/snapshots) or [state sync](/hub/next/node/sync), and it only needs the file's chain id, start height, and consensus section to match the network.
 
 ## Structure
 
@@ -63,23 +63,23 @@ A file written by `gaiad init` on v28.3.1 has these top level fields:
 }
 ```
 
-`consensus.params` is what CometBFT reads: block size and gas limits, evidence age limits, allowed validator key types (`ed25519` only on the Hub) and ABCI vote extension settings. Older files, including the cosmoshub-4 one, carry the same data under `consensus_params`; both forms load.
+The `consensus.params` section is what CometBFT reads. It holds block size and gas limits, evidence age limits, allowed validator key types (`ed25519` only on the Hub), and Application Blockchain Interface (ABCI) vote extension settings. Older files, including the cosmoshub-4 one, hold the same data under `consensus_params`. Both forms load.
 
-`app_state` has one object per module. The sections an operator building a devnet edits most are:
+The `app_state` section has one object per module. The sections an operator building a devnet edits most are:
 
 - `auth.accounts`: every account that exists at genesis, with `account_number` and `sequence`. `auth.params` holds `max_memo_characters` and `tx_sig_limit`.
-- `bank.balances` and `bank.supply`: starting balances per account; the supply must equal the sum of balances. `bank.denom_metadata` describes display denoms.
-- `staking.params`: `bond_denom` (`uatom` on the Hub, `stake` by default from `gaiad init`), `unbonding_time`, `max_validators`, `min_commission_rate`. `staking.validators` is empty at genesis; validators come from the genesis transactions below.
+- `bank.balances` and `bank.supply`: starting balances per account. The supply must equal the sum of balances. `bank.denom_metadata` describes display denoms.
+- `staking.params`: `bond_denom` (`uatom` on the Hub, `stake` by default from `gaiad init`), `unbonding_time`, `max_validators`, and `min_commission_rate`. The `staking.validators` list is empty at genesis. Validators come from the genesis transactions below.
 - `genutil.gen_txs`: the signed `MsgCreateValidator` transactions that create the first validator set at block 1.
-- `gov.params`: `min_deposit`, `voting_period`, `quorum`, `threshold`, expedited values.
-- `mint.params`, `distribution.params`, `slashing.params`: inflation bounds, community tax, signing window and slash fractions. Defaults from `gaiad init` differ from the Hub's live values (for example `signed_blocks_window` 100 against 10000 on mainnet); set them explicitly.
-- `wasm`, `liquid`, `tokenfactory`, `feemarket`, `ratelimit`, `metaprotocols`, `ibc`, `transfer`, `interchainaccounts`, `08-wasm`, `packetfowardmiddleware`: Hub modules with default parameters. The misspelling `packetfowardmiddleware` is the module's real store key.
+- `gov.params`: `min_deposit`, `voting_period`, `quorum`, `threshold`, and expedited values.
+- `mint.params`, `distribution.params`, and `slashing.params`: inflation bounds, community tax, signing window, and slash fractions. Defaults from `gaiad init` differ from the Hub's live values (for example `signed_blocks_window` 100 against 10000 on mainnet). Set them explicitly.
+- `wasm`, `liquid`, `tokenfactory`, `feemarket`, `ratelimit`, `metaprotocols`, `ibc`, `transfer`, `interchainaccounts`, `08-wasm`, and `packetfowardmiddleware`: Hub modules with default parameters. The misspelling `packetfowardmiddleware` is the module's real store key.
 
-The current value of any parameter on mainnet is one query away (`gaiad q <module> params`); the [Modules](/hub/next/modules/README) page lists them. Use those to copy mainnet behaviour into a devnet.
+The current value of any parameter on mainnet is one query away (`gaiad q <module> params`). The [Modules](/hub/next/modules/README) page lists them. Use those to copy mainnet behaviour into a devnet.
 
-## Building a devnet genesis
+## Build a devnet genesis
 
-Each command below rewrites `~/.gaia/config/genesis.json` in place; pass `--home` to work in another directory.
+Each command below rewrites `~/.gaia/config/genesis.json` in place. Pass `--home` to work in another directory.
 
 ```bash
 gaiad init demo --chain-id demo-1
@@ -90,9 +90,9 @@ gaiad genesis collect-gentxs
 gaiad genesis validate
 ```
 
-`init` writes the default file plus `node_key.json` and `priv_validator_key.json`. `add-genesis-account` adds a `BaseAccount` to `auth.accounts` and a balance to `bank.balances` and `bank.supply` (a key name or an address both work; `--vesting-amount` and `--vesting-end-time` create a vesting account instead). `gentx` builds a `MsgCreateValidator` signed by the key, using the node's own consensus key, and writes it to `config/gentx/`; the amount must be in `bond_denom` and no larger than the account's balance. `collect-gentxs` reads every file in `config/gentx/` into `genutil.gen_txs` and sets the node's persistent peers from them. `validate` checks that every module section parses and that invariants such as supply hold; it prints `is a valid genesis file` on success.
+The `init` command writes the default file plus `node_key.json` and `priv_validator_key.json`. The `add-genesis-account` command adds a `BaseAccount` to `auth.accounts` and a balance to `bank.balances` and `bank.supply`. A key name or an address both work. The `--vesting-amount` and `--vesting-end-time` flags create a vesting account instead. The `gentx` command builds a `MsgCreateValidator` signed by the key, using the node's own consensus key, and writes it to `config/gentx/`. The amount must be in `bond_denom` and no larger than the account's balance. The `collect-gentxs` command reads every file in `config/gentx/` into `genutil.gen_txs` and sets the node's persistent peers from them. The `validate` command checks that every module section parses and that invariants such as supply hold. It prints `is a valid genesis file` on success.
 
-`gaiad init` sets `bond_denom` to `stake`, so a devnet that should look like the Hub needs `staking.params.bond_denom`, `mint.params.mint_denom`, `gov.params.min_deposit` and `crisis` style fee denoms changed to `uatom` before `gentx`. Edit with `jq` or `sed` and run `gaiad genesis validate` again. `gaiad genesis migrate <target-version>` converts a genesis exported by an older gaia to a newer module layout, and `gaiad export` produces a genesis from a running node's state for forks and test networks.
+Because `gaiad init` sets `bond_denom` to `stake`, a devnet that should look like the Hub needs `staking.params.bond_denom`, `mint.params.mint_denom`, `gov.params.min_deposit`, and `crisis` style fee denoms changed to `uatom` before `gentx`. Edit with `jq` or `sed`, then run `gaiad genesis validate` again. The `gaiad genesis migrate <target-version>` command converts a genesis exported by an older gaia to a newer module layout. The `gaiad export` command produces a genesis from a running node's state for forks and test networks.
 
 ## Verify
 
@@ -101,7 +101,7 @@ gaiad genesis validate
 jq '{chain_id, initial_height, genesis_time}' ~/.gaia/config/genesis.json
 ```
 
-For a devnet, `validate` must report a valid file and `jq` must show the chain id you passed to `init`. For mainnet, `jq` must show `cosmoshub-4` and `5200791`, and `sha256sum` must match the value above; `validate` is expected to fail on the mainnet file as described.
+For a devnet, `validate` must report a valid file. The `jq` output must show the chain id you passed to `init`. For mainnet, `jq` must show `cosmoshub-4` and `5200791`. The `sha256sum` output must match the value above. On the mainnet file, `validate` is expected to fail as described.
 
 ## Next
 

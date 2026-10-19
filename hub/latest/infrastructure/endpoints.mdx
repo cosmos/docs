@@ -7,11 +7,11 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for operators who already run a synced Cosmos Hub full node (see [Join mainnet](/hub/latest/hub-tutorials/join-mainnet)) and want to serve it to other people. At the end you have a node that answers CometBFT RPC, Cosmos SDK REST and gRPC behind a reverse proxy, with limits that keep one noisy client from taking the node down.
+This page is for operators who already run a synced Cosmos Hub full node (see [Join mainnet](/hub/latest/hub-tutorials/join-mainnet)) and want to serve it to other people. At the end you have a node that answers CometBFT remote procedure call (RPC), Cosmos SDK REST, and gRPC behind a reverse proxy, with limits that keep one noisy client from taking the node down.
 
 ## Which node serves endpoints
 
-Serve endpoints from a dedicated full node, never from a validator. The validator node should keep RPC bound to localhost and talk only to its sentries; see [Validator security](/hub/latest/validators/security). An endpoint node needs no consensus key and no stake, only disk, bandwidth and a public address.
+Serve endpoints from a dedicated full node, never from a validator. The validator node should keep RPC bound to localhost and connect only to its sentries. See [Validator security](/hub/latest/validators/security). An endpoint node needs no consensus key and no stake, only disk, bandwidth, and a public address.
 
 Decide first how much history the node keeps, because that decides which queries it can answer:
 
@@ -34,9 +34,9 @@ max_subscriptions_per_client = 5
 timeout_broadcast_tx_commit = "10s"
 ```
 
-Keep `laddr` on `127.0.0.1` and put the reverse proxy in front of it. Binding `0.0.0.0` exposes the unauthenticated endpoint directly, including `/unsafe_*` style routes if `unsafe = true` is ever set. Set `cors_allowed_origins = ["*"]` only if browser wallets must talk to this node directly; a proxy can also add the header.
+Keep `laddr` on `127.0.0.1`. Put the reverse proxy in front of it. Binding `0.0.0.0` exposes the unauthenticated endpoint directly, including `/unsafe_*` style routes if `unsafe = true` is ever set. Set `cors_allowed_origins = ["*"]` only if browser wallets must reach this node directly. A proxy can also add the header.
 
-`gaiad config set config ...` is not supported on gaia v28.3.1 (it returns "cometbft config is not supported"), so edit `config.toml` by hand or with `sed`.
+To change a `config.toml` key with `gaiad config set config ...` on gaia v28.3.1, add the `-s` flag (`--skip-validate`). Without it the command returns `cometbft config is not supported`.
 
 Check that the RPC answers and is not catching up:
 
@@ -44,7 +44,7 @@ Check that the RPC answers and is not catching up:
 curl -s http://127.0.0.1:26657/status | jq '.result.sync_info | {latest_block_height, catching_up}'
 ```
 
-`catching_up` must be `false` before the node goes behind a public hostname.
+The `catching_up` field must be `false` before the node goes behind a public hostname.
 
 ## Transaction indexer
 
@@ -55,11 +55,11 @@ Wallets and explorers call `/tx?hash=` and `/tx_search`. Both need the transacti
 indexer = "kv"
 ```
 
-Set `indexer = "null"` only on nodes that will never serve transaction lookups (sentries, signing nodes). Switching the indexer later does not index old blocks; the node has to resync or restore a snapshot that was made with indexing enabled.
+Set `indexer = "null"` only on nodes that will never serve transaction lookups (sentries, signing nodes). Switching the indexer later does not index old blocks. The node has to resync or restore a snapshot that was made with indexing enabled.
 
 ## REST (API) and gRPC
 
-The SDK listeners are in `app.toml`. The API is off by default and gRPC is on, bound to all interfaces:
+The SDK listeners are in `app.toml`. The API is off by default. gRPC is on, bound to `localhost:9090`:
 
 ```toml
 [api]
@@ -75,7 +75,7 @@ address = "localhost:9090"
 enable = true
 ```
 
-Turn the API on and keep both listeners on localhost; `gaiad config set app` accepts dotted keys:
+Turn the API on and keep both listeners on localhost. The `gaiad config set app` command accepts dotted keys:
 
 ```bash
 gaiad config set app api.enable true
@@ -90,22 +90,22 @@ The REST API answers under `/cosmos/...` paths, for example:
 curl -s http://127.0.0.1:1317/cosmos/base/tendermint/v1beta1/node_info | jq .default_node_info.network
 ```
 
-The answer is `cosmoshub-4`. gRPC needs a TLS terminating proxy that speaks HTTP/2; gRPC-web shares the API port.
+The answer is `cosmoshub-4`. gRPC needs a Transport Layer Security (TLS) terminating proxy that supports HTTP/2. gRPC-web shares the API port.
 
 ## Reverse proxy and limits
 
-Put TLS termination, request limits and a health check in a reverse proxy (nginx, Caddy, HAProxy or a cloud load balancer). The settings that matter, whatever the proxy:
+Put TLS termination, request limits, and a health check in a reverse proxy (nginx, Caddy, HAProxy, or a cloud load balancer). The settings that matter, whatever the proxy:
 
 - Health check on `GET /status` and mark the backend down when `catching_up` is `true` or the latest block time is older than about a minute. A node that is behind still returns 200.
-- Per-client rate limit on `/tx_search`, `/block_search` and `/abci_query`. These are the calls that let one client saturate disk.
+- Per-client rate limit on `/tx_search`, `/block_search`, and `/abci_query`. These are the calls that let one client saturate disk.
 - Websocket pass-through on `/websocket` for Hermes `event_source = { mode = "push" }` subscriptions, with an idle timeout longer than the relayer's ping interval.
 - A body size limit around 1 MiB. Transactions on the Hub are limited by the consensus `max_bytes` of 2,000,000, so nothing legitimate is larger.
 
-Do not expose the CometBFT P2P port (26656) through the same proxy; P2P is a separate listener covered on [Peering](/hub/latest/infrastructure/peering).
+Do not expose the CometBFT peer to peer (P2P) port, 26656, through the same proxy. P2P is a separate listener covered on [Peering](/hub/latest/infrastructure/peering).
 
 ## Publish the endpoint
 
-Other operators find public endpoints through the [chain registry](https://github.com/cosmos/chain-registry/blob/master/cosmoshub/chain.json) (`apis.rpc`, `apis.rest`, `apis.grpc`) and through [cosmos.directory](https://cosmos.directory/cosmoshub), which reads the registry. Add the hostname with a pull request against the registry once the endpoint has been stable for a while. Remove it again before taking the node down for a long time; stale entries break wallets for everyone.
+Other operators find public endpoints through the [chain registry](https://github.com/cosmos/chain-registry/blob/master/cosmoshub/chain.json) (`apis.rpc`, `apis.rest`, `apis.grpc`) and through [cosmos.directory](https://cosmos.directory/cosmoshub), which reads the registry. Add the hostname with a pull request against the registry once the endpoint has been stable for a while. Remove it again before taking the node down for a long time. Stale entries break wallets for everyone.
 
 ## Verify
 
@@ -117,7 +117,7 @@ gaiad q bank balances cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn --node https
 gaiad q tx EC76C5DE43CD14068AAECB2F018F0616E9ECD192F83C5E308E0BA0013DBCBB24 --node https://rpc.example.com:443 --output json | jq '{height, code, gas_used}'
 ```
 
-The first returns `false`. The second returns the gov module account's uatom balance, which proves `abci_query` works through the proxy. The third returns height `33424479`, code `0`, which proves the transaction indexer and `/tx` work; on a pruned node that was synced after that height the third call fails, which is expected.
+The first returns `false`. The second returns the gov module account's uatom balance, which proves `abci_query` works through the proxy. The third returns height `33424479`, code `0`, which proves the transaction indexer and `/tx` work. On a pruned node that was synced after that height the third call fails, which is expected.
 
 ## Next
 

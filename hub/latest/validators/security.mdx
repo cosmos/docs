@@ -7,23 +7,23 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-This page is for an operator with a validator created on chain ([Create and manage a validator](/hub/latest/validators/validator-setup)) and the consensus key in a [remote signer](/hub/latest/validators/remote-signing). At the end the validator host is unreachable from the public internet, every host exposes only the ports its job needs, and each key sits on the host where losing it does the least damage.
+This page is for an operator with a validator created on chain ([Create and manage a validator](/hub/latest/validators/validator-setup)) and the consensus key in a [remote signer](/hub/latest/validators/remote-signing). At the end the validator host is unreachable from the public internet. Every host exposes only the ports its job needs, and each key is on the host where losing it does the least damage.
 
 Diverse setups make the network stronger. Treat what follows as the minimum, not a template to copy exactly.
 
-## Where each key lives
+## Where to keep each key
 
-Each of the three keys goes on a different host, and none of them can be rotated on gaia v28.3.1, so placement is the only protection you get.
+Each of the three keys goes on a different host. None of them can be rotated on gaia v28.3.1, so placement is the only protection you get.
 
-- Operator key: never on a server. Keep it on a [Ledger](/hub/latest/resources/ledger) or in an `os` or `file` keyring on a machine you sign from, and consider a multisig (`gaiad keys add <name> --multisig <k1>,<k2> --multisig-threshold 2`). Losing it loses the funds on the account and control of the validator forever, because the `cosmosvaloper` address cannot be replaced. A thief with it can change your commission, withdraw commission and unjail, but cannot sign blocks.
-- Consensus key: on the signer host or inside an HSM, never on the validator host. A copy on two running hosts is the usual cause of double signing, which slashes 5 percent and tombstones the validator.
-- Node key: on the validator host, in `config/node_key.json`. It is only the peer identity. If it leaks, delete the file, restart, and update `private_peer_ids` and `unconditional_peer_ids` on the sentries with the new id from `gaiad comet show-node-id`.
+- Operator key: never on a server. Keep it on a [Ledger](/hub/latest/resources/ledger) or in an `os` or `file` keyring on a machine you sign from. Consider a multisig (`gaiad keys add <name> --multisig <k1>,<k2> --multisig-threshold 2`). Losing it loses the funds on the account and control of the validator forever, because the `cosmosvaloper` address cannot be replaced. A thief with it can change your commission, withdraw commission, and unjail, but cannot sign blocks.
+- Consensus key: on the signer host or inside a hardware security module (HSM), never on the validator host. A copy on two running hosts is the usual cause of double signing. A double sign slashes 5 percent and tombstones the validator.
+- Node key: on the validator host, in `config/node_key.json`. It is only the peer identity. If it leaks, delete the file and restart. Then update `private_peer_ids` and `unconditional_peer_ids` on the sentries with the new id from `gaiad comet show-node-id`.
 
 ## Sentry topology
 
 A validator that peers directly with the internet can be found and flooded. The sentry pattern puts public full nodes in front of it: the validator peers only with your sentries, over private addresses, and the sentries peer with everyone else. A sentry under attack can be dropped and replaced without the validator missing a block.
 
-Run at least two sentries in different networks or providers. The [CometBFT validator guide](/cometbft/latest/docs/core/Validators) has the full configuration tables; the keys below are the ones that matter, with the `gaiad config` command and the `config.toml` key for each. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`, because the binary's confix validator does not know the CometBFT schema; the values are still written and read correctly.
+Run at least two sentries in different networks or providers. The [CometBFT validator guide](/cometbft/latest/docs/core/Validators) has the full configuration tables. The keys below are the ones that matter, with the `gaiad config` command and the `config.toml` key for each. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`, because the binary's confix validator does not know the CometBFT schema. The values are still written and read correctly.
 
 On the validator:
 
@@ -39,7 +39,7 @@ gaiad config set config consensus.double_sign_check_height 10 --skip-validate
 - `persistent_peers`: the sentries, by node id and private address. Get each id with `gaiad comet show-node-id` on that sentry.
 - `unconditional_peer_ids`: the sentries keep their slot even when the peer limits are full.
 - `addr_book_strict = false`: allows private addresses in the address book.
-- `double_sign_check_height = 10`: on restart the node exits with `Error: failed to start ConsensusReactor: found signature from the same key` if its consensus key signed any of the last 10 blocks, which catches a second instance still running somewhere.
+- `double_sign_check_height = 10`: on restart the node exits with `Error: failed to start ConsensusReactor: found signature from the same key` if its consensus key signed any of the last 10 blocks. That catches a second instance still running somewhere.
 
 On each sentry:
 
@@ -56,7 +56,7 @@ gaiad config set config p2p.addr_book_strict false --skip-validate
 - `persistent_peers`: the validator plus the other sentries, so the sentries also form a mesh among themselves.
 - `pex = true` and the default `max_num_inbound_peers = 40`, `max_num_outbound_peers = 10` keep the sentry well connected to the public network.
 
-Every one of these is a plain `config.toml` key (`[p2p]` and `[consensus]` tables). Confirm with `gaiad config get config p2p.pex` and the other keys, then restart the service. Flags beat environment variables (`GAIAD_P2P_PEX`), and environment variables beat the file, so a stray export in the service unit silently overrides what you just set.
+Every one of these is a plain `config.toml` key (`[p2p]` and `[consensus]` tables). Confirm with `gaiad config get config p2p.pex` and the other keys, then restart the service. Flags beat environment variables (`GAIAD_P2P_PEX`), and environment variables beat the file. A stray export in the service unit therefore silently overrides what you just set.
 
 ## Firewall per host
 
@@ -66,42 +66,42 @@ The validator host should accept only three kinds of inbound connection, all fro
 - The privval port (26659 in these docs) from the signer host only, when the signer dials in.
 - SSH from your management network only.
 
-Nothing else. Leave 26657 (RPC), 1317 (API), 9090 (gRPC) and 26660 (Prometheus) bound to localhost or a private interface, and query them over a VPN or an SSH tunnel. The defaults in `config.toml` already bind RPC to `tcp://127.0.0.1:26657` and p2p to `tcp://0.0.0.0:26656`.
+Nothing else. Leave 26657 (RPC), 1317 (API), 9090 (gRPC), and 26660 (Prometheus) bound to localhost or a private interface. Query them over a VPN or an SSH tunnel. The defaults in `config.toml` already bind RPC to `tcp://127.0.0.1:26657` and p2p to `tcp://0.0.0.0:26656`.
 
-Sentries open 26656 to the world. If a sentry also serves RPC or API, run that on a separate node; a public RPC behind the same process as a sentry invites the load you built sentries to avoid.
+Sentries open 26656 to the world. If a sentry also serves RPC or API, run that on a separate node. A public RPC behind the same process as a sentry invites the load you built sentries to avoid.
 
 The signer host accepts nothing inbound except SSH from the management network. It dials out to the validator's privval port.
 
-Use a private network, VPN or cloud VPC between validator, sentries and signer so the private addresses in `persistent_peers` never traverse the public internet.
+Use a private network, VPN, or virtual private cloud (VPC) between validator, sentries, and signer so the private addresses in `persistent_peers` never traverse the public internet.
 
 ## DDoS
 
-With sentries in place, the validator has no public address to attack. What remains:
+With sentries in place, the validator has no public address for a distributed denial of service (DDoS) attack. What remains:
 
 - Keep sentries replaceable: image them, keep a synced spare, and script replacing one and updating `persistent_peers`.
 - Spread sentries across providers and regions so one provider's outage or filtering does not take all of them.
-- Watch `cometbft_p2p_peers` on the validator; if it falls to zero the validator is isolated even though it is up. See [Monitoring](/hub/latest/validators/monitoring).
+- Watch `cometbft_p2p_peers` on the validator. If it falls to zero, the validator is isolated even though it is up. See [Monitoring](/hub/latest/validators/monitoring).
 - Do not publish the validator's IP anywhere, including the chain registry, Discord, or your website. Publish sentry or dedicated seed addresses instead.
 
 ## Host hygiene
 
 <Warning>
-Never copy `priv_validator_key.json` or a signer's state file onto a second host "as a backup that is also running". Two signers with one key double sign within minutes. Back up the key encrypted and offline; back up state files never.
+Never copy `priv_validator_key.json` or a signer's state file onto a second host "as a backup that is also running". Two signers with one key double sign within minutes. Back up the key encrypted and offline. Never back up state files.
 </Warning>
 
 - Run gaiad as an unprivileged user with the service hardening in [Run gaiad as a service](/hub/latest/node/service).
 - Keep the OS patched on a schedule that does not coincide with upgrade heights.
-- Disable password SSH; use keys and a bastion.
+- Disable password SSH. Use keys and a bastion.
 - Keep system time accurate (chrony or systemd-timesyncd). Clock drift causes dropped votes.
 - When the node restarts after the same key signed recent blocks, `double_sign_check_height` makes it exit on purpose with `found signature from the same key`. Stop, wait ten or more blocks (about a minute on mainnet), and start again rather than lowering the setting.
 
 ## Verify
 
-- From a machine outside your network, `nc -vz <validator-ip> 26656` and `26657` time out; the same against each sentry's 26656 connects.
+- From a machine outside your network, `nc -vz <validator-ip> 26656` and `26657` time out. The same against each sentry's 26656 connects.
 - On the validator, `curl -s localhost:26657/net_info | jq '.result.peers[].node_info.id'` lists exactly your sentry ids.
-- On each sentry, `curl -s localhost:26657/net_info | jq '.result.n_peers'` shows a healthy count (tens), and `/dump_consensus_state` on a public node that peers only with your sentries never shows the validator's address. Keep the sentries' own RPC ports closed to the public or bound to localhost, because `/net_info` and `/dump_consensus_state` on a sentry do list the validator's id and address.
-- `gaiad config get config p2p.pex` prints `false` on the validator and `true` on the sentries.
-- On the validator host, `config/priv_validator_key.json` holds a throwaway key, not the live one, and `curl -s localhost:26657/status | jq .result.validator_info.pub_key` shows the key held by the remote signer.
+- On each sentry, `curl -s localhost:26657/net_info | jq '.result.n_peers'` shows a healthy count (tens). On a public node that peers only with your sentries, `/dump_consensus_state` never shows the validator's address. Keep the sentries' own RPC ports closed to the public or bound to localhost, because `/net_info` and `/dump_consensus_state` on a sentry do list the validator's id and address.
+- The command `gaiad config get config p2p.pex` prints `false` on the validator and `true` on the sentries.
+- On the validator host, `config/priv_validator_key.json` holds a throwaway key, not the live one. On the same host, `curl -s localhost:26657/status | jq .result.validator_info.pub_key` shows the key held by the remote signer.
 
 ## Next
 
