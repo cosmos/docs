@@ -7,7 +7,7 @@ import { HubVerified } from '/snippets/hub-verified.mdx';
 
 <HubVerified date="2026-10-15" log="https://github.com/cosmos/docs" />
 
-You need a machine that meets the [system requirements](/hub/latest/getting-started/system-requirements) and a verified `gaiad` from [Install gaiad](/hub/latest/getting-started/installation). At the end you have a full node on `cosmoshub-4` that is catching up or caught up, with configuration you set through `gaiad config` rather than by editing TOML by hand. A validator starts as exactly this node. The validator pages add the keys and the transaction on top.
+You need a machine that meets the [system requirements](/hub/latest/getting-started/system-requirements) and a verified `gaiad` from [Install gaiad](/hub/latest/getting-started/installation). At the end you have a full node on `cosmoshub-4`, configured through `gaiad config` rather than by hand-edited TOML. A validator starts as exactly this node.
 
 Commands below use the default home `~/.gaia`. Add `--home <path>` to every command if you keep the node elsewhere. The units on [Run gaiad as a service](/hub/latest/node/service) pass `--home` for the same reason. Do not rely on `GAIAD_HOME`, because not every subcommand honours it on v28.3.1.
 
@@ -17,9 +17,9 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     gaiad init my-hub-node --chain-id cosmoshub-4
     ```
 
-    This creates `~/.gaia/config` with `config.toml`, `app.toml`, `client.toml`, a placeholder `genesis.json`, `node_key.json`, and `priv_validator_key.json`, plus `~/.gaia/data/priv_validator_state.json`. The moniker is a display name for peers and explorers. Use ASCII only, since a Unicode moniker makes the node unreachable. The command prints the node id and the new genesis as JSON. The printed genesis is a throwaway that the next step replaces.
+    This creates `~/.gaia/config` with `config.toml`, `app.toml`, `client.toml`, a placeholder `genesis.json` that the next step replaces, `node_key.json`, and `priv_validator_key.json`, plus `~/.gaia/data/priv_validator_state.json`. The moniker is a display name. Use ASCII only, since a Unicode moniker makes the node unreachable.
 
-    The init also generates the two key files a validator will care about later. The `node_key.json` file is the peer to peer (P2P) identity and can be regenerated at any time. The `priv_validator_key.json` file is the consensus key. On a full node it signs nothing. On a validator it signs blocks and cannot be rotated on the Hub today. If this machine will become a validator, back that file up now and never copy it to a second running node. [Security](/hub/latest/validators/security) covers key handling.
+    Two of those files are keys. The `node_key.json` file is the peer to peer (P2P) identity and can be regenerated at any time. The `priv_validator_key.json` file is the consensus key, which cannot be rotated on the Hub today. If this machine will become a validator, back it up now and never copy it to a second running node. [Security](/hub/latest/validators/security) covers key handling.
 
     Check:
 
@@ -38,7 +38,7 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     mv genesis.cosmoshub-4.json ~/.gaia/config/genesis.json
     ```
 
-    The checksum of the gzipped file is `7fe946e6bb3c378da546767f4d078585c38f256c8ec17888d71aeee3b7edd5c7`, as published in the [cosmos/mainnet genesis checksum file](https://github.com/cosmos/mainnet/blob/master/genesis/genesis_checksum.md). The file is about 21 MB compressed. The chain `cosmoshub-4` launched on 2021-02-18 at height 5200791 from the exported state of `cosmoshub-3`, so this genesis is not an empty chain. The `genesis_time` field still holds the `cosmoshub-3` date (2019-12-11), and block 5200791 repeats it. The first real block, 5200792, is timestamped 2021-02-18.
+    The checksum of the gzipped file is `7fe946e6bb3c378da546767f4d078585c38f256c8ec17888d71aeee3b7edd5c7`, as published in the [cosmos/mainnet genesis checksum file](https://github.com/cosmos/mainnet/blob/master/genesis/genesis_checksum.md). The file is about 21 MB compressed. It is the exported state of `cosmoshub-3`, which is why `initial_height` is 5200791 and `genesis_time` is a 2019 date.
 
     Check:
 
@@ -46,7 +46,7 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     jq -r '.chain_id, .initial_height, .genesis_time' ~/.gaia/config/genesis.json
     ```
 
-    This prints `cosmoshub-4`, `5200791`, and `2019-12-11T16:11:34Z`. Do not use `gaiad genesis validate` on this file. The 2019 genesis predates several module formats, and v28.3.1 reports `section is missing in the app_state`, even though the node bootstraps from it without trouble. The checksum is the real check.
+    This prints `cosmoshub-4`, `5200791`, and `2019-12-11T16:11:34Z`. Do not run `gaiad genesis validate` on this file. On v28.3.1 it reports `section is missing in the app_state` because the file predates several module formats, yet the node bootstraps from it without trouble. The checksum is the real check.
   </Step>
 
   <Step title="Set the client defaults">
@@ -55,7 +55,7 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     gaiad config get client chain-id
     ```
 
-    This writes `chain-id = "cosmoshub-4"` to `client.toml`, so every later `gaiad query` and `gaiad tx` on this machine targets the right chain without a `--chain-id` flag. The `gaiad config` command is the confix tool. Its `get` reads a key back, and `view client` prints the whole file.
+    This writes `chain-id = "cosmoshub-4"` to `client.toml`, so later `gaiad query` and `gaiad tx` commands need no `--chain-id` flag. The `get` subcommand reads a key back, and `view client` prints the whole file.
   </Step>
 
   <Step title="Set the minimum gas price">
@@ -64,13 +64,13 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     gaiad config get app minimum-gas-prices
     ```
 
-    This sets `minimum-gas-prices` in `app.toml`. Set it before any other `gaiad config set app` change. On a fresh home every other `app.toml` edit is rejected with `set min gas price in app.toml or flag or env variable` until `minimum-gas-prices` has a value. The Hub prices transactions with the feemarket module, whose floor is 0.005uatom. A node that accepts cheaper transactions into its mempool just holds spam that no block will include. Fees work out as `fees = ceil(gas * gasPrices)`. One query returns the live price:
+    This sets `minimum-gas-prices` in `app.toml`. Set it first: on a fresh home every other `gaiad config set app` change is rejected with `set min gas price in app.toml or flag or env variable` until it has a value. The feemarket module's floor is 0.005uatom, and a node that accepts cheaper transactions only holds spam that no block will include. One query returns the live price:
 
     ```bash
     curl -s https://cosmos-rest.publicnode.com/feemarket/v1/gas_price/uatom | jq -r '.price.amount'
     ```
 
-    On 2026-10-15 this returned `0.005000000000000000`. The TOML key is `minimum-gas-prices` at the top of `app.toml`.
+    On 2026-10-15 this returned `0.005000000000000000`.
   </Step>
 
   <Step title="Add seeds">
@@ -81,9 +81,9 @@ Commands below use the default home `~/.gaia`. Add `--home <path>` to every comm
     gaiad config get config p2p.seeds
     ```
 
-    This writes `seeds` in the `[p2p]` section of `config.toml` from the chain registry's seed list. That list had ten entries on 2026-10-15, for example `ade4d8bc8cbe014af6ebdf3cb7b1e9ad36f412c0@seeds.polkachu.com:14956`. Seeds give your node a list of peers and disconnect. The node then fills its 40 inbound and 10 outbound slots on its own. Persistent peers (`p2p.persistent_peers`, from `.peers.persistent_peers` in the same file) are for nodes you want to stay connected to, such as your own sentries.
+    This writes `seeds` in the `[p2p]` section of `config.toml` from the chain registry, which listed ten seeds on 2026-10-15. Seeds hand your node a peer list and disconnect, and the node fills its 40 inbound and 10 outbound slots on its own. Reserve `p2p.persistent_peers` for nodes you must stay connected to, such as your own sentries.
 
-    The `-s` flag (`--skip-validate`) is required for every `config.toml` key. Without it, `gaiad config set config` on v28.3.1 fails with `cometbft config is not supported`. The write is still a plain TOML edit, and `gaiad config get config <key>` reads the result back without the flag.
+    The `-s` flag (`--skip-validate`) is required for every `config.toml` key on v28.3.1. Without it `gaiad config set config` fails with `cometbft config is not supported`. Reading a key back with `gaiad config get config <key>` needs no flag.
   </Step>
 
   <Step title="Choose pruning and the database backend">
@@ -137,7 +137,7 @@ gaiad export > export.json
 gaiad export --height <height> --for-zero-height --log_level error > new_genesis.json
 ```
 
-The `--height` flag exports the state after that block. The `--for-zero-height` flag rewrites it so the file can start a new chain at height 0. The `--modules-to-export` flag limits the output to a comma separated module list. With `--height` the command logs a fastnode notice (`INF NOTICE: this could take a long time to migrate IAVL store to fastnode ...`) to stdout before the JSON. Without `--log_level error` the redirected file therefore starts with a log line, and `jq` rejects it. Passing `--output-document new_genesis.json` also keeps the log out of the file. Plain `gaiad export` writes clean JSON. Check with `jq -r .chain_id new_genesis.json`.
+The `--height` flag exports the state after that block, `--for-zero-height` rewrites it to start a new chain at height 0, and `--modules-to-export` limits the output to a comma separated module list. With `--height` the command prints a fastnode notice to stdout before the JSON, so keep `--log_level error` (or pass `--output-document new_genesis.json`) or `jq` rejects the file. Check with `jq -r .chain_id new_genesis.json`.
 
 ## Verify
 

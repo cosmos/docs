@@ -52,7 +52,7 @@ On 2026-10-15 this printed `v28.3.1`. The examples below use that tag. Replace i
     sha256sum --check --ignore-missing "SHA256SUMS-${GAIA_TAG}.txt"
     ```
 
-    The `gpg --verify` command must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"`. A warning that the key is not certified with a trusted signature is normal for a key you imported directly. A `BAD signature` line is not normal. The line `Can't check signature: No public key` means the import step did not reach the keyring gpg is using. The checksum file lists `./gaiad-linux-amd64/gaiad`, which is where the tarball extracts to. The `sha256sum --check` command therefore prints `./gaiad-linux-amd64/gaiad: OK`. On macOS use `shasum -a 256 --check --ignore-missing`.
+    Expect `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` from `gpg --verify` and `./gaiad-linux-amd64/gaiad: OK` from `sha256sum --check`. A warning that the key is not certified is normal for a key you imported directly. A `BAD signature` line is not, and `Can't check signature: No public key` means the import did not reach the keyring gpg uses. On macOS use `shasum -a 256 --check --ignore-missing`.
 
     Install the binary where your service user can run it:
 
@@ -60,7 +60,7 @@ On 2026-10-15 this printed `v28.3.1`. The examples below use that tag. Replace i
     sudo install -m 0755 gaiad-linux-amd64/gaiad /usr/local/bin/gaiad
     ```
 
-    The `install` command copies the file and sets the mode in one step. The `/usr/local/bin` directory is on `PATH` for every user. That keeps the systemd unit on [Run gaiad as a service](/hub/latest/node/service) simple.
+    The `install` command copies the file and sets the mode in one step, and `/usr/local/bin` is on `PATH` for every user, including the service user on [Run gaiad as a service](/hub/latest/node/service).
   </Tab>
   <Tab title="Container image">
     The release workflow publishes `ghcr.io/cosmos/gaia:<tag>` for every release tag (for example `ghcr.io/cosmos/gaia:v28.3.1`), plus a `nightly` tag from main. There is no `latest` tag, which is deliberate. Pin the tag mainnet runs. The image is a static linux/amd64 build with `gaiad start` as its entrypoint. It runs as user `nonroot` (uid 1025) and exposes ports 26656, 26657, 1317, and 9090.
@@ -72,9 +72,9 @@ On 2026-10-15 this printed `v28.3.1`. The examples below use that tag. Replace i
     docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v28.3.1 version --long | grep -E '^(version|commit):'
     ```
 
-    The image build stamps the version as `HEAD-<commit>` rather than the tag. This therefore prints `version: HEAD-b7f8b81bd4bd3df697d484cbb5577c1382435243` with `commit: b7f8b81bd4bd3df697d484cbb5577c1382435243`. Match the commit against the [v28.3.1 release page](https://github.com/cosmos/gaia/releases/tag/v28.3.1). The commit is the proof, not the version string. Any other `gaiad` subcommand works the same way with `--entrypoint gaiad`.
+    The image stamps the version as `HEAD-<commit>`, so this prints `version: HEAD-b7f8b81bd4bd3df697d484cbb5577c1382435243`. Match the commit against the [v28.3.1 release page](https://github.com/cosmos/gaia/releases/tag/v28.3.1). The commit is the proof, not the version string.
 
-    Mount a host directory as the node home so the data survives the container. The home inside the container is whatever you pass with `--home`. The convention from the gaia repository is `/opt/gaia`:
+    Mount a host directory as the node home so the data survives the container. The gaia repository's convention is `/opt/gaia`:
 
     ```bash
     sudo mkdir -p /opt/gaia && sudo chown 1025:1025 /opt/gaia
@@ -87,10 +87,10 @@ On 2026-10-15 this printed `v28.3.1`. The examples below use that tag. Replace i
     docker run -d --name gaiad --restart unless-stopped -p 26656:26656 -v /opt/gaia:/opt/gaia ghcr.io/cosmos/gaia:v28.3.1 --home /opt/gaia
     ```
 
-    Upgrades with the container image mean changing the tag at the upgrade height. Cosmovisor does not run inside this image. See [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) for the manual upgrade sequence.
+    To upgrade, change the tag at the upgrade height. Cosmovisor does not run inside this image, so follow the manual sequence on [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node).
   </Tab>
   <Tab title="Source build">
-    Build from the release tag with the Go version pinned in that tag's `go.mod`. For v28.3.1 that is Go 1.25.7. Any later 1.25 patch works (1.25.14 was current on 2026-10-15). The Makefile refuses older Go, and Go 1.27 fails to compile a dependency. Match the minor version.
+    Build from the release tag with the Go version pinned in that tag's `go.mod`. For v28.3.1 that is Go 1.25.7 or any later 1.25 patch (1.25.14 was current on 2026-10-15). The Makefile refuses older Go, and Go 1.27 fails to compile a dependency.
 
     Install the build tools and Go:
 
@@ -112,11 +112,11 @@ On 2026-10-15 this printed `v28.3.1`. The examples below use that tag. Replace i
     CGO_ENABLED=1 make install
     ```
 
-    The `make install` target compiles with the `netgo,ledger` build tags and places `gaiad` in `$(go env GOPATH)/bin`. Setting `CGO_ENABLED=1` is required because wasmvm is a C library. A build without it fails at link time. The `make build` target writes to `./build/gaiad` instead of installing.
+    The `make install` target compiles with the `netgo,ledger` build tags and places `gaiad` in `$(go env GOPATH)/bin`. Wasmvm is a C library, so a build without `CGO_ENABLED=1` fails at link time. The `make build` target writes to `./build/gaiad` instead.
 
     If the build fails with `flag provided but not defined: -L`, an `LDFLAGS` variable from your environment is leaking into the Go linker. Run `LDFLAGS="" make install`.
 
-    A source build is also the only option that includes the `ledger` build tag, which `gaiad keys add --ledger` needs. It is not bit for bit identical to the release binary. If you need a build you can compare to the published checksums, follow [Reproducible builds](/hub/latest/resources/reproducible-builds).
+    A source build is the only option with the `ledger` build tag, which `gaiad keys add --ledger` needs. It is not bit for bit identical to the release binary. For one you can compare to the published checksums, follow [Reproducible builds](/hub/latest/resources/reproducible-builds).
   </Tab>
 </Tabs>
 
