@@ -1,0 +1,87 @@
+---
+title: "Signing & Broadcasting"
+description: "Sign and broadcast transactions, or separate the two steps for advanced workflows"
+---
+
+Once you have your messages and fee, `SigningStargateClient` handles signing and broadcasting. There are three approaches depending on how much control you need.
+
+## `signAndBroadcast` — The Standard Flow
+
+Signs the transaction, broadcasts it, and polls until it is included in a block:
+
+```typescript
+const result = await client.signAndBroadcast(
+  senderAddress,
+  [sendMsg],
+  "auto",
+  "payment for services",
+);
+```
+
+The returned `DeliverTxResponse` contains everything about the executed transaction:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transactionHash` | `string` | Hex-encoded transaction hash |
+| `code` | `number` | `0` on success, non-zero on failure |
+| `height` | `number` | Block height where the tx was included |
+| `txIndex` | `number` | 0-based index of the transaction within the block |
+| `gasUsed` | `bigint` | Actual gas consumed |
+| `gasWanted` | `bigint` | Gas limit from the fee |
+| `events` | `readonly Event[]` | Transaction events emitted during execution |
+| `rawLog` | `string \| undefined` | Raw log string (often contains error details on failure) |
+| `msgResponses` | `Array<{ typeUrl: string; value: Uint8Array }>` | Protobuf-encoded response for each message |
+
+## `signAndBroadcastSync` — Fire and Forget
+
+Signs and broadcasts but returns immediately with the transaction hash, without waiting for block inclusion:
+
+```typescript
+const txHash = await client.signAndBroadcastSync(
+  senderAddress,
+  [sendMsg],
+  "auto",
+  "payment for services",
+);
+```
+
+Use this when you want to submit a transaction and check the result later (e.g. via `client.getTx(txHash)`).
+
+## Separate Sign and Broadcast
+
+For advanced workflows (offline signing, multi-sig, or inspecting the signed bytes before broadcasting), separate the two steps:
+
+```typescript
+import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+import { calculateFee } from "@cosmjs/stargate";
+
+const fee = calculateFee(200_000, "0.025uatom");
+const txRaw = await client.sign(senderAddress, [sendMsg], fee, "memo");
+
+const txBytes = TxRaw.encode(txRaw).finish();
+const result = await client.broadcastTx(txBytes);
+```
+
+The `sign` method accepts an optional `explicitSignerData` parameter for offline signing, where account number, sequence, and chain ID must be provided manually:
+
+```typescript
+const txRaw = await client.sign(senderAddress, [sendMsg], fee, "memo", {
+  accountNumber: 42,
+  sequence: 7,
+  chainId: "cosmoshub-4",
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Waiting for Confirmation" icon="clock" href="/cosmjs/v0.38.x/guides/transactions/confirmation">
+    Configure polling timeouts and handle transactions that take too long.
+  </Card>
+  <Card title="Advanced Patterns" icon="gear" href="/cosmjs/v0.38.x/concepts/transactions/advanced">
+    Offline signing, IBC transfers, and inspecting signed transactions.
+  </Card>
+  <Card title="Wallets" icon="wallet" href="/cosmjs/v0.38.x/concepts/account/local-wallets">
+    Create wallets from mnemonics, or integrate browser extensions like Keplr.
+  </Card>
+</CardGroup>

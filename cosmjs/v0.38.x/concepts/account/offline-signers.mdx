@@ -1,0 +1,63 @@
+---
+title: Offline Signers
+description: The OfflineSigner interface and the two Cosmos signing modes
+---
+
+An `OfflineSigner` is the interface CosmJS uses to abstract over _any_ source of
+signatures. It doesn't matter whether the private key lives in memory, in a
+browser extension, or on a hardware device — as long as it implements
+`OfflineSigner`, it works with `SigningStargateClient`.
+
+```typescript
+type OfflineSigner = OfflineAminoSigner | OfflineDirectSigner;
+```
+
+There are two flavors, matching the two Cosmos signing modes:
+
+## OfflineDirectSigner (Protobuf / Direct)
+
+The modern default. Signs raw Protobuf-encoded bytes. Preferred for new
+applications.
+
+```typescript
+interface OfflineDirectSigner {
+  readonly getAccounts: () => Promise<readonly AccountData[]>;
+  readonly signDirect: (
+    signerAddress: string,
+    signDoc: SignDoc,
+  ) => Promise<DirectSignResponse>;
+}
+```
+
+## OfflineAminoSigner (Amino JSON)
+
+The legacy format. Signs a deterministic JSON representation. Required for
+Ledger hardware wallets and some older chains.
+
+```typescript
+interface OfflineAminoSigner {
+  readonly getAccounts: () => Promise<readonly AccountData[]>;
+  readonly signAmino: (
+    signerAddress: string,
+    signDoc: StdSignDoc,
+  ) => Promise<AminoSignResponse>;
+}
+```
+
+The "offline" in the name means the signer itself never needs network access. It
+only receives bytes and returns a signature. The client handles everything
+else — querying account state, building the transaction, and broadcasting.
+
+## Signer Summary
+
+| Signer | Use Case | Package |
+|--------|----------|---------|
+| `DirectSecp256k1HdWallet` | Scripts, backends, tests | `@cosmjs/proto-signing` |
+| `Secp256k1HdWallet` | Amino signing, legacy chains | `@cosmjs/amino` |
+| `window.keplr.getOfflineSigner()` | Browser apps with Keplr | (provided by extension) |
+| `LedgerSigner` | Hardware wallet signing | `@cosmjs/ledger-amino` |
+
+All of these produce an `OfflineSigner`. All of them work with
+`SigningStargateClient.connectWithSigner`. The signing client doesn't know or
+care where the signature comes from — it just needs something that implements
+the interface.

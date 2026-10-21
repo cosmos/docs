@@ -1,0 +1,70 @@
+---
+title: "Timeouts"
+description: "Configure HTTP request, WebSocket connection, and broadcast polling timeouts"
+---
+
+CosmJS exposes timeouts at three levels: HTTP requests, WebSocket connections, and transaction broadcast polling. Each is configured independently.
+
+## HTTP Request Timeout
+
+Pass a timeout in milliseconds as the second argument to `HttpClient`:
+
+```typescript
+import { HttpClient } from "@cosmjs/tendermint-rpc";
+
+const rpcClient = new HttpClient("https://rpc.my-chain.network", 15_000);
+```
+
+When the timeout fires, the underlying `fetch` call is aborted via `AbortSignal.timeout()`. If omitted, requests have no timeout and rely on the runtime's default behavior.
+
+For `HttpBatchClient`, use the `httpTimeout` option:
+
+```typescript
+import { HttpBatchClient } from "@cosmjs/tendermint-rpc";
+
+const rpcClient = new HttpBatchClient("https://rpc.my-chain.network", {
+  httpTimeout: 15_000,
+});
+```
+
+## WebSocket Connection Timeout
+
+The underlying socket has a 10-second connection timeout. If the WebSocket handshake doesn't complete in time, the connection promise rejects with a timeout error.
+
+## Broadcast Timeout
+
+Separately from transport timeouts, signing clients control how long `signAndBroadcast()` polls for transaction inclusion in a block:
+
+```typescript
+import { SigningStargateClient, GasPrice } from "@cosmjs/stargate";
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  {
+    gasPrice: GasPrice.fromString("0.025uatom"),
+    broadcastTimeoutMs: 120_000,
+    broadcastPollIntervalMs: 5_000,
+  },
+);
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `broadcastTimeoutMs` | 60,000 (60s) | Max time to wait for tx inclusion |
+| `broadcastPollIntervalMs` | 3,000 (3s) | Interval between inclusion checks |
+
+<Info>
+These are not transport-level timeouts — they only affect `signAndBroadcast()`. If you use `signAndBroadcastSync` instead, no polling occurs and these options are ignored.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Connection Errors" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/connect/errors">
+    Handle timeout errors and other connection failures.
+  </Card>
+  <Card title="Custom Endpoints" icon="key" href="/cosmjs/v0.38.x/guides/connect/custom-endpoints">
+    Combine timeouts with custom headers and batching.
+  </Card>
+</CardGroup>

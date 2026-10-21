@@ -1,0 +1,67 @@
+---
+title: "Simulating Gas"
+description: "Estimate gas consumption with auto fees, manual simulation, or explicit fee objects"
+---
+
+Before broadcasting, you can simulate the transaction to estimate how much gas it will consume. This prevents out-of-gas failures.
+
+## Automatic Simulation with `"auto"`
+
+The simplest approach — pass `"auto"` as the fee and the client simulates internally:
+
+```typescript
+const result = await client.signAndBroadcast(senderAddress, [sendMsg], "auto");
+```
+
+Behind the scenes, the client:
+
+1. Sends the transaction to the chain's `Simulate` endpoint (without actually executing it)
+2. Receives the estimated `gasUsed`
+3. Multiplies by a safety buffer (default 1.4x) to get the gas limit
+4. Calculates the fee from the gas limit and the configured `gasPrice`
+
+You can override the multiplier by passing a number instead of `"auto"`:
+
+```typescript
+const result = await client.signAndBroadcast(senderAddress, [sendMsg], 1.6);
+```
+
+## Manual Simulation
+
+For more control, call `simulate` directly and build the fee yourself:
+
+```typescript
+import { calculateFee, GasPrice } from "@cosmjs/stargate";
+
+const gasEstimate = await client.simulate(senderAddress, [sendMsg], "optional memo");
+const gasLimit = Math.ceil(gasEstimate * 1.5);
+const fee = calculateFee(gasLimit, GasPrice.fromString("0.025uatom"));
+
+const result = await client.signAndBroadcast(senderAddress, [sendMsg], fee, "optional memo");
+```
+
+## Explicit Fee (No Simulation)
+
+When you know the gas cost ahead of time, skip simulation entirely by passing a `StdFee`:
+
+```typescript
+import { calculateFee } from "@cosmjs/stargate";
+
+const fee = calculateFee(200_000, "0.025uatom");
+const result = await client.signAndBroadcast(senderAddress, [sendMsg], fee);
+```
+
+<Info>
+Simulation is an estimate. If chain state changes between simulation and broadcast (e.g. many concurrent transactions), actual gas may differ. The safety multiplier accounts for this, but high-contention scenarios may need a larger buffer (1.5–2.0x).
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gas & Fees" icon="gas-pump" href="/cosmjs/v0.38.x/concepts/fees-gas/gas-and-fees">
+    Understand gas pricing, fee calculation, and dynamic fee markets in depth.
+  </Card>
+  <Card title="Signing & Broadcasting" icon="paper-plane" href="/cosmjs/v0.38.x/guides/transactions/signing-broadcasting">
+    Sign and send your transaction to the chain.
+  </Card>
+</CardGroup>

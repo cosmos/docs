@@ -1,0 +1,57 @@
+---
+title: Encoding & Decoding
+description: Binary encoding helpers and decoding transactions in CosmJS
+---
+
+## Encoding Utilities
+
+`@cosmjs/encoding` provides conversions between common formats:
+
+| Function | Input | Output | Use case |
+|----------|-------|--------|----------|
+| `toHex` / `fromHex` | `Uint8Array` ↔ `string` | Hex strings | Transaction hashes, debug output |
+| `toBase64` / `fromBase64` | `Uint8Array` ↔ `string` | Base64 strings | Public keys, signatures in JSON |
+| `toUtf8` / `fromUtf8` | `string` ↔ `Uint8Array` | UTF-8 bytes | Amino sign docs, contract messages |
+| `toAscii` / `fromAscii` | `string` ↔ `Uint8Array` | ASCII bytes | Printable ASCII only (0x20–0x7E) |
+| `toRfc3339` / `fromRfc3339` | `Date` ↔ `string` | ISO timestamps | Block times, governance deadlines |
+
+```typescript
+import { toHex, fromHex, toBase64, fromBase64, toUtf8, fromUtf8 } from "@cosmjs/encoding";
+
+toHex(new Uint8Array([0xde, 0xad]));   // "dead"
+fromHex("deadbeef");                    // Uint8Array [222, 173, 190, 239]
+
+toBase64(new Uint8Array([1, 2, 3]));   // "AQID"
+fromBase64("AQID");                     // Uint8Array [1, 2, 3]
+
+toUtf8("hello");                        // Uint8Array [104, 101, 108, 108, 111]
+fromUtf8(new Uint8Array([104, 101]));   // "he"
+```
+
+## Decoding Transactions
+
+You can decode raw transaction bytes back into structured data:
+
+```typescript
+import { decodeTxRaw } from "@cosmjs/proto-signing";
+
+const decoded = decodeTxRaw(txBytes);
+
+// decoded.body.messages — Array<Any> (typeUrl + raw bytes)
+// decoded.authInfo — fee and signer info
+// decoded.signatures — raw signature bytes
+```
+
+To decode individual messages, use the registry:
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes } from "@cosmjs/stargate";
+
+const registry = new Registry(defaultRegistryTypes);
+
+for (const anyMsg of decoded.body.messages) {
+  const msg = registry.decode({ typeUrl: anyMsg.typeUrl, value: anyMsg.value });
+  console.info(anyMsg.typeUrl, msg);
+}
+```

@@ -1,0 +1,76 @@
+---
+title: Error Handling Pattern
+description: Recommended pattern for handling all transaction failure modes in CosmJS.
+---
+
+A robust transaction flow should handle all three failure modes — CheckTx
+rejection, timeout, and execution failure:
+
+```typescript
+import {
+  SigningStargateClient,
+  GasPrice,
+  TimeoutError,
+  BroadcastTxError,
+  isDeliverTxSuccess,
+  Coin,
+} from "@cosmjs/stargate";
+
+async function sendTokens(
+  client: SigningStargateClient,
+  sender: string,
+  recipient: string,
+  amount: readonly Coin[],
+): Promise<string> {
+  try {
+    const result = await client.sendTokens(sender, recipient, amount, "auto");
+
+    if (isDeliverTxSuccess(result)) {
+      return result.transactionHash;
+    }
+
+    // Execution failed (out of gas, insufficient funds, etc.)
+    throw new Error(
+      `Transaction ${result.transactionHash} failed with code ${result.code}: ${result.rawLog}`,
+    );
+  } catch (error) {
+    if (error instanceof BroadcastTxError) {
+      // CheckTx rejection — do not retry without fixing the issue
+      throw error;
+    }
+
+    if (error instanceof TimeoutError) {
+      // Transaction may still succeed — query later
+      console.warn("Transaction submitted but not yet confirmed:", error.txId);
+      throw error;
+    }
+
+    throw error;
+  }
+}
+```
+
+## Error Summary
+
+| Stage | Error type | Retryable? | Key fields |
+| --- | --- | --- | --- |
+| Encoding | `Error` | No | Fix input data |
+| Signing | `Error` | No | Fix wallet/key setup |
+| Transport (HTTP) | `Error` | Often | `cause.status`, `cause.body` |
+| Transport (WebSocket) | `Error` | Reconnects automatically | — |
+| CheckTx | `BroadcastTxError` | Rarely | `code`, `codespace`, `log` |
+| Block inclusion | `TimeoutError` | Query later | `txId` |
+| DeliverTx | `DeliverTxResponse` | Depends | `code`, `rawLog`, `events` |
+| Query | `Error` | Depends | Error message |
+| Simulation | `Error` | Fix input | Error message |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Classes" icon="arrow-right" href="/cosmjs/v0.38.x/concepts/errors/error-classes">
+    Explore CosmJS error types and their properties.
+  </Card>
+  <Card title="Transaction Errors" icon="arrow-right" href="/cosmjs/v0.38.x/concepts/errors/transaction-execution">
+    Handle CheckTx failures and execution errors.
+  </Card>
+</CardGroup>

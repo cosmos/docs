@@ -1,0 +1,64 @@
+---
+title: "Waiting for Confirmation"
+description: "Configure polling timeouts and handle transactions that take too long to land in a block"
+---
+
+When you call `signAndBroadcast`, the client handles confirmation automatically:
+
+1. The signed transaction is submitted via `broadcastTxSync` (CheckTx)
+2. The client polls `getTx(txHash)` every 3 seconds (configurable)
+3. Once the transaction appears in a block, the `DeliverTxResponse` is returned
+
+## Configuring Timeouts
+
+Control how long the client waits and how often it polls:
+
+```typescript
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  {
+    gasPrice: GasPrice.fromString("0.025uatom"),
+    broadcastTimeoutMs: 120_000,
+    broadcastPollIntervalMs: 5_000,
+  },
+);
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `broadcastTimeoutMs` | `60_000` (60s) | Maximum time to wait for block inclusion |
+| `broadcastPollIntervalMs` | `3_000` (3s) | Interval between `getTx` polls |
+
+## Handling Timeouts
+
+If the transaction is not included within the timeout, a `TimeoutError` is thrown. The transaction may still succeed — it could be sitting in the mempool:
+
+```typescript
+import { TimeoutError } from "@cosmjs/stargate";
+
+try {
+  const result = await client.signAndBroadcast(senderAddress, [sendMsg], "auto");
+} catch (error) {
+  if (error instanceof TimeoutError) {
+    const txHash = error.txId;
+    const laterResult = await client.getTx(txHash);
+  }
+  throw error;
+}
+```
+
+<Warning>
+A `TimeoutError` does **not** mean the transaction failed. The signed bytes were already submitted to the mempool. Always check with `getTx` before resubmitting, or you risk sending the transaction twice.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/cosmjs/v0.38.x/guides/transactions/error-handling">
+    Handle CheckTx rejections, execution failures, and timeouts.
+  </Card>
+  <Card title="Events & Lookups" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/transactions/events-and-lookups">
+    Read transaction events and look up past transactions.
+  </Card>
+</CardGroup>
