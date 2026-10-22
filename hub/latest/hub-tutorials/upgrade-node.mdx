@@ -1,149 +1,149 @@
 ---
-title: Upgrading Your Node
-description: >-
-  This document describes the upgrade procedure of a gaiad full-node to a new
-  version.
+title: Upgrade a node
+description: For operators running a cosmoshub-4 node under Cosmovisor or by hand, this page is the runbook for a governance upgrade and for a coordinated halt-height upgrade, with the checks before and after.
 ---
-This document describes the upgrade procedure of a `gaiad` full-node to a new version.
 
-## Cosmovisor
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-The Cosmos SDK provides a convenient process manager that wraps around the `gaiad` binary and can automatically swap in new binaries upon a successful governance upgrade proposal. Cosmovisor is entirely optional but recommended. More information can be found in [cosmos.network docs](/sdk/latest/guides/upgrades/cosmovisor) and [cosmos-sdk/cosmovisor/readme](https://github.com/cosmos/cosmos-sdk/blob/v0.47.11/tools/cosmovisor/README.md).
+<HubVerified date="2026-10-15" />
 
-### Setup
+You have a node running as a service from [Run gaiad as a service](/hub/latest/node/service). At the end the node runs the new gaia version from the exact height the network switched, without missing more blocks than the upgrade itself costs. Every upgrade is announced on the [gaia releases page](https://github.com/cosmos/gaia/releases) and in the validator announcements channel on [Discord](https://discord.gg/interchain). The release notes name the pattern, the height, and the binary.
 
-To get started with Cosmovisor first download it
+## Two upgrade patterns
 
-```bash
-go install github.com/cosmos/cosmos-sdk/cosmovisor/cmd/cosmovisor
-```
+The Hub uses two patterns and the release notes say which one applies.
 
-Set up the environment variables
+A governance upgrade is a passed `MsgSoftwareUpgrade` proposal with a plan name and a plan height. At that height the old binary stops with `ERR UPGRADE "<name>" NEEDED at height: <height>`. The new binary's upgrade handler then runs the migrations. Releases v28.0.0 (plan `v28.0.0`, height 32785900) and v28.2.0 (plan `v28.2.0`, height 33073000) were governance upgrades. Cosmovisor handles the swap on its own if the binary is in place.
 
-```bash
-echo "# Setup Cosmovisor" >> ~/.profile
-echo "export DAEMON_NAME=gaiad" >> ~/.profile
-echo "export DAEMON_HOME=$HOME/.gaia" >> ~/.profile
-source ~/.profile
-```
+A halt-height upgrade is a coordinated restart without a plan. Every operator sets `halt-height` to the announced height. The node stops there with `CONSENSUS FAILURE!!! err="failed to apply block; error halt per configuration height <height> time 0"`, and the operator starts the new binary. Releases v28.1.1 (height 32830000) and v28.3.1 (height 33086740) were halt-height upgrades. Cosmovisor does not switch on its own unless you register the height with `add-upgrade --upgrade-height`.
 
-Create the appropriate directories
+[Upgrade history](/hub/latest/upgrade/history) lists every upgrade since genesis with its pattern.
 
-```bash
-mkdir -p ~/.gaia/cosmovisor/upgrades
-mkdir -p ~/.gaia/cosmovisor/genesis/bin/
-cp $(which gaiad) ~/.gaia/cosmovisor/genesis/bin/
+## Before upgrade day
 
-# verify the setup. 
-# It should return the same version as gaiad
-cosmovisor version
-```
+<Steps>
+  <Step title="Read the release notes and confirm the height">
+    ```bash
+    gaiad query upgrade plan
+    ```
 
-Now `gaiad` can start by running
+    For a governance upgrade this prints the plan name, height, and info once the proposal has passed. Before that it prints an empty `{}`. For a halt-height upgrade it stays `{}`. The height comes from the release notes. On 2026-10-15 there was no plan scheduled.
+  </Step>
 
-```bash
-cosmovisor start
-```
+  <Step title="Rehearse on the testnet">
+    The testnet runs the release candidate one or two weeks ahead of mainnet. Upgrading a [testnet node](/hub/latest/hub-tutorials/join-testnet) through the same height is the only way to find out, while it is still cheap, that your machine lacks RAM for a migration or that your unit file is wrong.
+  </Step>
 
-### Preparing an Upgrade
+  <Step title="Get and verify the new binary">
+    Install the new release with the same method and verification as [Install gaiad](/hub/latest/getting-started/installation): signature and checksum for a release binary, the tag's commit for a source build. Do not install it over the running binary yet.
 
-Cosmovisor will continually poll  the `$DAEMON_HOME/data/upgrade-info.json` for new upgrade instructions. When an upgrade is ready, node operators can download the new binary and place it under `$DAEMON_HOME/cosmovisor/upgrades/<name>/bin` where `<name>` is the URI-encoded name of the upgrade as specified in the upgrade module plan.
+    ```bash
+    /tmp/gaiad-new version --long | grep -E '^(version|commit):'
+    ```
 
-It is possible to have Cosmovisor automatically download the new binary. To do this set the following environment variable.
+    The version must match the release notes exactly, including the patch number. Keep the file somewhere the service user can read.
+  </Step>
 
-```bash
-export DAEMON_ALLOW_DOWNLOAD_BINARIES=true
-```
+  <Step title="Check memory, disk, and a backup">
+    Migrations can need far more memory than steady state. Confirm 32 GB or swap from [System requirements](/hub/latest/getting-started/system-requirements). Confirm free disk of at least the size of `data/`. Take a snapshot or filesystem backup of `data/` the day before. With `UNSAFE_SKIP_BACKUP=true` in the unit, Cosmovisor does not do this for you.
+  </Step>
 
-## Manual Software Upgrade
+  <Step title="Stage the binary for Cosmovisor">
+    For a governance upgrade the directory name is the plan name, character for character:
 
-First, stop your instance of `gaiad`. Next, upgrade the software:
+    ```bash
+    sudo -u gaia env DAEMON_NAME=gaiad DAEMON_HOME=/var/lib/gaia/.gaia cosmovisor add-upgrade v28.2.0 /tmp/gaiad-new
+    ls -l /var/lib/gaia/.gaia/cosmovisor/upgrades/v28.2.0/bin/gaiad
+    ```
 
-```bash
-cd gaia
-git fetch --all && git checkout <new_version>
-make install
-```
+    The `add-upgrade` subcommand copies the binary to `cosmovisor/upgrades/<name>/bin/gaiad` and makes it executable. It is the same as creating the directory and copying by hand. Cosmovisor reads the plan name from `data/upgrade-info.json`, which the running node writes at the upgrade height. It then switches `current` to that directory.
 
-<Tip>
-*NOTE*: If you have issues at this step, please check that you have the latest stable version of GO installed.
-</Tip>
+    For a halt-height upgrade, add `--upgrade-height`:
 
-See the [testnet repo](https://github.com/cosmos/testnets) for details on which version is needed for which public testnet, and the [Gaia release page](https://github.com/cosmos/Gaia/releases) for details on each release.
+    ```bash
+    sudo -u gaia env DAEMON_NAME=gaiad DAEMON_HOME=/var/lib/gaia/.gaia cosmovisor add-upgrade v28.3.1 /tmp/gaiad-new --upgrade-height 33086740 --force
+    cat /var/lib/gaia/.gaia/data/upgrade-info.json
+    ```
 
-Your full node has been cleanly upgraded! If there are no breaking changes then you can simply restart the node by running:
+    This also writes `data/upgrade-info.json` with the name and height, so Cosmovisor switches binaries at that height on its own. Do not set `halt-height` as well when you use this. The two mechanisms stop the node for different reasons, and Cosmovisor only restarts for its own. On a node that has already been through a governance upgrade under Cosmovisor, `data/upgrade-info.json` still holds that old plan. The command then fails with `Error: file already exists at .../data/upgrade-info.json`. The `--force` flag overwrites it, and the height-based switch then works. Run `cosmovisor show-upgrade-info` first, because `--force` also discards a plan that is still pending.
+  </Step>
 
-```bash
-gaiad start
-```
+  <Step title="Or set the halt height without Cosmovisor">
+    ```bash
+    gaiad config set app halt-height 33086740
+    gaiad config get app halt-height
+    sudo systemctl restart gaiad
+    ```
 
-## Upgrade Genesis File
+    This writes `halt-height` in `app.toml`. The running process reads it at start, so restart the node. At that height the node commits the block, logs the consensus failure quoted above, and stops. Set it back to `0` after the upgrade, or the node refuses to pass that height again.
+  </Step>
+</Steps>
 
-<Warning>
-If the new version you are upgrading to has breaking changes, you will have to restart your chain. If it is not breaking, you can skip to [Restart](/hub/latest/hub-tutorials/upgrade-node#restart)
-</Warning>
-
-To upgrade the genesis file, you can either fetch it from a trusted source or export it locally.
-
-### Fetching from a Trusted Source
-
-If you are joining the mainnet, fetch the genesis from the [mainnet repo](https://github.com/cosmos/launch). If you are joining a public testnet, fetch the genesis from the appropriate testnet in the [testnet repo](https://github.com/cosmos/testnets). Otherwise, fetch it from your trusted source.
-
-Save the new genesis as `new_genesis.json`. Then replace the old `genesis.json` with `new_genesis.json`
-
-```bash
-cd $HOME/.gaia/config
-cp -f genesis.json new_genesis.json
-mv new_genesis.json genesis.json
-```
-
-Then, go to the [reset data](#reset-data) section.
-
-### Exporting State to a New Genesis Locally
-
-If you were running a node in the previous version of the network and want to build your new genesis locally from a state of this previous network, use the following command:
-
-```bash
-cd $HOME/.gaia/config
-gaiad export --for-zero-height --height=<export-height> > new_genesis.json
-```
-
-The command above take a state at a certain height `<export-height>` and turns it into a new genesis file that can be used to start a new network.
-
-Then, replace the old `genesis.json` with `new_genesis.json`.
-
-```bash
-cp -f genesis.json new_genesis.json
-mv new_genesis.json genesis.json
-```
-
-At this point, you might want to run a script to update the exported genesis into a genesis that is compatible with your new version. For example, the attributes of the `Account` type changed, a script should query encoded account from the account store, unmarshal them, update their type, re-marshal and re-store them. You can find an example of such script [here](https://github.com/cosmos/cosmos-sdk/blob/02c6c9fafd58da88550ab4d7d494724a477c8a68/contrib/migrate/v0.33.x-to-v0.34.0.py).
-
-## Reset Data
+## On upgrade day
 
 <Warning>
-If the version {'<'}new\_version{'>'} you are upgrading to is not breaking from the previous one, you should not reset the data. If it is not breaking, you can skip to [Restart](#restart)
+Do not start the new binary before the network reaches the height. A node that applies a migration early produces a different app hash and stops with `wrong Block.Header.AppHash`. It must then be rolled back or restored. A validator in that state misses blocks until it is fixed and risks jail for downtime.
 </Warning>
 
-<Warning>
-If you are running a **validator node** on the mainnet, always be careful when doing `gaiad unsafe-reset-all`. You should never use this command if you are not switching `chain-id`.
-</Warning>
-
-::: danger IMPORTANT
-Make sure that every node has a unique `priv_validator.json`. Do not copy the `priv_validator.json` from an old node to multiple new nodes. Running two nodes with the same `priv_validator.json` will cause you to get slashed due to double signing!
-
-First, remove the outdated files and reset the data. **If you are running a validator node, make sure you understand what you are doing before resetting**.
+With Cosmovisor and a staged binary there is nothing to do at the height except watch:
 
 ```bash
-gaiad unsafe-reset-all
+journalctl -u cosmovisor -f -o cat
 ```
 
-Your node is now in a pristine state while keeping the original `priv_validator.json` and `config.toml`. If you had any sentry nodes or full nodes setup before, your node will still try to connect to them, but may fail if they haven't also been upgraded.
+Expect `UPGRADE "v28.2.0" NEEDED at height: 33073000` (governance) or the halt per configuration line (halt-height). Then come Cosmovisor's own lines about the upgrade and the binary switch. Then the new binary prints its `applying upgrade` line, followed by block execution. Upgrades with migrations can sit in `applying upgrade` for minutes. A quiet log is not a hung node until memory or CPU drop to zero.
 
-## Restart
-
-If there are no breaking changes then you can simply restart the node by running:
+Without Cosmovisor, at the height:
 
 ```bash
-gaiad start
+sudo systemctl stop gaiad
+sudo install -m 0755 /tmp/gaiad-new /usr/local/bin/gaiad
+gaiad version
+gaiad config set app halt-height 0
+sudo systemctl start gaiad
 ```
+
+The stop is clean because the node has already halted. The `install` command replaces the binary atomically. Running `gaiad version` proves which one is on the path. Resetting `halt-height` lets the node continue. With the container image the same sequence is `docker stop`, change the image tag, then `docker run` as on [Install gaiad](/hub/latest/getting-started/installation).
+
+## If something goes wrong
+
+The node stopped at the height but Cosmovisor did not switch: check `ls -l cosmovisor/upgrades/` for a directory name that matches the plan name exactly. Check `cat data/upgrade-info.json`. Check `journalctl` for a permissions error on the binary. Fix the directory, then run `systemctl start cosmovisor`. Cosmovisor reads `upgrade-info.json` on start and switches.
+
+The new binary panics during the migration: the usual cause is memory. Stop, add swap, and start again. The migration restarts from the beginning. If it panics on something else, the chain's Discord channel is where the fix is coordinated. Your `data/` backup is what you restore if a patched binary requires it.
+
+The node reports an app hash mismatch after the upgrade: a binary was started one height early or a wrong patch was used. The `gaiad rollback` command undoes the last committed height on both CometBFT and the application:
+
+```bash
+sudo systemctl stop cosmovisor
+gaiad rollback --home /var/lib/gaia/.gaia
+```
+
+It removes no blocks. On restart the node re-executes the block with the correct binary. Run it once per bad height. On a validator, the restart does not change `priv_validator_state.json`, so there is no double sign risk from the rollback itself. The validator will not sign the rolled-back height again at the same round (`error signing vote: step regression at height <height> round 0`). On mainnet it misses that one signature and signs from the next round or height.
+
+Running `gaiad start --unsafe-skip-upgrades <height>` tells the node to ignore a scheduled plan at that height. It exists for coordinated recovery from a broken upgrade and nothing else. Using it alone forks your node off the network.
+
+## After the upgrade
+
+```bash
+gaiad version
+gaiad query upgrade applied v28.2.0
+gaiad status | jq '{height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up}'
+ls -l /var/lib/gaia/.gaia/cosmovisor/current
+```
+
+The `version` command prints the new tag. The `upgrade applied <name>` query prints the block header at which a governance plan was executed, which is the proof the handler ran. It has no record of halt-height upgrades. For those, `version` plus a climbing height is the proof. The `current` symlink now points at `upgrades/<name>`. A validator also checks that it is signing again on an explorer or with the queries on [Monitoring](/hub/latest/validators/monitoring).
+
+Clean up when the node is stable. Remove binaries under `cosmovisor/upgrades/` older than the previous upgrade. If you set `halt-height`, confirm it is `0` again.
+
+## Verify
+
+```bash
+gaiad version
+gaiad query upgrade module-versions | head
+```
+
+The first prints the version the release notes named. The second lists each module's consensus version after the upgrade, which is what a migration changes. Compare it with another operator's output if you suspect a partial migration.
+
+## Next
+
+[Upgrade history](/hub/latest/upgrade/history) for the record of past upgrades, and [Monitoring](/hub/latest/validators/monitoring) so the next halt is something you are told about rather than find out.

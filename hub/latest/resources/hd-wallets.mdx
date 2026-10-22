@@ -1,58 +1,85 @@
 ---
-title: HD Wallets
+title: "HD wallets"
+description: "How gaiad derives Cosmos Hub accounts from one mnemonic: the BIP-44 path, the account and index flags, recovery, and what the mnemonic controls."
 ---
-Accounts in Cosmos are Hierarchical Deterministic (HD) Wallets. Originally specified in Bitcoin's [BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki), HD wallets are a special kind of wallet that let users derive any number of accounts from a single seed. To understand what that means, let us first define some terminology:
 
-* **Wallet**: Set of accounts obtained from a given seed.
-* **Account**: A pair of public key/private key.
-* **Private Key**: A private key is a secret piece of information used to sign messages. In the blockchain context, a private key identifies the owner of an account. The private key of a user should never be revealed to others.
-* **Public Key**: A public key is a piece of information obtained by applying a one-way mathematical function on a private key. From it, an address can be derived. A private key cannot be found from a public key.
-* **Address**: An address is a public string with a human-readable prefix that identifies an account. It is obtained by applying mathematical transformations to a public key.
-* **Digital Signature**: A digital signature is a piece of cryptographic information that proves the owner of a given private key approved of a given message without revealing the private key.
-* **Seed**: Same as Mnemonic.
-* **Mnemonic**: A mnemonic is a sequence of words that is used as seed to derive private keys. The mnemonic is at the core of each wallet. NEVER LOSE YOUR MNEMONIC. WRITE IT DOWN ON A PIECE OF PAPER AND STORE IT SOMEWHERE SAFE. IF YOU LOSE IT, THERE IS NO WAY TO RETRIEVE IT. IF SOMEONE GAINS ACCESS TO IT, THEY GAIN ACCESS TO ALL THE ASSOCIATED ACCOUNTS.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-At the core of a HD wallet, there is a seed. From this seed, users can deterministically generate accounts. To generate an account from a seed, one-way mathematical transformations are applied. To decide which account to generate, the user specifies a `path`, generally an `integer` (`0`, `1`, `2`, ...).
+<HubVerified date="2026-10-15" />
 
-By specifying `path` to be `0` for example, the Wallet will generate `Private Key 0` from the seed. Then, `Public Key 0` can be generated from `Private Key 0`. Finally, `Address 0` can be generated from `Public Key 0`. All these steps are one way only, meaning the `Public Key` cannot be found from the `Address`, the `Private Key` cannot be found from the `Public Key`, ...
+This page is for anyone creating or recovering a Cosmos Hub wallet key with `gaiad keys` ([gaiad reference](/hub/latest/hub-tutorials/gaiad)), Keplr, or a Ledger. It explains how a hierarchical deterministic (HD) wallet yields many addresses from one phrase, and which flags pick them. With that, a recovered wallet produces the expected address.
 
-```
-     Account 0                         Account 1                         Account 2
+## Terms
 
-+------------------+              +------------------+               +------------------+
-|                  |              |                  |               |                  |
-|    Address 0     |              |    Address 1     |               |    Address 2     |
-|        ^         |              |        ^         |               |        ^         |
-|        |         |              |        |         |               |        |         |
-|        |         |              |        |         |               |        |         |
-|        |         |              |        |         |               |        |         |
-|        +         |              |        +         |               |        +         |
-|  Public key 0    |              |  Public key 1    |               |  Public key 2    |
-|        ^         |              |        ^         |               |        ^         |
-|        |         |              |        |         |               |        |         |
-|        |         |              |        |         |               |        |         |
-|        |         |              |        |         |               |        |         |
-|        +         |              |        +         |               |        +         |
-|  Private key 0   |              |  Private key 1   |               |  Private key 2   |
-|        ^         |              |        ^         |               |        ^         |
-+------------------+              +------------------+               +------------------+
-         |                                 |                                  |
-         |                                 |                                  |
-         |                                 |                                  |
-         +--------------------------------------------------------------------+
-                                           |
-                                           |
-                                 +---------+---------+
-                                 |                   |
-                                 |  Mnemonic (Seed)  |
-                                 |                   |
-                                 +-------------------+
+Five terms cover everything on this page. The mnemonic is the one that matters most, because it reproduces all the others.
+
+- Mnemonic (seed phrase): 24 words from which every key in the wallet is derived. It is the wallet. Everything else can be recomputed from it.
+- Private key: the secret that signs transactions for one account. Derived from the mnemonic and a path.
+- Public key: computed from the private key with a one way function. The chain stores it after the account's first signed transaction.
+- Address: a hash of the public key, shown with a readable prefix (`cosmos1...`). The same key also has `cosmosvaloper1...` and `cosmosvalcons1...` encodings, which are prefixes, not separate keys.
+- Account (in HD terms): one private key, public key, and address derived from the mnemonic at one path.
+
+Each step is one way. The mnemonic produces the private key, the private key produces the public key, and the public key produces the address. None of these steps can be reversed.
+
+```text
+   Account 0            Account 1            Account 2
+   Address 0            Address 1            Address 2
+       ^                    ^                    ^
+   Public key 0         Public key 1         Public key 2
+       ^                    ^                    ^
+   Private key 0        Private key 1        Private key 2
+       ^                    ^                    ^
+       +--------------------+--------------------+
+                            |
+                     Mnemonic (seed)
 ```
 
-The process of derivating accounts from the seed is deterministic. This means that given the same path, the derived private key will always be the same.
+## The derivation path
 
-The funds stored in an account are controlled by the private key. This private key is generated using a one-way function from the mnemonic. If you lose the private key, you can retrieve it using the mnemonic. However, if you lose the mnemonic, you will lose access to all the derived private keys. Likewise, if someone gains access to your mnemonic, they gain access to all the associated accounts.
+Cosmos wallets follow BIP-32 and BIP-44 (Bitcoin Improvement Proposals 32 and 44). The path `gaiad` uses by default is:
+
+```text
+m/44'/118'/0'/0/0
+```
+
+The first element, `44'`, marks BIP-44. The second, `118'`, is the coin type registered for Cosmos. The third number is the account, the fourth is the change field (always 0 for Cosmos), and the last is the address index. Changing the account or the index gives a different, unrelated address from the same mnemonic. The same path always gives the same address, which is what makes recovery possible.
+
+```bash
+gaiad keys add mykey
+gaiad keys add mykey-1 --index 1
+gaiad keys add mykey-acct1 --account 1
+gaiad keys add mykey-custom --hd-path "m/44'/118'/0'/0/5"
+```
+
+The `--account` and `--index` flags set the third and fifth path elements. The `--hd-path` flag sets the whole path and overrides both. The `--coin-type` flag (default 118) changes the second element. Both `--index 1` and `--hd-path "m/44'/118'/0'/0/1"` produce the same address. Keplr and Ledger use the same path, so a key created in one tool recovers in another as long as the path matches. Add `--dry-run` to see the address a path would produce without saving the key.
+
+## Recover a wallet
+
+```bash
+gaiad keys add mykey --recover
+```
+
+The `--recover` flag prompts for the mnemonic and derives the key at the default path. If the resulting address is not the one expected, the original key was created at another index or account. Retry with `--index` or `--account` until the address matches, or check the expected address in the explorer first. Recovery writes the private key into the keyring selected by `--keyring-backend` ([Keyring](/sdk/latest/node/keyring)), so recover on a trusted machine only.
 
 <Warning>
-**Do not lose or share your 24 words with anyone. To prevent theft or loss of funds, it is best to keep multiple copies of your mnemonic stored in safe, secure places. If someone is able to gain access to your mnemonic, they will fully control the accounts associated with them.**
+Keep offline copies of the 24 words in more than one safe place. Never type the words into a web page. Never store them next to the keyring they recover. Anyone with the words controls every account derived from them, on every chain that uses the same coin type.
 </Warning>
+
+## What the mnemonic does not cover
+
+A validator's consensus key (`priv_validator_key.json`) and node key (`node_key.json`) are ed25519 keys generated by `gaiad init`, not derived from a mnemonic. Back up those files separately ([Validator setup](/hub/latest/validators/validator-setup)). Multisig entries in the keyring are combinations of public keys. They are rebuilt from the member keys, not from a phrase. A Ledger key's mnemonic is stored on the device ([Ledger](/hub/latest/resources/ledger)).
+
+## Verify
+
+```bash
+gaiad keys add check --dry-run --recover --index 0
+gaiad keys add check --dry-run --recover --index 1
+```
+
+Both prompts accept the same mnemonic and print different addresses. Repeating either command prints the same address again, which confirms the derivation is deterministic. Nothing is saved with `--dry-run`.
+
+## Next
+
+- [gaiad reference](/hub/latest/hub-tutorials/gaiad) for the full `keys` command set and keyring backends.
+- [Ledger](/hub/latest/resources/ledger) for keys that never leave a hardware device.
+- [Delegator security](/hub/latest/delegators/delegator-security) for how to store the phrase and spot phishing.

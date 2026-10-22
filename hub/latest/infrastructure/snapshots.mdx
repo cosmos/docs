@@ -1,0 +1,151 @@
+---
+title: "Snapshots"
+description: "Restore a Cosmos Hub node from a data snapshot, choose a snapshot that matches your database backend, and publish snapshots for other operators."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+This page is for operators who want a Cosmos Hub node synced in hours rather than days, and for operators who publish snapshots. It assumes gaia is installed and the home directory is initialized (see [Join mainnet](/hub/latest/hub-tutorials/join-mainnet)). At the end the node starts from a recent height and catches up from peers.
+
+Two things are both called snapshots on the Hub. A data snapshot is a tar archive of the `data` directory that you download and extract. A state sync snapshot is produced inside the node (`[state-sync]` in `app.toml`) and fetched over peer-to-peer (P2P) by [state sync](/hub/latest/node/sync). This page covers data snapshots. The last section covers producing state sync snapshots for others.
+
+## Pick a snapshot that matches your backend
+
+The snapshot's database format must match the `app-db-backend` in `app.toml` and the `db_backend` in `config.toml` of the node that restores it. A PebbleDB node cannot open goleveldb files, and a goleveldb node cannot open PebbleDB files. Provider pages do not always state the backend. When they do not, assume goleveldb or ask. Backend choice and migration are explained on [Database and pruning](/hub/latest/node/database).
+
+<Tabs>
+<Tab title="PebbleDB">
+
+Providers that state PebbleDB for cosmoshub-4, checked 2026-10-15:
+
+| Provider | Snapshot page | Cadence | Checksum |
+| --- | --- | --- | --- |
+| Unity Nodes | [docs.unitynodes.com/snapshots/cosmos-mainnet](https://docs.unitynodes.com/snapshots/cosmos-mainnet), files under `snapshots.unitynodes.com/cosmos-mainnet/` (`latest-pebbledb.tar.lz4`, wasm archive separate) | every 4 hours | `.sha256` sidecar |
+| SOLVA | [snapshots.solva.solutions](https://snapshots.solva.solutions), instructions in the [solva-solutions repository](https://github.com/solva-solutions/solva-solutions/blob/main/chains/cosmoshub/service_Node_Snapshot_pebbledb.md), wasm archive separate | every 12 hours | `.sha256` sidecar |
+| BryanLabs | [bryanlabs.net/snapshots/chains/cosmoshub-4](https://bryanlabs.net/snapshots/chains/cosmoshub-4), downloads through a signed URL API rather than a fixed file name | about daily | on the page |
+
+Set the backend before extracting:
+
+```bash
+gaiad config set app app-db-backend pebbledb
+```
+
+Then set the same backend in `~/.gaia/config/config.toml`:
+
+```toml
+db_backend = "pebbledb"
+```
+
+</Tab>
+<Tab title="goleveldb">
+
+Providers for cosmoshub-4 whose archives are goleveldb or whose backend is not stated, checked 2026-10-15:
+
+| Provider | Snapshot page | Cadence | Checksum |
+| --- | --- | --- | --- |
+| HighStakes | [tools.highstakes.ch/snapshots/cosmos](https://tools.highstakes.ch/snapshots/cosmos) | every 3 hours | MD5; backend not stated |
+| ITRocket | [itrocket.net/services/mainnet/cosmoshub](https://itrocket.net/services/mainnet/cosmoshub/) | every 4 hours | none; goleveldb stated |
+| Nodes Hub | [services.nodeshub.online/mainnet/cosmos/snapshot](https://services.nodeshub.online/mainnet/cosmos/snapshot) | every 3 hours | backend not stated |
+| Kjnodes | [services.kjnodes.com/mainnet/cosmoshub/snapshot](https://services.kjnodes.com/mainnet/cosmoshub/snapshot/) | every 6 hours | backend not stated |
+| NodeStake | [nodestake.org/networks/cosmoshub/mainnet](https://nodestake.org/networks/cosmoshub/mainnet?tab=snapshots) | daily | goleveldb stated |
+| Polkachu | [polkachu.com/tendermint_snapshots/cosmos](https://polkachu.com/tendermint_snapshots/cosmos) | daily | on the page |
+
+Because `gaiad init` writes goleveldb defaults, nothing needs to change in `app.toml` or `config.toml` for these.
+
+</Tab>
+</Tabs>
+
+Snapshot archives are made from pruned nodes. A pruned snapshot cannot be turned into an archive node. For that, see [Archive nodes](/hub/latest/resources/archives).
+
+## Restore a data snapshot
+
+A restore is a stop, a reset that keeps the validator state file, an extract into `data/`, and a start. The validator state file is the step that matters.
+
+1. Stop the node and back up the validator state file. On a validator this file is what stops the node from double signing after a restore.
+
+```bash
+sudo systemctl stop gaiad
+cp ~/.gaia/data/priv_validator_state.json ~/priv_validator_state.json.bak
+```
+
+2. Reset the data directory, keeping the address book so the node reconnects quickly:
+
+```bash
+gaiad comet unsafe-reset-all --home ~/.gaia --keep-addr-book
+```
+
+3. Download the archive and its checksum, and compare them before extracting. The file names and checksum formats are on the provider's page.
+
+```bash
+sha256sum -c cosmoshub-4-snapshot.tar.lz4.sha256
+```
+
+4. Extract into the home directory. Most archives contain `data/`, and some also contain `wasm/`. A PebbleDB provider that ships `wasm` as a separate archive needs both extracted.
+
+```bash
+lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -xf - -C ~/.gaia
+```
+
+5. Put the validator state back and start:
+
+```bash
+cp ~/priv_validator_state.json.bak ~/.gaia/data/priv_validator_state.json
+sudo systemctl start gaiad
+```
+
+<Warning>
+On a validator, always restore your own copy of `priv_validator_state.json`. Restoring a snapshot that contains someone else's copy, or starting with a fresh one, can make the node sign a height it already signed. That is a double sign. The slash is 5 percent of stake plus permanent tombstoning.
+</Warning>
+
+## Make snapshots for others
+
+A snapshot node is a pruned full node that is stopped on a schedule, tarred, and started again. A common pruning setting is `pruning = "custom"`, `pruning-keep-recent = "100"`, `pruning-interval = "10"`. Stop the node first, because archiving a live database produces a corrupt snapshot.
+
+```bash
+sudo systemctl stop gaiad
+tar -cf - -C ~/.gaia data wasm | lz4 -c > cosmoshub-4_$(date -u +%Y%m%d)_$(gaiad status 2>/dev/null | jq -r .sync_info.latest_block_height).tar.lz4
+sudo systemctl start gaiad
+```
+
+Publish next to each archive: the height, the gaia version, the database backend (`pebbledb` or `goleveldb`), the pruning settings, whether `wasm` is included, and a SHA-256 checksum. Strip `data/priv_validator_state.json` from the archive, or document that it is included.
+
+## Serve state sync snapshots
+
+State sync snapshots are made by the running node and need no stop. Enable them in `app.toml`:
+
+```bash
+gaiad config set app state-sync.snapshot-interval 1000
+gaiad config set app state-sync.snapshot-keep-recent 2
+```
+
+```toml
+[state-sync]
+snapshot-interval = 1000
+snapshot-keep-recent = 2
+```
+
+The `snapshot-interval` value is in heights. The default that `gaiad init` writes is 1000, with 10 kept. Snapshots are only taken at heights that are a multiple of the interval. The node must have the state at that height, so a node that prunes more aggressively than the interval cannot produce them. List what the node holds:
+
+```bash
+gaiad snapshots list
+```
+
+The output is empty on a fresh node. Once snapshots exist, it lists `height`, `format`, and `chunks`. The command `gaiad snapshots export --height <h>` takes one on demand. Then `gaiad snapshots dump <height> <format>` writes it to an archive file. On another node, `gaiad snapshots load <archive-file>` followed by `gaiad snapshots restore <height> <format>` brings it in without P2P. Consumers also need two RPC endpoints with these snapshots to configure `[statesync]`. See [Sync options](/hub/latest/node/sync).
+
+## Verify
+
+After a restore, the node should report the snapshot height and then advance:
+
+```bash
+gaiad status | jq '.sync_info | {latest_block_height, catching_up}'
+```
+
+The `latest_block_height` value starts at the snapshot height. The `catching_up` value turns `false` once the node is within a few blocks of the network. If the node logs `panic: ... pebble` or `leveldb` read errors at start, the archive did not match the configured backend.
+
+## Next
+
+- [Sync options](/hub/latest/node/sync) to compare state sync and snapshots.
+- [Database and pruning](/hub/latest/node/database) for PebbleDB migration and pruning settings.
+- [Run public endpoints](/hub/latest/infrastructure/endpoints) if the snapshot node also serves RPC.

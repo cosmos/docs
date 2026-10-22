@@ -1,47 +1,80 @@
 ---
 noindex: true
-title: Gaia Modules
-description: >-
-  Here you can find an overview of the modules included on the Cosmos Hub (Gaia)
-  blockchain with relevant info and links for each one.
+title: "Modules on the Hub"
+description: "Every module wired into gaia v28.3.1, grouped by where it comes from, with the parameter query and documentation link for each."
 ---
-Here you can find an overview of the modules included on the Cosmos Hub (Gaia) blockchain with relevant info and
-links for each one.
 
-## cosmos-sdk
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-* [x/auth](/sdk/latest/modules/auth/auth)
-* [x/authz](/sdk/latest/modules/authz/README)
-* [x/bank](/sdk/latest/modules/bank/README)
-* [x/capability](/ibc/v8.5.x/ibc/capability-module)
-* [x/consensus](/sdk/latest/modules/consensus/README)
-* [x/crisis](/sdk/latest/modules/crisis/README)
-* [x/distribution](/sdk/latest/modules/distribution/README)
-* [x/evidence](/sdk/latest/modules/evidence/README)
-* [x/feegrant](/sdk/latest/modules/feegrant/README)
-* [x/gov](/sdk/latest/modules/gov/README)
-* [x/mint](/sdk/latest/modules/mint/README)
-* [x/params](/sdk/latest/modules/params/README)
-* [x/slashing](/sdk/latest/modules/slashing/README)
-* [x/staking (with LSM changes)](/sdk/latest/modules/staking/README)
-* [x/upgrade](/sdk/latest/modules/upgrade/README)
+<HubVerified date="2026-10-15" />
 
-## ibc-go
+This page lists the modules that make up the Cosmos Hub application in gaia v28.3.1, taken from `app/modules.go` in the release, so operators and builders can see which messages and parameters exist on chain. Each module's current parameters come from the query shown next to it (all queries below ran against mainnet on 2026-10-15). Module documentation is kept with the module's source. The Hub pages only cover what the Hub configures differently.
 
-* [transfer](/ibc/next/apps/transfer/overview)
-* [interchain accounts - host](/ibc/v8.5.x/apps/interchain-accounts/client#host)
-* [interchain accounts - controller](/ibc/v8.5.x/apps/interchain-accounts/client#controller)
-* [interchain-security/provider](https://github.com/cosmos/interchain-security/tree/main/x/ccv/provider)
-* [packetforward](https://github.com/cosmos/ibc-apps/tree/main/middleware/packet-forward-middleware)
-* [ibcfee](/ibc/v8.5.x/middleware/ics29-fee/overview)
-* [ibc-rate-limiting](https://github.com/Stride-Labs/ibc-rate-limiting)
+Three modules that older lists mention are not in v28.3.1: the interchain security provider (removed in v28.0.0, as the Hub no longer hosts consumer chains), ICS-29 fee middleware, and the globalfee module (replaced by the fee market). The `gaiad q upgrade module-versions` query still reports `capability` and `crisis` entries from earlier versions. Neither has state or messages any more.
 
-## gaia specific modules
+## Cosmos SDK v0.53.4
 
-* [x/metaprotocols](/hub/next/modules/metaprotocols)
-* [x/liquid](/hub/next/modules/liquid)
-* [Cosmos SDK LSM (deprecated)](/hub/next/modules/lsm-migration)
+| Module | What it does on the Hub | Parameters |
+| --- | --- | --- |
+| [auth](/sdk/latest/modules/auth/auth) | accounts, signature verification, memo and signature limits | `gaiad q auth params`: `max_memo_characters: 512`, `tx_sig_limit: 7` |
+| [vesting](/sdk/latest/modules/auth/vesting) | vesting account types | none |
+| [bank](/sdk/latest/modules/bank/README) | balances, transfers, denom metadata; gaia wraps it to enforce send restrictions | `gaiad q bank params`: `default_send_enabled: true` |
+| [staking](/sdk/latest/modules/staking/README) | validators, delegations, unbonding | `gaiad q staking params`: 180 validators, 21 day unbonding, 5 percent minimum commission |
+| [distribution](/sdk/latest/modules/distribution/README) | rewards, commission, community pool | `gaiad q distribution params`: `community_tax: 0.02` |
+| [slashing](/sdk/latest/modules/slashing/README) | downtime and double sign penalties | `gaiad q slashing params`: window 10000, 5 percent double sign, 0.01 percent downtime, 10 minute jail |
+| [mint](/sdk/latest/modules/mint/README) | ATOM issuance | `gaiad q mint params`: inflation 7 to 10 percent, goal bonded 67 percent |
+| [gov](/sdk/latest/modules/gov/README) | proposals, deposits, votes; gaia wraps it to require 1 ATOM staked to vote | `gaiad q gov params`: 500 ATOM deposit, 7 day vote, 40 percent quorum |
+| [upgrade](/sdk/latest/modules/upgrade/README) | coordinated software upgrades | `gaiad q upgrade plan` (empty when none is scheduled) |
+| [evidence](/sdk/latest/modules/evidence/README) | double sign evidence handling | none |
+| [feegrant](/sdk/latest/modules/feegrant/README) | fee allowances from one account to another | none |
+| [authz](/sdk/latest/modules/authz/README) | message authorizations between accounts | none |
+| [params](/sdk/latest/modules/params/README) | legacy parameter subspaces; only `param-change` proposals still use it | `gaiad q params subspace staking MaxValidators` |
+| [consensus](/sdk/latest/modules/consensus/README) | block size, gas and evidence limits | `gaiad q consensus params`: `max_bytes: 2000000`, `max_gas: 75000000` |
+| [genutil](/sdk/latest/modules/genutil/README) | genesis transactions | none |
 
-## other modules
+## ibc-go v10.7.0
 
-* [fee market](https://github.com/skip-mev/feemarket)
+| Module | What it does on the Hub | Parameters |
+| --- | --- | --- |
+| [ibc core](/ibc/latest/ibc/overview) | clients, connections, channels, and the IBC v2 client and channel keepers | `gaiad q ibc client params`: `allowed_clients: 07-tendermint, 08-wasm` |
+| [07-tendermint](/ibc/latest/ibc/overview) | light client for Cosmos SDK chains | per client |
+| [08-wasm](/ibc/latest/light-clients/wasm/overview) | Wasm light clients, used for IBC v2 counterparties such as Ethereum | `gaiad q ibc-wasm checksums` (4 checksums) |
+| [transfer](/ibc/latest/apps/transfer/overview) | ICS-20 token transfer, classic and v2 | `gaiad q ibc-transfer params`: send and receive enabled |
+| [interchain accounts](/ibc/latest/apps/interchain-accounts/overview) | host (any message allowed) and controller | `gaiad q interchain-accounts host params`: `host_enabled: true`, `allow_messages: ["*"]` |
+| [packet forward middleware](/ibc/latest/middleware/packet-forward-middleware/overview) v10.6.0 | multi hop transfers through the Hub | none |
+| [rate limiting](/ibc/latest/middleware/rate-limit-middleware/overview) v10.1.0 | per channel, per denom transfer quotas | `gaiad q ratelimit list-rate-limits` (7 limits) |
+| [callbacks](/ibc/latest/middleware/callbacks/overview) | contract callbacks on packet lifecycle, classic and v2 | none |
+
+The transfer application is wrapped as transfer, then callbacks, then rate limiting, then packet forward middleware on the classic stack. On the v2 stack it is wrapped as transfer, callbacks, and rate limiting (`app/keepers/keepers.go`).
+
+## CosmWasm (wasmd v0.60.9)
+
+| Module | What it does on the Hub | Parameters |
+| --- | --- | --- |
+| [wasm](https://github.com/CosmWasm/wasmd/tree/v0.60.9) | smart contracts | `gaiad q wasm params`: `code_upload_access: Everybody`, `instantiate_default_permission: Everybody` |
+
+The `gaiad q wasm list-code` query returned more than 100 code IDs on 2026-10-15 (the query paginates). Contracts can call the tokenfactory module through its wasm bindings.
+
+## Hub specific and third party
+
+| Module | What it does on the Hub | Parameters |
+| --- | --- | --- |
+| [liquid](/hub/next/modules/liquid) | liquid staking: tokenized shares, caps, account locks | `gaiad q liquid params`: 25 percent global cap |
+| [tokenfactory](/hub/next/modules/tokenfactory) | permissionless `factory/...` denoms | `gaiad q tokenfactory params`: 10 ATOM creation fee |
+| [feemarket](/hub/next/modules/feemarket) | dynamic gas price with a 0.005 uatom floor | `gaiad q feemarket params` |
+| [metaprotocols](/hub/next/modules/metaprotocols) | validated extension data on transactions | none |
+
+## Verify
+
+The authoritative list for any release is the module manager in `app/modules.go` at that tag, and the versions the chain has stored:
+
+```bash
+gaiad q upgrade module-versions --node https://cosmos-rpc.publicnode.com:443
+```
+
+The output lists every module name with its consensus version. A module in the table above with no entry means it has no versioned state (vesting, genutil). An entry with no module above is a leftover from an earlier release (`capability`, `crisis`).
+
+## Next
+
+- [Parameter change proposals](/hub/next/governance/proposal-types/param-change) to change any value above.
+- [Liquid staking](/hub/next/modules/liquid), [Tokenfactory](/hub/next/modules/tokenfactory), and [Fee market](/hub/next/modules/feemarket) for the Hub specific modules.

@@ -1,36 +1,133 @@
 ---
 noindex: true
-title: Validator Overview
+title: Validator overview
+description: What a Cosmos Hub validator does, the live limits that decide whether you get a seat, and what you earn and risk, for anyone deciding whether to run one.
 ---
-## Introduction
 
-The Cosmos Hub is based on [CometBFT](/cometbft/v0.38/docs/README) that relies on a set of validators that are responsible for committing new blocks in the blockchain. These validators participate in the consensus protocol by broadcasting votes that contain cryptographic signatures signed by each validator's private key.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-Validator candidates can bond their own ATOM and have ATOM ["delegated"](/hub/next/delegators/delegator-guide-cli), or staked, to them by token holders. The Cosmos Hub has 180 active validators, but over time the number of validators can be changed through governance (`MaxValidators` parameter). Validator voting power is determined by the total number of ATOM tokens delegated to them. Validators that do not have enough voting power to be in the top 180 are considered inactive. Inactive validators can become active if their staked amount increases so that they fall into the top 180 validators.
+<HubVerified date="2026-10-15" />
 
-Validators and their delegators earn ATOM as block provisions and tokens as transaction fees through execution of the Tendermint consensus protocol. Note that validators can set a commission percentage on the fees their delegators receive as additional incentive. You can find an overview of all current validators and their voting power on [Mintscan](https://www.mintscan.io/cosmos/validators).
+This page is for anyone deciding whether to run a Cosmos Hub validator. It needs no setup. At the end you know what the role requires, the on-chain numbers that decide whether you get in and stay in, and how rewards and penalties work. The step-by-step path starts at the [onboarding checklist](/hub/next/validators/README).
 
-If validators double sign or are offline for an [extended period](/hub/next/validators/validator-faq#what-are-the-slashing-conditions), their staked ATOM (including ATOM of users that delegated to them) can be slashed. The penalty depends on the severity of the violation.
+Every number below was read from cosmoshub-4 on 2026-10-15 through a public remote procedure call (RPC) endpoint. The query next to each number fetches the current value. Run it before relying on a figure, because governance can change any of them.
 
-## Hardware
+## What a validator does
 
-For validator key management, validators must set up a physical operation that is secured with restricted access. A good starting place, for example, would be co-locating in secure data centers.
+The Cosmos Hub runs [CometBFT](/cometbft/latest/docs/core/Validators) consensus. A validator is a node whose consensus key signs prevotes and precommits on every block, and that proposes blocks in turn. The chance of proposing is proportional to voting power. Voting power is the ATOM bonded to the validator: its own self-delegation plus everything delegators bonded to it.
 
-Validators are expected to equip their datacenter location with redundant power, connectivity, and storage backups. Expect to have several redundant networking boxes for fiber, firewall, and switching and then small servers with redundant hard drive and failover.
+Only the 180 validators with the most voting power are in the active set. Everyone else is a candidate: created on chain, able to receive delegations, but not signing and not earning.
 
-You can find the minimum hardware requirements on the instructions for [joining the Cosmos Hub mainnet](/hub/next/hub-tutorials/join-mainnet). As the network grows, bandwidth, CPU, and memory requirements rise. Large hard drives are recommended for storing years of blockchain history, as well as significant RAM to process the increasing amount of transactions.
+Being in the set means:
 
-## Create a Validator Website
+- Signing every block. Missing too many gets you jailed (numbers below).
+- Never signing two different blocks at the same height. That is a double sign, and the penalty is permanent.
+- Upgrading at the governance-approved height, every time. See [Upgrade with Cosmovisor](/hub/next/hub-tutorials/upgrade-node).
+- Voting on governance proposals. Delegators who do not vote inherit your vote.
+- Running infrastructure that stays up through hardware failures, attacks, and maintenance.
 
-To get started as a validator, create your dedicated validator website and signal your intention to become a validator in the [Interchain Discord](https://discord.gg/interchain). Posting your validator website is essential because delegators want to have information about the entity they are delegating their ATOM to.
+## The three keys
 
-## Seek Legal Advice
+A validator uses three keys. On gaia v28.3.1 none of them can be rotated. The `gaiad tx staking --help` output lists `cancel-unbond`, `create-validator`, `delegate`, `edit-validator`, `redelegate`, and `unbond`. There is no rotate command for any key.
 
-As always, do your own research and seek legal advice if you intend to run a validator node.
+- Operator key. An account key in the `gaiad` keyring. Its `cosmos` address holds funds. Its `cosmosvaloper` form identifies the validator on chain. It signs `create-validator`, `edit-validator`, `unjail`, commission withdrawals, and governance votes. It can never be changed or replaced. Retiring it means creating a new validator and asking delegators to move.
+- Consensus key. An Ed25519 key written to `config/priv_validator_key.json` by `gaiad init`, identified by a `cosmosvalcons` address. It signs votes and proposals. It should be kept in a remote signer or hardware security module (HSM), not on the validator host. See [Remote signing](/hub/next/validators/remote-signing).
+- Node key. `config/node_key.json`, the peer-to-peer identity. It has no on-chain state. It can be regenerated by deleting the file and restarting the node.
 
-## Community
+## Live constraints
 
-Discuss the finer details of being a validator on our community Discord and sign up for the Cosmos newsletter to get regular updates:
+180 active seats, and the set is full.
 
-* [Discord](https://discord.gg/interchain)
-* [Newsletter](https://cosmos.network/updates/signup/)
+```bash
+gaiad query staking params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `max_validators` parameter is 180, and 180 validators are bonded. To enter the set your voting power must exceed the 180th validator's. Check the current cutoff on [Mintscan](https://www.mintscan.io/cosmos/validators).
+
+5 percent minimum commission.
+
+```bash
+gaiad query staking params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `min_commission_rate` parameter is 0.05. A `create-validator` with a lower `commission-rate` is rejected by the chain. An `edit-validator` cannot go below it.
+
+21 days unbonding.
+
+```bash
+gaiad query staking params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `unbonding_time` parameter is 504 hours. Self-delegation you undelegate stays locked, and slashable, for 21 days.
+
+Downtime: sign at least 5 percent of any 10,000-block window.
+
+```bash
+gaiad query slashing params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `signed_blocks_window` parameter is 10000 and `min_signed_per_window` is 0.05, so missing more than 9,500 of the last 10,000 blocks jails you. At the block time measured on 2026-10-15 (5.7 seconds average), 10,000 blocks is about 16 hours and 9,500 blocks is about 15 hours. The penalty is `slash_fraction_downtime` 0.0001 (0.01 percent of bonded stake) plus a jail of at least `downtime_jail_duration` 10 minutes. After that you send `unjail` yourself.
+
+Double sign: 5 percent slash and permanent removal.
+
+```bash
+gaiad query slashing params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `slash_fraction_double_sign` parameter is 0.05. The validator is also tombstoned. A tombstoned validator can never be unjailed. The only way back is a new validator with a new consensus key and a new operator key.
+
+Liquid staking caps: 25 percent of all bonded ATOM globally, 100 percent per validator.
+
+```bash
+gaiad query liquid params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `global_liquid_staking_cap` parameter is 0.25 and `validator_liquid_staking_cap` is 1.0. These are the only liquid staking parameters on the Hub today. There is no validator bond requirement. See [Liquid staking](/hub/next/modules/liquid).
+
+Minimum self-delegation: your own floor, at least 1 uatom.
+
+You set `min-self-delegation` in `validator.json` when you create the validator. It can only be raised afterwards. If your self-delegation drops below it, the validator is jailed. This is also the mechanism for a clean exit. See [Create and manage a validator](/hub/next/validators/validator-setup).
+
+## Economics
+
+Rewards come from inflation and from transaction fees, pooled and split by voting power.
+
+```bash
+gaiad query mint params --node https://cosmos-rpc.publicnode.com:443
+gaiad query mint inflation --node https://cosmos-rpc.publicnode.com:443
+```
+
+Inflation moves between `inflation_min` 7 percent and `inflation_max` 10 percent depending on how much ATOM is bonded against `goal_bonded` 67 percent. On 2026-10-15 it was 10 percent.
+
+```bash
+gaiad query distribution params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The `community_tax` parameter takes 2 percent off the top for the community pool. Both `base_proposer_reward` and `bonus_proposer_reward` are 0. The block proposer earns nothing extra, so there is no advantage in waiting for more precommits. After the tax, each validator's pool receives its share by voting power. Your commission is taken from the delegators' part, and the rest is split among delegators by stake.
+
+What this means for you:
+
+- Your income is commission on delegators' rewards plus the rewards on your own self-delegation. A validator with little stake earns little, whatever its commission.
+- Fees are paid in `uatom` at a dynamic minimum set by the fee market, 0.005 uatom per gas on 2026-10-15 (`gaiad query feemarket gas-prices`). Fees join the same reward pool.
+- Liquid staking providers can delegate tokenized stake to you inside the caps above. If you do not want that, the operator account can send `gaiad tx liquid disable-tokenize-shares`.
+- Costs are yours: the validator host, two or more sentry nodes, a remote signer or HSM, monitoring, and the time to follow every upgrade.
+
+## Before you commit
+
+- Read [Hardware and system requirements](/hub/next/getting-started/system-requirements) and size for growth. The chain adds state every day.
+- Run the whole path on the [testnet](/hub/next/hub-tutorials/join-testnet) first, including a remote signer and an upgrade.
+- Decide on your public identity. The validator description contains a moniker, a website, a security contact, and a [Keybase](https://keybase.io) identity that explorers use for your logo.
+- Seek legal advice for your jurisdiction. Running a validator is operating financial infrastructure.
+- Join the validator channels on the [Interchain Discord](https://discord.gg/interchain), where upgrades and incidents are announced.
+
+## Verify
+
+You can answer these from the queries above before moving on:
+
+- The current 180th validator's voting power, and how much ATOM you need to exceed it.
+- The commission floor, the unbonding time, and the downtime window in hours at the current block time.
+- Which of the three keys you will keep in a remote signer, and which one can never be replaced.
+
+## Next
+
+Work through the [Validator onboarding checklist](/hub/next/validators/README), which links every page on the path in order.

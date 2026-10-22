@@ -1,32 +1,35 @@
 ---
 noindex: true
-title: Metaprotocol
-description: >-
-  The x/metaprotocol module adds support for encoding and decoding additional
-  fields attached to transactions.
+title: "Metaprotocols module"
+description: "The x/metaprotocols module validates extension data attached to Cosmos Hub transactions without acting on it."
 ---
-The `x/metaprotocol` module adds support for encoding and decoding additional fields attached to transactions.
 
-`extension_options` and `non_critical_extension_options` are optional fields that can be used to attach data to valid transactions. The fields are validated by the blockchain, but they are not used in any way. The fields pass validation if they are provided as empty lists (`[ ]`) or they use a list of `ExtensionData` types.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-The application does not use the attached data but it does ensure that the correct type is provided and that it can be successfully unmarshalled. The attached data will be part of a block.
+<HubVerified reviewed date="2026-10-15" />
+
+The `x/metaprotocols` module adds support for encoding and decoding additional fields attached to transactions. It is for builders of protocols that write data into Hub transactions (inscriptions, indexers) and for operators who see `/gaia.metaprotocols.ExtensionData` in blocks and want to know what it is. Source: [x/metaprotocols README](https://github.com/cosmos/gaia/blob/v28.3.1/x/metaprotocols/README.md).
+
+The `extension_options` and `non_critical_extension_options` fields are optional. They can be used to attach data to valid transactions. The blockchain validates the fields but does not use them in any way. The fields pass validation if they are provided as empty lists (`[ ]`) or as a list of `ExtensionData` types.
+
+The application does not use the attached data. It does ensure that the correct type is provided and that the data can be unmarshalled. The attached data becomes part of a block.
 
 <Tip>
-Txs where `extension_options` or `non_critical_extension_options` are populated with a type other than `/gaia.metaprotocols.ExtensionData` are considered invalid and will be rejected.
+Use only `/gaia.metaprotocols.ExtensionData` in `extension_options` and `non_critical_extension_options`. A transaction that populates either field with another type is invalid and is rejected.
 </Tip>
 
-Here is an example of a correctly formed `non_critical_extension_options` field:
+The following is a correctly formed `non_critical_extension_options` entry. The `@type` must be exactly `/gaia.metaprotocols.ExtensionData`:
 
 ```json
 {
-  "@type": "/gaia.metaprotocols.ExtensionData", // must be this exact string
+  "@type": "/gaia.metaprotocols.ExtensionData",
   "protocol_id": "some-protocol",
   "protocol_version": "1",
   "data": "<base64 encoded bytes>"
 }
 ```
 
-Here is an example of a correctly populated `non_critical_extension_options` on a `bank.MsgSend` transaction:
+The following is a `bank.MsgSend` transaction with a correctly populated `non_critical_extension_options` field:
 
 ```json expandable
 {
@@ -63,9 +66,23 @@ Here is an example of a correctly populated `non_critical_extension_options` on 
       "gas_limit": "200000",
       "payer": "",
       "granter": ""
-    },
-    "tip": null
+    }
   },
   "signatures": []
 }
 ```
+
+## Verify
+
+Decode any transaction that carries extension data and check that the type is the one the Hub accepts:
+
+```bash
+gaiad q tx <txhash> --output json | jq '.tx.body.non_critical_extension_options[]."@type"'
+```
+
+The output is `/gaia.metaprotocols.ExtensionData` for every entry. A transaction with any other type in either extension field is rejected before it reaches a block.
+
+## Next
+
+- [Modules on the Hub](/hub/next/modules/README) for the other modules.
+- [Delegator CLI guide](/hub/next/delegators/delegator-guide-cli#offline-signing) for building a transaction JSON by hand.

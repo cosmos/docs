@@ -1,11 +1,85 @@
 ---
-title: Delegators
-description: >-
-  This folder contains documentation relevant to delegators of the Cosmos Hub
-  and other gaia blockchains.
+title: "Delegate and stake"
+description: "How ATOM holders stake on the Cosmos Hub: what delegating means, which wallets and explorers to use, and where the command line guides are."
 ---
-This folder contains documentation relevant to delegators of the Cosmos Hub and other `gaia` blockchains.
 
-* [Delegator CLI Guide](/hub/latest/delegators/delegator-guide-cli)
-* [Delegators FAQ](/hub/latest/delegators/delegator-faq)
-* [Delegator Security Notice](/hub/latest/delegators/delegator-security)
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified reviewed date="2026-10-15" />
+
+This section is for ATOM holders who want to stake, claim rewards, and vote without running a node. No prerequisites beyond holding ATOM in an address you control. From here you can pick a wallet, choose a validator, delegate, and find the command line guide if you prefer `gaiad` to a wallet.
+
+## What delegating does
+
+Delegating bonds your ATOM to a validator in the active set (the 180 validators with the most stake). The validator's voting power and block rewards grow with your stake. You receive the rewards minus the validator's commission. Your ATOM never leaves your address: the validator cannot spend, move, or withdraw it. What you take on is the validator's slashing risk and a 21 day unbonding period when you want the ATOM liquid again.
+
+The parameters that shape this on cosmoshub-4, checked 2026-10-15:
+
+- Unbonding period: 21 days. `gaiad q staking params` reports `unbonding_time: 504h0m0s`.
+- Active set: 180 validators. `max_validators: 180` in the same output.
+- Minimum commission a validator can charge: 5 percent. `min_commission_rate: "0.050000000000000000"`.
+- Slash for double signing: 5 percent of stake, and the validator is removed permanently. `gaiad q slashing params` reports `slash_fraction_double_sign: "0.050000000000000000"`.
+- Slash for downtime: 0.01 percent and a 10 minute jail. `slash_fraction_downtime: "0.000100000000000000"`, `downtime_jail_duration: 600s`.
+- Inflation: between 7 and 10 percent a year, currently at the 10 percent maximum. `gaiad q mint inflation` returned `0.100000000000000000`.
+
+The [Delegator FAQ](/hub/latest/delegators/delegator-faq) explains how rewards, commission, and the risks work, and what to look at when choosing a validator.
+
+## Governance rights
+
+Staked ATOM votes. Every proposal on the Hub is decided by bonded stake. A delegator who does not vote inherits the vote of their validator. Voting from a delegator address requires at least 1 ATOM staked across up to 100 delegations. The Hub rejects a vote from an address with less. How proposals move from forum to vote is on [Governance process](/hub/latest/governance/process).
+
+## Wallets
+
+A wallet holds the key for your address and signs delegate, withdraw, and vote transactions. Every wallet below uses the same Cosmos key derivation (`m/44'/118'/0'/0/0` by default, see [HD wallets](/hub/latest/resources/hd-wallets)). An address created in one can therefore be recovered in another from its recovery phrase. All links checked 2026-10-15.
+
+| Wallet | Form | Notes |
+| --- | --- | --- |
+| [Keplr](https://www.keplr.app) | browser extension, mobile | Ledger support; [docs](https://docs.keplr.app) |
+| [Cosmostation](https://www.cosmostation.io) | browser extension, mobile | Ledger support |
+| [Ledger](https://www.ledger.com/coin/wallet/cosmos) | hardware | used through Keplr, Cosmostation, or `gaiad --ledger`; see [Ledger](/hub/latest/resources/ledger) |
+| [Trust Wallet](https://trustwallet.com) | mobile, extension | |
+| [Atomic Wallet](https://atomicwallet.io) | desktop, mobile | |
+| [Math Wallet](https://mathwallet.org/en) | extension, mobile | |
+| [Komodo Wallet](https://komodoplatform.com/en/wallet) | desktop, mobile | |
+
+Keep the recovery phrase offline. Never type it into a website. [Delegator security](/hub/latest/delegators/delegator-security) lists the ways people lose ATOM.
+
+## Explorers
+
+Explorers show validators, proposals, your delegations, and transaction status without a node of your own. Links checked 2026-10-15.
+
+- [Mintscan](https://www.mintscan.io/cosmos): [validators](https://www.mintscan.io/cosmos/validators) with commission and uptime, [proposals](https://www.mintscan.io/cosmos/proposals) with live tallies.
+- [ATOMScan](https://atomscan.com): validators, proposals, account history.
+- [cosmos.directory](https://cosmos.directory/cosmoshub): chain registry data, public remote procedure call (RPC) and REST endpoints, validator profiles from the registry.
+
+Historical chains (cosmoshub-1 to cosmoshub-3) have their own explorers on [Archives](/hub/latest/resources/archives).
+
+## Delegate with a wallet
+
+The steps are the same in every wallet. The names of the buttons differ.
+
+1. Create or import the address. Fund it with ATOM. Keep a little ATOM unstaked, around 1 ATOM, for fees on later withdraw and vote transactions. Fees at the Hub's floor price are a few thousandths of an ATOM each (`gaiad q feemarket gas-prices` returns `0.005uatom` per gas when the chain is idle).
+2. Open the staking or validators view. Pick a validator using the checks in the [Delegator FAQ](/hub/latest/delegators/delegator-faq#choose-a-validator). Spreading stake across several validators limits the damage from one slashing event.
+3. Delegate the amount, review the transaction on screen (and on the device screen if using Ledger), and sign.
+4. Rewards accrue every block and show as claimable in the wallet. Claiming is a transaction. Rewards do not compound until you claim and delegate them again.
+5. To move stake, redelegate to another validator. Redelegation takes effect at once, but the stake cannot be redelegated again for 21 days. To make it liquid, unbond and wait 21 days. An unbonding can be cancelled before it completes.
+
+Confirm any transaction on an explorer. Search your address and check that the latest transaction shows code 0 and the message you intended.
+
+## Command line
+
+The [Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli) covers `gaiad` for everything a wallet does: keys, delegating, redelegating, unbonding, withdrawing rewards, voting, offline signing, and multisig accounts. It is the right path for custodians, for Ledger users who do not want a browser extension, and for anyone scripting against the chain.
+
+## Liquid staking
+
+The Hub's liquid staking module lets staked ATOM be tokenized into transferable shares without unbonding, under global and per validator caps. Delegators who never intend to use it can lock their account against tokenization. The lock is a useful protection if the key is ever stolen. Both are on [Liquid staking module](/hub/latest/modules/liquid).
+
+## Testnet first
+
+The Hub testnet (chain-id `provider`) runs the next gaia release before mainnet and has a faucet. Every step above can therefore be rehearsed with worthless tokens. Endpoints, explorer, and faucet instructions are on [Join testnet](/hub/latest/hub-tutorials/join-testnet). Wallets connect to it by adding a custom chain with those endpoints.
+
+## Next
+
+- [Delegator FAQ](/hub/latest/delegators/delegator-faq) before choosing a validator.
+- [Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli) to stake with `gaiad`.
+- [Governance process](/hub/latest/governance/process) to vote.

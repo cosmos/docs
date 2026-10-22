@@ -1,60 +1,81 @@
 ---
-title: Building Gaia Deterministically
+title: "Build and verify gaiad"
+description: "How gaia v28.3.1 release binaries are built and signed, how to verify a download with the Cosmos release key and checksums, how to use the Docker image, and how to build from source."
 ---
-The [Tendermint rbuilder Docker image](https://github.com/tendermint/images/tree/master/rbuilder) provides a deterministic build environment that is used to build Cosmos SDK applications. It provides a way to be reasonably sure that the executables are really built from the git source. It also makes sure that the same, tested dependencies are used and statically built into the executable.
 
-## Prerequisites
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-Make sure you have [Docker installed on your system](https://docs.docker.com/get-docker/).
+<HubVerified date="2026-10-15" />
 
-All the following instructions have been tested on *Ubuntu 18.04.2 LTS* with *docker 20.10.2*.
+This page is for operators who want proof that the `gaiad` they run is the one the gaia maintainers published, or who build it themselves. [Installation](/hub/latest/getting-started/installation) covers the quick path. This page covers what is behind each option.
 
-## Build
+## Release artifacts
 
-Clone `gaia`:
+Each gaia release on GitHub (`https://github.com/cosmos/gaia/releases/tag/v28.3.1`, published 2026-10-01) ships:
 
-```sh
-git clone https://github.com/cosmos/gaia.git
+- `gaiad-v28.3.1-linux-amd64` and `gaiad-v28.3.1-darwin-amd64`: bare binaries, each with a detached signature `.asc`.
+- `gaiad-linux-amd64.tar.gz` and `gaiad-darwin-amd64.tar.gz`: the same binaries in a directory with a `sha256sum.txt`, each with a detached signature `.asc`.
+- `SHA256SUMS-v28.3.1.txt`: SHA-256 of the binaries as extracted from the archives (`./gaiad-linux-amd64/gaiad`, `./gaiad-darwin-amd64/gaiad`).
+
+There is no arm64 build. The release configuration (`.goreleaser.yml` in the gaia repository) disables it because the static wasmvm library the Hub's CosmWasm module links against is built for amd64 only. Operators on arm64 hosts build from source or run the amd64 image under emulation.
+
+## Check a download
+
+Releases are signed with the Cosmos release key, published with instructions in the `cosmos/security` repository (`https://github.com/cosmos/security/tree/main/release/gaia/signing`). Fingerprint: `E625 9F16 9C7B 913D BB75 DE02 5395 305D 29B8 8B32`, identity `Cosmos-Release <nodes@cosmoslabs.io>`.
+
+```bash
+curl -sLO https://github.com/cosmos/gaia/releases/download/v28.3.1/gaiad-linux-amd64.tar.gz
+curl -sLO https://github.com/cosmos/gaia/releases/download/v28.3.1/gaiad-linux-amd64.tar.gz.asc
+curl -sLO https://github.com/cosmos/gaia/releases/download/v28.3.1/SHA256SUMS-v28.3.1.txt
+curl -sLO https://raw.githubusercontent.com/cosmos/security/main/release/gaia/signing/keys/cosmos-release.asc
+gpg --show-keys --with-fingerprint cosmos-release.asc
+gpg --import cosmos-release.asc
+gpg --verify gaiad-linux-amd64.tar.gz.asc gaiad-linux-amd64.tar.gz
+tar -xzf gaiad-linux-amd64.tar.gz
+sha256sum -c --ignore-missing SHA256SUMS-v28.3.1.txt
 ```
 
-Checkout the commit, branch, or release tag you want to build:
+The `--show-keys` flag prints the fingerprint of the downloaded key. Compare it against the one above before importing. The `gpg --verify` command must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` with that fingerprint. The `WARNING: This key is not certified with a trusted signature` line that follows is not a failure. It only means your local GNU Privacy Guard (GPG) has not been told to trust the key. The `sha256sum -c` command prints `./gaiad-linux-amd64/gaiad: OK`. Do not run a binary whose signature fails, is from another key, or whose checksum does not match. The bare binaries verify the same way with their own `.asc`.
 
-```sh
-cd gaia/
-git checkout v4.2.1
+The extracted binary is a static position-independent executable (PIE), so it runs on any x86-64 Linux without extra libraries. The `file gaiad` command reports `static-pie linked`.
+
+## Docker image
+
+The release workflow also publishes `ghcr.io/cosmos/gaia` with the version as the tag:
+
+```bash
+docker pull ghcr.io/cosmos/gaia:v28.3.1
+docker run --rm ghcr.io/cosmos/gaia:v28.3.1 version --long
 ```
 
-The buildsystem supports and produces binaries for the following architectures:
+The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.25.7-alpine` with a statically linked musl wasmvm. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are `gaiad` subcommands. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/latest/node/service) covers running it under systemd or compose.
 
-* **darwin/amd64**
-* **linux/amd64**
-* **linux/arm64**
-* **windows/amd64**
+## Build from source
 
-Run the following command to launch a build for all supported architectures:
-
-```sh
-make distclean build-reproducible
+```bash
+git clone https://github.com/cosmos/gaia
+cd gaia && git checkout v28.3.1
+make install
 ```
 
-The build system generates both the binaries and deterministic build report in the `artifacts` directory.
-The `artifacts/build_report` file contains the list of the build artifacts and their respective checksums, and can be used to verify
-build sanity. An example of its contents follows:
+The `make install` target runs `go install` with the repository's build flags and places `gaiad` in `$GOPATH/bin`. The `make build` target puts it in `build/` instead. The Makefile refuses Go older than 1.25 (`check_version`). Version v28.3.1 was released with Go 1.25.7. Default build tags are `netgo` and `ledger`. The `ledger` tag needs `gcc`, and `LEDGER_ENABLED=false make install` drops it on hosts without a compiler. The linker flags stamp the version, commit, build tags, and CometBFT version into the binary. That is what `gaiad version --long` prints. The `-trimpath` flag strips local paths. Setting `GAIA_BUILD_OPTIONS=nostrip` keeps debug symbols. Setting `LINK_STATICALLY=true` with `BUILD_TAGS=muslc` and a musl wasmvm produces the static binary the Docker image uses.
 
-```sh expandable
-App: gaiad
-Version: v4.2.1
-Commit: dbd8a6fb522c571debf958837f9113c56d418f6b
-Files:
- 29d219b0b120b3188bd7cd7249fc96b9  gaiad-v4.2.1-darwin-amd64
- 80338d9f0e55ea8f6c93f2ec7d4e18d6  gaiad-v4.2.1-linux-amd64
- 9bc77a512acca673ca1769ae67b4d6c7  gaiad-v4.2.1-linux-arm64
- c84387860f52178e2bffee08897564bb  gaiad-v4.2.1-windows-amd64.exe
- c25cca8ccceec06a6fabae90f671fab1  gaiad-v4.2.1.tar.gz
-Checksums-Sha256:
- 05e5b9064bac4e71f0162c4c3c3bff55def22ca016d34205a5520fef89fd2776  gaiad-v4.2.1-darwin-amd64
- ccda422cbda29c723aaf27653bcf0f6412e138eec33fba2b49de131f9ffbe2d2  gaiad-v4.2.1-linux-amd64
- 95f89e8213cb758d12e1b0b631285938de822d04d2e25f399e99c0b798173cfd  gaiad-v4.2.1-linux-arm64
- 7ef98f0041f1573f0a8601abad4a14b1c163f47481c7ba1954fd81ed423a6408  gaiad-v4.2.1-windows-amd64.exe
- 422883ba43c96a6ea5ef9512d39321dd1356633c6a9505517b9c651788df4a7f  gaiad-v4.2.1.tar.gz
+A source build on your own machine gives the same version and commit as the release but not a byte-identical file, because the release is cross compiled in a container with a static wasmvm. Treat source builds as trusted because you built them from a checked-out tag. Treat release downloads as trusted because the signature verifies.
+
+## How releases are built
+
+Releases are produced by `.github/workflows/release.yml`, which runs goreleaser inside the `goreleaser-cross` image. The configuration is in `.goreleaser.yml`: `CGO_ENABLED=1`, tags `netgo,ledger,static_wasm`, `-trimpath -mod=readonly`, a `mod_timestamp` fixed to the commit time, and the same version ldflags as the Makefile. The `make goreleaser-build-local` target runs that configuration on a workstation with Docker (`release --snapshot --skip=publish`). It is the way to reproduce the release build environment. Expect it to run for a long time.
+
+## Verify
+
+```bash
+gaiad version --long | head -n 8
 ```
+
+Expect `version: v28.3.1`, `commit: b7f8b81b` followed by the full hash, `build_tags: netgo,ledger,static_wasm` for a release binary (`netgo,ledger` for a default source build), `go: go version go1.25.7`, and `cosmos_sdk_version: v0.53.4`. A different commit for the same version string means the binary was not built from the release tag.
+
+## Next
+
+- [Installation](/hub/latest/getting-started/installation) to put the verified binary in place.
+- [Versions](/hub/latest/start/versions) for the dependency versions in a Hub release.
+- [Upgrade a node](/hub/latest/hub-tutorials/upgrade-node) for verifying the next release before Cosmovisor switches to it.

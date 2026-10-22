@@ -1,68 +1,107 @@
 ---
-title: On-Chain Proposal Process
+title: "Governance process"
+description: "How a Cosmos Hub proposal moves from deposit to vote to tally: the live parameters with the queries that return them, what each vote option means, and what makes a proposal pass or fail."
 ---
-## Governance Parameters
 
-Several of the numbers involved in governance are parameters and can thus be changed by passing a parameter change proposal.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-* Minimum deposit: 250 ATOM
-* Maximum deposit period: 14 days
-* Voting period: 14 days
-* Quorum: 40% of participating voting power
-* Pass threshold: 50% of participating voting power
-* Veto threshold: 33.40% of participating voting power
+<HubVerified date="2026-10-15" />
 
-## 1. Deposit Period
+This page is for anyone voting on or submitting a Cosmos Hub proposal. It needs no setup. Every number on it comes from the chain, with the query that returns it, as of 2026-10-15. How to write and submit a proposal is on [Submitting a proposal](/hub/latest/governance/submitting).
 
-The deposit period lasts either 14 days or until the proposal deposit totals 250 ATOMs, whichever happens first.
+## Parameters
 
-### Deposits
+All of these are governance parameters and change through a `cosmos.gov.v1.MsgUpdateParams` proposal. Proposal 998 shortened the voting period to 7 days. Proposal 1018, which would have put it back to 14, was rejected.
 
-Prior to a governance proposal entering the voting period (i.e., for the proposal to be voted upon), there must be at least a minimum number of ATOMs deposited (250). Anyone may contribute to this deposit, though it is usually filled by the proposal maker. Deposits of passed and failed proposals are returned to the contributors.
+```bash
+gaiad q gov params --node https://cosmos-rpc.publicnode.com:443
+```
 
-In the past, different people have considered contribution amounts differently. There is some consensus that this should be a personal choice. There is also some consensus that this can be an opportunity for supporters to signal their support by adding to the deposit amount, so a proposer may choose to leave contribution room (i.e., a deposit below 250 ATOMs) so that others may participate. It is important to remember that any contributed ATOMs are at risk of being burned.
+| Parameter | Value | Field in the output |
+| --- | --- | --- |
+| Minimum deposit | 500 ATOM | `min_deposit: 500000000uatom` |
+| Minimum initial deposit | 50 ATOM (10 percent) | `min_initial_deposit_ratio: 0.1` |
+| Smallest accepted deposit transaction | 5 ATOM (1 percent) | `min_deposit_ratio: 0.01` |
+| Deposit period | 14 days | `max_deposit_period: 336h0m0s` |
+| Voting period | 7 days | `voting_period: 168h0m0s` |
+| Quorum | 40 percent | `quorum: 0.4` |
+| Pass threshold | 50 percent of non-abstain votes | `threshold: 0.5` |
+| Veto threshold | 33.4 percent | `veto_threshold: 0.334` |
+| Deposit burned on veto | yes | `burn_vote_veto: true` |
+| Refund on cancel | 50 percent | `proposal_cancel_ratio: 0.5` |
+| Expedited deposit | 501 ATOM | `expedited_min_deposit: 501000000uatom` |
+| Expedited voting period | 3 days | `expedited_voting_period: 72h0m0s` |
+| Expedited threshold | 66.7 percent | `expedited_threshold: 0.667` |
 
-### Burned deposits
+The Hub adds one rule outside these parameters: a vote is accepted only from an address with at least 1 ATOM staked (1,000,000 uatom summed over its first 100 delegations). This is enforced in gaia's ante handler, not in the Cosmos SDK gov module.
 
-Deposits are burned only when proposals are vetoed as documented in the [Cosmos SDK gov module spec](/sdk/latest/modules/gov/README#deposit-refund-and-burn). Deposits are not burned for failing to meet quorum or for being rejected.
+## 1. Deposit period
 
-## 2. Voting Period
+A proposal exists on chain from the moment it is submitted with at least 50 ATOM. It enters voting as soon as the total deposit reaches 500 ATOM. Anyone can add to the deposit, in increments of at least 5 ATOM, for up to 14 days. After that the proposal is removed and the deposits are refunded.
 
-The voting period is currently a fixed 14-day period. During the voting period, participants may select a vote of either 'Yes', 'No', 'Abstain', or 'NoWithVeto'. Voters may change their vote at any time before the voting period ends.
+```bash
+gaiad q gov proposals --proposal-status deposit-period --node https://cosmos-rpc.publicnode.com:443
+gaiad q gov deposits <id> --node https://cosmos-rpc.publicnode.com:443
+```
 
-### What do the voting options mean?
+Deposits are refunded after the vote in every case except a veto. With `burn_vote_veto: true`, a proposal that ends with 33.4 percent or more NoWithVeto loses the whole deposit. Proposal 1056 is a recent example. Deposits are not burned for failing quorum or for a plain No majority. A proposer can cancel a proposal before the voting period ends with `gaiad tx gov cancel-proposal <id>`. Half of the deposit is then burned.
 
-1. **Abstain:** The voter wishes to contribute to quorum without voting for or against a proposal.
-2. **Yes:** Approval of the proposal in its current form.
-3. **No:** Disapproval of the proposal in its current form.
-4. **NoWithVeto:** A ‘NoWithVeto’ vote indicates a proposal either (1) is deemed to be spam, i.e., irrelevant to Cosmos Hub, (2) disproportionately infringes on minority interests, or (3) violates or encourages violation of the rules of engagement as currently set out by Cosmos Hub governance.
+## 2. Voting period
 
-As accepted by the community in [Proposal 75](https://ipfs.io/ipfs/QmVHVH9WeGy9tTNN9dViqvDn7N79XJJUseKXD1rpyLVckK), voters are expected to vote 'NoWithVeto' for proposals that are spam, infringe on minority interests, or violate the rules of engagement (i.e., Social protocols which have passed governance and thus been accepted as rules on the Hub). This proposal was an extension of the ideas put forward in [Proposal 6](https://ipfs.io/ipfs/QmRtR7qkeaZCpCzHDwHgJeJAZdTrbmHLxFDYXhw7RoF1pp).
+Voting lasts 7 days from the moment the deposit is filled (3 days for an expedited proposal). Any address with at least 1 ATOM staked can vote once and can change the vote until the period ends. The last vote counts.
 
-Voting 'NoWithVeto' has no immediate additional financial cost to the voter - you do not directly risk your ATOM by using this option.
+```bash
+gaiad q gov proposals --proposal-status voting-period --node https://cosmos-rpc.publicnode.com:443
+gaiad q gov proposal <id> --node https://cosmos-rpc.publicnode.com:443
+gaiad q gov tally <id> --node https://cosmos-rpc.publicnode.com:443
+```
 
-### What determines whether or not a governance proposal passes?
+The `proposal` query prints `voting_end_time`, `total_deposit`, and `title`. The `tally` query prints the running `yes_count`, `no_count`, `abstain_count`, and `no_with_veto_count` in uatom.
 
-There are four criteria:
+The four options:
 
-1. Deposit is filled: A minimum deposit of 250 ATOM is required for the proposal to enter the voting period
-   * anyone may contribute to this deposit
-   * the deposit must be reached within 14 days (this is the deposit period)
-2. Quorum is reached: A minimum of 40% of the network's total voting power (staked ATOM) is required to participate
-3. Simple majority of 'Yes' votes: Greater than 50% of the participating voting power must back the 'Yes' vote by the end of the 14-day voting period
-4. Not vetoed: Less than 33.4% of participating voting power must have backed 'NoWithVeto' by the end of the 14-day voting period
+- Yes: approve the proposal as written.
+- No: reject it as written.
+- Abstain: count toward quorum without taking a side. Abstain votes are excluded when the threshold is computed.
+- NoWithVeto: reject it and burn the deposit. By community agreement in proposal 75, this is for proposals that are spam, that disproportionately harm a minority, or that break rules the Hub has adopted through governance. Voting NoWithVeto costs the voter nothing.
 
-Currently, the criteria for submitting and passing/failing all proposal types is the same.
+A vote can be split across options with `weighted-vote` (for example `yes=0.6,no=0.4`). Custodians use this to pass through their clients' choices. Commands are on the [Delegator CLI guide](/hub/latest/delegators/delegator-guide-cli#vote).
 
-### How is quorum determined?
+## 3. Tally
 
-Voting power, whether backing a vote of 'Yes', 'Abstain', 'No', or 'NoWithVeto', counts toward quorum. Quorum is required for the outcome of a governance proposal vote to be considered valid and for deposit contributors to recover their deposit amounts.
+A proposal passes when all four hold at the end of the voting period:
 
-### How is voting tallied?
+1. The deposit reached 500 ATOM within 14 days (otherwise there is no vote).
+2. Quorum: at least 40 percent of all bonded ATOM voted (Yes, No, Abstain, and NoWithVeto all count).
+3. Threshold: more than 50 percent of the votes, excluding Abstain, are Yes.
+4. Veto: fewer than 33.4 percent of all votes are NoWithVeto. A veto at or above that fails the proposal even with a Yes majority. A third of the voting stake can therefore block anything.
 
-* **Total voting power** refers to all staked ATOM at the end of the 14-day voting period. Liquid ATOMs are not part of the total voting power and thus cannot participate in voting.
-* **Participating voting power** refers to only the ATOM which have been used to cast a vote on a particular proposal. Quorum is set to 40% of the **participating** voting power.
+An expedited proposal uses the 66.7 percent threshold and the 3 day period. If it fails to reach that threshold but would have passed as a regular proposal, it converts to a regular proposal. The voting period then continues to the regular length.
 
-Validators not in the active set can cast a vote, but their voting power (including the backing of their delegators) will not count toward the vote if they are not in the active set **when the voting period ends**. That means that if ATOM is delegated to a validator that is jailed, tombstoned, or outside of the active set at the time that the voting period ends, that ATOM's stake-weight will not count in the vote.
+Voting power is bonded ATOM at the end of the voting period. Liquid ATOM does not vote. A delegator who does not vote inherits the vote of each validator they delegate to, in proportion. A delegator who votes overrides that for their own stake. Votes from validators outside the active set when the period ends, including jailed or tombstoned validators, carry no weight. Neither do the inherited votes of their delegators.
 
-Though a simple majority 'Yes' vote (ie. 50% of participating voting power) is required for a governance proposal vote to pass, a 'NoWithVeto' vote of 33.4% of participating voting power or greater can override this outcome and cause the proposal to fail. This enables a minority group representing greater than 1/3 of participating voting power to fail a proposal that would otherwise pass.
+```bash
+gaiad q gov proposals --proposal-status passed --page-reverse --page-limit 5 --node https://cosmos-rpc.publicnode.com:443
+```
+
+Each proposal prints `final_tally_result` with the four counts. Proposal 1055 (the v28.2.0 upgrade) was expedited and passed with 146,696,672 ATOM Yes against under 3,000 ATOM in other votes.
+
+## What happens after a pass
+
+Messages in a passed proposal execute at the end of the voting period, in the same block as the tally: a software upgrade plan is scheduled, parameters change, community pool funds move. A text proposal with no messages executes nothing and stands as a record. If a message fails at execution (an upgrade height already in the past, for example), the proposal status becomes `PROPOSAL_STATUS_FAILED`. Nothing is applied.
+
+## Verify
+
+Confirm your own vote was recorded while the period is open:
+
+```bash
+gaiad q gov vote <id> cosmos1... --node https://cosmos-rpc.publicnode.com:443
+```
+
+The output lists `options` with the option and weight. An error `not found` means the vote did not land. Either the proposal id was wrong, or the address had under 1 ATOM staked and the transaction failed, which `gaiad q tx <hash>` shows with a non-zero code.
+
+## Next
+
+- [Submitting a proposal](/hub/latest/governance/submitting) for drafting, forum review, and the submit transaction.
+- [Proposal types](/hub/latest/governance/proposal-types/README) for what each message does.
+- [Gov module reference](/sdk/latest/modules/gov/README) for the module internals.

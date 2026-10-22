@@ -1,70 +1,91 @@
 ---
 noindex: true
-title: Software Upgrade
-description: >-
-  Software upgrade proposals are submitted to signal that a Cosmos Hub release
-  with new features, bugfixes and various other improvements is available and
-  ready for production deployment.
+title: "Software upgrade proposals"
+description: "How a Cosmos Hub software upgrade is scheduled through governance: the MsgSoftwareUpgrade plan, the binaries JSON that Cosmovisor reads, expedited votes, and cancellation."
 ---
-Software upgrade proposals are submitted to signal that a Cosmos Hub release with new features, bugfixes and various other improvements is available and ready for production deployment.
 
-Software upgrade proposals should be submitted by the development teams tasked with stewarding the Cosmos Hub development.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-## Procedure
+<HubVerified date="2026-10-15" />
 
-Use `draft-proposal` command to create a draft proposal and populate it with required information.
+This page is for the teams that maintain gaia and submit upgrade proposals, and for validators who want to read one before voting. It assumes the process on [Submitting a proposal](/hub/next/governance/submitting). A passed upgrade proposal stores a plan in the upgrade module. At the plan height every node halts. Operators (or Cosmovisor) then switch to the new binary. What validators do at that point is on [Upgrade a node](/hub/next/hub-tutorials/upgrade-node).
 
-```sh expandable
-✗ gaiad tx gov draft-proposal
-Use the arrow keys to navigate: ↓ ↑ → ←
-? Select proposal type:
-    text
-    community-pool-spend
-  ▸ software-upgrade # choose this
-    cancel-software-upgrade
-    other
+## The message
 
-# populate all steps (displaying all for demonstration purposes)
-Enter proposal title: Upgrade v15
-Enter proposal authors: Stewards
-Enter proposal summary: Upgrade to v15
-Enter proposal details: <v15 upgrade changelog details>
-Enter proposal proposal forum url: /
-Enter proposal vote option context: Vote YES to support running this binary on the Cosmos Hub mainnet.
-Enter proposal deposit: 100001uatom
-Enter msg authority: cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn
-```
-
-In your `draft_proposal.json` populate the `height` with your desired upgrade height and populate the `info` field with additional information (must be a valid JSON string):
+The proposal carries `/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade` with a `plan`:
 
 ```json
 {
-  "binaries": {
-    "darwin/amd64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-darwin-amd64?checksum=sha256:7157f03fbad4f53a4c73cde4e75454f4a40a9b09619d3295232341fec99ad138",
-    "darwin/arm64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-darwin-arm64?checksum=sha256:09e2420151dd22920304dafea47af4aa5ff4ab0ddbe056bb91797e33ff6df274",
-    "linux/amd64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-linux-amd64?checksum=sha256:236b5b83a7674e0e63ba286739c4670d15d7d6b3dcd810031ff83bdec2c0c2af",
-    "linux/arm64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-linux-arm64?checksum=sha256:b055fb7011e99d16a3ccae06443b0dcfd745b36480af6b3e569e88c94f3134d3",
-    "windows/armd64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-windows-amd64.exe?checksum=sha256:f0224ba914cad46dc27d6a9facd8179aec8a70727f0b1e509f0c6171c97ccf76",
-    "windows/arm64": "https://github.com/cosmos/gaia/releases/download/v15.0.0/gaiad-v15.0.0-windows-arm64.exe?checksum=sha256:cbbce5933d501b4d54dcced9b097c052bffdef3fa8e1dfd75f29b34c3ee7de86"
-  }
+  "messages": [
+    {
+      "@type": "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade",
+      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
+      "plan": {
+        "name": "v28.2.0",
+        "time": "0001-01-01T00:00:00Z",
+        "height": "33073000",
+        "info": "{\"binaries\":{\"linux/amd64\":\"https://github.com/cosmos/gaia/releases/download/v28.2.0/gaiad-v28.2.0-linux-amd64?checksum=sha256:...\",\"darwin/amd64\":\"https://github.com/cosmos/gaia/releases/download/v28.2.0/gaiad-v28.2.0-darwin-amd64?checksum=sha256:...\"}}",
+        "upgraded_client_state": null
+      }
+    }
+  ],
+  "metadata": "ipfs://CID",
+  "deposit": "501000000uatom",
+  "title": "Gaia v28.2.0 upgrade",
+  "summary": "Upgrade cosmoshub-4 to gaia v28.2.0 at height 33073000.",
+  "expedited": true
 }
 ```
 
-Upload your `draft_metadata.json` to a distribution platform of your choice. `draft_proposal.json` is used to submit a governance proposal using `submit-proposal`.
+- `name` must equal the upgrade handler name registered in the release (`gaiad` refuses to start past the height if its binary has no handler of that name). The Hub names handlers after the version.
+- `height` is the halt height. The `time` field is unused on the Hub and stays at the zero value.
+- `info` is a string containing JSON with a `binaries` map. Cosmovisor with `DAEMON_ALLOW_DOWNLOAD_BINARIES=true` downloads from it. The Hub docs recommend leaving that false and installing binaries by hand. But the map is still the canonical pointer to the release and its checksums. Each URL carries `?checksum=sha256:<hash>` from the release's `SHA256SUMS-<version>.txt`.
+- `expedited: true` needs 501 ATOM, votes for 3 days, and passes at 66.7 percent. Proposal 1055 (v28.2.0) used it. Non-expedited upgrades use 500 ATOM and 7 days.
 
-```sh
-gaiad tx gov submit-proposal <path_to_proposal.json>
-   --from <submitter address> \
-   --chain-id cosmoshub-4 \
-   --gas <max gas allocated> \
-   --fees <fees allocated> \
-   --node <node address> \
+The values above are proposal 1055's, read with `gaiad q gov proposal 1055`. The v28.2.0 upgrade executed at height 33073000, which `gaiad q upgrade applied v28.2.0` confirms.
+
+## Build the proposal
+
+The `gaiad tx upgrade software-upgrade` command builds the whole proposal from flags. It validates the `info` JSON against the release before submitting:
+
+```bash
+gaiad tx upgrade software-upgrade v28.2.0 \
+  --upgrade-height 33073000 \
+  --upgrade-info '{"binaries":{"linux/amd64":"https://github.com/cosmos/gaia/releases/download/v28.2.0/gaiad-v28.2.0-linux-amd64?checksum=sha256:..."}}' \
+  --title "Gaia v28.2.0 upgrade" --summary "Upgrade cosmoshub-4 to gaia v28.2.0 at height 33073000." \
+  --deposit 500000000uatom \
+  --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-## Using x/upgrading
+The command downloads each binary in `--upgrade-info` and checks its checksum unless `--no-validate` is passed. It also checks that the `--daemon-name` (default `gaiad`) matches. It has no expedited flag and always writes `"expedited": false`. To expedite, add `--generate-only` to write the unsigned transaction to a file. In the file, change `expedited` to `true` and the deposit to at least 501 ATOM. Then sign and broadcast it ([offline signing](/hub/next/delegators/delegator-guide-cli#offline-signing)). This is also how a multisig proposer prepares it. The `gaiad tx gov draft-proposal` command with the `software-upgrade` type produces the same proposal JSON interactively, asks for the `authority`, and lets you set `expedited` before `submit-proposal`.
 
-Software upgrade proposals can be submitted using the [x/upgrade module](/sdk/latest/modules/upgrade/README#transactions). The end effect will be the same since the `x/gov` module routes the message to `x/upgrade` module.
+Pick the height from the current block rate. The Hub produces a block about every 6 seconds. The `gaiad status` command on a synced node gives the current height. The plan height should leave at least a week after the vote ends for validators to prepare.
 
-## Additional information
+## Cancel a scheduled upgrade
 
-Additional instructions with debugging information is available on the [submitting](/hub/next/governance/submitting) page.
+A plan that must not execute (a bug found after the vote, a missed binary) is removed with `/cosmos.upgrade.v1beta1.MsgCancelUpgrade`, which `gaiad tx upgrade cancel-software-upgrade` builds. It is itself a proposal and has to pass before the plan height. For that reason it is usually expedited. If there is no time for that, validators coordinate out of band to skip the height with `--unsafe-skip-upgrades <height>`. See [Upgrade a node](/hub/next/hub-tutorials/upgrade-node).
+
+## Verify
+
+Before voting:
+
+```bash
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0].plan | {name, height}'
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq -r '.proposal.messages[0].plan.info' | jq .binaries
+```
+
+The `name` matches a published gaia release tag. The `height` is in the future. Each binary URL's checksum matches `SHA256SUMS-<version>.txt` on the release page.
+
+After a pass:
+
+```bash
+gaiad q upgrade plan --node https://cosmos-rpc.publicnode.com:443
+```
+
+The plan is listed with its `name` and `height` until the upgrade executes. After that the query is empty, and `gaiad q upgrade applied <name>` returns the height it ran at.
+
+## Next
+
+- [Upgrade a node](/hub/next/hub-tutorials/upgrade-node) for what operators do at the plan height.
+- [Upgrade history](/hub/next/upgrade/history) for every past plan and height.
+- [Upgrade module reference](/sdk/latest/modules/upgrade/README) for the plan semantics.
