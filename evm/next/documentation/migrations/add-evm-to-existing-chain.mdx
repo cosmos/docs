@@ -82,7 +82,7 @@ Ethereum uses 18 decimals for its gas token (1 wei = 10^-18 ETH), and maintainin
 <Warning>
 **Strongly Recommended: Use 18-Decimal Tokens**
 
-If you are pre-genesis or planning to add EVM support in the future, configure your gas token with 18 decimals from the start. Non-18-decimal tokens require additional module dependencies (specifically the `x/precisebank` module) and introduce complexity in managing fractional balances. This workaround is available for post-genesis chains that cannot migrate their token decimals, but it adds overhead and should be avoided when possible.
+If you are pre-genesis or planning to add EVM support in the future, configure your gas token with 18 decimals from the start. Non-18-decimal tokens need a separate 18-decimal gas denom and a converter precompile in your application, which adds complexity in managing fractional balances. This workaround is available for post-genesis chains that cannot migrate their token decimals, but it adds overhead and should be avoided when possible.
 </Warning>
 
 ### Option A: 18-Decimal Gas Token (Preferred)
@@ -118,22 +118,20 @@ If your chain already uses an 18-decimal token as the gas token, no additional c
 }
 ```
 
-### Option B: Non-18-Decimal Token with PreciseBank
+### Option B: Non-18-Decimal Token
+
+For chains with non-18-decimal gas tokens (e.g., 6 decimals like `uatom`), run the EVM on a separate 18-decimal gas denom and convert it against the native denom with a gas converter precompile. See [Migrating off x/precisebank](/evm/next/documentation/migrations/gas-converter-migration).
 
 <Warning>
-`x/precisebank` is deprecated as of cosmos/evm v0.7 and removed after it. For a non-18-decimal chain, see [Migrating off x/precisebank](/evm/next/documentation/migrations/gas-converter-migration).
+Through cosmos/evm v0.6, chains used [`x/precisebank`](https://github.com/cosmos/evm/tree/v0.7.3/contrib/x/precisebank) for this. It is deprecated as of v0.7, ships only under `contrib/` in v0.7.x, and is removed after it. Do not add it to a new integration.
 </Warning>
-
-For chains with non-18-decimal gas tokens (e.g., 6 decimals like `uatom`), use the [`x/precisebank`](https://github.com/cosmos/evm/tree/v0.7.3/contrib/x/precisebank) module to track fractional balances at the EVM level while maintaining the native denomination for Cosmos transactions.
-
-The `precisebank` module wraps the standard `bank` module and stores fractional balances separately. For example, if someone transfers 0.5 × 10^-6 tokens (less than 1 `uatom`) via an EVM transaction, precisebank tracks this fractional amount even though the base denomination can't represent it.
 
 ### Decimal Configuration Summary
 
 | Token Type | Configuration | Module Required |
 |------------|---------------|-----------------|
 | 18-decimal native token | Standard setup | None |
-| Non-18-decimal token | ExtendedDenomOptions + precisebank | `x/precisebank` |
+| Non-18-decimal token | Separate 18-decimal gas denom + gas converter precompile | None (application code) |
 
 ---
 
@@ -155,7 +153,7 @@ Before proposing the upgrade on mainnet, thoroughly test on a testnet or local n
 
 - [] Coin type set to 60
 - [] EthSecp256k1 added to keyring and signing options
-- [] Gas token decimal configuration determined (18-decimal native or `x/precisebank`)
+- [] Gas token decimal configuration determined (18-decimal native or gas converter precompile)
 - [] Upgrade handler implemented and tested
 
 ### Post-Upgrade Validation
@@ -221,13 +219,14 @@ If Step 1 (address derivation setup) was skipped, users importing their mnemonic
 Token balances are preserved during the upgrade:
 
 - For 18-decimal tokens: No migration needed, just [ensure bank metadata is set properly](https://github.com/cosmos/evm/blob/d97c9e5370b224b5d48e03592bb4074a42cee289/evmd/upgrades.go#L31-51). 
-- For non-18-decimal tokens: Existing balances remain unchanged in the Cosmos SDK, but EVM interactions will use the precisebank wrapper for fractional precision
+- For non-18-decimal tokens: Existing balances remain unchanged in the Cosmos SDK, and EVM gas is paid in the 18-decimal denom that users mint through the gas converter precompile
 
 ---
 
 ## Additional Resources
 
 - [Upgrade Handlers Guide](/evm/next/documentation/migrations/upgrade-handlers)
-- [PreciseBank Module](/evm/next/documentation/cosmos-sdk/modules/precisebank)
+- [Migrating off x/precisebank](/evm/next/documentation/migrations/gas-converter-migration)
+- [PreciseBank Module (deprecated)](/evm/next/documentation/cosmos-sdk/modules/precisebank)
 - [Address Encoding](/evm/next/documentation/concepts/encoding)
 - [Cosmos EVM Repository](https://github.com/cosmos/evm)
