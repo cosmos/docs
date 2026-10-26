@@ -23,7 +23,7 @@ If you are operating a Cosmos EVM chain and need to access IBC through the EVM, 
 
 ## What it does
 
-The script uses the committed forge workspace at [`ibc/forge/`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/forge/) and downloads prebuilt contract bytecode from the [`cosmos/solidity-ibc-eureka`](https://github.com/cosmos/solidity-ibc-eureka) release bundle. Then the following runs inside a Foundry container:
+The script uses the committed forge workspace at [`ibc/forge/`](https://github.com/cosmos/ibc-e2e-docs-example/blob/main/demo/cosmos-evm/ibc/forge/) and downloads prebuilt contract bytecode from the [`cosmos/ibc-contracts`](https://github.com/cosmos/ibc-contracts) release bundle. Then the following runs inside a Foundry container:
 
 ```bash
 forge script scripts/MinimalDeploy.s.sol \
@@ -44,18 +44,18 @@ The following steps are run by [`MinimalDeploy.s.sol`](https://github.com/cosmos
 | Step | Source | Purpose | Notes |
 | --- | --- | --- | --- |
 | 1. `AccessManager` | [OpenZeppelin AccessManager](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/manager/AccessManager.sol) | Role-based access control for the IBC contract suite | Deployer becomes the `ADMIN_ROLE` holder |
-| 2. `ICS26Router` (ERC1967 proxy) | [contracts/ICS26Router.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS26Router.sol) | IBC packet hub: validates packet sequencing and timeouts, routes packets to app contracts | Initialized with the `AccessManager` address |
-| 3. `ICS27Account` | [contracts/utils/ICS27Account.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/ICS27Account.sol) | CREATE2 proxy account used by `ICS27GMP` to derive and hold a client-derived account address | No constructor arguments |
-| 4. `ICS27GMP` (ERC1967 proxy) | [contracts/ICS27GMP.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/ICS27GMP.sol) | ICS-27 General Message Passing app: parses GMP payloads and dispatches calls to target contracts | Initialized with the `ICS26Router`, `ICS27Account`, and `AccessManager` addresses |
+| 2. `ICS26Router` (ERC1967 proxy) | [contracts/ICS26Router.sol](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/ICS26Router.sol) | IBC packet hub: validates packet sequencing and timeouts, routes packets to app contracts | Initialized with the `AccessManager` address |
+| 3. `ICS27Account` | [contracts/utils/ICS27Account.sol](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/utils/ICS27Account.sol) | CREATE2 proxy account used by `ICS27GMP` to derive and hold a client-derived account address | No constructor arguments |
+| 4. `ICS27GMP` (ERC1967 proxy) | [contracts/ICS27GMP.sol](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/ICS27GMP.sol) | ICS-27 General Message Passing app: parses GMP payloads and dispatches calls to target contracts | Initialized with the `ICS26Router`, `ICS27Account`, and `AccessManager` addresses |
 | 5. `ICS26Router.addIBCApp` | - | Registers `ICS27GMP` as the handler for `gmpport` | Must be called before any packets can be routed to GMP |
-| 6. `IFTOwnable` (ERC-20, ERC1967 proxy) | [`cosmos/solidity-ibc-eureka`](https://github.com/cosmos/solidity-ibc-eureka) | IFT token: `iftTransfer` burns tokens and emits an IBC packet; `iftMint` mints on packet receive | Initialized with the deployer address, token name/symbol, and the `ICS27GMP` address |
+| 6. `IFTOwnable` (ERC-20, ERC1967 proxy) | [`cosmos/ibc-contracts`](https://github.com/cosmos/ibc-contracts) | IFT token: `iftTransfer` burns tokens and emits an IBC packet; `iftMint` mints on packet receive | Initialized with the deployer address, token name/symbol, and the `ICS27GMP` address |
 
 Two more contracts are deployed in later steps:
 
 | Contract | Source | Deployed in | Role |
 | --- | --- | --- | --- |
-| `AttestationLightClient` | [contracts/light-clients/attestation/AttestationLightClient.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/light-clients/attestation/AttestationLightClient.sol) | `create-clients` | Verifies Cosmos packet state via m-of-n attestor ECDSA signatures; registered with `ICS26Router.addClient` |
-| `CosmosIFTSendCallConstructor` | [contracts/utils/CosmosIFTSendCallConstructor.sol](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/CosmosIFTSendCallConstructor.sol) | `wire` | Encodes the `MsgIFTMint` GMP payload for EVM-to-Cosmos transfers |
+| `AttestationLightClient` | [contracts/light-clients/attestation/AttestationLightClient.sol](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/light-clients/attestation/AttestationLightClient.sol) | `create-clients` | Verifies Cosmos packet state via m-of-n attestor ECDSA signatures; registered with `ICS26Router.addClient` |
+| `CosmosIFTSendCallConstructor` | [contracts/utils/CosmosIFTSendCallConstructor.sol](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/utils/CosmosIFTSendCallConstructor.sol) | `wire` | Encodes the `MsgIFTMint` GMP payload for EVM-to-Cosmos transfers |
 
 ### Resolving the IFT Contract Address
 
@@ -73,7 +73,7 @@ The three core addresses produced by this step are used throughout the rest of t
 
 ### IBC Solidity Contracts
 
-For a complete list of the IBC Solidity contracts, see the [cosmos/solidity-ibc-eureka](https://github.com/cosmos/solidity-ibc-eureka) repository.
+For a complete list of the IBC Solidity contracts, see the [cosmos/ibc-contracts](https://github.com/cosmos/ibc-contracts) repository.
 
 ### EVM Deployments
 
@@ -97,7 +97,7 @@ For permissioned relayers, the relayer address should hold a role that covers on
 
 ### IFT contract
 
-The demo deploys `IFTOwnable`, which uses `OwnableUpgradeable` for access control: a single owner address controls all privileged functions. [`IFTAccessManaged`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTAccessManaged.sol) provides more fine-grained control, allowing each function to be restricted to a different role. For a fully custom implementation, extend [`IFTBaseUpgradeable`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/utils/IFTBaseUpgradeable.sol) and implement `_onlyAuthority()` with your own logic. The full interface is defined in [`IIFT.sol`](https://github.com/cosmos/solidity-ibc-eureka/blob/main/contracts/interfaces/IIFT.sol).
+The demo deploys `IFTOwnable`, which uses `OwnableUpgradeable` for access control: a single owner address controls all privileged functions. [`IFTAccessManaged`](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/utils/IFTAccessManaged.sol) provides more fine-grained control, allowing each function to be restricted to a different role. For a fully custom implementation, extend [`IFTBaseUpgradeable`](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/utils/IFTBaseUpgradeable.sol) and implement `_onlyAuthority()` with your own logic. The full interface is defined in [`IIFT.sol`](https://github.com/cosmos/ibc-contracts/blob/main/ibc-solidity/contracts/interfaces/IIFT.sol).
 
 
 ## Next steps
