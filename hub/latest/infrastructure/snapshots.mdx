@@ -61,12 +61,13 @@ Snapshot archives are made from pruned nodes. A pruned snapshot cannot be turned
 
 ## Restore a data snapshot
 
-A restore is a stop, a reset that keeps the validator state file, an extract into `data/`, and a start. The validator state file is the step that matters. The commands use `~/.gaia`. On a node set up with [Run gaiad as a service](/hub/latest/node/service), use `/var/lib/gaia/.gaia` and run them as the `gaia` user.
+A restore is a stop, a reset that keeps the validator state file, an extract into `data/`, and a start. The validator state file is the step that matters. The commands use `~/.gaia`. On a node set up with [Run gaiad as a service](/hub/latest/node/service), use `/var/lib/gaia/.gaia` and run them as the `gaia` user. The `systemctl` and `journalctl` lines name the plain `gaiad` unit. If the node runs under the Cosmovisor unit from [Run gaiad as a service](/hub/latest/node/service), use `cosmovisor` instead. Do not touch `data/` until `systemctl is-active` prints `inactive`.
 
 1. Stop the node and back up the validator state file. On a validator this file is what stops the node from double signing after a restore.
 
 ```bash
 sudo systemctl stop gaiad
+systemctl is-active gaiad
 cp ~/.gaia/data/priv_validator_state.json ~/priv_validator_state.json.bak
 ```
 
@@ -101,12 +102,12 @@ On a validator, always restore your own copy of `priv_validator_state.json`. Res
 
 ## Make snapshots for others
 
-A snapshot node is a pruned full node that is stopped on a schedule, tarred, and started again. A common pruning setting is `pruning = "custom"`, `pruning-keep-recent = "100"`, `pruning-interval = "10"`. Stop the node first, because archiving a live database produces a corrupt snapshot. Read the height before stopping, because `gaiad status` needs the running node.
+A snapshot node is a pruned full node that is stopped on a schedule, tarred, and started again. A common pruning setting is `pruning = "custom"`, `pruning-keep-recent = "100"`, `pruning-interval = "10"`. Stop the node first, because archiving a live database produces a corrupt snapshot. Read the height before stopping, because `gaiad status` needs the running node. Use `cosmovisor` in place of `gaiad` in the `systemctl` lines if the node runs under that unit. The archive step only runs once the unit reports inactive.
 
 ```bash
 HEIGHT=$(gaiad status | jq -r .sync_info.latest_block_height)
-sudo systemctl stop gaiad
-tar -cf - -C ~/.gaia data wasm | lz4 -c > cosmoshub-4_$(date -u +%Y%m%d)_${HEIGHT}.tar.lz4
+sudo systemctl stop gaiad && ! systemctl is-active --quiet gaiad && \
+  tar -cf - -C ~/.gaia data wasm | lz4 -c > cosmoshub-4_$(date -u +%Y%m%d)_${HEIGHT}.tar.lz4
 sudo systemctl start gaiad
 ```
 
