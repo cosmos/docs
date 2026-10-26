@@ -46,10 +46,10 @@ The release workflow also publishes `ghcr.io/cosmos/gaia` with the version as th
 
 ```bash
 docker pull ghcr.io/cosmos/gaia:v28.3.1
-docker run --rm ghcr.io/cosmos/gaia:v28.3.1 version --long
+docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v28.3.1 version --long
 ```
 
-The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.25.7-alpine` with a statically linked musl wasmvm. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are `gaiad` subcommands. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/next/node/service) covers running it under systemd or compose.
+The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.25.7-alpine` with a statically linked musl wasmvm. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are appended to `start`. Any other subcommand needs `--entrypoint gaiad`, as in the version check above. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/next/node/service) covers running it under systemd or compose.
 
 ## Build from source
 
@@ -65,7 +65,7 @@ A source build on your own machine gives the same version and commit as the rele
 
 ## How releases are built
 
-Releases are produced by `.github/workflows/release.yml`, which runs goreleaser inside the `goreleaser-cross` image. The configuration is in `.goreleaser.yml`: `CGO_ENABLED=1`, tags `netgo,ledger,static_wasm`, `-trimpath -mod=readonly`, a `mod_timestamp` fixed to the commit time, and the same version ldflags as the Makefile. The `make goreleaser-build-local` target runs that configuration on a workstation with Docker (`release --snapshot --skip=publish`). It is the way to reproduce the release build environment. Expect it to run for a long time.
+Releases are produced by `.github/workflows/release.yml`, which runs goreleaser inside the `goreleaser-cross` image. The configuration is in `.goreleaser.yml`: `CGO_ENABLED=1`, tags `netgo,ledger,static_wasm`, `-trimpath -mod=readonly`, a `mod_timestamp` fixed to the commit time, and the same version ldflags as the Makefile. That configuration builds the macOS binaries. The Linux binary is a static musl build without the `ledger` tag. The `make goreleaser-build-local` target runs that configuration on a workstation with Docker (`release --snapshot --skip=publish`). It is the way to reproduce the release build environment. Expect it to run for a long time.
 
 ## Verify
 
@@ -73,7 +73,7 @@ Releases are produced by `.github/workflows/release.yml`, which runs goreleaser 
 gaiad version --long | head -n 8
 ```
 
-Expect `version: v28.3.1`, `commit: b7f8b81b` followed by the full hash, `build_tags: netgo,ledger,static_wasm` for a release binary (`netgo,ledger` for a default source build), `go: go version go1.25.7`, and `cosmos_sdk_version: v0.53.4`. A different commit for the same version string means the binary was not built from the release tag.
+Expect `version: v28.3.1`, `commit: b7f8b81b` followed by the full hash, `build_tags: netgo,muslc` for the Linux release binary (`netgo,ledger,static_wasm` for macOS, `netgo,ledger` for a default source build), `go: go version go1.25.7`, and `cosmos_sdk_version: v0.53.4`. A different commit for the same version string means the binary was not built from the release tag.
 
 ## Next
 

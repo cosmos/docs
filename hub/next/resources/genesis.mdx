@@ -80,6 +80,7 @@ Each command below rewrites `~/.gaia/config/genesis.json` in place. Pass `--home
 
 ```bash
 gaiad init demo --chain-id demo-1
+jq '.app_state.staking.params.bond_denom = "uatom" | .app_state.mint.params.mint_denom = "uatom" | .app_state.gov.params.min_deposit[0].denom = "uatom" | .app_state.gov.params.expedited_min_deposit[0].denom = "uatom"' ~/.gaia/config/genesis.json > /tmp/genesis.json && mv /tmp/genesis.json ~/.gaia/config/genesis.json
 gaiad keys add val --keyring-backend test
 gaiad genesis add-genesis-account val 1000000000uatom --keyring-backend test
 gaiad genesis gentx val 500000000uatom --chain-id demo-1 --keyring-backend test
@@ -89,7 +90,7 @@ gaiad genesis validate
 
 The `init` command writes the default file plus `node_key.json` and `priv_validator_key.json`. The `add-genesis-account` command adds a `BaseAccount` to `auth.accounts` and a balance to `bank.balances` and `bank.supply`. A key name or an address both work. The `--vesting-amount` and `--vesting-end-time` flags create a vesting account instead. The `gentx` command builds a `MsgCreateValidator` signed by the key, using the node's own consensus key, and writes it to `config/gentx/`. The amount must be in `bond_denom` and no larger than the account's balance. The `collect-gentxs` command reads every file in `config/gentx/` into `genutil.gen_txs` and sets the node's persistent peers from them. The `validate` command checks that every module section parses and that invariants such as supply hold. It prints `is a valid genesis file` on success.
 
-Because `gaiad init` sets `bond_denom` to `stake`, a devnet that should look like the Hub needs `staking.params.bond_denom`, `mint.params.mint_denom`, `gov.params.min_deposit`, and `crisis` style fee denoms changed to `uatom` before `gentx`. Edit with `jq` or `sed`, then run `gaiad genesis validate` again. The `gaiad genesis migrate <target-version>` command converts a genesis exported by an older gaia to a newer module layout. The `gaiad export` command produces a genesis from a running node's state for forks and test networks.
+The `jq` line runs before `gentx` because `gaiad init` sets `bond_denom`, `mint_denom`, and both governance deposit denoms to `stake`. Skip it and the `uatom` gentx still passes `validate`, but the chain panics at block 1 with `invalid coin denomination: got uatom, expected stake`. The `gaiad genesis migrate <target-version>` command converts a genesis exported by an older gaia to a newer module layout. The `gaiad export` command produces a genesis from a running node's state for forks and test networks.
 
 ## Verify
 

@@ -61,7 +61,7 @@ Snapshot archives are made from pruned nodes. A pruned snapshot cannot be turned
 
 ## Restore a data snapshot
 
-A restore is a stop, a reset that keeps the validator state file, an extract into `data/`, and a start. The validator state file is the step that matters.
+A restore is a stop, a reset that keeps the validator state file, an extract into `data/`, and a start. The validator state file is the step that matters. The commands use `~/.gaia`. On a node set up with [Run gaiad as a service](/hub/latest/node/service), use `/var/lib/gaia/.gaia` and run them as the `gaia` user.
 
 1. Stop the node and back up the validator state file. On a validator this file is what stops the node from double signing after a restore.
 
@@ -101,11 +101,12 @@ On a validator, always restore your own copy of `priv_validator_state.json`. Res
 
 ## Make snapshots for others
 
-A snapshot node is a pruned full node that is stopped on a schedule, tarred, and started again. A common pruning setting is `pruning = "custom"`, `pruning-keep-recent = "100"`, `pruning-interval = "10"`. Stop the node first, because archiving a live database produces a corrupt snapshot.
+A snapshot node is a pruned full node that is stopped on a schedule, tarred, and started again. A common pruning setting is `pruning = "custom"`, `pruning-keep-recent = "100"`, `pruning-interval = "10"`. Stop the node first, because archiving a live database produces a corrupt snapshot. Read the height before stopping, because `gaiad status` needs the running node.
 
 ```bash
+HEIGHT=$(gaiad status | jq -r .sync_info.latest_block_height)
 sudo systemctl stop gaiad
-tar -cf - -C ~/.gaia data wasm | lz4 -c > cosmoshub-4_$(date -u +%Y%m%d)_$(gaiad status 2>/dev/null | jq -r .sync_info.latest_block_height).tar.lz4
+tar -cf - -C ~/.gaia data wasm | lz4 -c > cosmoshub-4_$(date -u +%Y%m%d)_${HEIGHT}.tar.lz4
 sudo systemctl start gaiad
 ```
 
@@ -126,13 +127,13 @@ snapshot-interval = 1000
 snapshot-keep-recent = 2
 ```
 
-The `snapshot-interval` value is in heights. The default that `gaiad init` writes is 1000, with 10 kept. Snapshots are only taken at heights that are a multiple of the interval. The node must have the state at that height, so a node that prunes more aggressively than the interval cannot produce them. List what the node holds:
+The `snapshot-interval` value is in heights. The default that `gaiad init` writes is 1000, with 10 kept. Snapshots are only taken at heights that are a multiple of the interval. Pruning does not block them. The node keeps the state at a snapshot height until that snapshot is written, whatever the pruning settings. List what the node holds:
 
 ```bash
 gaiad snapshots list
 ```
 
-The output is empty on a fresh node. Once snapshots exist, it lists `height`, `format`, and `chunks`. The command `gaiad snapshots export --height <h>` takes one on demand. Then `gaiad snapshots dump <height> <format>` writes it to an archive file. On another node, `gaiad snapshots load <archive-file>` followed by `gaiad snapshots restore <height> <format>` brings it in without P2P. Consumers also need two RPC endpoints with these snapshots to configure `[statesync]`. See [Sync options](/hub/latest/node/sync).
+The output is empty on a fresh node. Once snapshots exist, it lists `height`, `format`, and `chunks`. The command `gaiad snapshots export --height <h>` takes one on demand. Then `gaiad snapshots dump <height> <format>` writes it to an archive file. Other nodes consume these snapshots through state sync. They need two RPC endpoints serving them to configure `[statesync]`. See [State sync](/hub/latest/node/sync#state-sync). Do not start a new node with `gaiad snapshots load <archive-file>` and `gaiad snapshots restore <height> <format>`. On v28.3.1 they fill only the application store, and the node then panics on start with `state.AppHash does not match AppHash after replay` because CometBFT has no state yet.
 
 ## Verify
 
