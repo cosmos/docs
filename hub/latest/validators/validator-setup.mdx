@@ -1,176 +1,180 @@
 ---
-title: Running a Validator
+title: Create and manage a validator
+description: How an operator with a synced node creates a Cosmos Hub validator, edits it, unjails it, collects commission, and leaves cleanly.
 ---
-<Tip>
-We suggest you try out joining a public testnet first. Information on how to join the most recent testnet can be found [here](/hub/latest/hub-tutorials/join-testnet).
-</Tip>
 
-Before setting up a validator node, make sure to have completed the [Joining Mainnet](/hub/latest/hub-tutorials/join-mainnet) guide.
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-If you plan to use a KMS (key management system), you should go through these steps first: [Using a KMS](/hub/latest/validators/kms/kms).
+<HubVerified date="2026-10-15" />
 
-## What is a Validator?
+This page is for an operator with a node that is fully synced to cosmoshub-4 and running as a service ([Join mainnet](/hub/latest/hub-tutorials/join-mainnet), [Run gaiad as a service](/hub/latest/node/service)). At the end you have a validator registered on chain. You also know every operator-key transaction you will send over its life.
 
-[Validators](/hub/latest/validators/overview) are responsible for committing new blocks to the blockchain through an automated voting process. A validator's stake is slashed if they become unavailable or sign blocks at the same height. Because there is a chance of slashing, we suggest you read about [Sentry Node Architecture](/hub/latest/validators/validator-faq#how-can-validators-protect-themselves-from-denial-of-service-attacks) to protect your node from DDOS attacks and to ensure high-availability.
+All transactions below are signed by the operator key and cost a fee in `uatom`. Add `--chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom` to each. The fee market floor on 2026-10-15 was 0.005 uatom per gas (`gaiad query feemarket gas-prices`). Test every command on the [testnet](/hub/latest/hub-tutorials/join-testnet) first with the testnet chain-id.
+
+## Prerequisites
+
+- An operator key in the keyring. Create one with `gaiad keys add <name>`, or `gaiad keys add <name> --ledger` to keep it on a [Ledger](/hub/latest/resources/ledger). Use the `os` or `file` keyring backend on a server, never `test`. See [Keyring](/sdk/latest/node/keyring).
+- ATOM on the operator address for the self-delegation plus fees. Print the `cosmos` address with `gaiad keys show <name> -a`. Print the `cosmosvaloper` address you will query later with `gaiad keys show <name> --bech val -a`.
+- The consensus public key. On the node host, `gaiad comet show-validator` prints it from `config/priv_validator_key.json`. On a node set up with [Run gaiad as a service](/hub/latest/node/service), run `sudo -u gaia gaiad comet show-validator --home /var/lib/gaia/.gaia` so it reads the running node's key. If you already moved the key to a [remote signer](/hub/latest/validators/remote-signing), take the key from `curl -s localhost:26657/status | jq .result.validator_info.pub_key` instead. The `show-validator` command always reads the local file.
+- The node reports `"catching_up": false` in `curl -s localhost:26657/status | jq .result.sync_info`. A validator created while behind the head misses blocks immediately.
+
+## Write validator.json
+
+On gaia v28.3.1, `create-validator` takes a JSON file, not flags. Print the schema with `gaiad tx staking create-validator --help`.
+
+```json
+{
+  "pubkey": {"@type":"/cosmos.crypto.ed25519.PubKey","key":"U1ONwh10OTBOB+PcDhpQLupEyx2gJoYvDkZ6f7fYbIE="},
+  "amount": "1000000uatom",
+  "moniker": "docs-validator",
+  "identity": "",
+  "website": "https://example.com",
+  "security": "security@example.com",
+  "details": "",
+  "commission-rate": "0.10",
+  "commission-max-rate": "0.20",
+  "commission-max-change-rate": "0.01",
+  "min-self-delegation": "1"
+}
+```
+
+Field by field:
+
+- `pubkey`: the exact output of `gaiad comet show-validator` (or the `/status` key, converted to the same `@type` form). A wrong key creates a validator that can never sign.
+- `amount`: the initial self-delegation. An amount of 1,000,000 uatom is 1 ATOM. The active set cutoff is far higher. See [Live constraints](/hub/latest/validators/overview#live-constraints).
+- `identity`: a 16-character Keybase PGP fingerprint, used by explorers for your logo. Optional.
+- `commission-rate`: at least 0.05, the chain minimum. The binary does not check this. A lower value is rejected when the transaction executes.
+- `commission-max-rate` and `commission-max-change-rate`: fixed forever at creation. You can never raise commission above the max, or move it by more than the max change in one day.
+- `min-self-delegation`: whole uatom, at least 1. It can only be increased later. Dropping your self-delegation below it jails the validator.
+
+## Create the validator
+
+```bash
+gaiad tx staking create-validator validator.json \
+  --from <operator-key-name> \
+  --chain-id cosmoshub-4 \
+  --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+This sends `MsgCreateValidator`. It bonds `amount` from the operator address and registers the description and commission. Use `--generate-only` first to inspect the unsigned transaction without broadcasting it. With `--gas auto` a rejected transaction fails during simulation and is never broadcast. The reason is in the `Error:` line (insufficient funds, commission below minimum, or duplicate consensus key). If you set `--gas` by hand instead, the broadcast returns code `0`. The failure then shows up as a non-zero `code` in `gaiad query tx <hash>`.
+
+## Verify
+
+```bash
+gaiad query staking validator $(gaiad keys show <operator-key-name> --bech val -a)
+```
+
+A new validator with less stake than the 180th seat shows `status: BOND_STATUS_UNBONDED` and `jailed: false`. It becomes `BOND_STATUS_BONDED` at the end of the block in which its voting power enters the top 180.
+
+```bash
+curl -s localhost:26657/status | jq '.result.validator_info'
+```
+
+The `voting_power` field is `0` until the validator is bonded, then equals bonded ATOM. The `pub_key` field must match the key in `validator.json`.
+
+```bash
+gaiad query slashing signing-info $(gaiad comet show-validator)
+```
+
+Once bonded, `index_offset` increases every block and `missed_blocks_counter` stays flat. With `--output json` the `missed_blocks_counter` field is omitted while it is zero, as is `tombstoned` while false. The `jailed_until` field prints `1970-01-01T00:00:00Z` until the first jailing. Explorers such as [Mintscan](https://www.mintscan.io/cosmos/validators) list the validator within a few minutes.
+
+## Edit the validator
+
+The `edit-validator` command is flag based. Only the flags you pass change. Everything else keeps its value.
+
+```bash
+gaiad tx staking edit-validator \
+  --new-moniker "<name>" \
+  --website "https://example.com" \
+  --security-contact "security@example.com" \
+  --identity "<keybase-fingerprint>" \
+  --details "<one line>" \
+  --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+Two flags have rules enforced by the chain:
+
+- `--commission-rate`: at most one change per 24 hours, never above your `commission-max-rate`, never moving more than `commission-max-change-rate` at once, never below the chain minimum 0.05. The clock starts at `create-validator`, so any change in the first 24 hours, or a second change inside 24 hours, fails with `commission cannot be changed more than once in 24h`.
+- `--min-self-delegation`: can only go up, and not above your current self-delegation.
+
+Confirm with the same `gaiad query staking validator` call. The `description` and `commission` fields update in the next block.
+
+## Unjail
+
+If the validator is jailed for downtime, fix the cause first (signer down, node stopped, or missed upgrade). Confirm the node is at the chain head and signing is possible, then:
+
+```bash
+gaiad tx slashing unjail --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The chain rejects the transaction in three cases: `jailed_until` (10 minutes after the jailing) has not passed, self-delegation is below `min-self-delegation`, or the validator was tombstoned for a double sign. A tombstoned validator cannot be unjailed by anyone.
+
+The query `gaiad query staking validator <cosmosvaloper>` then shows `jailed: false` (with `--output json` the field is omitted while false). The validator re-enters the set at the next block if its power qualifies.
+
+## Rewards and withdraw address
+
+Commission accrues in the distribution module until you withdraw it.
+
+```bash
+gaiad tx distribution withdraw-rewards <cosmosvaloper> --commission \
+  --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+This sends `MsgWithdrawDelegatorReward` for the self-delegation and `MsgWithdrawValidatorCommission` for commission. To pay rewards to a different account (a cold wallet, for example):
+
+```bash
+gaiad tx distribution set-withdraw-addr <cosmos-address> --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The query `gaiad query distribution commission <cosmosvaloper>` shows the unclaimed commission.
+
+## Liquid staking
+
+Anyone can tokenize delegations to your validator inside the chain caps (25 percent global, 100 percent per validator; see [Liquid staking](/hub/latest/modules/liquid)). A validator cannot refuse that. The `disable-tokenize-shares` message locks only the account that sends it, so it stops that account from tokenizing its own delegations. Sent from the operator account, it protects the self-delegation if the operator key leaks, the same lock delegators use ([Delegator security](/hub/latest/delegators/delegator-security)):
+
+```bash
+gaiad tx liquid disable-tokenize-shares --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+Re-enabling takes `enable-tokenize-shares` plus the unbonding period before it applies. There is no validator bond requirement on the Hub.
+
+## Stop at a height
+
+For maintenance you cannot script otherwise, make the node stop itself at a block:
+
+```bash
+gaiad config set app halt-height <height>
+```
+
+The TOML key is `halt-height` in `app.toml`. Running `gaiad start --halt-height <height>` does the same for one run. Reset it to `0` before the restart, or the node stops again. Remember the downtime window: about 15 hours of missed blocks jails you (see [Validator overview](/hub/latest/validators/overview#live-constraints)).
+
+## Leave the set cleanly
 
 <Warning>
-If you want to become a validator for the Hub's `mainnet`, you should learn more about [security](/hub/latest/validators/security).
+Exit by reducing self-delegation, because there is no "unbond validator" transaction on gaia v28.3.1. Stopping the node and walking away jails you for downtime after about 15 hours. It also slashes 0.01 percent of all stake delegated to you, including your delegators'.
 </Warning>
 
-The following instructions assume you have already [set up a full-node](/hub/latest/hub-tutorials/join-mainnet) and are synchronised to the latest blockheight.
-
-## Create Your Validator
-
-Your `cosmosvalconspub` can be used to create a new validator by staking tokens. You can find your validator pubkey by running:
+Undelegating your own stake below `min-self-delegation` jails the validator at once, without a slash, and removes it from the set at the end of the block:
 
 ```bash
-gaiad tendermint show-validator
+gaiad tx staking unbond <cosmosvaloper> <amount>uatom --from <operator-key-name> \
+  --chain-id cosmoshub-4 --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
 ```
 
-To create your validator, just use the following command:
+Keep the node and signer running until `gaiad query staking validator <cosmosvaloper>` shows `jailed: true` and `status` other than `BOND_STATUS_BONDED`. Tell your delegators ahead of time so they can redelegate. Their stake, and your remaining self-delegation, unbonds over 21 days. It stays slashable for evidence from before the exit. The `cosmosvaloper` address is permanent, so a later return means `unjail` on the same validator, not a new one.
 
-<Warning>
-Don't use more `uatom` than you have!
-</Warning>
+## Common problems
 
-```bash expandable
-gaiad tx staking create-validator \
-  --amount=1000000uatom \
-  --pubkey=$(gaiad tendermint show-validator) \
-  --moniker="choose a moniker" \
-  --chain-id=<chain_id> \
-  --commission-rate="0.10" \
-  --commission-max-rate="0.20" \
-  --commission-max-change-rate="0.01" \
-  --gas="auto" \
-  --gas-prices="0.0025uatom" \
-  --from=<key_name>
-```
+- `voting_power: 0` in `/status` long after creation: the validator is below the 180th seat, or the `pubkey` in `validator.json` is not the key the node signs with. Compare `gaiad query staking validator` `consensus_pubkey` with `/status` `validator_info.pub_key`.
+- `create-validator` fails with a commission error: `commission-rate` below 0.05 or above `commission-max-rate`.
+- `jailed: true` right after a commission change: unrelated. Check `gaiad query slashing signing-info` for `jailed_until` and the node logs for the gap.
+- Too many open files or peer drops under load: raise the service file descriptor limit; see [Run gaiad as a service](/hub/latest/node/service).
 
-<Tip>
-When specifying commission parameters, the `commission-max-change-rate` is used to measure % *point* change over the `commission-rate`. E.g. 1% to 2% is a 100% rate increase, but only 1 percentage point.
-</Tip>
+## Next
 
-It's possible that you won't have enough ATOM to be part of the active set of validators in the beginning. Users are able to delegate to inactive validators (those outside of the active set) using the [Keplr web app](https://wallet.keplr.app/#/cosmoshub/stake?tab=inactive-validators). You can confirm that you are in the validator set by using a third party explorer like [Mintscan](https://www.mintscan.io/cosmos/validators).
-
-## Edit Validator Description
-
-You can edit your validator's public description. This info is to identify your validator, and will be relied on by delegators to decide which validators to stake to. Make sure to provide input for every flag below. If a flag is not included in the command the field will default to empty (`--moniker` defaults to the machine name) if the field has never been set or remain the same if it has been set in the past.
-
-The {'<'}key\_name{'>'} specifies which validator you are editing. If you choose to not include some of the flags below, remember that the --from flag **must** be included to identify the validator to update.
-
-The `--identity` can be used as to verify identity with systems like Keybase or UPort. When using Keybase, `--identity` should be populated with a 16-digit string that is generated with a [keybase.io](https://keybase.io) account. It's a cryptographically secure method of verifying your identity across multiple online networks. The Keybase API allows us to retrieve your Keybase avatar. This is how you can add a logo to your validator profile.
-
-```bash
-gaiad tx staking edit-validator
-  --moniker="choose a moniker" \
-  --website="https://cosmos.network" \
-  --identity=6A0D65E29A4CBC8E \
-  --details="To infinity and beyond!" \
-  --chain-id=<chain_id> \
-  --gas="auto" \
-  --gas-prices="0.0025uatom" \
-  --from=<key_name> \
-  --commission-rate="0.10"
-```
-
-<Warning>
-Please note that some parameters such as `commission-max-rate` and `commission-max-change-rate` cannot be changed once your validator is up and running.
-</Warning>
-
-**Note**: The `commission-rate` value must adhere to the following rules:
-
-* Must be between 0 and the validator's `commission-max-rate`
-* Must not exceed the validator's `commission-max-change-rate` which is maximum
-  % point change rate **per day**. In other words, a validator can only change
-  its commission once per day and within `commission-max-change-rate` bounds.
-
-## View Validator Description
-
-View the validator's information with this command:
-
-```bash
-gaiad query staking validator <account_cosmos>
-```
-
-## Track Validator Signing Information
-
-In order to keep track of a validator's signatures in the past you can do so by using the `signing-info` command:
-
-```bash
-gaiad query slashing signing-info <validator-pubkey>\
-  --chain-id=<chain_id>
-```
-
-## Unjail Validator
-
-When a validator is "jailed" for downtime, you must submit an `Unjail` transaction from the operator account in order to be able to get block proposer rewards again (depends on the zone fee distribution).
-
-```bash
-gaiad tx slashing unjail \
- --from=<key_name> \
- --chain-id=<chain_id>
-```
-
-## Confirm Your Validator is Running
-
-Your validator is active if the following command returns anything:
-
-```bash
-gaiad query tendermint-validator-set | grep "$(gaiad tendermint show-address)"
-```
-
-You should now see your validator in one of the Cosmos Hub explorers. You are looking for the `bech32` encoded `address` in the `~/.gaia/config/priv_validator.json` file.
-
-## Halting Your Validator
-
-When attempting to perform routine maintenance or planning for an upcoming coordinated upgrade, it can be useful to have your validator systematically and gracefully halt. You can achieve this by either setting the `halt-height` to the height at which you want your node to shutdown or by passing the `--halt-height` flag to `gaiad`. The node will shutdown with a zero exit code at that given height after committing
-the block.
-
-## Advanced configuration
-
-You can find more advanced information about running a node or a validator on the [CometBFT Core documentation](/cometbft/latest/docs/core/Running-in-production).
-
-## Common Problems
-
-### Problem #1: My validator has `voting_power: 0`
-
-Your validator has become jailed. Validators get jailed, i.e. get removed from the active validator set, if they do not vote on at least `500` of the last `10,000` blocks, or if they double sign.
-
-If you got jailed for downtime, you can get your voting power back to your validator. First, if you're not using [Cosmovisor](/sdk/latest/guides/upgrades/cosmovisor#installation) and `gaiad` is not running, start it up again:
-
-```bash
-gaiad start
-```
-
-Wait for your full node to catch up to the latest block. Then, you can [unjail your validator](#unjail-validator)
-
-After you have submitted the unjail transaction, check your validator again to see if your voting power is back.
-
-```bash
-gaiad status
-```
-
-You may notice that your voting power is less than it used to be. That's because you got slashed for downtime!
-
-### Problem #2: My `gaiad` crashes because of `too many open files`
-
-The default number of files Linux can open (per-process) is `1024`. `gaiad` is known to open more than `1024` files. This causes the process to crash. A quick fix is to run `ulimit -n 4096` (increase the number of open files allowed) and then restarting the process with `gaiad start`. If you are using `systemd` or another process manager to launch `gaiad` (such as [Cosmovisor](/sdk/latest/guides/upgrades/cosmovisor#installation)) this may require some configuration at that level. A sample `systemd` file to fix this issue is below:
-
-```toml expandable
-[Unit]
-Description=Cosmos Gaia Node
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu
-ExecStart=/home/ubuntu/go/bin/gaiad start
-Restart=on-failure
-RestartSec=3
-LimitNOFILE=4096
-
-[Install]
-WantedBy=multi-user.target
-```
+Move the consensus key off the validator host: [Remote signing](/hub/latest/validators/remote-signing).

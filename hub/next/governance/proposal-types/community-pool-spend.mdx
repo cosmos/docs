@@ -1,64 +1,92 @@
 ---
 noindex: true
-title: Community Pool Spend
-description: >-
-  Cosmos Hub launched with community-spend capabilities on December 11, 2019,
-  effectively unlocking the potential for token-holders to vote to approve
-  spending from the Community Pool.
+title: "Community pool spend"
+description: "How the Cosmos Hub community pool is funded, how much it holds, and how to write and verify a MsgCommunityPoolSpend proposal on gaia v28.3.1."
 ---
-Cosmos Hub launched with community-spend capabilities on December 11, 2019, effectively unlocking the potential for token-holders to vote to approve spending from the Community Pool.
 
-🇪🇸 Esta página también está [disponible en español](https://github.com/raquetelio/CosmosCommunitySpend/blob/master/README%5BES_es%5D.md).
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-## Learn About the Community Pool
+<HubVerified date="2026-10-15" />
 
-### How is the Community Pool funded?
+This page is for teams requesting funds from the Cosmos Hub community pool and for voters evaluating a request. It assumes the process on [Submitting a proposal](/hub/next/governance/submitting). A spend proposal carries one or more `MsgCommunityPoolSpend` messages. When it passes, the amount moves to the recipient in the same block as the tally.
 
-2% of all staking rewards generated (via block rewards & transaction fees) are continually transferred to and accrue within the Community Pool. For example, from Dec 19, 2019 until Jan 20, 2020 (32 days), 28,726 ATOM were generated and added to the pool.
+## How the pool is funded
 
-### How can funding for the Community Pool change?
+The pool receives 2 percent of every block's rewards (inflation and fees) before validators and delegators are paid. Tokenfactory denom creation fees (10 ATOM each) go there too.
 
-Though the rate of funding is currently fixed at 2% of staking rewards, the effective rate is dependent upon the Cosmos Hub's staking rewards, which can change with inflation and block times.
+```bash
+gaiad q distribution params --node https://cosmos-rpc.publicnode.com:443
+```
 
-The current parameter `Community Tax` parameter of 2% may be modified with a governance proposal and enacted immediately after the proposal passes.
+The output shows `community_tax: "0.020000000000000000"`. The rate is a parameter. Proposal 996 set it back to 2 percent after an earlier change, through `/cosmos.distribution.v1beta1.MsgUpdateParams`.
 
-### How much money is in the Community Pool?
+## How much it holds
 
-You may directly query the Cosmos Hub 4 for the balance of the Community Pool:
+```bash
+gaiad q distribution community-pool --node https://cosmos-rpc.publicnode.com:443
+```
 
-`gaiad q distribution community-pool --chain-id cosmoshub-4 --node <rpc-node-address> `
+The output lists every denom in the pool with a decimal amount in base units. The uatom line is the one that matters for a spend. The many `ibc/...` lines are tokens sent to the pool by other chains or by `fund-community-pool` transactions. Explorers show the same balance in ATOM.
 
-Alternatively, popular Cosmos explorers such as [Mintscan](https://www.mintscan.io/cosmos) display the ongoing Community Pool balance.
+## What the community funds
 
-### How can funds from the Community Pool be spent?
+There is no fixed policy. The pool funds what voters pass. The pattern from passed and rejected proposals: work that benefits the Hub directly, priced in ATOM with a stated conversion basis, paid in stages where the work is long, to a multisig when more than one person is responsible. Recurring concerns in the debate are retroactive grants, price negotiation, disbursal in stages or pegged to a fiat value, and whether large one-off transfers belong in a spend proposal at all. Proposal 1056 (a 1,721,120 ATOM refund request) was rejected with 91.5 million ATOM in NoWithVeto and lost its deposit. That is the outcome a request without community support gets.
 
-Funds from the Cosmos Community Pool may be spent via successful governance proposal.
+Funding is fast once it passes: the transfer happens at the end of the 7 day vote with no further step. The pool is an alternative to foundation grants. A proposer can pursue both, withdrawing one if the other succeeds.
 
-### How should funds from the Community Pool be spent?
+## Proposal JSON
 
-We don't know 🤷
+The `gaiad tx gov draft-proposal` command with the `community-pool-spend` type asks for the recipient and amount, then writes:
 
-The prevailing assumption is that funds should be spent in a way that brings value to the Cosmos Hub. However, there is debate about how to keep the fund sustainable. There is also some debate about who should receive funding. For example, part of the community believes that the funds should only be used for those who need funding most. Other topics of concern include:
+```json
+{
+  "messages": [
+    {
+      "@type": "/cosmos.distribution.v1beta1.MsgCommunityPoolSpend",
+      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
+      "recipient": "cosmos1...",
+      "amount": [
+        {
+          "denom": "uatom",
+          "amount": "1000000000"
+        }
+      ]
+    }
+  ],
+  "metadata": "ipfs://CID",
+  "deposit": "50000000uatom",
+  "title": "Fund X for Y",
+  "summary": "1,000 ATOM to cosmos1... for Y, delivered by Z.",
+  "expedited": false
+}
+```
 
-* retroactive grants
-* price negotiation
-* fund disbursal (eg. payments in stages; payments pegged to reduce volatility)
-* radical overhaul of how the community-spend mechanism functions
+The `amount` is in uatom (1,000 ATOM above). The `recipient` is usually a multisig. Create it with `gaiad keys add <name> --multisig ... --multisig-threshold N` on the recipient side. Verify the address with `gaiad keys parse` before it goes in the JSON. The recipient need not sign anything. The `authority` must be the gov module account, which `gaiad q auth module-account gov` returns.
 
-We can expect this to take shape as proposals are discussed, accepted, and rejected by the Cosmos Hub community.
+Submit with:
 
-### How are funds disbursed after a community-spend proposal is passed?
+```bash
+gaiad tx gov submit-proposal draft_proposal.json --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
 
-If a community-spend proposal passes successfully, the number of ATOM encoded in the proposal will be transferred from the community pool to the address encoded in the proposal, and this will happen immediately after the voting period ends.
+## Verify
 
-## Why create a proposal to use Community Pool funds?
+Before the vote, confirm the message:
 
-There are other funding options, most notably the Interchain Foundation's grant program. Why create a community-spend proposal?
+```bash
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0] | {recipient, amount}'
+```
 
-**As a strategy: you can do both.** You can submit your proposal to the Interchain Foundation, but also consider submitting your proposal publicly on-chain. If the Hub votes in favour, you can withdraw your Interchain Foundation application.
+After a pass, confirm the transfer landed in the block the voting period ended:
 
-**As a strategy: funding is fast.** Besides the time it takes to push your proposal on-chain, the only other limiting factor is a fixed 14-day voting period. As soon as the proposal passes, your account will be credited the full amount of your proposal request.
+```bash
+gaiad q bank balance cosmos1RECIPIENT... uatom --node https://cosmos-rpc.publicnode.com:443
+gaiad q distribution community-pool --node https://cosmos-rpc.publicnode.com:443
+```
 
-**To build rapport.** Engaging publicly with the community is the opportunity to develop relationships with stakeholders and to educate them about the importance of your work. Unforeseen partnerships could arise, and overall the community may value your work more if they are involved as stakeholders.
+The recipient's uatom balance has grown by the proposal amount. The pool's uatom line has shrunk by it. If the pool held less than the amount at execution, the proposal status is `PROPOSAL_STATUS_FAILED`. Nothing moved.
 
-**To be more independent.** The Interchain Foundation (ICF) may not always be able to fund work. Having a more consistently funded source and having a report with its stakeholders means you can use your rapport to have confidence in your ability to secure funding without having to be dependent upon the ICF alone.
+## Next
+
+- [Submitting a proposal](/hub/next/governance/submitting) for the forum draft and deposit.
+- [Delegator CLI guide](/hub/next/delegators/delegator-guide-cli#multisig-accounts) to set up the receiving multisig.

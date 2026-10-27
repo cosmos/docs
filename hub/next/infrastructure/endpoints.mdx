@@ -1,0 +1,128 @@
+---
+noindex: true
+title: "Run public endpoints"
+description: "Expose RPC, REST and gRPC endpoints from a Cosmos Hub full node for wallets, explorers, relayers and other operators."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+This page is for operators who already run a synced Cosmos Hub full node (see [Join mainnet](/hub/next/hub-tutorials/join-mainnet)) and want to serve it to other people. At the end you have a node that answers CometBFT remote procedure call (RPC), Cosmos SDK REST, and gRPC behind a reverse proxy, with limits that keep one noisy client from taking the node down.
+
+## Which node serves endpoints
+
+Serve endpoints from a dedicated full node, never from a validator. The validator node should keep RPC bound to localhost and connect only to its sentries. See [Validator security](/hub/next/validators/security). An endpoint node needs no consensus key and no stake, only disk, bandwidth, and a public address.
+
+Decide first how much history the node keeps, because that decides which queries it can answer:
+
+- A node with the default `pruning = "default"` answers current-state queries and recent heights. This is enough for wallets and most relayers.
+- A node with `pruning = "nothing"` answers historical queries at any height since it was synced. Explorers and indexers need this. Size and sync options are on [Archive nodes](/hub/next/resources/archives).
+
+Database backend and pruning settings are covered on [Database and pruning](/hub/next/node/database).
+
+## CometBFT RPC
+
+The CometBFT RPC listener is in `config.toml` under `[rpc]`. The defaults written by `gaiad init` bind it to localhost:
+
+```toml
+[rpc]
+laddr = "tcp://127.0.0.1:26657"
+cors_allowed_origins = []
+max_open_connections = 900
+max_subscription_clients = 100
+max_subscriptions_per_client = 5
+timeout_broadcast_tx_commit = "10s"
+```
+
+Keep `laddr` on `127.0.0.1`. Put the reverse proxy in front of it. Binding `0.0.0.0` exposes the unauthenticated endpoint directly, including `/unsafe_*` style routes if `unsafe = true` is ever set. Set `cors_allowed_origins = ["*"]` only if browser wallets must reach this node directly. A proxy can also add the header.
+
+To change a `config.toml` key with `gaiad config set config ...` on gaia v28.3.1, add the `-s` flag (`--skip-validate`). Without it the command returns `cometbft config is not supported`.
+
+Check that the RPC answers and is not catching up:
+
+```bash
+curl -s http://127.0.0.1:26657/status | jq '.result.sync_info | {latest_block_height, catching_up}'
+```
+
+The `catching_up` field must be `false` before the node goes behind a public hostname.
+
+## Transaction indexer
+
+Wallets and explorers call `/tx?hash=` and `/tx_search`. Both need the transaction indexer, which is on by default:
+
+```toml
+[tx_index]
+indexer = "kv"
+```
+
+Set `indexer = "null"` only on nodes that will never serve transaction lookups (sentries, signing nodes). Switching the indexer later does not index old blocks. The node has to resync or restore a snapshot that was made with indexing enabled.
+
+## REST (API) and gRPC
+
+The SDK listeners are in `app.toml`. The API is off by default. gRPC is on, bound to `localhost:9090`:
+
+```toml
+[api]
+enable = false
+swagger = false
+address = "tcp://localhost:1317"
+
+[grpc]
+enable = true
+address = "localhost:9090"
+
+[grpc-web]
+enable = true
+```
+
+Turn the API on and keep both listeners on localhost. The `gaiad config set app` command accepts dotted keys:
+
+```bash
+gaiad config set app api.enable true
+gaiad config set app api.address tcp://127.0.0.1:1317
+gaiad config set app grpc.address 127.0.0.1:9090
+gaiad config get app api.enable
+```
+
+The REST API answers under `/cosmos/...` paths, for example:
+
+```bash
+curl -s http://127.0.0.1:1317/cosmos/base/tendermint/v1beta1/node_info | jq .default_node_info.network
+```
+
+The answer is `cosmoshub-4`. gRPC needs a Transport Layer Security (TLS) terminating proxy that supports HTTP/2. gRPC-web shares the API port.
+
+## Reverse proxy and limits
+
+Put TLS termination, request limits, and a health check in a reverse proxy (nginx, Caddy, HAProxy, or a cloud load balancer). The settings that matter, whatever the proxy:
+
+- Health check on `GET /status` and mark the backend down when `catching_up` is `true` or the latest block time is older than about a minute. A node that is behind still returns 200.
+- Per-client rate limit on `/tx_search`, `/block_search`, and `/abci_query`. These are the calls that let one client saturate disk.
+- Websocket pass-through on `/websocket` for Hermes `event_source = { mode = "push" }` subscriptions, with an idle timeout longer than the relayer's ping interval.
+- A body size limit around 1 MiB. Transactions on the Hub are limited by the consensus `max_bytes` of 2,000,000, so nothing legitimate is larger.
+
+Do not expose the CometBFT peer to peer (P2P) port, 26656, through the same proxy. P2P is a separate listener covered on [Peering](/hub/next/infrastructure/peering).
+
+## Publish the endpoint
+
+Other operators find public endpoints through the [chain registry](https://github.com/cosmos/chain-registry/blob/master/cosmoshub/chain.json) (`apis.rpc`, `apis.rest`, `apis.grpc`) and through [cosmos.directory](https://cosmos.directory/cosmoshub), which reads the registry. Add the hostname with a pull request against the registry once the endpoint has been stable for a while. Remove it again before taking the node down for a long time. Stale entries break wallets for everyone.
+
+## Verify
+
+From a machine outside the node's network, with the public hostname:
+
+```bash
+gaiad status --node https://rpc.example.com:443 | jq '.sync_info.catching_up'
+gaiad q bank balances cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn --node https://rpc.example.com:443 --output json | jq '.balances[0]'
+gaiad q tx EC76C5DE43CD14068AAECB2F018F0616E9ECD192F83C5E308E0BA0013DBCBB24 --node https://rpc.example.com:443 --output json | jq '{height, code, gas_used}'
+```
+
+The first returns `false`. The second returns the gov module account's uatom balance, which proves `abci_query` works through the proxy. The third returns height `33424479`, code `0`, which proves the transaction indexer and `/tx` work. On a pruned node that was synced after that height the third call fails, which is expected.
+
+## Next
+
+- [Snapshots](/hub/next/infrastructure/snapshots) to publish snapshots from the same node.
+- [Peering](/hub/next/infrastructure/peering) to add seeds and persistent peers.
+- [Relaying](/hub/next/infrastructure/relaying) to point a relayer at this endpoint.
+- [Monitoring](/hub/next/validators/monitoring) for Prometheus metrics on port 26660.

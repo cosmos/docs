@@ -1,464 +1,155 @@
 ---
 noindex: true
-title: Joining Mainnet
+title: Join mainnet
+description: For operators with gaiad installed, this page initializes a cosmoshub-4 node, configures it with gaiad config, syncs it from a snapshot or state sync, and starts it.
 ---
-<Info>
-The chain-id of Cosmos Hub mainnet is `cosmoshub-4`.
-</Info>
 
-## Release History
+import { HubVerified } from '/snippets/hub-verified.mdx';
 
-* use `gaia v5.0.x` (Delta) for queries of state between height `6,910,000` and `8,695,000`
-* use `gaia v6.0.x` (Vega) between `8,695,000` and `10,085,397`
-* use `gaia v7.0.x` (Theta) between `10,085,397` and `14,099,412`
-* use `gaia v8.0.x` (Rho) between `14,099,412` and `14,470,501`
-* use `gaia v9.0.x` (Lambda) between `14,470,501` and `15,213,800`
-* use `gaia v9.1.x` between `15,213,800` and `15,816,200`
-* use `gaia v10.0.x` between `15,816,200` and `16,596,000`
-* use `gaia v11.x` between `16,596,000` and `16,985,500`
-* use `gaia v12.x` between `16,985,500` and `17,380,000`
-* use `gaia v13.x` between `17,380,000` and `18,262,000`
-* use `gaia v14.1.x` between `18,262,000` and `19,639,600`
-* use `gaia v15.1.x` between `19,639,600`  and `19,939,000`
-* use `gaia v15.2.x` between `19,939,000` and `20,440,500`
-* use `gaia v16.x` from `20,440,500` and `20,739,800`
-* use `gaia v17.1.x` from `20,739,800`
+<HubVerified date="2026-10-15" />
 
-**This guide includes full instructions for joining the mainnet either as an archive/full node or a pruned node.**
+You need a machine that meets the [system requirements](/hub/next/getting-started/system-requirements) and a verified `gaiad` from [Install gaiad](/hub/next/getting-started/installation). At the end you have a full node on `cosmoshub-4`, configured through `gaiad config` rather than by hand-edited TOML. A validator starts as exactly this node.
 
-For instructions to bootstrap a node via Quicksync or State Sync, see the [Quickstart Guide](/hub/next/getting-started/quickstart)
+Commands below use the default home `~/.gaia`. Add `--home <path>` to every command if you keep the node elsewhere. The units on [Run gaiad as a service](/hub/next/node/service) pass `--home` for the same reason. Do not rely on `GAIAD_HOME`, because not every subcommand honours it on v28.3.1.
 
-For instructions to join as a validator, please also see the [Validator Guide](/hub/next/validators/overview).
+<Steps>
+  <Step title="Initialize the home directory">
+    ```bash
+    gaiad init my-hub-node --chain-id cosmoshub-4
+    ```
 
-### Overview
+    This creates `~/.gaia/config` with `config.toml`, `app.toml`, `client.toml`, a placeholder `genesis.json` that the next step replaces, `node_key.json`, and `priv_validator_key.json`, plus `~/.gaia/data/priv_validator_state.json`. The moniker is a display name. Use ASCII only, since a Unicode moniker makes the node unreachable.
 
-{/* DON'T FORGET TO KEEP INDEX UP TO DATE */}
+    Two of those files are keys. The `node_key.json` file is the peer to peer (P2P) identity and can be regenerated at any time. The `priv_validator_key.json` file is the consensus key, which cannot be rotated on the Hub today. If this machine will become a validator, back it up now and never copy it to a second running node. [Security](/hub/next/validators/security) covers key handling.
 
-* [Release History](#release-history)
-  * [Overview](#overview)
-* [Explorers](#explorers)
-* [Getting Started](#getting-started)
-* [Hardware](#hardware)
-* [General Configuration](#general-configuration)
-  * [Initialize Chain](#initialize-chain)
-  * [Genesis File](#genesis-file)
-  * [Seeds & Peers](#seeds--peers)
-  * [Gas & Fees](#gas--fees)
-  * [Pruning of State](#pruning-of-state)
-  * [REST API](#rest-api)
-  * [GRPC](#grpc)
-* [Sync Options](#sync-options)
-  * [Blocksync](#blocksync)
-    * [Getting Started](#getting-started-1)
-  * [State Sync](#state-sync)
-  * [Quicksync](#quicksync)
-* [Snapshots](#snapshots)
-* [Cosmovisor](#cosmovisor)
-* [Running via Background Process](#running-via-background-process)
-* [Exporting State](#exporting-state)
-* [Verify Mainnet](#verify-mainnet)
+    Check:
 
-## Explorers
+    ```bash
+    ls ~/.gaia/config
+    gaiad comet show-node-id
+    ```
+  </Step>
 
-There are many explorers for the Cosmos Hub. For reference while setting up a node, here are a few recommendations:
+  <Step title="Install the genesis file">
+    ```bash
+    cd "$(mktemp -d)"
+    curl -LO https://raw.githubusercontent.com/cosmos/mainnet/master/genesis/genesis.cosmoshub-4.json.gz
+    sha256sum genesis.cosmoshub-4.json.gz
+    gzip -d genesis.cosmoshub-4.json.gz
+    mv genesis.cosmoshub-4.json ~/.gaia/config/genesis.json
+    ```
 
-* [Mintscan](https://www.mintscan.io/cosmos)
+    The checksum of the gzipped file is `7fe946e6bb3c378da546767f4d078585c38f256c8ec17888d71aeee3b7edd5c7`, as published in the [cosmos/mainnet genesis checksum file](https://github.com/cosmos/mainnet/blob/master/genesis/genesis_checksum.md). The file is about 21 MB compressed. It is the exported state of `cosmoshub-3`, which is why `initial_height` is 5200791 and `genesis_time` is a 2019 date.
 
-- [Numia](https://www.datalenses.zone/chain/cosmos)
-- [Ping.Pub](https://ping.pub/cosmos)
+    Check:
 
-## Getting Started
+    ```bash
+    jq -r '.chain_id, .initial_height, .genesis_time' ~/.gaia/config/genesis.json
+    ```
 
-Make sure the following prerequisites are completed:
+    This prints `cosmoshub-4`, `5200791`, and `2019-12-11T16:11:34Z`. Do not run `gaiad genesis validate` on this file. On v28.3.1 it reports `section is missing in the app_state` because the file predates several module formats, yet the node bootstraps from it without trouble. The checksum is the real check.
+  </Step>
 
-* Choose the proper hardware/server configuration. See the [hardware guide](#hardware).
-* Ensure Gaia is properly installed. See the [installation guide](/hub/next/getting-started/installation) for a walk-through.
-* Follow the [configuration guide](/hub/next/hub-tutorials/join-mainnet#general-configuration) to initialize and prepare the node to sync with the network.
+  <Step title="Set the client defaults">
+    ```bash
+    gaiad config set client chain-id cosmoshub-4
+    gaiad config get client chain-id
+    ```
 
-## Hardware
+    This writes `chain-id = "cosmoshub-4"` to `client.toml`, so later `gaiad query` and `gaiad tx` commands need no `--chain-id` flag. The `get` subcommand reads a key back, and `view client` prints the whole file.
+  </Step>
 
-Running a full archive node can be resource intensive as the full  current `cosmoshub-4` state is over `1.4TB`. For those who wish to run state sync or use quicksync, the following hardware configuration is recommended:
+  <Step title="Set the minimum gas price">
+    ```bash
+    gaiad config set app minimum-gas-prices 0.005uatom
+    gaiad config get app minimum-gas-prices
+    ```
 
-| Node Type | RAM  | Storage     |
-| --------- | ---- | ----------- |
-| Validator | 32GB | 500GB-2TB\* |
-| Full      | 16GB | 2TB         |
-| Default   | 16GB | 1TB         |
+    This sets `minimum-gas-prices` in `app.toml`. Set it first: on a fresh home every other `gaiad config set app` change is rejected with `set min gas price in app.toml or flag or env variable` until it has a value. The feemarket module's floor is 0.005uatom, and a node that accepts cheaper transactions only holds spam that no block will include. One query returns the live price:
 
-\* Storage size for validators will depend on level of pruning.
+    ```bash
+    curl -s https://cosmos-rest.publicnode.com/feemarket/v1/gas_price/uatom | jq -r '.price.amount'
+    ```
 
-## General Configuration
+    On 2026-10-15 this returned `0.005000000000000000`.
+  </Step>
 
-Make sure to walk through the basic setup and configuration. Operators will need to initialize `gaiad`, download the genesis file for `cosmoshub-4`, and set persistent peers and/or seeds for startup.
+  <Step title="Add seeds">
+    ```bash
+    SEEDS=$(curl -s https://raw.githubusercontent.com/cosmos/chain-registry/master/cosmoshub/chain.json | jq -r '[.peers.seeds[] | "\(.id)@\(.address)"] | join(",")')
+    echo "$SEEDS"
+    gaiad config set config p2p.seeds "$SEEDS" -s
+    gaiad config get config p2p.seeds
+    ```
 
-### Initialize Chain
+    This writes `seeds` in the `[p2p]` section of `config.toml` from the chain registry, which listed ten seeds on 2026-10-15. Seeds hand your node a peer list and disconnect, and the node fills its 40 inbound and 10 outbound slots on its own. Reserve `p2p.persistent_peers` for nodes you must stay connected to, such as your own sentries.
 
-Choose a custom moniker for the node and initialize. By default, the `init` command creates the `~/.gaia` directory with subfolders `config` and `data`. In the `/config` directory, the most important files for configuration are `app.toml` and `config.toml`.
+    The `-s` flag (`--skip-validate`) is required for every `config.toml` key on v28.3.1. Without it `gaiad config set config` fails with `cometbft config is not supported`. Reading a key back with `gaiad config get config <key>` needs no flag.
+  </Step>
+
+  <Step title="Choose pruning and the database backend">
+    Decide both before the first sync. Neither changes in place later.
+
+    ```bash
+    gaiad config set app pruning default
+    gaiad config get config db_backend
+    ```
+
+    The setting `pruning = "default"` keeps the last 362880 application states (about three weeks) and prunes every 10 blocks. That fits a validator or a general remote procedure call (RPC) node. The `nothing` value makes an archive node, `everything` keeps only the two latest states, and `custom` takes `pruning-keep-recent` and `pruning-interval`. The `pruning-keep-every` setting no longer exists. A pruned node cannot answer queries for heights it has pruned.
+
+    The `db_backend` key defaults to `goleveldb`. To run on PebbleDB, set `gaiad config set config db_backend pebbledb -s` and `gaiad config set app app-db-backend pebbledb` now. Then restore a PebbleDB snapshot in the next step. [Database backends](/hub/next/node/database) explains the choice.
+  </Step>
+
+  <Step title="Sync the node">
+    A new node has three ways to reach the chain tip: a snapshot from a provider, state sync from public RPCs, or block sync from genesis. Block sync from genesis is not practical on the Hub because every historical upgrade must be replayed with its own binary. Use one of the first two. [Sync a node](/hub/next/node/sync) has the provider table, the state sync configuration, and the troubleshooting for both. Come back here when the data directory is in place or state sync is configured.
+  </Step>
+
+  <Step title="Start the node">
+    Run it in the foreground once to watch the first minutes of logs:
+
+    ```bash
+    gaiad start
+    ```
+
+    The node starts CometBFT, connects to peers, and either restores the state sync snapshot or begins applying blocks on top of the restored data. The log lines to look for are `Discovered new snapshot` and `Applied snapshot chunk` during state sync, then `executed block height=... module=state` and `committed state` as it catches up. Stop it with Ctrl-C once it is applying blocks. Then move it under systemd on [Run gaiad as a service](/hub/next/node/service).
+
+    Old guides add `--x-crisis-skip-assert-invariants`. The crisis module is gone, and v28.3.1 refuses to start with that flag.
+  </Step>
+</Steps>
+
+## Optional servers
+
+The REST API is off by default. gRPC is on and bound to `localhost:9090`. Turn either on only on a machine that is meant to serve queries, never on a validator.
 
 ```bash
-gaiad init <custom-moniker>
+gaiad config set app api.enable true
+gaiad config set app api.address tcp://0.0.0.0:1317
+gaiad config set app grpc.address 0.0.0.0:9090
 ```
 
-> **Note**: Monikers can contain only ASCII characters. Using Unicode characters is not supported and renders the node unreachable.
+The TOML sections are `[api]` and `[grpc]` in `app.toml`. For Prometheus metrics, set `gaiad config set config instrumentation.prometheus true -s`, which opens `:26660`. [Endpoints](/hub/next/infrastructure/endpoints) covers running these publicly.
 
-The `moniker` can be edited in the `~/.gaia/config/config.toml` file:
+## Export state
 
-```sh
-# A custom human readable name for this node
-moniker = "<custom_moniker>"
-```
-
-### Genesis File
-
-Once the node is initialized, download the genesis file and move to the `/config` directory of the Gaia home directory.
+The `gaiad export` command writes the full application state as JSON, which is how a new network or a migration test starts from Hub state. The node must be stopped first, or the command fails with `resource temporarily unavailable`.
 
 ```bash
-wget https://raw.githubusercontent.com/cosmos/mainnet/master/genesis/genesis.cosmoshub-4.json.gz
-gzip -d genesis.cosmoshub-4.json.gz
-mv genesis.cosmoshub-4.json ~/.gaia/config/genesis.json
+gaiad export > export.json
+gaiad export --height <height> --for-zero-height --log_level error > new_genesis.json
 ```
 
-### Seeds & Peers
+The `--height` flag exports the state after that block, `--for-zero-height` rewrites it to start a new chain at height 0, and `--modules-to-export` limits the output to a comma separated module list. With `--height` the command prints a fastnode notice to stdout before the JSON, so keep `--log_level error` (or pass `--output-document new_genesis.json`) or `jq` rejects the file. Check with `jq -r .chain_id new_genesis.json`.
 
-Upon startup the node will need to connect to peers. If there are specific nodes a node operator is interested in setting as seeds or as persistent peers, this can be configured in `~/.gaia/config/config.toml`
+## Verify
 
-```sh
-# Comma separated list of seed nodes to connect to
-seeds = "<seed node id 1>@<seed node address 1>:26656,<seed node id 2>@<seed node address 2>:26656"
-
-# Comma separated list of nodes to keep persistent connections to
-persistent_peers = "<node id 1>@<node address 1>:26656,<node id 2>@<node address 2>:26656"
-```
-
-Node operators can optionally download the [Quicksync address book](https://quicksync.io/addrbook.cosmos.json). Make sure to move this to `~/.gaia/config/addrbook.json`.
-
-### Gas & Fees
-
-On Cosmos Hub mainnet, the accepted denom is `uatom`, where `1atom = 1.000.000uatom`
-
-Transactions on the Cosmos Hub network need to include a transaction fee in order to be processed. This fee pays for the gas required to run the transaction. The formula is the following:
-
-```
-fees = ceil(gas * gasPrices)
-```
-
-`Gas` is the smallest unit or pricing value required to perform a transaction. Different transactions require different amounts of `gas`. The `gas` amount for a transaction is calculated as it is being processed, but it can be estimated beforehand by using the `auto` value for the `gas` flag. The gas estimate can be adjusted with the flag `--gas-adjustment` (default `1.0`) to ensure enough `gas` is provided for the transaction.
-
-The `gasPrice` is the price of each unit of `gas`. Each validator sets a `min-gas-price` value, and will only include transactions that have a `gasPrice` greater than their `min-gas-price`.
-
-The transaction `fees` are the product of `gas` and `gasPrice`. The higher the `gasPrice`/`fees`, the higher the chance that a transaction will get included in a block.
-
-**For mainnet, the recommended `gas-prices` is `0.0025uatom`.**
-
-A full-node keeps unconfirmed transactions in its mempool. In order to protect it from spam, it is better to set a `minimum-gas-prices` that the transaction must meet in order to be accepted in the node's mempool. This parameter can be set in  `~/.gaia/config/app.toml`.
-
-```
-# The minimum gas prices a validator is willing to accept for processing a
-# transaction. A transaction's fees must meet the minimum of any denomination
-# specified in this config (e.g. 0.25token1;0.0001token2).
-minimum-gas-prices = "0.0025uatom"
-```
-
-The initial recommended `min-gas-prices` is `0.0025uatom`, but this can be changed later.
-
-### Pruning of State
-
-> **Note**: This is an optional configuration.
-
-There are four strategies for pruning state. These strategies apply only to state and do not apply to block storage. A node operator may want to consider custom pruning if node storage is a concern or there is an interest in running an archive node.
-
-To set pruning, adjust the `pruning` parameter in the `~/.gaia/config/app.toml` file.
-The following pruning state settings are available:
-
-1. `everything`: Prune all saved states other than the current state.
-2. `nothing`: Save all states and delete nothing.
-3. `default`: Save the last 100 states and the state of every 10,000th block.
-4. `custom`: Specify pruning settings with the `pruning-keep-recent`, `pruning-keep-every`, and `pruning-interval` parameters.
-
-By default, every node is in `default` mode which is the recommended setting for most environments.
-If a node operator wants to change their node's pruning strategy then this **must** be done before the node is initialized.
-
-In `~/.gaia/config/app.toml`
-
-```
-# default: the last 100 states are kept in addition to every 500th state; pruning at 10 block intervals
-# nothing: all historic states will be saved, nothing will be deleted (i.e. archiving node)
-# everything: all saved states will be deleted, storing only the current state; pruning at 10 block intervals
-# custom: allow pruning options to be manually specified through 'pruning-keep-recent', 'pruning-keep-every', and 'pruning-interval'
-pruning = "custom"
-
-# These are applied if and only if the pruning strategy is custom.
-pruning-keep-recent = "10"
-pruning-keep-every = "1000"
-pruning-interval = "10"
-```
-
-Passing a flag when starting `gaia` will always override settings in the `app.toml` file. To change the node's pruning setting to `everything` mode then pass the `---pruning everything` flag when running `gaiad start`.
-
-> **Note**: If running the node with pruned state, it will not be possible to query the heights that are not in the node's store.
-
-### REST API
-
-> **Note**: This is an optional configuration.
-
-By default, the REST API is disabled. To enable the REST API, edit the `~/.gaia/config/app.toml` file, and set `enable` to `true` in the `[api]` section.
-
-```toml
-###############################################################################
-###                           API Configuration                             ###
-###############################################################################
-[api]
-# Enable defines if the API server should be enabled.
-enable = true
-# Swagger defines if swagger documentation should automatically be registered.
-swagger = false
-# Address defines the API server to listen on.
-address = "tcp://0.0.0.0:1317"
-```
-
-Optionally activate swagger by setting `swagger` to `true` or change the port of the REST API in the parameter `address`.
-After restarting the application, access the REST API on `<NODE IP>:1317`.
-
-### GRPC
-
-> **Note**: This is an optional configuration.
-
-By default, gRPC is enabled on port `9090`. The `~/.gaia/config/app.toml` file is where changes can be made in the gRPC section. To disable the gRPC endpoint, set `enable` to `false`. To change the port, use the `address` parameter.
-
-```toml
-###############################################################################
-###                           gRPC Configuration                            ###
-###############################################################################
-[grpc]
-# Enable defines if the gRPC server should be enabled.
-enable = true
-# Address defines the gRPC server address to bind to.
-address = "0.0.0.0:9090"
-```
-
-## Sync Options
-
-There are three main ways to sync a node on the Cosmos Hub; Blocksync, State Sync, and Quicksync. See the matrix below for the Hub's recommended setup configuration. This guide will focus on syncing two types of common nodes; full and pruned. For further information on syncing to run a validator node, see the section on [Validators](/hub/next/validators/overview).
-
-There are two types of concerns when deciding which sync option is right. *Data integrity* refers to how reliable the data provided by a subset of network participants is. *Historical data* refers to how robust and inclusive the chain’s history is.
-
-|                          | Low Data Integrity  | High Data Integrity |
-| ------------------------ | ------------------- | ------------------- |
-| Minimal Historical Data  | Quicksync - Pruned  | State Sync          |
-| Moderate Historical Data | Quicksync - Default |                     |
-| Full Historical Data     | Quicksync - Archive | Blocksync           |
-
-If a node operator wishes to run a full node, it is possible to start from scratch but will take a significant amount of time to catch up. Node operators not concerned with rebuilding original state from the beginning of `cosmoshub-4` can also leverage [Quicksync](#quicksync)'s available archive history.
-
-For operators interested in bootstrapping a pruned node, either [Quicksync](#quicksync) or [State Sync](#state-sync) would be sufficient.
-
-Make sure to consult the [hardware](#hardware) section for guidance on the best configuration for the type of node operating.
-
-### Blocksync
-
-Blocksync is faster than traditional consensus and syncs the chain from genesis by downloading blocks and verifying against the merkle tree of validators. For more information see [CometBFT's Blocksync Docs](/cometbft/v0.38/docs/core/Using-CometBFT#block-sync)
-
-When syncing via Blocksync, node operators will either need to manually upgrade the chain or set up [Cosmovisor](#cosmovisor) to upgrade automatically.
-
-It is possible to sync from previous versions of the Cosmos Hub. See the matrix below for the correct `gaia` version. See the [mainnet archive](https://github.com/cosmos/mainnet) for historical genesis files.
-
-| Chain Id      | Gaia Version |
-| ------------- | ------------ |
-| `cosmoshub-4` | `v4.2.1`     |
-| `cosmoshub-3` | `v2.0.x`     |
-| `cosmoshub-2` | `v1.0.x`     |
-| `cosmoshub-1` | `v0.0.x`     |
-
-##### Getting Started
-
-Start Gaia to begin syncing with the `skip-invariants` flag. For more information on this see [Verify Mainnet](#verify-mainnet).
+With the node running, from the same machine:
 
 ```bash
-gaiad start --x-crisis-skip-assert-invariants
-
+gaiad status | jq '{id: .node_info.id, network: .node_info.network, height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up}'
 ```
 
-The node will begin rebuilding state until it hits the first upgrade height at block `6910000`. If Cosmovisor is set up then there's nothing else to do besides wait, otherwise the node operator will need to perform the manual upgrade twice.
+The `network` field must be `cosmoshub-4`. The `catching_up` field turns `false` once the node reaches the tip. Compare `height` with the height on [Mintscan](https://www.mintscan.io/cosmos) or with `curl -s https://cosmos-rpc.polkachu.com/status | jq -r .result.sync_info.latest_block_height`. Peer count comes from `curl -s localhost:26657/net_info | jq .result.n_peers`. A healthy node shows ten or more.
 
-### State Sync
+## Next
 
-State Sync is an efficient and fast way to bootstrap a new node, and it works by replaying larger chunks of application state directly rather than replaying individual blocks or consensus rounds. For more information, see [CometBFT's State Sync docs](/cometbft/v0.38/docs/core/state-sync).
-
-To enable state sync, visit an explorer to get a recent block height and corresponding hash. A node operator can choose any height/hash in the current bonding period, but as the recommended snapshot period is `1000` blocks, it is advised to choose something close to `current height - 1000`.
-
-With the block height and hash selected, update the configuration in `~/.gaia/config/config.toml` to set `enable = true`, and populate the `trust_height` and `trust_hash`. Node operators can configure the rpc servers to a preferred provider, but there must be at least two entries. It is important that these are two rpc servers the node operator trusts to verify component parts of the chain state. While not recommended, uniqueness is not currently enforced, so it is possible to duplicate the same server in the list and still sync successfully.
-
-> **Note**: In the future, the RPC server requirement will be deprecated as state sync is [moved to the p2p layer in Tendermint 0.38](https://github.com/tendermint/tendermint/issues/6491).
-
-```toml expandable
-#######################################################
-###         State Sync Configuration Options        ###
-#######################################################
-[statesync]
-# State sync rapidly bootstraps a new node by discovering, fetching, and restoring a state machine
-# snapshot from peers instead of fetching and replaying historical blocks. Requires some peers in
-# the network to take and serve state machine snapshots. State sync is not attempted if the node
-# has any local state (LastBlockHeight > 0). The node will have a truncated block history,
-# starting from the height of the snapshot.
-enable = true
-
-# RPC servers (comma-separated) for light client verification of the synced state machine and
-# retrieval of state data for node bootstrapping. Also needs a trusted height and corresponding
-# header hash obtained from a trusted source, and a period during which validators can be trusted.
-#
-# For Cosmos SDK-based chains, trust_period should usually be about 2/3 of the unbonding time (~2
-# weeks) during which they can be financially punished (slashed) for misbehavior.
-rpc_servers = "https://cosmos-rpc.polkachu.com:443,https://rpc-cosmoshub-ia.cosmosia.notional.ventures:443"
-trust_height = 8959784
-trust_hash = "3D8F12EA302AEDA66E80939F7FC785206692F8B6EE6F727F1655F1AFB6A873A5"
-trust_period = "168h0m0s"
-```
-
-Start Gaia to begin state sync. It may take some time for the node to acquire a snapshot, but the command and output should look similar to the following:
-
-```bash
-$ gaiad start --x-crisis-skip-assert-invariants
-
-...
-
-> INF Discovered new snapshot format=1 hash="0x000..." height=8967000 module=statesync
-
-...
-
-> INF Fetching snapshot chunk chunk=4 format=1 height=8967000 module=statesync total=45
-> INF Applied snapshot chunk to ABCI app chunk=0 format=1 height=8967000 module=statesync total=45
-```
-
-Once state sync successfully completes, the node will begin to process blocks normally. If state sync fails and the node operator encounters the following error:  `State sync failed err="state sync aborted"`, either try restarting `gaiad` or running `gaiad unsafe-reset-all` (make sure to backup any configuration and history before doing this).
-
-### Quicksync
-
-Quicksync.io offers several  daily snapshots of the Cosmos Hub with varying levels of pruning (`archive` 1.4TB, `default` 540GB, and `pruned` 265GB). For downloads and installation instructions, visit the [Cosmos Quicksync guide](https://quicksync.io/networks/cosmos.html).
-
-{/* #end */}
-
-## Snapshots
-
-Saving and serving snapshots helps nodes rapidly join the network. Snapshots are now enabled by default effective `1/20/21`.
-
-While not advised, if a node operator needs to customize this feature, it can be configured in `~/.gaia/config/app.toml`. The Cosmos Hub recommends setting this value to match `pruning-keep-every` in `config.toml`.
-
-> **Note**: It is highly recommended that node operators use the same value for snapshot-interval in order to aid snapshot discovery. Discovery is easier when more nodes are serving the same snapshots.
-
-In `app.toml`
-
-```toml expandable
-###############################################################################
-###                        State Sync Configuration                         ###
-###############################################################################
-
-# State sync snapshots allow other nodes to rapidly join the network without replaying historical
-# blocks, instead downloading and applying a snapshot of the application state at a given height.
-[state-sync]
-
-# snapshot-interval specifies the block interval at which local state sync snapshots are
-# taken (0 to disable). Must be a multiple of pruning-keep-every.
-snapshot-interval = 1000
-
-# snapshot-keep-recent specifies the number of recent snapshots to keep and serve (0 to keep all).
-snapshot-keep-recent = 10
-```
-
-## Cosmovisor
-
-Cosmovisor is a process manager developed to relieve node operators of having to manually intervene every time there is an upgrade. Cosmovisor monitors the governance module for upgrade proposals; it will take care of downloading the new binary, stopping the old one, switching to the new one, and restarting.
-
-For more information on how to run a node via Cosmovisor, check out the [docs](https://github.com/cosmos/cosmos-sdk/tree/main/tools/cosmovisor).
-
-## Running via Background Process
-
-To run the node in a background process with automatic restarts, it's recommended to use a service manager like `systemd`. To set this up run the following:
-
-```bash expandable
-sudo tee /etc/systemd/system/<service name>.service > /dev/null <<EOF  
-[Unit]
-Description=Gaia Daemon
-After=network-online.target
-
-[Service]
-User=$USER
-ExecStart=$(which gaiad) start
-Restart=always
-RestartSec=3
-LimitNOFILE=4096
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-If using Cosmovisor then make sure to add the following:
-
-```bash
-Environment="DAEMON_HOME=$HOME/.gaia"
-Environment="DAEMON_NAME=gaiad"
-Environment="DAEMON_ALLOW_DOWNLOAD_BINARIES=false"
-Environment="DAEMON_RESTART_AFTER_UPGRADE=true"
-```
-
-After the `LimitNOFILE` line and replace `$(which gaiad)` with `$(which cosmovisor)`.
-
-Run the following to setup the daemon:
-
-```bash
-sudo -S systemctl daemon-reload
-sudo -S systemctl enable <service name>
-```
-
-Then start the process and confirm that it's running.
-
-```bash
-sudo -S systemctl start <service name>
-
-sudo service <service name> status
-```
-
-## Exporting State
-
-Gaia can dump the entire application state into a JSON file. This application state dump is useful for manual analysis and can also be used as the genesis file of a new network.
-
-> **Note**: The node can't be running while exporting state, otherwise the operator can expect a `resource temporarily unavailable` error.
-
-Export state with:
-
-```bash
-gaiad export > [filename].json
-```
-
-It is also possible to export state from a particular height (at the end of processing the block of that height):
-
-```bash
-gaiad export --height [height] > [filename].json
-```
-
-If planning to start a new network from the exported state, export with the `--for-zero-height` flag:
-
-```bash
-gaiad export --height [height] --for-zero-height > [filename].json
-```
-
-## Verify Mainnet
-
-Help to prevent a catastrophe by running invariants on each block on your full
-node. In essence, by running invariants the node operator ensures that the state of mainnet is the correct expected state. One vital invariant check is that no atoms are being created or destroyed outside of expected protocol, however there are many other invariant checks each unique to their respective module. Because invariant checks are computationally expensive, they are not enabled by default. To run a node with these checks start your node without the `--x-crisis-skip-assert-invariants` flag:
-
-```bash
-gaiad start
-```
-
-If an invariant is broken on the node, it will panic and prompt the operator to send a transaction which will halt mainnet. For example the provided message may look like:
-
-```bash
-invariant broken:
-    loose token invariance:
-        pool.NotBondedTokens: 100
-        sum of account tokens: 101
-    CRITICAL please submit the following transaction:
-        gaiad tx crisis invariant-broken staking supply
-
-```
+[Run gaiad as a service](/hub/next/node/service) to keep it running, then [Upgrade a node](/hub/next/hub-tutorials/upgrade-node) before the next upgrade height. To turn the node into a validator, continue with [Validator setup](/hub/next/validators/validator-setup).

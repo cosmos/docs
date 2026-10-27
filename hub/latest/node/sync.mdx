@@ -1,0 +1,150 @@
+---
+title: Sync a node
+description: For operators bringing a new cosmoshub-4 node to the chain tip, this page restores a provider snapshot or runs state sync, and shows how to check what you downloaded before trusting it.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+You have an initialized, configured node from [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) that has not started yet, or a node you are rebuilding. At the end the data directory holds recent Hub state and `gaiad start` catches up in minutes rather than days.
+
+## Pick a method
+
+| Method | Time to tip | What you trust | Use it when |
+| --- | --- | --- | --- |
+| Snapshot from a provider | Download time plus minutes | The provider's archive and your checksum verification | Default choice; the only way to get a PebbleDB data directory quickly |
+| State sync | Usually under an hour | Two RPC servers and one block hash you fetched yourself | You want no third party data directory on the machine |
+| Block sync from genesis | Weeks, and every past upgrade must be replayed with its binary | Only the network | Not practical on the Hub; see [Upgrade history](/hub/latest/upgrade/history) if you must |
+
+Both practical methods leave the node without history before the snapshot height. For an archive node, restore an archive snapshot from a provider that publishes one and keep `pruning = "nothing"`.
+
+## Restore a snapshot
+
+<Warning>
+On a validator, copy `priv_validator_state.json` out before `unsafe-reset-all` and put it back after extracting. Without it, the node can double sign on the next block it sees. The reset deletes all of `data/`, including that file. On a full node it only costs a resync.
+</Warning>
+
+<Steps>
+  <Step title="Pick a provider and check the backend">
+    Providers below publish pruned `cosmoshub-4` snapshots. Backend, cadence, compression, and checksum are what each provider's page or API stated when checked on 2026-10-15. Cadence was confirmed by observing two consecutive files where "observed" is noted. Sizes were 9 to 19 GB compressed.
+
+    PebbleDB snapshots (stated by the provider in the page, file name, or API):
+
+    | Provider | Cadence | Format | Checksum | Page |
+    | --- | --- | --- | --- | --- |
+    | Unity Nodes | Every 4 hours (observed) | tar.lz4, pruning custom keep-recent 100 | sha256 sidecar file | [docs.unitynodes.com](https://docs.unitynodes.com/snapshots/cosmos-mainnet) |
+    | SOLVA | Every 12 hours (observed) | tar.lz4, pruned | sha256 sidecar file and JSON metadata | [SOLVA snapshot guide](https://github.com/solva-solutions/solva-solutions/blob/main/chains/cosmoshub/service_Node_Snapshot_pebbledb.md) |
+    | BryanLabs | About every 24 hours (observed) | tar.zst, pruned, download through a signed URL from the API | sha256 sidecar file | [bryanlabs.net](https://bryanlabs.net/snapshots/chains/cosmoshub-4) |
+
+    goleveldb snapshots, or backend not stated. Check the backend before restoring, since the archive must match your `db_backend`:
+
+    | Provider | Cadence | Format | Checksum | Page |
+    | --- | --- | --- | --- | --- |
+    | HighStakes | Every 3 hours (observed) | tar.gz, backend not stated | MD5 on the page | [tools.highstakes.ch](https://tools.highstakes.ch/snapshots/cosmos) |
+    | ITRocket | Every 4 hours | tar.lz4, goleveldb stated in JSON | none | [itrocket.net](https://itrocket.net/services/mainnet/cosmoshub/) |
+    | Nodes Hub | Every 3 hours | tar.zst, goleveldb stated in API | none | [services.nodeshub.online](https://services.nodeshub.online/mainnet/cosmos/snapshot) |
+    | Kjnodes | Every 6 hours | tar.lz4, backend not stated | partial hash on the page | [services.kjnodes.com](https://services.kjnodes.com/mainnet/cosmoshub/snapshot/) |
+    | NodeStake | Not stated | tar.lz4, goleveldb stated on the page | none | [nodestake.org](https://nodestake.org/networks/cosmoshub/mainnet) |
+    | Polkachu | Daily | tar.lz4, backend not stated | none | [polkachu.com](https://polkachu.com/tendermint_snapshots/cosmos) |
+
+    Checked 2026-10-15. Every page above returned HTTP 200 that day. The list is not an endorsement and has no ranking. It is the set of providers whose snapshot was recent, whose metadata could be verified, and whose download responded. Providers change their backend, pruning, and cadence without notice, so read the page before every restore.
+
+    To confirm a backend before extracting, list the archive and look at `data/application.db`. A PebbleDB directory has an `OPTIONS-*` file and `.sst` tables. A goleveldb directory has `.ldb` tables and no `OPTIONS-` file. Both have `CURRENT` and `MANIFEST-*`. Either can hold a `LOG` file, so ignore it:
+
+    ```bash
+    lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -t | grep -m 3 -E 'application\.db/(OPTIONS-|.*\.(sst|ldb)$)'
+    ```
+
+    Replace `lz4 -dc` with `zstd -dc` or `gzip -dc` to match the archive. Then set `db_backend` and `app-db-backend` to match, as on [Database backends](/hub/latest/node/database).
+  </Step>
+
+  <Step title="Download and verify the checksum">
+    ```bash
+    cd "$(mktemp -d)"
+    curl -LO <snapshot url>
+    curl -LO <snapshot url>.sha256
+    sha256sum --check *.sha256
+    ```
+
+    This fetches the archive and its sha256 sidecar and compares them. The output must end in `OK`. Providers that publish no checksum give you nothing to compare, which is the caveat in the second table. The exact URL comes from the provider page. Several publish a `latest` alias next to dated files.
+  </Step>
+
+  <Step title="Stop the node and reset the data directory">
+    ```bash
+    sudo systemctl stop gaiad
+    systemctl is-active gaiad
+    cp ~/.gaia/data/priv_validator_state.json ~/priv_validator_state.json.bak
+    gaiad comet unsafe-reset-all --keep-addr-book
+    ```
+
+    The `unsafe-reset-all` command empties `data/` and writes a fresh `priv_validator_state.json` with height 0. The `--keep-addr-book` flag keeps the peer address book. Skip the `systemctl` lines on a node that has never run. The `systemctl` and `journalctl` lines name the plain `gaiad` unit. If the node runs under the Cosmovisor unit from [Run gaiad as a service](/hub/latest/node/service), use `cosmovisor` instead. Do not reset until `systemctl is-active` prints `inactive`.
+  </Step>
+
+  <Step title="Extract into the home directory">
+    ```bash
+    lz4 -dc cosmoshub-4-snapshot.tar.lz4 | tar -xf - -C ~/.gaia
+    cp ~/priv_validator_state.json.bak ~/.gaia/data/priv_validator_state.json
+    ls ~/.gaia/data
+    ```
+
+    Most archives contain a top level `data/` directory, so `-C ~/.gaia` puts it in place. Check the provider's page if theirs is laid out differently. Some include `wasm/` as well, which the node needs. Restoring `priv_validator_state.json` on a validator is the step that prevents double signing. The listing should show `application.db`, `blockstore.db`, `state.db`, and the other CometBFT stores.
+  </Step>
+
+  <Step title="Start and watch it catch up">
+    ```bash
+    sudo systemctl start gaiad
+    journalctl -u gaiad -f -o cat | grep -E 'executed block|committed state' | head
+    ```
+
+    The node applies blocks from the snapshot height to the tip. If the node fails while opening `application.db` or `blockstore.db` on the first start, the archive's backend does not match `db_backend` in `config.toml`. Fix the setting and restart.
+  </Step>
+</Steps>
+
+## State sync
+
+State sync fetches a recent application snapshot from peers. It verifies the snapshot against a block header you trust. It needs two remote procedure call (RPC) servers for the light client and a trust height and hash that you fetch yourself from a source you trust.
+
+Fetch the values. Pick a height about 2000 blocks below the tip so the snapshot at the nearest multiple of 1000 already exists:
+
+```bash
+RPC=https://cosmos-rpc.polkachu.com
+LATEST=$(curl -s $RPC/block | jq -r .result.block.header.height)
+TRUST_HEIGHT=$(( (LATEST - 2000) / 1000 * 1000 ))
+TRUST_HASH=$(curl -s "$RPC/block?height=$TRUST_HEIGHT" | jq -r .result.block_id.hash)
+echo "$TRUST_HEIGHT $TRUST_HASH"
+curl -s "https://rpc.cosmoshub-main.ccvalidators.com/block?height=$TRUST_HEIGHT" | jq -r .result.block_id.hash
+```
+
+The last line asks a second provider for the same height. The two hashes must match. On 2026-10-15 height 33422000 returned `92B8B6B8580D1AF937129A6D019E02883B1655F6FC3CBE237FD748008C1CC5C5` from both. Any block within the trust period works, but a stale height makes every peer's snapshot unusable.
+
+Write the configuration:
+
+```bash
+gaiad config set config statesync.enable true -s
+gaiad config set config statesync.rpc_servers "https://cosmos-rpc.polkachu.com:443,https://rpc.cosmoshub-main.ccvalidators.com:443" -s
+gaiad config set config statesync.trust_height "$TRUST_HEIGHT" -s
+gaiad config set config statesync.trust_hash "$TRUST_HASH" -s
+gaiad config set config statesync.trust_period 336h0m0s -s
+gaiad config get config statesync.trust_height
+```
+
+These are the `[statesync]` keys in `config.toml`. The `trust_period` value is two thirds of the Hub's 21 day unbonding time, which is the longest a header can be trusted before a validator who signed it could have unbonded. The default 168h also works but leaves less room. The two RPC servers above were live on 2026-10-15 (the polkachu node is an archive, the ccvalidators node serves from height 5200791). Swap in any providers you trust.
+
+Start the node. Watch for `Discovered new snapshot`, then `Applied snapshot chunk` lines, then normal block execution. If it stops with `State sync failed err="state sync aborted"`, the usual causes are a trust height outside the peers' snapshot window or too few peers serving snapshots. Refetch the height and hash, then restart. Once synced, set `statesync.enable` back to `false` so a later restart does not try again.
+
+## Serve snapshots to others
+
+Every node takes state sync snapshots by default: `snapshot-interval = 1000` and `snapshot-keep-recent = 10` in the `[state-sync]` section of `app.toml`. Leave the interval at 1000 so your snapshots line up with everyone else's and peers can find them. The local snapshot store is managed with `gaiad snapshots list`, `dump`, `load`, `restore`, and `delete`. On v28.3.1 a `dump`, `load`, `restore` round trip into a fresh home fills the application store only. The node then panics on start with `state.AppHash does not match AppHash after replay` because CometBFT has no state or blocks yet. Those commands serve peers. To bootstrap your own second node, state sync it from the first one as above. Publishing full data directory archives for the public is covered on [Snapshots](/hub/latest/infrastructure/snapshots).
+
+## Verify
+
+```bash
+gaiad status | jq '{height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up, earliest: .sync_info.earliest_block_height}'
+```
+
+The `earliest` field is one above the snapshot height, the first block the node applied itself (a snapshot at 400 gives `401`). The `height` field climbs toward the public height, and `catching_up` becomes `false` at the tip.
+
+## Next
+
+[Run gaiad as a service](/hub/latest/node/service) if the node is still running in the foreground, or back to [Join mainnet](/hub/latest/hub-tutorials/join-mainnet) to finish the checklist.
