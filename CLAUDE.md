@@ -19,9 +19,11 @@ Each product lives in its own top-level directory:
 | `sdk/` | Cosmos SDK |
 | `hub/` | Cosmos Hub |
 | `cometbft/` | CometBFT |
-| `ibc/` | IBC Protocol |
 | `skip-go/` | Skip Go |
 | `enterprise/` | Cosmos Enterprise (not versioned) |
+
+IBC is no longer documented here. It lives at https://ibcprotocol.dev/docs, built from
+https://github.com/cosmos/ibc. `/ibc/*` URLs redirect there. Do not add pages under `ibc/`.
 
 Each versioned product directory has:
 
@@ -64,8 +66,8 @@ After editing files in `latest/`, run `node scripts/sync-latest-to-next.js <file
 
 ```json
 "redirects": [
-  { "source": "/ibc/next/old-page", "destination": "/ibc/next/new-page" },
-  { "source": "/ibc/beta/:slug*", "destination": "/ibc/next/:slug*" }
+  { "source": "/evm/next/old-page", "destination": "/evm/next/new-page" },
+  { "source": "/evm/beta/:slug*", "destination": "/evm/next/:slug*" }
 ]
 ```
 

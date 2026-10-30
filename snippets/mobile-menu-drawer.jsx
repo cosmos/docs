@@ -193,7 +193,7 @@ export const MobileMenuDrawer = () => {
                   transition: 'opacity 0.4s ease-out 0.3s, transform 0.4s ease-out 0.3s'
                 }}>
                   <a
-                    href="/ibc/latest/intro"
+                    href="https://ibcprotocol.dev/docs"
                     className="text-black dark:text-white hover:opacity-70"
                     style={{
                       textDecoration: 'none',

@@ -14,11 +14,11 @@
  * Usage:
  *   node tag-archived.js --product sdk --version v0.50
  *   node tag-archived.js --product sdk --all
- *   node tag-archived.js --product ibc --version v8.5.x
+ *   node tag-archived.js --product sdk --version v0.50
  *   node tag-archived.js --all-products --all
  *
  * Options:
- *   --product <name>    Product name (sdk, ibc, evm, cometbft, hub, etc.)
+ *   --product <name>    Product name (sdk, evm, cometbft, hub, etc.)
  *   --version <ver>     Single version directory to tag (e.g. v0.53)
  *   --all               Tag all non-latest, non-next versioned dirs for the product
  *   --all-products      Run across every product discovered in the repo

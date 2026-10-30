@@ -1,6 +1,6 @@
 # Documentation Versioning System
 
-Unified versioning scripts for the Cosmos documentation site (Mintlify). Covers all products: `sdk`, `ibc`, `evm`, `cometbft`, `hub`, etc.
+Unified versioning scripts for the Cosmos documentation site (Mintlify). Covers all products: `sdk`, `evm`, `cometbft`, `hub`, etc.
 
 ## Model: next → latest → archive
 
@@ -59,7 +59,7 @@ npm run freeze
 
 The script will prompt for:
 
-- **Product** — e.g. `sdk`, `ibc`
+- **Product** — e.g. `sdk`, `evm`
 - **New display version** — the label for the outgoing `latest/` when it becomes an archive (e.g. `v0.54`)
 
 **What happens internally:**
@@ -158,7 +158,6 @@ Release notes are fetched from the GitHub repositories configured in `versions.j
 | ------- | ---------- |
 | evm | `cosmos/evm` |
 | sdk | `cosmos/cosmos-sdk` |
-| ibc | `cosmos/ibc-go` |
 | hub | `cosmos/gaia` |
 
 ---
