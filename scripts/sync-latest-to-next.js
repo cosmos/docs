@@ -25,7 +25,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..');
 
-const PRODUCTS = ['evm', 'sdk', 'hub', 'cometbft', 'ibc', 'skip-go', 'enterprise'];
+const PRODUCTS = ['evm', 'sdk', 'hub', 'cometbft', 'skip-go', 'enterprise'];
 
 // Paths, relative to <product>/latest/, where next/ is the canonical copy and
 // syncing into it destroys content. Each refusal fired for real once.

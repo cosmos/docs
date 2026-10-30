@@ -33,7 +33,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..');
 
-const PRODUCTS = ['evm', 'sdk', 'hub', 'cometbft', 'ibc', 'skip-go', 'enterprise'];
+const PRODUCTS = ['evm', 'sdk', 'hub', 'cometbft', 'skip-go', 'enterprise'];
 
 // Paths, relative to <product>/next/, that may be carried forward into latest/.
 // Each entry needs a reason that survives someone asking "why is this exempt

@@ -84,7 +84,7 @@ Usage:
   node manage-changelogs.js [options]
 
 Options:
-  --product <name>      Product name (evm, sdk, ibc, etc.) [default: evm]
+  --product <name>      Product name (evm, sdk, hub, etc.) [default: evm]
   --target <version>    Target version directory (next, v0.5.0, v0.4.x, etc.)
   --filter <pattern>    Version filter pattern (v0.5, v0.4, etc.)
   --all                 Generate changelogs for all versions of the product
@@ -130,7 +130,6 @@ function getProductConfig(product) {
   const defaultRepos = {
     evm: 'cosmos/evm',
     sdk: 'cosmos/cosmos-sdk',
-    ibc: 'cosmos/ibc-go',
     hub: 'cosmos/gaia',
   };
 

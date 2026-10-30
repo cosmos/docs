@@ -52,7 +52,7 @@ NON_INTERACTIVE=1 SUBDIR=sdk NEW_DISPLAY_VERSION=v0.54 ARCHIVE_VERSION=v0.53 npm
 
 ### Known limitation — docs.json nav update
 
-The `updateNavigation` function looks for the product's dropdown by `subdir.toUpperCase()` (e.g. `'SDK'`). The actual dropdown labels in `docs.json` are `'Cosmos SDK'`, `'IBC Protocol'`, `'CometBFT'`, `'Cosmos Hub'` — none of which match. This means **`docs.json` nav updates are always manual**, even on subsequent freezes. The nav update step must be done by hand after every freeze.
+The `updateNavigation` function looks for the product's dropdown by `subdir.toUpperCase()` (e.g. `'SDK'`). The actual dropdown labels in `docs.json` are `'Cosmos SDK'`, `'Cosmos EVM'`, `'CometBFT'`, `'Cosmos Hub'` — none of which match. This means **`docs.json` nav updates are always manual**, even on subsequent freezes. The nav update step must be done by hand after every freeze.
 
 ### Manual docs.json update after a freeze
 
@@ -294,7 +294,7 @@ npm run changelogs -- --product evm --target next
 npm run changelogs -- --product sdk --target v0.53
 
 # Generate all changelogs for a product
-npm run changelogs -- --product ibc --all
+npm run changelogs -- --product sdk --all
 
 # Dry run — output to ./tmp instead of modifying real files
 npm run changelogs -- --product evm --all --staging
@@ -304,7 +304,7 @@ npm run changelogs -- --product evm --all --staging
 
 | Flag | Description |
 | ---- | ----------- |
-| `--product <name>` | Product name — `evm`, `sdk`, `ibc`, `hub`, etc. Defaults to `evm` |
+| `--product <name>` | Product name — `evm`, `sdk`, `hub`, etc. Defaults to `evm` |
 | `--target <version>` | Target version directory (`next`, `v0.5.0`, `v0.4.x`, etc.) |
 | `--filter <pattern>` | Version filter prefix (e.g. `v0.5` to include only `v0.5.x` releases) |
 | `--all` | Generate changelogs for all versions listed in `versions.json` |
