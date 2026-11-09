@@ -605,7 +605,7 @@ def main():
         alerts.trigger("hub-docs-version", f"Hub docs version in versions.json is {ctx['current']!r}, not a gaia release, so the bot cannot compare upgrades",
                        {"fix": "set products.hub.latestDisplayVersion to the gaia release hub/latest documents, for example with the versioning freeze"})
         log.write_summary()
-        return 1
+        return 0 if args.plan else 1
     alerts.resolve("hub-docs-version")
     upgrade = pick_upgrade(state, ctx["current"])
     if upgrade:
