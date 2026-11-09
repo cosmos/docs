@@ -1,20 +1,20 @@
 ---
 noindex: true
 title: "Parameter change proposals"
-description: "Change a Cosmos Hub module parameter through governance on gaia v28.3.1: which modules accept MsgUpdateParams, how to build the message from the live parameters, and how to verify the change."
+description: "Change a Cosmos Hub module parameter through governance on gaia v29.0.1: which modules accept MsgUpdateParams, how to build the message from the live parameters, and how to verify the change."
 ---
 
 import { HubVerified } from '/snippets/hub-verified.mdx';
 
-<HubVerified date="2026-10-15" />
+<HubVerified gaia="v29.0.1" sdk="v0.53.8" comet="v0.38.25" date="2026-11-08" />
 
-This page is for proposers changing a parameter and for voters checking what a proposal actually changes. It assumes the process on [Submitting a proposal](/hub/next/governance/submitting). A parameter change on gaia v28.3.1 is a proposal carrying the target module's `MsgUpdateParams`, which replaces that module's whole parameter set when it passes. The change takes effect in the block the vote ends.
+This page is for proposers changing a parameter and for voters checking what a proposal actually changes. It assumes the process on [Submitting a proposal](/hub/next/governance/submitting). A parameter change on gaia v29.0.1 is a proposal carrying the target module's `MsgUpdateParams`, which replaces that module's whole parameter set when it passes. The change takes effect in the block the vote ends.
 
 Two things go wrong with these proposals. The deposit is lost when voters find a mistake. A wrong value changes how the Hub behaves in ways that are not obvious (a shorter unbonding period, for example, is a security parameter as much as a convenience).
 
 ## Which modules accept a parameter change
 
-Every module below takes a full `MsgUpdateParams` whose `authority` is the gov module account. The type URLs are the ones registered in the v28.3.1 binary (`gaiad debug codec list-implementations cosmos.base.v1beta1.Msg`).
+Every module below takes a full `MsgUpdateParams` whose `authority` is the gov module account. The type URLs are the ones registered in the v29.0.1 binary (`gaiad debug codec list-implementations cosmos.base.v1beta1.Msg`).
 
 | Module | Message type | Current values |
 | --- | --- | --- |
@@ -36,9 +36,9 @@ Every module below takes a full `MsgUpdateParams` whose `authority` is the gov m
 | ICA host | `/ibc.applications.interchain_accounts.host.v1.MsgUpdateParams` | `gaiad q interchain-accounts host params` |
 | ICA controller | `/ibc.applications.interchain_accounts.controller.v1.MsgUpdateParams` | `gaiad q interchain-accounts controller params` |
 
-Rate limits are not parameters. They are added, changed, and removed with `/ratelimit.v1.MsgAddRateLimit`, `MsgUpdateRateLimit`, `MsgRemoveRateLimit`, and `MsgResetRateLimit`, each with the gov account as authority. The query `gaiad q ratelimit list-rate-limits` shows the current set. Packet forward middleware, callbacks, evidence, feegrant, authz, vesting, and metaprotocols have no governable parameters. The interchain security provider module is not in v28.3.1. Proposals targeting it fail.
+Rate limits are not parameters. They are added, changed, and removed with `/ratelimit.v1.MsgAddRateLimit`, `MsgUpdateRateLimit`, `MsgRemoveRateLimit`, and `MsgResetRateLimit`, each with the gov account as authority. The query `gaiad q ratelimit list-rate-limits` shows the current set. Packet forward middleware, callbacks, evidence, feegrant, authz, vesting, and metaprotocols have no governable parameters. The interchain security provider module is not in v29.0.1. Proposals targeting it fail.
 
-The legacy `param-change` proposal (`gaiad tx gov submit-legacy-proposal param-change`) still exists and still works for the few parameters kept in `x/params` subspaces. But every module above reads its parameters from its own store now, so use `MsgUpdateParams`.
+There is no other route. gaia v29.0.0 removed the `x/params` module, and with it the legacy `ParameterChangeProposal`. `gaiad tx gov submit-legacy-proposal` has no `param-change` subcommand, and a proposal file carrying `/cosmos.params.v1beta1.ParameterChangeProposal` is rejected before broadcast with `unable to resolve type URL /cosmos.params.v1beta1.ParameterChangeProposal`. The `gaiad query params` command and the `/cosmos/params/v1beta1/params` REST route are gone too.
 
 ## Build the message
 
@@ -84,7 +84,7 @@ Edit the one value, then wrap it in the message. Proposal 998 changed the voting
 }
 ```
 
-Durations are written as seconds with an `s` suffix (`604800s`). The Go form the query prints (`168h0m0s`) is also accepted by `submit-proposal` on v28.3.1. Decimals are 18 digit strings. Amounts are in base units. Fields the query omits because they are at their zero value (`proposal_cancel_dest`, `burn_vote_quorum`, `burn_proposal_deposit_prevote`) can be left out or written explicitly as above. The `gaiad tx gov draft-proposal` command with the `other` type lets you pick the message type from a list and fills the authority. It does not fill the current values, so paste them from the query. Field names and types for each Cosmos SDK module are in the module's `MsgUpdateParams` section, for example [gov](/sdk/latest/modules/gov/README) and [staking](/sdk/latest/modules/staking/README). The gaia specific modules are on [Modules on the Hub](/hub/next/modules/README).
+Durations are written as seconds with an `s` suffix (`604800s`). The Go form the query prints (`168h0m0s`) is also accepted by `submit-proposal` on v29.0.1. Decimals are 18 digit strings. Amounts are in base units. Fields the query omits because they are at their zero value (`proposal_cancel_dest`, `burn_vote_quorum`, `burn_proposal_deposit_prevote`) can be left out or written explicitly as above. The `gaiad tx gov draft-proposal` command with the `other` type lets you pick the message type from a list and fills the authority. It does not fill the current values, so paste them from the query. Field names and types for each Cosmos SDK module are in the module's `MsgUpdateParams` section, for example [gov](/sdk/latest/modules/gov/README) and [staking](/sdk/latest/modules/staking/README). The gaia specific modules are on [Modules on the Hub](/hub/next/modules/README).
 
 Submit:
 
@@ -103,7 +103,7 @@ State the parameter, the current value with the query that returns it, the new v
 Before the vote, compare the proposal's params object with the chain field by field:
 
 ```bash
-gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0].params' > proposed.json
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0].value.params' > proposed.json
 gaiad q gov params --output json --node https://cosmos-rpc.publicnode.com:443 | jq .params > current.json
 diff <(jq -S . current.json) <(jq -S . proposed.json)
 ```
