@@ -83,7 +83,7 @@ function loadVersionsRegistry() {
     if (entries.includes('next'))   discovered.push('next');
     if (entries.includes('latest')) discovered.push('latest');
     for (const name of entries) {
-      if (/^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(name)) discovered.push(name);
+      if (/^v\d+(?:\.\d+)?(?:\.(?:\d+|x))?$/.test(name)) discovered.push(name);
     }
 
     if (!data.products[subdir]) {
@@ -96,8 +96,8 @@ function loadVersionsRegistry() {
     } else {
       const existing = data.products[subdir].versions || [];
       const merged = Array.from(new Set([...discovered, ...existing]));
-      const stable = merged.filter(v => /^v\d+\.\d+(?:\.(?:\d+|x))?$/.test(v)).sort(compareVersionsDesc);
-      const special = ['next', 'latest'].filter(s => merged.includes(s));
+      const stable = merged.filter(v => /^v\d+(?:\.\d+)?(?:\.(?:\d+|x))?$/.test(v)).sort(compareVersionsDesc);
+      const special = ['latest', 'next'].filter(s => merged.includes(s));
       data.products[subdir].versions = [...special, ...stable];
       if (!data.products[subdir].repository)    data.products[subdir].repository    = `cosmos/${subdir}`;
       if (!data.products[subdir].changelogPath) data.products[subdir].changelogPath = 'CHANGELOG.md';
@@ -116,10 +116,10 @@ function validateVersionFormat(version) {
 }
 
 function parseVersionTuple(v) {
-  const m = v.match(/^v(\d+)\.(\d+)(?:\.(\d+|x))?$/);
+  const m = v.match(/^v(\d+)(?:\.(\d+))?(?:\.(\d+|x))?$/);
   if (!m) return null;
   const patch = m[3] === undefined ? 0 : (m[3] === 'x' ? Number.POSITIVE_INFINITY : parseInt(m[3], 10));
-  return [parseInt(m[1], 10), parseInt(m[2], 10), patch, m[3] === 'x'];
+  return [parseInt(m[1], 10), m[2] === undefined ? 0 : parseInt(m[2], 10), patch, m[3] === 'x'];
 }
 
 function compareVersionsDesc(a, b) {
@@ -373,7 +373,11 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   if (!docsJson.navigation) docsJson.navigation = {};
   if (!Array.isArray(docsJson.navigation.dropdowns)) docsJson.navigation.dropdowns = [];
 
-  let dropdown = docsJson.navigation.dropdowns.find(d => d.dropdown === dropdownLabel);
+  // Dropdown labels are display names ("Cosmos SDK", "Cosmos Hub"), not the
+  // directory name, so find the product's dropdown by the pages it links to.
+  let dropdown = docsJson.navigation.dropdowns.find(d =>
+    (d.versions || []).some(v => JSON.stringify(v).includes(`"${subdir}/`))
+  ) || docsJson.navigation.dropdowns.find(d => d.dropdown === dropdownLabel);
   if (!dropdown) {
     dropdown = { dropdown: dropdownLabel, versions: [] };
     docsJson.navigation.dropdowns.push(dropdown);
@@ -398,6 +402,7 @@ function updateNavigation(subdir, archiveVersion, newDisplayVersion) {
   archiveEntry.version = archiveVersion;
   delete archiveEntry.tag;
   delete archiveEntry.hidden;
+  delete archiveEntry.default;
 
   // Update the 'latest' entry display version and badge
   if (latestEntry) {
@@ -463,7 +468,7 @@ function updateVersionsRegistry({ subdir, archiveVersion, newDisplayVersion }) {
   }
 
   // Sort: special first, then stable newest-first
-  const stable  = product.versions.filter(v => /^v\d+\.\d+/.test(v)).sort(compareVersionsDesc);
+  const stable  = product.versions.filter(v => /^v\d+/.test(v)).sort(compareVersionsDesc);
   const special = ['latest', 'next'].filter(s => product.versions.includes(s));
   product.versions = [...special, ...stable];
 

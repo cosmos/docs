@@ -1,0 +1,59 @@
+name: Hub upgrade docs
+
+# Keeps the Cosmos Hub docs on the gaia version mainnet runs.
+# scripts/hub/upgrade-bot.py explains each step; scripts/hub/README.md covers operation.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/hub/**'
+      - '.github/workflows/hub-upgrade-docs.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: hub-upgrade-docs-${{ github.event_name == 'pull_request' && github.ref || 'bot' }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests
+        run: python3 -m unittest discover -s scripts/hub -p 'test_*.py' -v
+      - name: Plan against mainnet (reads the chain, changes nothing)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/hub/upgrade-bot.py --plan
+
+  bot:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run the Hub docs bot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAGERDUTY_ROUTING_KEY: ${{ secrets.HUB_DOCS_PAGERDUTY_ROUTING_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/hub/upgrade-bot.py
