@@ -1,0 +1,156 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/hub-tutorials/join-mainnet'
+title: Join mainnet
+description: For operators with gaiad installed, this page initializes a cosmoshub-4 node, configures it with gaiad config, syncs it from a snapshot or state sync, and starts it.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+You need a machine that meets the [system requirements](/hub/v28.3.1/getting-started/system-requirements) and a verified `gaiad` from [Install gaiad](/hub/v28.3.1/getting-started/installation). At the end you have a full node on `cosmoshub-4`, configured through `gaiad config` rather than by hand-edited TOML. A validator starts as exactly this node.
+
+Commands below use the default home `~/.gaia`. Add `--home <path>` to every command if you keep the node elsewhere. The units on [Run gaiad as a service](/hub/v28.3.1/node/service) pass `--home` for the same reason. Do not rely on `GAIAD_HOME`, because not every subcommand honours it on v28.3.1.
+
+<Steps>
+  <Step title="Initialize the home directory">
+    ```bash
+    gaiad init my-hub-node --chain-id cosmoshub-4
+    ```
+
+    This creates `~/.gaia/config` with `config.toml`, `app.toml`, `client.toml`, a placeholder `genesis.json` that the next step replaces, `node_key.json`, and `priv_validator_key.json`, plus `~/.gaia/data/priv_validator_state.json`. The moniker is a display name. Use ASCII only, since a Unicode moniker makes the node unreachable.
+
+    Two of those files are keys. The `node_key.json` file is the peer to peer (P2P) identity and can be regenerated at any time. The `priv_validator_key.json` file is the consensus key, which cannot be rotated on the Hub today. If this machine will become a validator, back it up now and never copy it to a second running node. [Security](/hub/v28.3.1/validators/security) covers key handling.
+
+    Check:
+
+    ```bash
+    ls ~/.gaia/config
+    gaiad comet show-node-id
+    ```
+  </Step>
+
+  <Step title="Install the genesis file">
+    ```bash
+    cd "$(mktemp -d)"
+    curl -LO https://raw.githubusercontent.com/cosmos/mainnet/master/genesis/genesis.cosmoshub-4.json.gz
+    sha256sum genesis.cosmoshub-4.json.gz
+    gzip -d genesis.cosmoshub-4.json.gz
+    mv genesis.cosmoshub-4.json ~/.gaia/config/genesis.json
+    ```
+
+    The checksum of the gzipped file is `7fe946e6bb3c378da546767f4d078585c38f256c8ec17888d71aeee3b7edd5c7`, as published in the [cosmos/mainnet genesis checksum file](https://github.com/cosmos/mainnet/blob/master/genesis/genesis_checksum.md). The file is about 21 MB compressed. It is the exported state of `cosmoshub-3`, which is why `initial_height` is 5200791 and `genesis_time` is a 2019 date.
+
+    Check:
+
+    ```bash
+    jq -r '.chain_id, .initial_height, .genesis_time' ~/.gaia/config/genesis.json
+    ```
+
+    This prints `cosmoshub-4`, `5200791`, and `2019-12-11T16:11:34Z`. Do not run `gaiad genesis validate` on this file. On v28.3.1 it reports `section is missing in the app_state` because the file predates several module formats, yet the node bootstraps from it without trouble. The checksum is the real check.
+  </Step>
+
+  <Step title="Set the client defaults">
+    ```bash
+    gaiad config set client chain-id cosmoshub-4
+    gaiad config get client chain-id
+    ```
+
+    This writes `chain-id = "cosmoshub-4"` to `client.toml`, so later `gaiad query` and `gaiad tx` commands need no `--chain-id` flag. The `get` subcommand reads a key back, and `view client` prints the whole file.
+  </Step>
+
+  <Step title="Set the minimum gas price">
+    ```bash
+    gaiad config set app minimum-gas-prices 0.005uatom
+    gaiad config get app minimum-gas-prices
+    ```
+
+    This sets `minimum-gas-prices` in `app.toml`. Set it first: on a fresh home every other `gaiad config set app` change is rejected with `set min gas price in app.toml or flag or env variable` until it has a value. The feemarket module's floor is 0.005uatom, and a node that accepts cheaper transactions only holds spam that no block will include. One query returns the live price:
+
+    ```bash
+    curl -s https://cosmos-rest.publicnode.com/feemarket/v1/gas_price/uatom | jq -r '.price.amount'
+    ```
+
+    On 2026-10-15 this returned `0.005000000000000000`.
+  </Step>
+
+  <Step title="Add seeds">
+    ```bash
+    SEEDS=$(curl -s https://raw.githubusercontent.com/cosmos/chain-registry/master/cosmoshub/chain.json | jq -r '[.peers.seeds[] | "\(.id)@\(.address)"] | join(",")')
+    echo "$SEEDS"
+    gaiad config set config p2p.seeds "$SEEDS" -s
+    gaiad config get config p2p.seeds
+    ```
+
+    This writes `seeds` in the `[p2p]` section of `config.toml` from the chain registry, which listed ten seeds on 2026-10-15. Seeds hand your node a peer list and disconnect, and the node fills its 40 inbound and 10 outbound slots on its own. Reserve `p2p.persistent_peers` for nodes you must stay connected to, such as your own sentries.
+
+    The `-s` flag (`--skip-validate`) is required for every `config.toml` key on v28.3.1. Without it `gaiad config set config` fails with `cometbft config is not supported`. Reading a key back with `gaiad config get config <key>` needs no flag.
+  </Step>
+
+  <Step title="Choose pruning and the database backend">
+    Decide both before the first sync. Neither changes in place later.
+
+    ```bash
+    gaiad config set app pruning default
+    gaiad config get config db_backend
+    ```
+
+    The setting `pruning = "default"` keeps the last 362880 application states (about three weeks) and prunes every 10 blocks. That fits a validator or a general remote procedure call (RPC) node. The `nothing` value makes an archive node, `everything` keeps only the two latest states, and `custom` takes `pruning-keep-recent` and `pruning-interval`. The `pruning-keep-every` setting no longer exists. A pruned node cannot answer queries for heights it has pruned.
+
+    The `db_backend` key defaults to `goleveldb`. To run on PebbleDB, set `gaiad config set config db_backend pebbledb -s` and `gaiad config set app app-db-backend pebbledb` now. Then restore a PebbleDB snapshot in the next step. [Database backends](/hub/v28.3.1/node/database) explains the choice.
+  </Step>
+
+  <Step title="Sync the node">
+    A new node has three ways to reach the chain tip: a snapshot from a provider, state sync from public RPCs, or block sync from genesis. Block sync from genesis is not practical on the Hub because every historical upgrade must be replayed with its own binary. Use one of the first two. [Sync a node](/hub/v28.3.1/node/sync) has the provider table, the state sync configuration, and the troubleshooting for both. Come back here when the data directory is in place or state sync is configured.
+  </Step>
+
+  <Step title="Start the node">
+    Run it in the foreground once to watch the first minutes of logs:
+
+    ```bash
+    gaiad start
+    ```
+
+    The node starts CometBFT, connects to peers, and either restores the state sync snapshot or begins applying blocks on top of the restored data. The log lines to look for are `Discovered new snapshot` and `Applied snapshot chunk` during state sync, then `executed block height=... module=state` and `committed state` as it catches up. Stop it with Ctrl-C once it is applying blocks. Then move it under systemd on [Run gaiad as a service](/hub/v28.3.1/node/service).
+
+    Old guides add `--x-crisis-skip-assert-invariants`. The crisis module is gone, and v28.3.1 refuses to start with that flag.
+  </Step>
+</Steps>
+
+## Optional servers
+
+The REST API is off by default. gRPC is on and bound to `localhost:9090`. Turn either on only on a machine that is meant to serve queries, never on a validator.
+
+```bash
+gaiad config set app api.enable true
+gaiad config set app api.address tcp://0.0.0.0:1317
+gaiad config set app grpc.address 0.0.0.0:9090
+```
+
+The TOML sections are `[api]` and `[grpc]` in `app.toml`. For Prometheus metrics, set `gaiad config set config instrumentation.prometheus true -s`, which opens `:26660`. [Endpoints](/hub/v28.3.1/infrastructure/endpoints) covers running these publicly.
+
+## Export state
+
+The `gaiad export` command writes the full application state as JSON, which is how a new network or a migration test starts from Hub state. The node must be stopped first, or the command fails with `resource temporarily unavailable`.
+
+```bash
+gaiad export > export.json
+gaiad export --height <height> --for-zero-height --log_level error > new_genesis.json
+```
+
+The `--height` flag exports the state after that block, `--for-zero-height` rewrites it to start a new chain at height 0, and `--modules-to-export` limits the output to a comma separated module list. With `--height` the command prints a fastnode notice to stdout before the JSON, so keep `--log_level error` (or pass `--output-document new_genesis.json`) or `jq` rejects the file. Check with `jq -r .chain_id new_genesis.json`.
+
+## Verify
+
+With the node running, from the same machine:
+
+```bash
+gaiad status | jq '{id: .node_info.id, network: .node_info.network, height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up}'
+```
+
+The `network` field must be `cosmoshub-4`. The `catching_up` field turns `false` once the node reaches the tip. Compare `height` with the height on [Mintscan](https://www.mintscan.io/cosmos) or with `curl -s https://cosmos-rpc.polkachu.com/status | jq -r .result.sync_info.latest_block_height`. Peer count comes from `curl -s localhost:26657/net_info | jq .result.n_peers`. A healthy node shows ten or more.
+
+## Next
+
+[Run gaiad as a service](/hub/v28.3.1/node/service) to keep it running, then [Upgrade a node](/hub/v28.3.1/hub-tutorials/upgrade-node) before the next upgrade height. To turn the node into a validator, continue with [Validator setup](/hub/v28.3.1/validators/validator-setup).
