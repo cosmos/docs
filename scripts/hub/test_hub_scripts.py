@@ -4,6 +4,7 @@
 """
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def load(name, file):
 rc = load("release_check", "release-check.py")
 bot = load("upgrade_bot", "upgrade-bot.py")
 detect = load("detect_upgrade", "detect-upgrade.py")
+reader = load("release_reader", "release-reader.py")
 
 
 class FakeTree:
@@ -219,6 +221,81 @@ class Detector(unittest.TestCase):
     def test_release_tag_from_binaries(self):
         bins = {"linux/amd64": "https://github.com/cosmos/gaia/releases/download/v29.1.0-rc0/gaiad-v29.1.0-rc0-linux-amd64?checksum=sha256:ab"}
         self.assertEqual(detect.release_tag(bins), "v29.1.0-rc0")
+
+
+class ReleaseReader(unittest.TestCase):
+    def swap(self, text, skip=()):
+        root = Path(tempfile.mkdtemp())
+        (root / "page.mdx").write_text(text)
+        (root / "history.mdx").write_text("v29.0.1 history\n")
+        changed = reader.swap_version("v29.0.1", "v29.1.0", root=root, skip=["history.mdx", *skip])
+        return (root / "page.mdx").read_text(), changed, (root / "history.mdx").read_text()
+
+    def test_swaps_the_release_number(self):
+        text, changed, history = self.swap("Run v29.0.1.\nGet gaiad-v29.0.1-linux-amd64 from blob/v29.0.1/x.\n")
+        self.assertEqual(text, "Run v29.1.0.\nGet gaiad-v29.1.0-linux-amd64 from blob/v29.1.0/x.\n")
+        self.assertEqual([(c[0], c[1]) for c in changed], [("page.mdx", 1), ("page.mdx", 2)])
+        self.assertEqual(history, "v29.0.1 history\n")
+
+    def test_leaves_stamps_and_other_versions(self):
+        text, changed, _ = self.swap('<HubVerified version="v29.0.1" />\nv29.0.1-rc0 and v29.0.10 and sdk0.v29.0.1\n')
+        self.assertEqual(changed, [])
+        self.assertIn('version="v29.0.1"', text)
+
+    def test_changelog_between(self):
+        log = "# Changelog\n\n## v29.1.0\nnew\n\n## v29.0.2\nmid\n\n## v29.0.1\nold\n\n## v29.0.0\nolder\n"
+        got = reader.changelog_between(log, "v29.0.1", "v29.1.0")
+        self.assertIn("new", got)
+        self.assertIn("mid", got)
+        self.assertNotIn("old", got)
+
+    def test_diff_keeps_operator_facing_files(self):
+        files = [
+            {"filename": "go.mod", "status": "modified", "additions": 2, "deletions": 2, "patch": "MOD"},
+            {"filename": "app/app_test.go", "status": "added", "additions": 9, "deletions": 0, "patch": "TEST"},
+            {"filename": "contrib/images/Dockerfile", "status": "modified", "additions": 1, "deletions": 1, "patch": "DOCKER"},
+            {"filename": "x/big.go", "status": "modified", "additions": 1, "deletions": 1, "patch": "B" * 50},
+        ]
+        listed, patches = reader.trimmed_diff(files, limit=20)
+        self.assertEqual(len(listed.splitlines()), 4)
+        self.assertIn("MOD", patches)
+        self.assertIn("DOCKER", patches)
+        self.assertNotIn("TEST", patches)
+        self.assertIn("x/big.go\n(patch left out", patches)
+
+    def test_claude_gets_no_other_credentials(self):
+        self.assertIn("GH_TOKEN", reader.WITHHELD)
+        self.assertIn("PAGERDUTY_ROUTING_KEY", reader.WITHHELD)
+
+
+class ReaderToken(unittest.TestCase):
+    class Alerts:
+        def __init__(self):
+            self.sent = []
+
+        def trigger(self, key, summary, details=None):
+            self.sent.append(("trigger", key))
+
+        def resolve(self, key):
+            self.sent.append(("resolve", key))
+
+    def check(self, issued):
+        old = dict(bot.CONFIG)
+        bot.CONFIG.update({"reader_token_issued": issued, "reader_token_warn_days": 30})
+        alerts = self.Alerts()
+        try:
+            bot.reader_token_alert(alerts)
+        finally:
+            bot.CONFIG.clear()
+            bot.CONFIG.update(old)
+        return alerts.sent
+
+    def test_warns_before_the_year_is_up(self):
+        issued = (bot.NOW - bot.timedelta(days=340)).strftime("%Y-%m-%d")
+        self.assertEqual(self.check(issued), [("trigger", "hub-docs-reader-token")])
+
+    def test_quiet_when_fresh(self):
+        self.assertEqual(self.check(bot.NOW.strftime("%Y-%m-%d")), [("resolve", "hub-docs-reader-token")])
 
 
 if __name__ == "__main__":

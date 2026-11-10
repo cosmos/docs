@@ -13,6 +13,9 @@ For a software upgrade proposal whose release is newer than the docs:
   main moves, so it always publishes what next/ holds.
 - runs scripts/hub/release-check.py on the PR against the release binary
   named in the proposal, and records the result as a commit status.
+- opens a content PR that brings hub/next/ up to the release: the release
+  number, and what scripts/hub/release-reader.py finds in the gaia release
+  notes, changelog and code diff. A person reviews that PR.
 - opens a notice PR once the proposal passes, adding the upcoming upgrade
   box to the Hub pages.
 - merges each PR only when a Hub code owner has approved it, the release
@@ -55,12 +58,17 @@ REPO_ROOT = HERE.parent.parent
 CONFIG = json.loads((HERE / "bot-config.json").read_text())
 MARKER = "<!-- hub-docs-bot -->"
 STATUS_CONTEXT = "hub-release-check"
+READER_FAILED = "<!-- hub-docs-reader-failed -->"
 PAGERDUTY_URL = "https://events.pagerduty.com/v2/enqueue"
 NOW = datetime.now(timezone.utc)
 
 
 def load_detector():
-    spec = importlib.util.spec_from_file_location("detect_upgrade", HERE / "detect-upgrade.py")
+    return load_script("detect_upgrade", "detect-upgrade.py")
+
+
+def load_script(name, filename):
+    spec = importlib.util.spec_from_file_location(name, HERE / filename)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -380,6 +388,7 @@ def publish_upgrade(ctx, u):
     pr = find_pr(branch) if not plan else None
     if plan:
         log(f"PLAN: publish PR {branch}: freeze ARCHIVE_VERSION={current} NEW_DISPLAY_VERSION={release}")
+        log(f"PLAN: content PR {CONFIG['branch_prefix']}content-{release}: release reader {current} -> {release}")
         if u["status"] == "PASSED" and not u["applied_height"]:
             log(f"PLAN: notice PR {CONFIG['branch_prefix']}notice-{release}")
         return
@@ -389,6 +398,8 @@ def publish_upgrade(ctx, u):
     if pr and pr["state"] == "CLOSED":
         log(f"{branch}: PR was closed by a person, leaving it alone")
         return
+
+    content_open = publish_content(ctx, u)
 
     body = (
         f"Publishes the Hub docs for gaia `{release}` when mainnet applies upgrade `{u['plan_name']}` "
@@ -428,8 +439,9 @@ def publish_upgrade(ctx, u):
     checked, desc = check_pr(repo, pr, source)
     is_approved = approved(pr, owners)
     mergeable = pr["mergeable"] != "CONFLICTING"
-    ready = checked and is_approved and mergeable
+    ready = checked and is_approved and mergeable and not content_open
     reasons = [r for r, bad in (("no Hub code owner approval", not is_approved),
+                                (f"the content PR {content_open} is not merged", bool(content_open)),
                                 (f"release check: {desc}", not checked),
                                 ("merge conflict", not mergeable)) if bad]
     log(f"{pr['url']}: {'ready' if ready else 'not ready: ' + '; '.join(reasons)}")
@@ -489,6 +501,97 @@ def watch_height(ctx, u):
         time.sleep(30)
     log("Stopped polling; the next scheduled run continues")
     return u
+
+
+def read_release(current, u):
+    """Run the release reader on the working tree. Returns the reviewer
+    summary and whether the release notes were read."""
+    out = Path(tempfile.mkdtemp(prefix="hub-reader-"))
+    (out / "upgrade.json").write_text(json.dumps(u))
+    base = [sys.executable, str(HERE / "release-reader.py"), "--from", current, "--to", u["release"],
+            "--summary", str(out / "summary.md")]
+    error = None
+    if not (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")):
+        error = "no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY secret"
+    else:
+        try:
+            run(["npm", "install", "--global", "--silent", CONFIG["reader_package"]])
+            run([*base, "--upgrade", str(out / "upgrade.json")])
+        except Exception as exc:
+            error = str(exc)[-600:]
+    if error:
+        run(["git", "reset", "--hard", "origin/main"])
+        run([*base, "--no-agent"])
+    return (out / "summary.md").read_text(), error
+
+
+def publish_content(ctx, u):
+    """The PR a person reviews: hub/next/ brought up to the new release.
+    Returns the PR's URL while it is still open, so publishing waits for it."""
+    repo, current, owners, alerts, live = ctx["repo"], ctx["current"], ctx["owners"], ctx["alerts"], ctx["live"]
+    release = u["release"]
+    branch = f"{CONFIG['branch_prefix']}content-{release}"
+    key = f"hub-docs-{release}-reader"
+    pr = find_pr(branch)
+    if pr and pr["state"] == "CLOSED" and READER_FAILED in (pr.get("body") or ""):
+        pr = None  # a person closed the number-only PR to ask for another try
+    if pr and pr["state"] in ("MERGED", "CLOSED"):
+        alerts.resolve(key)
+        return None
+    if pr is None:
+        start_branch(branch)
+        summary, error = read_release(current, u)
+        title = f"Hub: update the upcoming docs for gaia {release}"
+        intro = (f"Brings `hub/next/` up to gaia `{release}` ahead of upgrade `{u['plan_name']}` "
+                 f"(proposal {u['proposal_id']}, height {u['plan_height']:,}). Nothing here is live until the publish PR "
+                 f"merges at that height.\n\n")
+        if error:
+            intro += (f"{READER_FAILED}\nThe release notes were not read ({error.splitlines()[-1][:200]}), so this PR only "
+                      f"replaces the release number. Read the gaia release notes and add what changed by hand, or close "
+                      f"this PR and the bot will try again on its next run.\n\n")
+            title += " (release number only)"
+        else:
+            intro += ("Written by `scripts/hub/release-reader.py` from the gaia release notes, changelog and code diff. "
+                      "Each change is listed beside its source below. Check the table against the diff before approving.\n\n")
+        if not push_branch(branch, f"Hub: update the upcoming docs for gaia {release}"):
+            log(f"{branch}: the release reader changed nothing")
+            return None
+        ensure_label(repo)
+        run(["gh", "pr", "create", "--base", "main", "--head", branch, "--title", title,
+             "--body", (intro + summary)[:60000], "--label", CONFIG["label"]])
+        log(f"Opened the content PR for {release}" + (" with the release number only" if error else ""))
+        pr = find_pr(branch)
+    if READER_FAILED in (pr.get("body") or ""):
+        alerts.trigger(key, f"Hub docs for {release}: the release notes were not read, {pr['url']} only replaces the release number",
+                       {"pr": pr["url"], "fix": "renew CLAUDE_CODE_OAUTH_TOKEN if the run log shows a login error, then close the PR and delete its branch"})
+    else:
+        alerts.resolve(key)
+    linux = u["binaries"].get("linux/amd64")
+    checked, desc = check_pr(repo, pr, (linux, None) if linux else release_binary_url(release), tier="next")
+    if checked and approved(pr, owners) and pr["mergeable"] != "CONFLICTING":
+        if live:
+            run(["gh", "pr", "merge", str(pr["number"]), "--squash", "--delete-branch"])
+            log(f"Merged the content PR {pr['url']}")
+            return None
+        log(f"Dry run: would merge the content PR {pr['url']}")
+    else:
+        log(f"{pr['url']}: waiting for approval" + ("" if checked else f"; release check: {desc}"))
+    return pr["url"]
+
+
+def reader_token_alert(alerts):
+    """The Claude token lasts a year and does not renew itself."""
+    issued = CONFIG.get("reader_token_issued")
+    if not issued:
+        return
+    expires = datetime.strptime(issued, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=365)
+    days = (expires - NOW).days
+    if days <= CONFIG["reader_token_warn_days"]:
+        alerts.trigger("hub-docs-reader-token",
+                       f"The Hub docs bot's Claude token expires in {max(days, 0)} days ({expires:%Y-%m-%d})",
+                       {"fix": "run `claude setup-token`, store it as the CLAUDE_CODE_OAUTH_TOKEN secret, update reader_token_issued in scripts/hub/bot-config.json"})
+    else:
+        alerts.resolve("hub-docs-reader-token")
 
 
 def publish_notice(ctx, u):
@@ -607,6 +710,7 @@ def main():
         log.write_summary()
         return 0 if args.plan else 1
     alerts.resolve("hub-docs-version")
+    reader_token_alert(alerts)
     upgrade = pick_upgrade(state, ctx["current"])
     if upgrade:
         publish_upgrade(ctx, upgrade)
