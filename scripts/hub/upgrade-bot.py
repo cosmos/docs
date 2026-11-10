@@ -40,6 +40,7 @@ writes alerts to the run summary, but never merges and never pages.
 """
 
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -240,15 +241,73 @@ def start_branch(branch):
     run(["git", "checkout", "-B", branch, "origin/main"])
 
 
+def tree_entries(status_z, read=None):
+    """Git tree entries for the staged changes against main, from the output
+    of `git diff --cached --name-status --no-renames -z origin/main`."""
+    read = read or (lambda path: (REPO_ROOT / path).read_bytes())
+    entries, binary = [], []
+    fields = [f for f in status_z.split("\0") if f]
+    for code, path in zip(fields[0::2], fields[1::2]):
+        if code == "D":
+            entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+            continue
+        mode = "100755" if os.access(REPO_ROOT / path, os.X_OK) else "100644"
+        data = read(path)
+        try:
+            entries.append({"path": path, "mode": mode, "type": "blob", "content": data.decode("utf-8")})
+        except UnicodeDecodeError:
+            binary.append((path, mode, data))
+    return entries, binary
+
+
 def push_branch(branch, message):
+    """Commit the working tree on top of main and point the branch at it.
+
+    The commit is created through the GitHub API with no author given, so
+    GitHub signs it as the workflow's bot. main requires signed commits, and
+    a commit made with `git commit` on the runner is not signed."""
     run(["git", "add", "-A"])
-    if run(["git", "diff", "--cached", "--quiet"], check=False).returncode == 0:
+    status = run(["git", "diff", "--cached", "--name-status", "--no-renames", "-z", "origin/main"]).stdout
+    if not status:
         return False
-    run(["git", "-c", "user.name=github-actions[bot]",
-         "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-         "commit", "-m", message])
-    run(["git", "push", "--force", "origin", f"HEAD:refs/heads/{branch}"])
+    repo = repo_name()
+    main_sha = run(["git", "rev-parse", "origin/main"]).stdout.strip()
+    entries, binary = tree_entries(status)
+    for path, mode, data in binary:
+        blob = api_post(f"repos/{repo}/git/blobs", {"content": base64.b64encode(data).decode(), "encoding": "base64"})
+        entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob["sha"]})
+    base_tree = run(["git", "rev-parse", "origin/main^{tree}"]).stdout.strip()
+    tree = api_post(f"repos/{repo}/git/trees", {"base_tree": base_tree, "tree": entries})
+    commit = api_post(f"repos/{repo}/git/commits", {"message": message, "tree": tree["sha"], "parents": [main_sha]})
+    ref = f"repos/{repo}/git/refs/heads/{branch}"
+    if run(["gh", "api", ref], check=False).returncode == 0:
+        api_post(ref, {"sha": commit["sha"], "force": True}, method="PATCH")
+    else:
+        api_post(f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     return True
+
+
+def ensure_signed(repo, pr, branch):
+    """Replace an unsigned head commit on one of the bot's open PRs with the
+    same tree committed through the API, which GitHub signs. Returns the PR."""
+    head = gh_json(["api", f"repos/{repo}/commits/{pr['headRefOid']}"])
+    if head["commit"]["verification"]["verified"]:
+        return pr
+    commit = api_post(f"repos/{repo}/git/commits", {
+        "message": head["commit"]["message"], "tree": head["commit"]["tree"]["sha"],
+        "parents": [p["sha"] for p in head["parents"]]})
+    api_post(f"repos/{repo}/git/refs/heads/{branch}", {"sha": commit["sha"], "force": True}, method="PATCH")
+    log(f"{pr['url']}: replaced an unsigned commit with a signed one, same content")
+    return find_pr(branch)
+
+
+def api_post(path, body, method="POST"):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(body, fh)
+    try:
+        return json.loads(run(["gh", "api", "-X", method, path, "--input", fh.name]).stdout)
+    finally:
+        os.unlink(fh.name)
 
 
 def freeze(archive_version, release):
@@ -434,6 +493,7 @@ def publish_upgrade(ctx, u):
             log(f"Regenerated the publish PR for {release} on current main")
         pr = find_pr(branch)
 
+    pr = ensure_signed(repo, pr, branch)
     linux = u["binaries"].get("linux/amd64")
     source = (linux, None) if linux else release_binary_url(release)
     checked, desc = check_pr(repo, pr, source)
@@ -561,6 +621,7 @@ def publish_content(ctx, u):
              "--body", (intro + summary)[:60000], "--label", CONFIG["label"]])
         log(f"Opened the content PR for {release}" + (" with the release number only" if error else ""))
         pr = find_pr(branch)
+    pr = ensure_signed(repo, pr, branch)
     if READER_FAILED in (pr.get("body") or ""):
         alerts.trigger(key, f"Hub docs for {release}: the release notes were not read, {pr['url']} only replaces the release number",
                        {"pr": pr["url"], "fix": "renew CLAUDE_CODE_OAUTH_TOKEN if the run log shows a login error, then close the PR and delete its branch"})
