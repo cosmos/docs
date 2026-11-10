@@ -1,0 +1,246 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/hub-tutorials/gaiad'
+title: "gaiad reference"
+description: "The gaiad command line on gaia v28.3.1: configuration, keys, fees, transactions, queries, offline and multisig signing, node management commands, and shell completion."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+This page is the reference for `gaiad`, the single binary that runs a Cosmos Hub node and acts as its command line client. It assumes `gaiad` v28.3.1 is installed ([Installation](/hub/v28.3.1/getting-started/installation)). Task pages elsewhere (delegating, validating, governance) link here for the details of a command. This page lists what exists and the flags that matter, in the order a new operator meets them.
+
+```bash
+gaiad version --long
+```
+
+This prints `version: v28.3.1`, `commit: b7f8b81b...`, `cosmos_sdk_version: v0.53.4`, `go: go1.25.7`, and the full dependency list. That output is how to confirm a binary before trusting anything else on this page. Every command has `--help`. The help text is generated from the same binary and is authoritative when it disagrees with a document.
+
+## Home directory and configuration
+
+The binary keeps everything under `--home`, default `~/.gaia`: `config/` (`config.toml`, `app.toml`, `client.toml`, `genesis.json`, `node_key.json`, `priv_validator_key.json`), `data/` (databases and `priv_validator_state.json`), and `wasm/`. Running `gaiad init <moniker> --chain-id cosmoshub-4` creates the layout with default files.
+
+Client defaults are stored in `client.toml` and are managed with `gaiad config`:
+
+```bash
+gaiad config set client chain-id cosmoshub-4
+gaiad config set client node https://cosmos-rpc.publicnode.com:443
+gaiad config set client keyring-backend os
+gaiad config set client output json
+gaiad config get client node
+gaiad config view client
+```
+
+The `set` subcommand writes the key, `get` reads one, `view` prints the file, `diff` shows what differs from defaults, and `home` prints the directory. The same command manages `app.toml` with dotted keys (`gaiad config set app minimum-gas-prices 0.005uatom`, `gaiad config set app api.enable true`, `gaiad config set app app-db-backend pebbledb`). It manages `config.toml` too, but only with the `-s` flag (`--skip-validate`), for example `gaiad config set config p2p.seeds "<list>" -s`. Without the flag, `gaiad config set config ...` returns `cometbft config is not supported` on v28.3.1.
+
+Every client flag can also be an environment variable with the `GAIAD_` prefix and underscores. For example, `GAIAD_KEYRING_BACKEND=test gaiad keys list` works, and `GAIAD_NODE`, `GAIAD_CHAIN_ID`, and `GAIAD_OUTPUT` work the same way. The `GAIAD_HOME` variable is not honoured by every subcommand on v28.3.1, so pass `--home` explicitly in scripts.
+
+## Keys
+
+The `gaiad keys` command manages wallet keys: secp256k1 keys derived from a BIP-39 phrase, used to sign transactions. These are the only keys this command touches. A validator's consensus key (`priv_validator_key.json`, ed25519, signs blocks) and node key (`node_key.json`, the peer to peer (P2P) identity) are files, not keyring entries. They are read with the `gaiad comet` commands described below. A validator's operator address is the `cosmosvaloper` form of one wallet key. It is fixed for the life of the validator.
+
+Keyring backends: `os` (system keychain), `file` (encrypted file, password prompt), `test` (unencrypted, for devnets only), `kwallet`, `pass`, and `memory`. Set it once with `gaiad config set client keyring-backend` or per command with `--keyring-backend`. Details: [Keyring](/sdk/latest/node/keyring).
+
+```bash
+gaiad keys add mykey
+gaiad keys add mykey --recover
+gaiad keys add mykey2 --recover --index 1
+gaiad keys add mykey-ledger --ledger
+gaiad keys add bob --pubkey '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A..."}'
+gaiad keys add council --multisig alice,bob,carol --multisig-threshold 2
+```
+
+The `add` subcommand prints the address and a 24 word phrase once. The `--recover` flag prompts for a phrase. The `--account` and `--index` flags pick another path under `m/44'/118'/<account>'/0/<index>` (see [HD wallets](/hub/v28.3.1/resources/hd-wallets)). The `--hd-path` flag sets it explicitly, and `--coin-type` defaults to 118. The `--ledger` flag stores a reference to a key on a connected device ([Ledger](/hub/v28.3.1/resources/ledger)). The `--pubkey` flag stores a public key only, which is how multisig members' keys are collected on one machine. Then `--multisig` with `--multisig-threshold` builds the multisig entry (type `multi`). The `--dry-run` flag shows what would be created without saving.
+
+```bash
+gaiad keys list
+gaiad keys show mykey
+gaiad keys show mykey -a
+gaiad keys show mykey -p
+gaiad keys show mykey --bech val
+gaiad keys show mykey --bech cons
+gaiad keys show mykey -d
+gaiad keys show alice bob carol --multisig-threshold 2
+```
+
+The `-a` flag prints only the address, and `-p` prints only the public key. The `--bech val` flag prints the `cosmosvaloper` form, and `--bech cons` prints the `cosmosvalcons` form of the same key. These are encodings of one address, not different keys. The `-d` flag shows the address on a Ledger screen. Passing several names with `--multisig-threshold` prints the multisig address those keys would form without saving it.
+
+```bash
+gaiad keys rename mykey oldkey
+gaiad keys delete oldkey
+gaiad keys export mykey
+gaiad keys import mykey mykey.armor
+gaiad keys parse cosmos1...
+gaiad keys mnemonic
+gaiad keys migrate
+```
+
+The `export` subcommand writes an ASCII armored, passphrase encrypted private key. The `import` subcommand reads one, and `import-hex` reads a raw hex key. The `parse` subcommand converts an address between bech32 and hex and shows every prefix. The `mnemonic` subcommand generates a phrase from system entropy without creating a key. The `migrate` subcommand moves entries from a legacy keyring format. Deleting a key does not touch the chain. Funds stay at the address, and the phrase restores it.
+
+## Fees and gas
+
+Every transaction pays gas times a gas price. The Hub's fee market sets the price floor at 0.005 uatom per gas and raises it under load ([Fee market](/hub/v28.3.1/modules/feemarket)):
+
+```bash
+gaiad q feemarket gas-price uatom
+```
+
+Use the returned price with gas estimation on every `tx` command:
+
+```bash
+--gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+The `--gas auto` flag simulates the transaction against the node to estimate gas. The `--gas-adjustment` flag multiplies the estimate, and `--gas-prices` sets the price. Passing `--fees 5000uatom` sets a fixed fee instead and needs `--gas` as a number. A transaction that runs out of gas fails and still pays. Other flags on every `tx` command: `--from` (key name or address), `--note` (the transaction memo), `--timeout-duration` (`--timeout-height` still works but is deprecated), `--broadcast-mode sync|async` (`sync` waits for the mempool check, the default), `--yes` to skip the confirmation prompt, `--dry-run` to simulate only, `--generate-only` to write the unsigned transaction and send nothing.
+
+## Transactions by module
+
+The commands below are the ones Hub operators and holders use. Each `gaiad tx <module> --help` lists the rest.
+
+- bank: `send <from> <to> <amount>`, `multi-send`.
+- staking: `delegate <valoper> <amount>`, `redelegate <src> <dst> <amount>`, `unbond <valoper> <amount>`, `cancel-unbond <valoper> <amount> <creation-height>`, `create-validator <validator.json>`, `edit-validator`. There is no key rotation command in this module on v28.3.1.
+- distribution: `withdraw-rewards <valoper>`, `withdraw-all-rewards`, `withdraw-validator-commission <valoper>`, `set-withdraw-addr <address>`, `fund-community-pool <amount>`.
+- slashing: `unjail`.
+- gov: `draft-proposal`, `submit-proposal <file>`, `deposit <id> <amount>`, `vote <id> <option>`, `weighted-vote <id> yes=0.6,no=0.4`, `cancel-proposal <id>`, `submit-legacy-proposal param-change`.
+- upgrade: `software-upgrade <name> --upgrade-height ...`, `cancel-software-upgrade`.
+- authz: `grant <grantee> send|generic|delegate|unbond|redelegate`, `revoke <grantee> <msg-type-url>`, `exec <file>`.
+- feegrant: `grant <granter> <grantee>`, `revoke`.
+- liquid: `tokenize-share`, `redeem-tokens`, `transfer-tokenize-share-record`, `disable-tokenize-shares`, `enable-tokenize-shares`, `withdraw-tokenize-share-rewards`, `withdraw-all-tokenize-share-rewards`.
+- tokenfactory: `create-denom`, `mint`, `mint-to`, `burn`, `change-admin`, `modify-metadata` (`burn-from` and `force-transfer` exist in the CLI but are disabled on the Hub).
+- ibc-transfer: `transfer transfer <channel-id> <receiver> <amount>` with `--packet-timeout-timestamp` (required on IBC v2 paths) and `--memo`.
+- wasm: `store`, `instantiate`, `execute`, `migrate`.
+
+Usage and examples: [Delegator CLI guide](/hub/v28.3.1/delegators/delegator-guide-cli), [Validator setup](/hub/v28.3.1/validators/validator-setup), [Submitting a proposal](/hub/v28.3.1/governance/submitting), [Liquid staking](/hub/v28.3.1/modules/liquid), [Tokenfactory](/hub/v28.3.1/modules/tokenfactory).
+
+## Queries
+
+Queries need `--node` (or the `client.toml` default) and no key. The `--output json` flag (or `-o json`) gives machine readable output, and `--height <h>` queries a past height on an archive node. Most list queries page with `--page-limit`, `--page-key`, `--page-offset`, `--page-reverse`, and `--page-count-total`. The `gaiad q staking validators` query has no `--limit` flag.
+
+```bash
+gaiad status
+gaiad q block --type=height 33424479
+gaiad q tx <hash>
+gaiad q txs --query "message.sender='cosmos1...'" --page 1 --limit 10
+gaiad q auth account cosmos1...
+gaiad q bank balances cosmos1...
+gaiad q bank balance cosmos1... uatom
+gaiad q bank total-supply-of uatom
+gaiad q staking validators --page-limit 200
+gaiad q staking validator cosmosvaloper1...
+gaiad q staking delegations cosmos1...
+gaiad q staking delegations-to cosmosvaloper1...
+gaiad q staking unbonding-delegations cosmos1...
+gaiad q staking params
+gaiad q staking pool
+gaiad q distribution rewards cosmos1...
+gaiad q distribution commission cosmosvaloper1...
+gaiad q distribution community-pool
+gaiad q slashing signing-info '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"..."}'
+gaiad q slashing signing-infos
+gaiad q gov proposals --proposal-status voting-period
+gaiad q gov proposal <id>
+gaiad q gov tally <id>
+gaiad q gov votes <id>
+gaiad q gov params
+gaiad q upgrade plan
+gaiad q upgrade applied v28.2.0
+gaiad q upgrade module-versions
+gaiad q mint inflation
+gaiad q consensus params
+gaiad q ibc client states --page-limit 5
+gaiad q ibc channel end transfer channel-141
+gaiad q ratelimit list-rate-limits
+gaiad q feemarket gas-price uatom
+gaiad q liquid params
+gaiad q tokenfactory params
+gaiad q wasm params
+```
+
+The `gaiad status` query prints the node's id, network, latest height, and `catching_up`. It is the only query that reads CometBFT rather than application state. The `q txs --query` form takes a CometBFT event query and only works against nodes with the transaction indexer on. The `q auth account` query returns the account inside `.account.value` in JSON for base and module accounts. The `account_number` and `sequence` from it are what offline signing needs.
+
+## Sign offline
+
+Build, sign, and broadcast as three steps so that the signing machine never needs a network:
+
+```bash
+gaiad tx bank send cosmos1FROM... cosmos1TO... 1000000uatom --generate-only --gas 200000 --gas-prices 0.005uatom --chain-id cosmoshub-4 > unsigned.json
+gaiad tx sign unsigned.json --from mykey --offline --chain-id cosmoshub-4 --account-number <n> --sequence <s> --output-document signed.json
+gaiad tx validate-signatures signed.json --offline --chain-id cosmoshub-4 --account-number <n> --sequence <s>
+gaiad tx broadcast signed.json
+```
+
+The `--offline` flag makes `sign` skip every node lookup, so `--account-number` and `--sequence` are required (`gaiad q auth account` provides them). The `--signature-only` flag outputs just the signature. The `--sign-mode` flag picks `direct`, `amino-json`, or `textual` (Ledger requires `amino-json` or `textual`). The `validate-signatures` subcommand prints `[OK]` per signer. The `tx encode` and `tx decode` subcommands convert between the JSON and the base64 wire form. The `sign-batch` and `multisign-batch` subcommands handle files with one transaction per line.
+
+## Multisig
+
+A multisig account is a public key made of N member public keys and a threshold. Each signer produces a signature file against the same unsigned transaction. Anyone then combines them:
+
+```bash
+gaiad keys add council --multisig alice,bob,carol --multisig-threshold 2
+gaiad tx bank send cosmos1COUNCIL... cosmos1TO... 1000000uatom --generate-only --gas 200000 --gas-prices 0.005uatom --chain-id cosmoshub-4 > unsigned.json
+gaiad tx sign unsigned.json --multisig council --from alice --offline --chain-id cosmoshub-4 --account-number <n> --sequence <s> --output-document alice-sig.json
+gaiad tx sign unsigned.json --multisig council --from bob --offline --chain-id cosmoshub-4 --account-number <n> --sequence <s> --output-document bob-sig.json
+gaiad tx multi-sign unsigned.json council alice-sig.json bob-sig.json --offline --chain-id cosmoshub-4 --account-number <n> --sequence <s> > signed.json
+gaiad tx broadcast signed.json
+```
+
+The `--multisig` flag on `sign` names the multisig entry, so the signature is made for the multisig address. The `--from` flag picks the member key. The `multi-sign` subcommand (alias `multisign`) assembles the threshold number of signatures. Order among members does not matter. However, every machine must have created the multisig from the same member keys in the same order (or all with `--nosort`), or the addresses differ. The Hub accepts at most 7 signatures per transaction (`gaiad q auth params`, `tx_sig_limit`), so 7 is the largest practical multisig.
+
+## Node commands
+
+These run against the local home directory and the node's own files, not against a remote node.
+
+```bash
+gaiad init <moniker> --chain-id cosmoshub-4
+gaiad start
+gaiad comet show-node-id
+gaiad comet show-validator
+gaiad comet show-address
+gaiad comet version
+gaiad comet unsafe-reset-all --keep-addr-book
+gaiad comet bootstrap-state
+gaiad comet reset-state
+gaiad snapshots list
+gaiad snapshots export --height <h>
+gaiad snapshots dump <height> <format>
+gaiad snapshots load <archive-file>
+gaiad snapshots restore <height> <format>
+gaiad prune custom --pruning-keep-recent 100 --pruning-interval 10 --app-db-backend pebbledb
+gaiad rollback
+gaiad export --height <h>
+gaiad module-hash-by-height <h>
+gaiad genesis validate
+gaiad genesis add-genesis-account <address> <amount>
+gaiad genesis gentx <key> <amount> --chain-id <id>
+gaiad genesis collect-gentxs
+gaiad debug addr cosmos1...
+gaiad debug pubkey '{"@type":"/cosmos.crypto.ed25519.PubKey","key":"..."}'
+```
+
+The `comet` command (alias `tendermint`) reads the node's own keys. Its `show-node-id` prints the P2P id from `node_key.json`, `show-validator` prints the consensus public key from `priv_validator_key.json`, and `show-address` prints the `cosmosvalcons` address of that key. None of these keys can be changed in place on v28.3.1. There is no consensus key rotation on the Hub's current gaia, the node key is regenerated (a new file means a new node id) rather than rotated, and the operator key can never change. The `comet version` subcommand reports the CometBFT version string compiled in. The `unsafe-reset-all` subcommand deletes `data/` and resets `priv_validator_state.json`, which is why it is unsafe on a validator. The `--keep-addr-book` flag keeps `addrbook.json`. The `bootstrap-state` subcommand prepares the CometBFT state after an application level state sync. The `snapshots` command manages state sync snapshots ([Snapshots](/hub/v28.3.1/infrastructure/snapshots)). The `prune` command prunes a stopped node's application store ([Database and pruning](/hub/v28.3.1/node/database)). The `rollback` command reverts one block of application and CometBFT state after a failed upgrade ([Upgrade a node](/hub/v28.3.1/hub-tutorials/upgrade-node)). The `export` command writes the application state as a genesis file. The `module-hash-by-height` command prints per module state hashes for comparing nodes after an upgrade. The `start` flags that matter: `--home`, `--unsafe-skip-upgrades <height>`, `--halt-height`, and `--p2p.seeds`, `--p2p.persistent_peers`, `--rpc.laddr` as overrides for `config.toml`. The `prune` command panics on v28.3.1 before it touches the store, so leave pruning to the running node. See [Prune offline](/hub/v28.3.1/node/database#prune-offline).
+
+## Shell completion
+
+```bash
+gaiad completion > /etc/bash_completion.d/gaiad
+gaiad completion --zsh > "${fpath[1]}/_gaiad"
+```
+
+The `gaiad completion` command writes a bash completion script, and `--zsh` writes the zsh one. Open a new shell afterwards. Tab completion covers subcommands and flags, not key names or addresses.
+
+## Verify
+
+```bash
+gaiad version
+gaiad config get client node
+gaiad status --output json | jq '{network: .node_info.network, height: .sync_info.latest_block_height, catching_up: .sync_info.catching_up}'
+```
+
+The `version` command prints `v28.3.1`. The `status` command prints `cosmoshub-4` and a height within a few blocks of any explorer. If `status` fails with a connection error, the `node` in `client.toml` is wrong or unreachable.
+
+## Next
+
+- [Delegator CLI guide](/hub/v28.3.1/delegators/delegator-guide-cli) for the staking and governance commands in use.
+- [Validator setup](/hub/v28.3.1/validators/validator-setup) for `create-validator` and the consensus key.
+- [Keyring](/sdk/latest/node/keyring) and [HD wallets](/hub/v28.3.1/resources/hd-wallets) for key storage and derivation.
