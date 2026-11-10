@@ -262,6 +262,7 @@ def tree_entries(status_z, read=None):
 
 def push_branch(branch, message):
     """Commit the working tree on top of main and point the branch at it.
+    Returns the new commit, or None when there is nothing to commit.
 
     The commit is created through the GitHub API with no author given, so
     GitHub signs it as the workflow's bot. main requires signed commits, and
@@ -269,7 +270,7 @@ def push_branch(branch, message):
     run(["git", "add", "-A"])
     status = run(["git", "diff", "--cached", "--name-status", "--no-renames", "-z", "origin/main"]).stdout
     if not status:
-        return False
+        return None
     repo = repo_name()
     main_sha = run(["git", "rev-parse", "origin/main"]).stdout.strip()
     entries, binary = tree_entries(status)
@@ -284,7 +285,19 @@ def push_branch(branch, message):
         api_post(ref, {"sha": commit["sha"], "force": True}, method="PATCH")
     else:
         api_post(f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
-    return True
+    return commit["sha"]
+
+
+def pr_at(branch, sha, tries=12, wait=5):
+    """The branch's PR once GitHub shows it at the commit just pushed. Right
+    after a push the PR can still report its previous head."""
+    pr = find_pr(branch)
+    for _ in range(tries):
+        if pr and pr["headRefOid"] == sha:
+            return pr
+        time.sleep(wait)
+        pr = find_pr(branch)
+    raise RuntimeError(f"{branch}: the PR did not move to {sha[:8]}")
 
 
 def ensure_signed(repo, pr, branch):
@@ -298,7 +311,7 @@ def ensure_signed(repo, pr, branch):
         "parents": [p["sha"] for p in head["parents"]]})
     api_post(f"repos/{repo}/git/refs/heads/{branch}", {"sha": commit["sha"], "force": True}, method="PATCH")
     log(f"{pr['url']}: replaced an unsigned commit with a signed one, same content")
-    return find_pr(branch)
+    return pr_at(branch, commit["sha"])
 
 
 def api_post(path, body, method="POST"):
@@ -483,7 +496,7 @@ def publish_upgrade(ctx, u):
     if stale:
         start_branch(branch)
         freeze(current, release)
-        push_branch(branch, f"Hub: publish the gaia {release} docs\n\nFreeze of hub/next/ for upgrade {u['plan_name']} at height {height}.")
+        pushed = push_branch(branch, f"Hub: publish the gaia {release} docs\n\nFreeze of hub/next/ for upgrade {u['plan_name']} at height {height}.")
         if pr is None:
             ensure_label(repo)
             run(["gh", "pr", "create", "--base", "main", "--head", branch, "--title", title,
@@ -491,7 +504,7 @@ def publish_upgrade(ctx, u):
             log(f"Opened the publish PR for {release}")
         else:
             log(f"Regenerated the publish PR for {release} on current main")
-        pr = find_pr(branch)
+        pr = pr_at(branch, pushed) if pushed else find_pr(branch)
 
     pr = ensure_signed(repo, pr, branch)
     linux = u["binaries"].get("linux/amd64")
@@ -613,14 +626,15 @@ def publish_content(ctx, u):
         else:
             intro += ("Written by `scripts/hub/release-reader.py` from the gaia release notes, changelog and code diff. "
                       "Each change is listed beside its source below. Check the table against the diff before approving.\n\n")
-        if not push_branch(branch, f"Hub: update the upcoming docs for gaia {release}"):
+        pushed = push_branch(branch, f"Hub: update the upcoming docs for gaia {release}")
+        if not pushed:
             log(f"{branch}: the release reader changed nothing")
             return None
         ensure_label(repo)
         run(["gh", "pr", "create", "--base", "main", "--head", branch, "--title", title,
              "--body", (intro + summary)[:60000], "--label", CONFIG["label"]])
         log(f"Opened the content PR for {release}" + (" with the release number only" if error else ""))
-        pr = find_pr(branch)
+        pr = pr_at(branch, pushed)
     pr = ensure_signed(repo, pr, branch)
     if READER_FAILED in (pr.get("body") or ""):
         alerts.trigger(key, f"Hub docs for {release}: the release notes were not read, {pr['url']} only replaces the release number",
@@ -705,7 +719,7 @@ def publish_patch(ctx, upgrades):
     if pr is None:
         start_branch(branch)
         changed = patch_version(current, tag)
-        push_branch(branch, f"Hub: move the docs to gaia {tag}\n\nPatch release of {current}; no upgrade proposal.")
+        pushed = push_branch(branch, f"Hub: move the docs to gaia {tag}\n\nPatch release of {current}; no upgrade proposal.")
         ensure_label(repo)
         run(["gh", "pr", "create", "--base", "main", "--head", branch,
              "--title", f"Hub: move the docs to gaia {tag}",
@@ -716,7 +730,7 @@ def publish_patch(ctx, upgrades):
                        f"and the `{STATUS_CONTEXT}` status passes.",
              "--label", CONFIG["label"]])
         log(f"Opened the patch PR for {tag}")
-        pr = find_pr(branch)
+        pr = pr_at(branch, pushed) if pushed else find_pr(branch)
     checked, desc = check_pr(repo, pr, release_binary_url(tag))
     if checked and approved(pr, owners) and pr["mergeable"] != "CONFLICTING":
         if live:
