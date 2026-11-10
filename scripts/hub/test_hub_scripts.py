@@ -298,5 +298,15 @@ class ReaderToken(unittest.TestCase):
         self.assertEqual(self.check(bot.NOW.strftime("%Y-%m-%d")), [("resolve", "hub-docs-reader-token")])
 
 
+class SignedCommits(unittest.TestCase):
+    def test_tree_entries(self):
+        files = {"hub/next/a.mdx": b"text\n", "hub/img.png": b"\xff\xd8\x00"}
+        status = "M\0hub/next/a.mdx\0D\0hub/old.mdx\0A\0hub/img.png\0"
+        entries, binary = bot.tree_entries(status, read=files.__getitem__)
+        self.assertEqual(entries[0], {"path": "hub/next/a.mdx", "mode": "100644", "type": "blob", "content": "text\n"})
+        self.assertEqual(entries[1], {"path": "hub/old.mdx", "mode": "100644", "type": "blob", "sha": None})
+        self.assertEqual([b[0] for b in binary], ["hub/img.png"])
+
+
 if __name__ == "__main__":
     unittest.main()
