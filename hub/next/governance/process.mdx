@@ -41,9 +41,13 @@ The Hub adds one rule outside these parameters: a vote is accepted only from an 
 A proposal exists on chain from the moment it is submitted with at least 50 ATOM. It enters voting as soon as the total deposit reaches 500 ATOM. Anyone can add to the deposit, in increments of at least 5 ATOM, for up to 14 days. After that the proposal is removed and the deposits are refunded.
 
 ```bash
-gaiad q gov proposals --proposal-status deposit-period --node https://cosmos-rpc.publicnode.com:443
+gaiad q gov proposals --page-reverse --page-limit 20 --output json --node https://cosmos-rpc.publicnode.com:443 | jq -r '.proposals[] | select(.status == "PROPOSAL_STATUS_DEPOSIT_PERIOD") | "\(.id) \(.title)"'
 gaiad q gov deposits <id> --node https://cosmos-rpc.publicnode.com:443
 ```
+
+<Note>
+On gaia v29.0.x, `gaiad q gov proposals --proposal-status <status>` fails on mainnet with `no concrete type registered for type URL /cosmos.params.v1beta1.ParameterChangeProposal`. The status filter reads every proposal back to the first, and 21 old parameter-change proposals (the newest is 868) can no longer be decoded. Listing the newest 20 with `--page-reverse --page-limit 20` and filtering with `jq`, as above, never reaches them. gaia v29.1.0 restores decoding.
+</Note>
 
 Deposits are refunded after the vote in every case except a veto. With `burn_vote_veto: true`, a proposal that ends with 33.4 percent or more NoWithVeto loses the whole deposit. Proposal 1056 is a recent example. Deposits are not burned for failing quorum or for a plain No majority. A proposer can cancel a proposal before the voting period ends with `gaiad tx gov cancel-proposal <id>`. Half of the deposit is then burned.
 
@@ -52,7 +56,7 @@ Deposits are refunded after the vote in every case except a veto. With `burn_vot
 Voting lasts 7 days from the moment the deposit is filled (3 days for an expedited proposal). Any address with at least 1 ATOM staked can vote once and can change the vote until the period ends. The last vote counts.
 
 ```bash
-gaiad q gov proposals --proposal-status voting-period --node https://cosmos-rpc.publicnode.com:443
+gaiad q gov proposals --page-reverse --page-limit 20 --output json --node https://cosmos-rpc.publicnode.com:443 | jq -r '.proposals[] | select(.status == "PROPOSAL_STATUS_VOTING_PERIOD") | "\(.id) \(.title)"'
 gaiad q gov proposal <id> --node https://cosmos-rpc.publicnode.com:443
 gaiad q gov tally <id> --node https://cosmos-rpc.publicnode.com:443
 ```

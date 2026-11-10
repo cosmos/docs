@@ -12,7 +12,7 @@ This page is for an operator whose validator exists on chain ([Create and manage
 
 ## Why a remote signer
 
-The consensus key signs every prevote, precommit, and proposal. Whoever holds it can sign a conflicting block. The chain punishes that with a 5 percent slash and a permanent tombstone of the validator ([Validator overview](/hub/next/validators/overview#live-constraints)). The key cannot be rotated on gaia v28.3.1. A leaked key therefore means retiring the validator.
+The consensus key signs every prevote, precommit, and proposal. Whoever holds it can sign a conflicting block. The chain punishes that with a 5 percent slash and a permanent tombstone of the validator ([Validator overview](/hub/next/validators/overview#live-constraints)). The key cannot be rotated on gaia v29.0.1. A leaked key therefore means retiring the validator.
 
 By default `gaiad init` writes the key to `config/priv_validator_key.json` on the node host. That is the same host that holds open TCP connections to peers and runs a large codebase. A remote signer moves the key to a separate host, or a hardware security module (HSM), that exposes nothing but the signing protocol. The node asks the signer for signatures over an authenticated connection. The validator host can then be rebuilt, snapshotted, or compromised without the key leaving the signer.
 
@@ -24,7 +24,7 @@ CometBFT asks the signer for signatures over a small protocol called privval. On
 gaiad config set config priv_validator_laddr tcp://127.0.0.1:26659 --skip-validate
 ```
 
-The `priv_validator_laddr` key (default empty) is the address the node listens on for a signer, `tcp://` or `unix://`. Once it is set, the node ignores `priv_validator_key_file` and does not start consensus until a signer connects and answers a public key request. On gaia v28.3.1 `gaiad config set config` needs `--skip-validate`. Confirm with `gaiad config get config priv_validator_laddr`.
+The `priv_validator_laddr` key (default empty) is the address the node listens on for a signer, `tcp://` or `unix://`. Once it is set, the node ignores `priv_validator_key_file` and does not start consensus until a signer connects and answers a public key request. On gaia v29.0.1 `gaiad config set config` needs `--skip-validate`. Confirm with `gaiad config get config priv_validator_laddr`.
 
 The signer dials in over a CometBFT SecretConnection, encrypted and authenticated with an Ed25519 identity on each side. The node generates its identity fresh at every start (`privval/utils.go` in CometBFT v0.38), so neither side pins the other across restarts. The network boundary is the control: bind the listener to a private interface and firewall the port to the signer host. The example uses loopback for a signer on the same host.
 
@@ -50,7 +50,7 @@ What the README and the v0.1.0 release state:
 
 - Build: Go 1.26 (`go.mod`), `git clone https://github.com/cosmos/kms`, then `make build` (binary at `build/kms`) or `make install`. There are no release binaries. A Dockerfile is included.
 - Commands: `kms init --home <dir>` writes a `kms.yaml` stub and an identity key; `kms start --home <dir>` runs the signer; `kms state init --chain <id> --height <h> [--round <r>] [--step <s>]` seeds the double-sign floor; `kms peer-id` prints the identity; `kms version`.
-- Transports: `tcp://` (CometBFT SecretConnection, what a CometBFT v0.38 node accepts) and `noise://` (libp2p Noise, which needs a node that supports it; gaia v28.3.1 does not).
+- Transports: `tcp://` (CometBFT SecretConnection, what a CometBFT v0.38 node accepts) and `noise://` (libp2p Noise, which needs a node that supports it; gaia v29.0.1 on CometBFT v0.38.25 does not).
 - Key backends: `file` (reads a CometBFT `priv_validator_key.json`; the README says this is not for production custody), `pkcs11` (an HSM module, with `token_label` or `slot`, `key_label` or `key_id`, and `pin`, `pin_env` or `pin_file`), and `awskms` (an `ECC_NIST_EDWARDS25519` key by `key_id`, `region`, `profile`). There is no Google Cloud KMS backend. Only `ed25519` applies to the Hub.
 - Configuration (`kms.yaml`): a `chains` list (chain id and a state file, default `<home>/state/<chain-id>.json`), a `validators` list (chain id, the node's `priv_validator_laddr` address, the identity key file, reconnect settings), and a `keys` list (chain ids, backend, algorithm). An optional `grpc` block exposes a signer service that has no caller authentication, so it must be behind TLS or stay off.
 - Double-sign protection reuses the CometBFT state-file format per chain. The `kms start` command refuses to run with a missing state file unless you pass `--allow-fresh-state <chain-id>`. The `state init` command refuses to overwrite an existing floor.
