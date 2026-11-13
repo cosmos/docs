@@ -1,0 +1,90 @@
+---
+title: "When a chain shuts down"
+description: "What users, validators and chain teams need to do with IBC tokens, including ATOM, before a Cosmos chain halts for good."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified gaia="v29.0.1" sdk="v0.53.8" comet="v0.38.25" date="2026-11-13" />
+
+When a Cosmos chain stops producing blocks for good, IBC tokens that depend on it can no longer move. This page covers what to do before the last block, because after it nobody can fix anything from the other side.
+
+It is based on the community discussion [What has to happen to IBC tokens before a Cosmos chain halts for good](https://forum.cosmos.network/t/what-has-to-happen-to-ibc-tokens-before-a-cosmos-chain-halts-for-good/17510) and on ibc-go v10.
+
+## Why tokens get stuck
+
+When a token leaves its home chain over IBC, the home chain holds it in an escrow account for that channel and the other chain mints a voucher. The escrow releases the token only when a packet proves the voucher was burned, and that packet has to come from a live chain.
+
+* Transfer channels can't be closed. The transfer module rejects channel closing, so there is no close-and-settle step.
+* Every packet needs an active light client. Packets, acknowledgements and timeouts are all verified through the counterparty's light client. A Tendermint client expires one trusting period (often around two weeks) after its latest header.
+* An expired client can't be recovered from a dead chain. Client recovery needs a newer, active substitute client, which needs new blocks.
+
+So once a chain halts and the clients that track it expire, tokens escrowed for it stay where they are.
+
+## For users and validators
+
+<Warning>
+Send tokens back the way they came, hop by hop, before the halt height. After the halt, the chain on the other side can't release them.
+</Warning>
+
+### Check whether your token depends on the chain
+
+A token can depend on a halting chain even if you hold it somewhere else. Every IBC voucher is shown on chain as `ibc/` plus a hash of its full path. If that path runs through the halting chain, the token depends on it.
+
+For example, ATOM sent from the Cosmos Hub to chain A and then on to chain B is a voucher on chain B whose path runs through chain A. Nothing in the chain B wallet says "chain A", but if chain A halts, that ATOM can only get home by going back through chain A first.
+
+To check, look up the token's denom trace (most explorers show it, or run `query ibc-transfer denom <hash>` with the chain's CLI where you hold it). Every chain listed in the path has to be live for the token to return.
+
+### Return it the way it came
+
+* Send the token back over the same channel it arrived on, one hop at a time, until it reaches its home chain.
+* Sending it from the outer chain straight to the home chain does not unwind anything. It adds another hop.
+
+### Watch the deadline
+
+* The deadline that counts is the chain's last block height, not a date. Dates are estimates.
+* Don't leave transfers to the last few blocks. A relayer has to deliver each one while the chain is still producing blocks, and a transfer in the very last block before the halt can't be delivered at all.
+
+## For chains winding down
+
+### Publish a notice wallets can pass on
+
+Many holders never see governance proposals or social posts. Publish a short notice that wallets and explorers can relay, with:
+
+* the chain and the halt height, with an estimated date
+* every affected denom on every chain, including vouchers whose path only passes through your chain
+* the channel to send each denom back on
+* what holders should do, in one line
+
+Update the chain's status in the [Chain Registry](https://github.com/cosmos/chain-registry) when it halts.
+
+### Count both directions, per channel
+
+* Your native token on other chains is backed by your escrow accounts.
+* Other chains' tokens on your chain, and anything that passed through your chain to a third chain, need a route back.
+* Publish the amounts and the return route for each channel.
+
+### Refuse late transfers with an error acknowledgement
+
+* With the transfer module's `receive_enabled` parameter off, incoming transfers fail with an error acknowledgement, and the sender is refunded on their own chain once that acknowledgement is relayed.
+* Don't filter `MsgRecvPacket` in an ante handler instead. The packet is then never received and the only refund path is a timeout, and a packet whose timeout falls after your last block never times out.
+* `receive_enabled` is global: it also blocks your own token coming home. If you still need returns, refuse only packets that would mint a new voucher, with a small middleware that writes the error acknowledgement.
+
+### Leave outbound transfers on until returns are done
+
+* Don't turn off the transfer module's `send_enabled` to wind down early. It blocks every outbound transfer, including other chains' tokens going home, so they are stranded on your chain. Turn it off only after the return window closes.
+* To stop only your own token leaving, turn off bank sends for that one denom instead. Other chains' tokens can still go home, but plain sends of your token on your chain stop too.
+* These changes usually go through governance, which takes effect when the voting period ends. That is a time and the halt is a height, so have each proposal pass well before the halt height.
+
+### Keep relaying to the end
+
+* Keep relayers running after the last transfer.
+* Update every counterparty's client of your chain to the final height.
+* Clear every pending packet and acknowledgement while those clients are still active. Refunds only land once the acknowledgement is relayed.
+* Don't count on relaying after the halt. In testing with Hermes v1.13.1, packets still pending when the chain stopped were not delivered, even from blocks another chain could still verify.
+
+### Halt at a planned height
+
+* Halt with a software upgrade plan that has no handler in the binary. Every node stops at the same height.
+* Stop IBC activity several blocks before that height, once returns are done. The last block before the halt can never be proven to another chain, so a packet sent in it is stuck.
+* Keep the state export from that height. It is the record any later claim or restart works from.
