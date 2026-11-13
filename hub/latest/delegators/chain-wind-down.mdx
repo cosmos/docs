@@ -70,6 +70,12 @@ Update the chain's status in the [Chain Registry](https://github.com/cosmos/chai
 * Don't filter `MsgRecvPacket` in an ante handler instead. The packet is then never received and the only refund path is a timeout, and a packet whose timeout falls after your last block never times out.
 * `receive_enabled` is global: it also blocks your own token coming home. If you still need returns, refuse only packets that would mint a new voucher, with a small middleware that writes the error acknowledgement.
 
+### Leave outbound transfers on until returns are done
+
+* Don't turn off the transfer module's `send_enabled` to wind down early. It blocks every outbound transfer, including other chains' tokens going home, so they are stranded on your chain. Turn it off only after the return window closes.
+* To stop only your own token leaving, turn off bank sends for that one denom instead. Other chains' tokens can still go home, but plain sends of your token on your chain stop too.
+* These changes usually go through governance, which takes effect when the voting period ends. That is a time and the halt is a height, so have each proposal pass well before the halt height.
+
 ### Keep relaying to the end
 
 * Keep relayers running after the last transfer.
@@ -80,5 +86,5 @@ Update the chain's status in the [Chain Registry](https://github.com/cosmos/chai
 ### Halt at a planned height
 
 * Halt with a software upgrade plan that has no handler in the binary. Every node stops at the same height.
-* Stop IBC activity several blocks before that height. The last block before the halt can never be proven to another chain, so a packet sent in it is stuck.
+* Stop IBC activity several blocks before that height, once returns are done. The last block before the halt can never be proven to another chain, so a packet sent in it is stuck.
 * Keep the state export from that height. It is the record any later claim or restart works from.
