@@ -1,0 +1,97 @@
+---
+title: Transport Errors
+description: HTTP, WebSocket, and JSON-RPC errors between CosmJS and RPC nodes.
+---
+
+Transport errors occur between CosmJS and the RPC node. They depend on which
+transport you use (HTTP or WebSocket).
+
+## HTTP Errors
+
+**Bad status (HTTP >= 400)**
+
+Thrown by the low-level HTTP layer when the node responds with a non-2xx status.
+The `cause` property carries the status code and response body:
+
+```typescript
+try {
+  const client = await StargateClient.connect("https://rpc.my-chain.network");
+} catch (error) {
+  // "Bad status on response: 429"
+  const { status, body } = (error as Error).cause as { status: number; body: string };
+}
+```
+
+Common status codes:
+
+| Status | Meaning | Action |
+| --- | --- | --- |
+| 401 / 403 | Authentication required | Add auth headers via `HttpEndpoint` |
+| 404 | Wrong URL or path | Verify the RPC endpoint URL |
+| 429 | Rate limited | Back off and retry; use multiple endpoints |
+| 502 / 503 / 504 | Server error / gateway timeout | Retry with exponential backoff |
+
+**Request timeout (AbortError)**
+
+When an HTTP client is configured with a timeout, requests that exceed it throw a
+`DOMException` with `name === "AbortError"`:
+
+```typescript
+import { HttpClient } from "@cosmjs/tendermint-rpc";
+
+const httpClient = new HttpClient("https://rpc.my-chain.network", 10_000); // 10s timeout
+```
+
+**Invalid URL**
+
+Thrown immediately if the endpoint URL is missing a protocol:
+
+```
+"Endpoint URL is missing a protocol. Expected 'https://' or 'http://'."
+```
+
+## WebSocket Errors
+
+**Connection timeout**
+
+Thrown when the WebSocket handshake does not complete within the timeout
+(default: 10 seconds):
+
+```
+"Connection attempt timed out after 10000 ms"
+```
+
+**Socket closed**
+
+Thrown when sending on a closed or not-yet-open socket:
+
+```
+"Socket was closed, so no data can be sent anymore."
+"Websocket is not open"
+```
+
+**Invalid URL**
+
+```
+"Base URL is missing a protocol. Expected 'ws://' or 'wss://'."
+```
+
+## JSON-RPC Errors
+
+When the node returns a JSON-RPC error response, CosmJS throws an `Error` whose
+message is the serialized error object. Standard JSON-RPC error codes:
+
+| Code | Meaning |
+| --- | --- |
+| -32700 | Parse error |
+| -32600 | Invalid request |
+| -32601 | Method not found |
+| -32602 | Invalid params |
+| -32603 | Internal error |
+| -32000 | Server error (custom) |
+
+## Reconnection
+
+`WebsocketClient` uses `ReconnectingSocket` internally with exponential backoff
+(100ms to 5s). HTTP clients do **not** retry automatically — implement retries
+in your application if needed.

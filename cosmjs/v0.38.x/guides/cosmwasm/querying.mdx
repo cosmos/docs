@@ -1,0 +1,105 @@
+---
+title: "Querying Contracts"
+description: "Query smart contract state, metadata, and code info on CosmWasm-enabled chains"
+---
+
+`CosmWasmClient` provides multiple ways to read contract state: JSON smart queries that execute the contract's query entry point, raw binary reads against storage keys, and metadata lookups for contracts and uploaded code.
+
+## Smart Queries
+
+Smart queries execute the contract's query entry point and return parsed JSON. The query message shape depends on the contract.
+
+```typescript
+import { CosmWasmClient } from "@cosmjs/cosmwasm";
+
+const client = await CosmWasmClient.connect("https://rpc.my-chain.network");
+
+const count = await client.queryContractSmart("osmo1contractaddr...", {
+  get_count: {},
+});
+
+const balance = await client.queryContractSmart("osmo1tokencontract...", {
+  balance: { address: "osmo1useraddr..." },
+});
+```
+
+<Warning>
+Smart queries are rejected if the contract address does not exist or the query message does not match the contract's schema. Both cases throw an error.
+</Warning>
+
+## Raw State Access
+
+For direct storage reads, use `queryContractRaw` with the binary storage key:
+
+```typescript
+import { toAscii } from "@cosmjs/encoding";
+
+const raw = await client.queryContractRaw("osmo1contractaddr...", toAscii("config"));
+if (raw) {
+  const config = JSON.parse(new TextDecoder().decode(raw));
+}
+```
+
+## Contract Metadata
+
+Retrieve a contract's on-chain metadata including its code ID, creator, admin, and label:
+
+```typescript
+const info = await client.getContract("osmo1contractaddr...");
+// { address, codeId, creator, admin, label, ibcPortId }
+
+const history = await client.getContractCodeHistory("osmo1contractaddr...");
+// [{ operation: "Init" | "Migrate" | "Genesis", codeId, msg }]
+```
+
+## Code and Contract Discovery
+
+List uploaded codes and find contracts by code ID or creator:
+
+```typescript
+const codes = await client.getCodes();
+// [{ id, creator, checksum }]
+
+const codeDetails = await client.getCodeDetails(1);
+// { id, creator, checksum, data (Uint8Array of original wasm) }
+
+const contracts = await client.getContracts(1);
+// ["osmo1abc...", "osmo1def..."]
+
+const byCreator = await client.getContractsByCreator("osmo1creatoraddr...");
+// ["osmo1abc...", "osmo1def..."]
+```
+
+<Note>
+`getCodes()`, `getContracts()`, and `getContractsByCreator()` loop through all pagination pages internally. For large result sets, consider using the wasm query extension directly with manual pagination.
+</Note>
+
+## Using the Wasm Query Extension
+
+For fine-grained control over pagination or when building a custom query client, use the wasm extension directly:
+
+```typescript
+import { QueryClient } from "@cosmjs/stargate";
+import { setupWasmExtension } from "@cosmjs/cosmwasm";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(cometClient, setupWasmExtension);
+
+const { codeInfos, pagination } = await queryClient.wasm.listCodeInfo();
+const contracts = await queryClient.wasm.listContractsByCodeId(1);
+const contractInfo = await queryClient.wasm.getContractInfo("osmo1contractaddr...");
+const history = await queryClient.wasm.getContractCodeHistory("osmo1contractaddr...");
+const allState = await queryClient.wasm.getAllContractState("osmo1contractaddr...");
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Uploading Code" icon="upload" href="/cosmjs/v0.38.x/guides/cosmwasm/uploading">
+    Deploy Wasm binaries to chain.
+  </Card>
+  <Card title="Executing Contracts" icon="play" href="/cosmjs/v0.38.x/guides/cosmwasm/executing">
+    Execute contract messages and parse events.
+  </Card>
+</CardGroup>

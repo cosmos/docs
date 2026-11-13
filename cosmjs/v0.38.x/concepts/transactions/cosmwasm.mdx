@@ -1,0 +1,103 @@
+---
+title: CosmWasm Transactions
+description: Signing and broadcasting CosmWasm smart contract transactions
+---
+
+For chains with smart contract support, use `SigningCosmWasmClient`. It extends
+the same signing patterns with CosmWasm-specific methods.
+
+```typescript
+import { SigningCosmWasmClient } from "@cosmjs/cosmwasm";
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { GasPrice } from "@cosmjs/stargate";
+import { readFileSync } from "fs";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic("your mnemonic ...", {
+  prefix: "wasm",
+});
+const [{ address }] = await wallet.getAccounts();
+
+const client = await SigningCosmWasmClient.connectWithSigner(
+  "https://rpc.my-wasm-chain.network",
+  wallet,
+  { gasPrice: GasPrice.fromString("0.025ucosm") },
+);
+```
+
+## Upload a Contract
+
+```typescript
+const wasmCode = readFileSync("./contract.wasm");
+
+const uploadResult = await client.upload(address, wasmCode, "auto");
+// uploadResult.codeId — use this to instantiate
+```
+
+## Instantiate a Contract
+
+```typescript
+const instantiateResult = await client.instantiate(
+  address,
+  uploadResult.codeId,
+  { count: 0 },
+  "My Counter Contract",
+  "auto",
+  { admin: address },
+);
+// instantiateResult.contractAddress — the new contract's address
+```
+
+## Execute a Contract
+
+```typescript
+const executeResult = await client.execute(
+  address,
+  contractAddress,
+  { increment: {} },
+  "auto",
+  "incrementing counter",
+  [{ denom: "ucosm", amount: "1000" }],
+);
+```
+
+## Execute Multiple Contracts Atomically
+
+```typescript
+const executeResult = await client.executeMultiple(
+  address,
+  [
+    {
+      contractAddress: counterAddress,
+      msg: { increment: {} },
+    },
+    {
+      contractAddress: registryAddress,
+      msg: { register: { name: "alice" } },
+      funds: [{ denom: "ucosm", amount: "5000" }],
+    },
+  ],
+  "auto",
+);
+```
+
+## Migrate a Contract
+
+```typescript
+const migrateResult = await client.migrate(
+  address,
+  contractAddress,
+  newCodeId,
+  { new_field: "value" },
+  "auto",
+);
+```
+
+## Quick Reference
+
+| Task | Method |
+|------|--------|
+| Upload WASM | `client.upload(sender, code, fee)` |
+| Instantiate | `client.instantiate(sender, codeId, msg, label, fee)` |
+| Execute contract | `client.execute(sender, contract, msg, fee)` |
+| Execute multiple | `client.executeMultiple(sender, instructions, fee)` |
+| Migrate contract | `client.migrate(sender, contract, codeId, msg, fee)` |

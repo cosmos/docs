@@ -1,0 +1,108 @@
+---
+title: "Instantiating Contracts"
+description: "Create contract instances with admin, funds, and predictable addresses"
+---
+
+After uploading a Wasm binary, you create contract instances from its `codeId`. Each instance gets its own address, storage, and optional admin. A single code ID can be instantiated many times with different configuration.
+
+## Basic Instantiation
+
+```typescript
+const instantiateResult = await client.instantiate(
+  address,
+  codeId,
+  { count: 0 },
+  "My Counter Contract",
+  "auto",
+);
+
+const { contractAddress, transactionHash, events } = instantiateResult;
+```
+
+The third argument is the JSON init message whose shape is defined by the contract. The fourth argument is a human-readable label stored on-chain.
+
+## Instantiation Options
+
+Pass an options object as the last argument to set an admin, attach funds, or add a memo:
+
+```typescript
+const instantiateResult = await client.instantiate(
+  address,
+  codeId,
+  { owner: address, threshold: 3 },
+  "My Multisig Contract",
+  "auto",
+  {
+    admin: address,
+    funds: [{ denom: "uosmo", amount: "1000000" }],
+    memo: "deploying multisig v1",
+  },
+);
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `admin` | `string` | Bech32 address with permission to migrate or update the contract. Omit to make the contract immutable. |
+| `funds` | `Coin[]` | Native tokens transferred to the contract on creation. |
+| `memo` | `string` | Transaction memo. |
+
+<Tip>
+Setting an admin is required if you ever want to migrate the contract to new code. If you omit the admin, the contract becomes permanently non-upgradeable.
+</Tip>
+
+## Predictable Addresses with Instantiate2
+
+`instantiate2` creates a contract with a deterministic address derived from the code checksum, creator address, and a salt. This is useful when other contracts or off-chain systems need to know the address before it exists.
+
+```typescript
+import { Random, sha256 } from "@cosmjs/crypto";
+import { instantiate2Address } from "@cosmjs/cosmwasm";
+import { readFileSync } from "fs";
+
+const wasmCode = readFileSync("./my_contract.wasm");
+const salt = Random.getBytes(32);
+
+const predictedAddress = instantiate2Address(
+  sha256(wasmCode),
+  address,
+  salt,
+  "osmo",
+);
+
+const result = await client.instantiate2(
+  address,
+  codeId,
+  salt,
+  { count: 0 },
+  "Predictable Counter",
+  "auto",
+  { admin: address },
+);
+// result.contractAddress === predictedAddress
+```
+
+<Note>
+The salt must be between 1 and 64 bytes. Use a unique salt for each instantiation to avoid address collisions.
+</Note>
+
+## Instantiation Result
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contractAddress` | `string` | Bech32 address of the new contract |
+| `transactionHash` | `string` | Upper-case hex transaction hash |
+| `height` | `number` | Block height of inclusion |
+| `events` | `Event[]` | Transaction events |
+| `gasWanted` | `bigint` | Gas requested |
+| `gasUsed` | `bigint` | Gas consumed |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Executing Contracts" icon="play" href="/cosmjs/v0.38.x/guides/cosmwasm/executing">
+    Send execute messages to change contract state.
+  </Card>
+  <Card title="Contract Administration" icon="shield" href="/cosmjs/v0.38.x/guides/cosmwasm/administration">
+    Migrate contracts and manage admin privileges.
+  </Card>
+</CardGroup>

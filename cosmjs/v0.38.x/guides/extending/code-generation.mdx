@@ -1,0 +1,223 @@
+---
+title: "Code Generation"
+description: "Generate TypeScript types from protobuf definitions using Telescope, ts-proto, or protobufjs"
+---
+
+Writing protobuf codec wrappers, query clients, and Amino converters by hand is error-prone and tedious. Code generation tools read your chain's `.proto` files and produce TypeScript code that's directly compatible with CosmJS's `Registry`, `createProtobufRpcClient`, and `AminoTypes`.
+
+## Choosing a Generator
+
+| | [Telescope](https://github.com/cosmology-tech/telescope) | [ts-proto](https://github.com/stephenh/ts-proto) | [protobufjs](https://github.com/protobufjs/protobuf.js) |
+|---|---|---|---|
+| **Approach** | Full-stack Cosmos codegen | General-purpose protobuf codegen | Runtime type definitions |
+| **Output** | Message codecs, query clients, Amino converters, registry helpers, LCD clients | Message codecs, query service clients | Encode/decode at runtime (no build step) |
+| **CosmJS interface** | `TelescopeGeneratedType` | `TsProtoGeneratedType` / `TsProto2GeneratedType` | `PbjsGeneratedType` |
+| **`fromPartial`** | Yes | Yes | No (uses `create`) |
+| **Best for** | Full dApp development, chain-specific libraries | Matching CosmJS's own code style, lightweight projects | Prototyping, runtime-defined types |
+| **Used by** | OsmoJS, Stargaze, dYdX, Stride | `cosmjs-types` (CosmJS itself) | Quick prototypes, dynamic schemas |
+
+## Telescope
+
+[Telescope](https://github.com/cosmology-tech/telescope) is the most popular code generator in the Cosmos ecosystem. It produces complete TypeScript libraries that include everything needed for CosmJS integration — message codecs, query clients, Amino converters, and registry arrays.
+
+### Quick Start
+
+<Info>
+Telescope v2 has been published as `@hyperweb/telescope` with InterchainJS as the default dependency. For CosmJS-based projects, `@cosmology/telescope` v1.x remains the recommended version. The CLI commands below work with both versions.
+</Info>
+
+<Steps>
+
+### Install Telescope
+
+```bash
+npm install -g @cosmology/telescope
+```
+
+### Initialize a new package
+
+```bash
+telescope generate
+```
+
+This creates a new project scaffold. Place your `.proto` files (or the chain's proto files) into the `./proto` directory.
+
+### Install existing protobuf definitions
+
+For well-known chains, Telescope can pull proto definitions automatically:
+
+```bash
+telescope install
+```
+
+### Generate TypeScript code
+
+```bash
+telescope transpile
+```
+
+This produces typed message codecs, query clients, Amino converters, and registry helpers — ready to import into your CosmJS project.
+
+</Steps>
+
+### Using Telescope Output with CosmJS
+
+Telescope-generated types implement `TelescopeGeneratedType`, which the CosmJS `Registry` accepts directly. A typical Telescope output includes:
+
+- **Message codecs** (`MsgXxx` with `encode`, `decode`, `fromPartial`)
+- **Query clients** (`QueryClientImpl` for gRPC-web queries)
+- **Registry arrays** (pre-built `[typeUrl, codec]` pairs)
+- **Amino converters** (ready-made `AminoConverter` objects)
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes, AminoTypes, createDefaultAminoConverters } from "@cosmjs/stargate";
+
+// Telescope-generated imports from OsmoJS
+import { osmosis, osmosisProtoRegistry, osmosisAminoConverters } from "osmojs";
+
+// Message composers give you typed helpers
+const { joinPool, swapExactAmountIn } = osmosis.gamm.v1beta1.MessageComposer.withTypeUrl;
+
+// Use the top-level registry and amino exports
+const registry = new Registry([
+  ...defaultRegistryTypes,
+  ...osmosisProtoRegistry,
+]);
+
+const aminoTypes = new AminoTypes({
+  ...createDefaultAminoConverters(),
+  ...osmosisAminoConverters,
+});
+```
+
+### Chain-Specific Libraries
+
+Many popular chains already have Telescope-generated libraries published on npm:
+
+| Chain | Package | Install |
+|-------|---------|---------|
+| Osmosis | `osmojs` | `npm install osmojs` |
+| Stargaze | `stargazejs` | `npm install stargazejs` |
+| Juno | `juno-network` | `npm install juno-network` |
+| Stride | `stridejs` | `npm install stridejs` |
+| dYdX | `@dydxprotocol/v4-client-js` | `npm install @dydxprotocol/v4-client-js` |
+| Injective | `@injectivelabs/sdk-ts` | `npm install @injectivelabs/sdk-ts` |
+
+Check if a library exists for your chain before generating types from scratch.
+
+## ts-proto
+
+CosmJS itself uses [ts-proto](https://github.com/stephenh/ts-proto) via the [`cosmjs-types`](https://github.com/confio/cosmjs-types) package. It's a lightweight, general-purpose protobuf code generator that produces clean TypeScript with no Cosmos-specific abstractions.
+
+### Setup
+
+Install `ts-proto` and `protoc` (the Protocol Buffer compiler):
+
+<CodeGroup>
+
+```bash npm
+npm install --save-dev ts-proto
+```
+
+```bash yarn
+yarn add --dev ts-proto
+```
+
+</CodeGroup>
+
+You also need [`protoc`](https://github.com/protocolbuffers/protobuf/releases) installed on your system.
+
+### Generating Code
+
+```bash
+protoc \
+  --plugin="./node_modules/.bin/protoc-gen-ts_proto" \
+  --ts_proto_out="./src/generated" \
+  --proto_path="./proto" \
+  --ts_proto_opt="esModuleInterop=true,forceLong=bigint,useOptionals=messages" \
+  ./proto/mymodule/v1/tx.proto \
+  ./proto/mymodule/v1/query.proto
+```
+
+Key `ts_proto_opt` options:
+
+| Option | Recommended value | Purpose |
+|--------|-------------------|---------|
+| `esModuleInterop` | `true` | Compatibility with ES module imports |
+| `forceLong` | `bigint` | Use native `bigint` instead of the `Long` library |
+| `useOptionals` | `messages` | Make nested message fields optional |
+
+The generated `MsgXxx` and `QueryClientImpl` classes work directly with CosmJS's `Registry` and `createProtobufRpcClient`.
+
+### Working with Yarn 2+
+
+The binary `./node_modules/.bin/protoc-gen-ts_proto` is not easily available in Yarn 2+. Create an executable wrapper script `bin/protoc-gen-ts_proto_yarn_2`:
+
+```bash
+#!/usr/bin/env -S yarn node
+require('ts-proto/build/plugin')
+```
+
+Then use `--ts_proto_yarn_2_opt` instead of `--ts_proto_opt` in your `protoc` command. See the [cosmjs-types repo](https://github.com/confio/cosmjs-types) for a full example.
+
+## protobufjs (Runtime Types)
+
+For prototyping or when you don't have access to `.proto` files, [protobufjs](https://github.com/protobufjs/protobuf.js) lets you define types at runtime in pure JavaScript — no build step required:
+
+```typescript
+import * as protobuf from "protobufjs";
+import { Registry } from "@cosmjs/proto-signing";
+import { defaultRegistryTypes } from "@cosmjs/stargate";
+
+const root = protobuf.Root.fromJSON({
+  nested: {
+    blog: {
+      nested: {
+        v1: {
+          nested: {
+            MsgCreatePost: {
+              fields: {
+                author: { type: "string", id: 1 },
+                title: { type: "string", id: 2 },
+                body: { type: "string", id: 3 },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+const MsgCreatePost = root.lookupType("blog.v1.MsgCreatePost");
+
+const registry = new Registry(defaultRegistryTypes);
+registry.register("/blog.v1.MsgCreatePost", MsgCreatePost);
+```
+
+<Tip>
+Runtime types from protobufjs use `create` instead of `fromPartial`. The Registry handles both automatically.
+</Tip>
+
+### When to Use protobufjs
+
+- **Prototyping**: Quickly test a message type without setting up a codegen pipeline
+- **Dynamic schemas**: When the proto definitions aren't known at build time
+- **Plain JavaScript**: When you don't want a TypeScript build step
+
+For production applications, Telescope or ts-proto are preferred because they provide compile-time type safety.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Protobuf Types" icon="cube" href="/cosmjs/v0.38.x/guides/extending/custom-types">
+    Register your generated types in the CosmJS Registry.
+  </Card>
+  <Card title="Custom Modules" icon="puzzle-piece" href="/cosmjs/v0.38.x/guides/extending/custom-modules">
+    Wire generated types into a complete module integration.
+  </Card>
+  <Card title="Supporting New Chains" icon="link" href="/cosmjs/v0.38.x/guides/extending/new-chains">
+    Configure CosmJS for your chain's address prefix, gas token, and account type.
+  </Card>
+</CardGroup>
