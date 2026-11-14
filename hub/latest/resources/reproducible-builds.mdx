@@ -1,6 +1,6 @@
 ---
 title: "Build and verify gaiad"
-description: "How gaia v29.0.1 release binaries are built and signed, how to verify a download with the Cosmos release key and checksums, how to use the Docker image, and how to build from source."
+description: "How gaia v29.1.0 release binaries are built and signed, how to verify a download with the Cosmos release key and checksums, how to use the Docker image, and how to build from source."
 ---
 
 import { HubVerified } from '/snippets/hub-verified.mdx';
@@ -11,10 +11,10 @@ This page is for operators who want proof that the `gaiad` they run is the one t
 
 ## Release artifacts
 
-The gaia v29.0.1 release on GitHub (`https://github.com/cosmos/gaia/releases/tag/v29.0.1`, published 2026-10-23) ships:
+The gaia v29.1.0 release on GitHub (`https://github.com/cosmos/gaia/releases/tag/v29.1.0`, published 2026-11-09) ships:
 
-- `gaiad-v29.0.1-linux-amd64` and `gaiad-v29.0.1-darwin-amd64`: bare binaries, each with a detached signature `.asc`.
-- `SHA256SUMS-v29.0.1.txt`: SHA-256 of the two binaries. It lists them under the archive paths earlier releases used (`./gaiad-linux-amd64/gaiad`, `./gaiad-darwin-amd64/gaiad`), not under their download names.
+- `gaiad-v29.1.0-linux-amd64` and `gaiad-v29.1.0-darwin-amd64`: bare binaries, each with a detached signature `.asc`.
+- `SHA256SUMS-v29.1.0.txt`: SHA-256 of the two binaries. It lists them under the archive paths earlier releases used (`./gaiad-linux-amd64/gaiad`, `./gaiad-darwin-amd64/gaiad`), not under their download names.
 
 Releases up to v28.3.1 also shipped `gaiad-linux-amd64.tar.gz` and `gaiad-darwin-amd64.tar.gz` archives with their own signatures. v29 releases do not.
 
@@ -25,18 +25,18 @@ There is no arm64 build. The release configuration (`.goreleaser.yml` in the gai
 Releases are signed with the Cosmos release key, published with instructions in the `cosmos/security` repository (`https://github.com/cosmos/security/tree/main/release/gaia/signing`). Fingerprint: `E625 9F16 9C7B 913D BB75 DE02 5395 305D 29B8 8B32`, identity `Cosmos-Release <nodes@cosmoslabs.io>`.
 
 ```bash
-curl -sLO https://github.com/cosmos/gaia/releases/download/v29.0.1/gaiad-v29.0.1-linux-amd64
-curl -sLO https://github.com/cosmos/gaia/releases/download/v29.0.1/gaiad-v29.0.1-linux-amd64.asc
-curl -sLO https://github.com/cosmos/gaia/releases/download/v29.0.1/SHA256SUMS-v29.0.1.txt
+curl -sLO https://github.com/cosmos/gaia/releases/download/v29.1.0/gaiad-v29.1.0-linux-amd64
+curl -sLO https://github.com/cosmos/gaia/releases/download/v29.1.0/gaiad-v29.1.0-linux-amd64.asc
+curl -sLO https://github.com/cosmos/gaia/releases/download/v29.1.0/SHA256SUMS-v29.1.0.txt
 curl -sLO https://raw.githubusercontent.com/cosmos/security/main/release/gaia/signing/keys/cosmos-release.asc
 gpg --show-keys --with-fingerprint cosmos-release.asc
 gpg --import cosmos-release.asc
-gpg --verify gaiad-v29.0.1-linux-amd64.asc gaiad-v29.0.1-linux-amd64
-grep 'linux-amd64/gaiad$' SHA256SUMS-v29.0.1.txt
-sha256sum gaiad-v29.0.1-linux-amd64
+gpg --verify gaiad-v29.1.0-linux-amd64.asc gaiad-v29.1.0-linux-amd64
+grep 'linux-amd64/gaiad$' SHA256SUMS-v29.1.0.txt
+sha256sum gaiad-v29.1.0-linux-amd64
 ```
 
-The `--show-keys` flag prints the fingerprint of the downloaded key. Compare it against the one above before importing. The `gpg --verify` command must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` with that fingerprint. The `WARNING: This key is not certified with a trusted signature` line that follows is not a failure. It only means your local GNU Privacy Guard (GPG) has not been told to trust the key. The last two commands must print the same hash, `f8d6b758e242b13344eb00c5676301bc44052c146f782b0b4b7058b308da01a9` for v29.0.1. Because the checksum file uses the old archive paths, `sha256sum -c --ignore-missing` on it verifies nothing for the bare binaries. Do not run a binary whose signature fails, is from another key, or whose checksum does not match.
+The `--show-keys` flag prints the fingerprint of the downloaded key. Compare it against the one above before importing. The `gpg --verify` command must print `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` with that fingerprint. The `WARNING: This key is not certified with a trusted signature` line that follows is not a failure. It only means your local GNU Privacy Guard (GPG) has not been told to trust the key. The last two commands must print the same hash, `bba80bdeeede77af5f32e545080ee4e94988b4ffb2820fb7b28a8fd45eb15a44` for v29.1.0. Because the checksum file uses the old archive paths, `sha256sum -c --ignore-missing` on it verifies nothing for the bare binaries. Do not run a binary whose signature fails, is from another key, or whose checksum does not match.
 
 The extracted binary is a static position-independent executable (PIE), so it runs on any x86-64 Linux without extra libraries. The `file gaiad` command reports `static-pie linked`.
 
@@ -45,21 +45,21 @@ The extracted binary is a static position-independent executable (PIE), so it ru
 The release workflow also publishes `ghcr.io/cosmos/gaia` with the version as the tag:
 
 ```bash
-docker pull ghcr.io/cosmos/gaia:v29.0.1
-docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v29.0.1 version --long
+docker pull ghcr.io/cosmos/gaia:v29.1.0
+docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v29.1.0 version --long
 ```
 
-The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.26.10-alpine` with a statically linked musl wasmvm. For v29.0.1 the `gaiad` in the image has the same SHA-256 as the Linux release binary. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are appended to `start`. Any other subcommand needs `--entrypoint gaiad`, as in the version check above. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/latest/node/service) covers running it under systemd or compose.
+The image (`Dockerfile` in the repository) builds `gaiad` on `golang:1.26.10-alpine` with a statically linked musl wasmvm. For v29.1.0 the `gaiad` in the image has the same SHA-256 as the Linux release binary. It copies only the binary into an Alpine base and runs as user `nonroot` (uid 1025). It exposes 26656, 26657, 1317, and 9090. Its entrypoint is `gaiad start`, so arguments to `docker run` are appended to `start`. Any other subcommand needs `--entrypoint gaiad`, as in the version check above. Mount the home directory at a path the `nonroot` user can write and pass `--home`. [Run gaiad as a service](/hub/latest/node/service) covers running it under systemd or compose.
 
 ## Build from source
 
 ```bash
 git clone https://github.com/cosmos/gaia
-cd gaia && git checkout v29.0.1
+cd gaia && git checkout v29.1.0
 make install
 ```
 
-The `make install` target runs `go install` with the repository's build flags and places `gaiad` in `$GOPATH/bin`. The `make build` target puts it in `build/` instead. The Makefile refuses Go older than 1.26 (`check_version`). Version v29.0.1 was released with Go 1.26.10. Default build tags are `netgo` and `ledger`. The `ledger` tag needs `gcc`, and `LEDGER_ENABLED=false make install` drops it on hosts without a compiler. The linker flags stamp the version, commit, build tags, and CometBFT version into the binary. That is what `gaiad version --long` prints. The `-trimpath` flag strips local paths. Setting `GAIA_BUILD_OPTIONS=nostrip` keeps debug symbols. Setting `LINK_STATICALLY=true` with `BUILD_TAGS=muslc` and a musl wasmvm produces the static binary the Docker image uses.
+The `make install` target runs `go install` with the repository's build flags and places `gaiad` in `$GOPATH/bin`. The `make build` target puts it in `build/` instead. The Makefile refuses Go older than 1.26 (`check_version`). Version v29.1.0 was released with Go 1.26.10. Default build tags are `netgo` and `ledger`. The `ledger` tag needs `gcc`, and `LEDGER_ENABLED=false make install` drops it on hosts without a compiler. The linker flags stamp the version, commit, build tags, and CometBFT version into the binary. That is what `gaiad version --long` prints. The `-trimpath` flag strips local paths. Setting `GAIA_BUILD_OPTIONS=nostrip` keeps debug symbols. Setting `LINK_STATICALLY=true` with `BUILD_TAGS=muslc` and a musl wasmvm produces the static binary the Docker image uses.
 
 A source build on your own machine gives the same version and commit as the release but not a byte-identical file, because the release is cross compiled in a container with a static wasmvm. Treat source builds as trusted because you built them from a checked-out tag. Treat release downloads as trusted because the signature verifies.
 
@@ -73,7 +73,7 @@ Releases are produced by `.github/workflows/release.yml`, which runs goreleaser 
 gaiad version --long | head -n 8
 ```
 
-Expect `commit: 48c981b3198164a3d5ba5632ed631fcc3e9eeb09`, `build_tags: netgo,muslc` for the Linux release binary (`netgo,ledger,static_wasm` for macOS, `netgo,ledger` for a default source build), `go: go version go1.26.10`, and `cosmos_sdk_version: v0.53.8`. The `version` line reads `v29.0.1` for a source build and `v29.0.1+dirty` for the Linux release binary and the image, which were built from a checkout git marked as modified. A different commit means the binary was not built from the release tag, whatever the version string says.
+Expect `commit: f4e63e3abe4a4ced05533ca572d344bf774a2cad`, `build_tags: netgo,muslc` for the Linux release binary (`netgo,ledger,static_wasm` for macOS, `netgo,ledger` for a default source build), `go: go version go1.26.10`, and `cosmos_sdk_version: v0.53.8`. The `version` line reads `v29.1.0` for a source build and `v29.1.0+dirty` for the Linux release binary and the image, which were built from a checkout git marked as modified. A different commit means the binary was not built from the release tag, whatever the version string says.
 
 ## Next
 

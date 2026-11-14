@@ -1,0 +1,118 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/governance/proposal-types/param-change'
+title: "Parameter change proposals"
+description: "Change a Cosmos Hub module parameter through governance on gaia v29.0.1: which modules accept MsgUpdateParams, how to build the message from the live parameters, and how to verify the change."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified gaia="v29.0.1" sdk="v0.53.8" comet="v0.38.25" date="2026-11-08" />
+
+This page is for proposers changing a parameter and for voters checking what a proposal actually changes. It assumes the process on [Submitting a proposal](/hub/v29.0.1/governance/submitting). A parameter change on gaia v29.0.1 is a proposal carrying the target module's `MsgUpdateParams`, which replaces that module's whole parameter set when it passes. The change takes effect in the block the vote ends.
+
+Two things go wrong with these proposals. The deposit is lost when voters find a mistake. A wrong value changes how the Hub behaves in ways that are not obvious (a shorter unbonding period, for example, is a security parameter as much as a convenience).
+
+## Which modules accept a parameter change
+
+Every module below takes a full `MsgUpdateParams` whose `authority` is the gov module account. The type URLs are the ones registered in the v29.0.1 binary (`gaiad debug codec list-implementations cosmos.base.v1beta1.Msg`).
+
+| Module | Message type | Current values |
+| --- | --- | --- |
+| auth | `/cosmos.auth.v1beta1.MsgUpdateParams` | `gaiad q auth params` |
+| bank | `/cosmos.bank.v1beta1.MsgUpdateParams` | `gaiad q bank params` |
+| staking | `/cosmos.staking.v1beta1.MsgUpdateParams` | `gaiad q staking params` |
+| mint | `/cosmos.mint.v1beta1.MsgUpdateParams` | `gaiad q mint params` |
+| distribution | `/cosmos.distribution.v1beta1.MsgUpdateParams` | `gaiad q distribution params` |
+| slashing | `/cosmos.slashing.v1beta1.MsgUpdateParams` | `gaiad q slashing params` |
+| gov | `/cosmos.gov.v1.MsgUpdateParams` | `gaiad q gov params` |
+| consensus | `/cosmos.consensus.v1.MsgUpdateParams` | `gaiad q consensus params` |
+| feemarket | `/feemarket.feemarket.v1.MsgParams` | `gaiad q feemarket params` |
+| liquid | `/gaia.liquid.v1beta1.MsgUpdateParams` | `gaiad q liquid params` |
+| tokenfactory | `/osmosis.tokenfactory.v1beta1.MsgUpdateParams` | `gaiad q tokenfactory params` |
+| wasm | `/cosmwasm.wasm.v1.MsgUpdateParams` | `gaiad q wasm params` |
+| ibc client | `/ibc.core.client.v1.MsgUpdateParams` | `gaiad q ibc client params` |
+| ibc connection | `/ibc.core.connection.v1.MsgUpdateParams` | `gaiad q ibc connection params` |
+| transfer | `/ibc.applications.transfer.v1.MsgUpdateParams` | `gaiad q ibc-transfer params` |
+| ICA host | `/ibc.applications.interchain_accounts.host.v1.MsgUpdateParams` | `gaiad q interchain-accounts host params` |
+| ICA controller | `/ibc.applications.interchain_accounts.controller.v1.MsgUpdateParams` | `gaiad q interchain-accounts controller params` |
+
+Rate limits are not parameters. They are added, changed, and removed with `/ratelimit.v1.MsgAddRateLimit`, `MsgUpdateRateLimit`, `MsgRemoveRateLimit`, and `MsgResetRateLimit`, each with the gov account as authority. The query `gaiad q ratelimit list-rate-limits` shows the current set. Packet forward middleware, callbacks, evidence, feegrant, authz, vesting, and metaprotocols have no governable parameters. The interchain security provider module is not in v29.0.1. Proposals targeting it fail.
+
+There is no other route. gaia v29.0.0 removed the `x/params` module, and with it the legacy `ParameterChangeProposal`. `gaiad tx gov submit-legacy-proposal` has no `param-change` subcommand, and a proposal file carrying `/cosmos.params.v1beta1.ParameterChangeProposal` is rejected before broadcast with `unable to resolve type URL /cosmos.params.v1beta1.ParameterChangeProposal`. The `gaiad query params` command and the `/cosmos/params/v1beta1/params` REST route are gone too.
+
+## Build the message
+
+A `MsgUpdateParams` message replaces the entire parameter set, not one field. Start from the live values so that every field you do not mean to change stays the same:
+
+```bash
+gaiad q gov params --output json --node https://cosmos-rpc.publicnode.com:443 | jq .params > gov-params.json
+```
+
+Edit the one value, then wrap it in the message. Proposal 998 changed the voting period to 7 days this way. The equivalent JSON, with the remaining fields copied from the chain:
+
+```json
+{
+  "messages": [
+    {
+      "@type": "/cosmos.gov.v1.MsgUpdateParams",
+      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
+      "params": {
+        "min_deposit": [{ "denom": "uatom", "amount": "500000000" }],
+        "max_deposit_period": "1209600s",
+        "voting_period": "604800s",
+        "quorum": "0.400000000000000000",
+        "threshold": "0.500000000000000000",
+        "veto_threshold": "0.334000000000000000",
+        "min_initial_deposit_ratio": "0.100000000000000000",
+        "proposal_cancel_ratio": "0.500000000000000000",
+        "proposal_cancel_dest": "",
+        "expedited_voting_period": "259200s",
+        "expedited_threshold": "0.667000000000000000",
+        "expedited_min_deposit": [{ "denom": "uatom", "amount": "501000000" }],
+        "burn_vote_quorum": false,
+        "burn_proposal_deposit_prevote": false,
+        "burn_vote_veto": true,
+        "min_deposit_ratio": "0.010000000000000000"
+      }
+    }
+  ],
+  "metadata": "ipfs://CID",
+  "deposit": "50000000uatom",
+  "title": "Set the voting period to 7 days",
+  "summary": "Change gov voting_period from 1209600s (14 days) to 604800s (7 days). All other gov parameters unchanged.",
+  "expedited": false
+}
+```
+
+Durations are written as seconds with an `s` suffix (`604800s`). The Go form the query prints (`168h0m0s`) is also accepted by `submit-proposal` on v29.0.1. Decimals are 18 digit strings. Amounts are in base units. Fields the query omits because they are at their zero value (`proposal_cancel_dest`, `burn_vote_quorum`, `burn_proposal_deposit_prevote`) can be left out or written explicitly as above. The `gaiad tx gov draft-proposal` command with the `other` type lets you pick the message type from a list and fills the authority. It does not fill the current values, so paste them from the query. Field names and types for each Cosmos SDK module are in the module's `MsgUpdateParams` section, for example [gov](/sdk/latest/modules/gov/README) and [staking](/sdk/latest/modules/staking/README). The gaia specific modules are on [Modules on the Hub](/hub/v29.0.1/modules/README).
+
+Submit:
+
+```bash
+gaiad tx gov submit-proposal draft_proposal.json --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+A message with a missing field or a wrong type is rejected at submission with `invalid params` or an unmarshal error in `raw_log`, before any deposit is taken. A rehearsal on the testnet ([Join testnet](/hub/v29.0.1/hub-tutorials/join-testnet)) therefore catches most mistakes.
+
+## Write the summary so voters can check it
+
+State the parameter, the current value with the query that returns it, the new value, and the effect. Proposal 998's summary did that for `voting_period`. Proposal 1018, which asked to reverse it, was rejected on the merits, not for form. Say explicitly that all other fields are unchanged, because a `MsgUpdateParams` that silently alters a second field is what voters are reading the JSON to find. Consensus parameters (`max_bytes`, `max_gas`, evidence age) and feemarket parameters were last changed together in proposal 970. Cite the previous proposal on the same parameter if there is one.
+
+## Verify
+
+Before the vote, compare the proposal's params object with the chain field by field:
+
+```bash
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0].value.params' > proposed.json
+gaiad q gov params --output json --node https://cosmos-rpc.publicnode.com:443 | jq .params > current.json
+diff <(jq -S . current.json) <(jq -S . proposed.json)
+```
+
+The diff shows only the field the summary names. After the vote ends, run the module's `params` query again. The new value is live from the block the voting period ended, with no upgrade or restart.
+
+## Next
+
+- [Submitting a proposal](/hub/v29.0.1/governance/submitting) for the forum stages and the deposit.
+- [Modules on the Hub](/hub/v29.0.1/modules/README) for every module's current parameters.
+- [Governance process](/hub/v29.0.1/governance/process) for the vote rules.

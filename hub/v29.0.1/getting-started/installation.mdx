@@ -1,0 +1,155 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/getting-started/installation'
+title: Install gaiad
+description: For operators setting up a Cosmos Hub machine, this page installs gaia v29.0.1 from signed release binaries, the container image, or a source build, and proves the binary is the right one.
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified gaia="v29.0.1" sdk="v0.53.8" comet="v0.38.25" date="2026-11-08" />
+
+You need a machine that meets the [system requirements](/hub/v29.0.1/getting-started/system-requirements) and the version you are installing from the [Versions](/hub/v29.0.1/start/versions) page. At the end you have a `gaiad` binary (or image) built from the v29.0.1 commit and that you have verified against the release signature or built yourself. All three options are equal. Pick the one that fits how you run servers.
+
+## Pick the version first
+
+Install the current mainnet release tag, not the newest tag. Release candidates (`-rc`) are for the testnet.
+
+```bash
+curl -s https://cosmos-rpc.polkachu.com/abci_info | jq -r '.result.response.version'
+```
+
+On 2026-11-08 this printed `v29.0.1`. The examples below use that tag. Replace it if the chain has moved on.
+
+## Install
+
+<Tabs>
+  <Tab title="Signed release binary">
+    Each gaia v29 release ships two bare binaries, `gaiad-<tag>-linux-amd64` and `gaiad-<tag>-darwin-amd64`, a detached GNU Privacy Guard (GPG) signature (`.asc`) for each, and `SHA256SUMS-<tag>.txt`. Releases before v29 also shipped `.tar.gz` archives. v29 does not. The release is signed with the Cosmos release key, fingerprint `E625 9F16 9C7B 913D BB75 DE02 5395 305D 29B8 8B32`, published in the [cosmos/security](https://github.com/cosmos/security/tree/main/release/gaia/signing) repository. There is no arm64 Linux binary. Use the source build on arm64.
+
+    Import the release key once:
+
+    ```bash
+    curl -sL https://raw.githubusercontent.com/cosmos/security/main/release/gaia/signing/keys/cosmos-release.asc | gpg --import
+    gpg --fingerprint nodes@cosmoslabs.io
+    ```
+
+    The fingerprint printed must match the one above. If it does not, stop. Do not install.
+
+    Download the binary, its signature, and the checksum file:
+
+    ```bash
+    export GAIA_TAG=v29.0.1
+    cd "$(mktemp -d)"
+    curl -LO "https://github.com/cosmos/gaia/releases/download/${GAIA_TAG}/gaiad-${GAIA_TAG}-linux-amd64"
+    curl -LO "https://github.com/cosmos/gaia/releases/download/${GAIA_TAG}/gaiad-${GAIA_TAG}-linux-amd64.asc"
+    curl -LO "https://github.com/cosmos/gaia/releases/download/${GAIA_TAG}/SHA256SUMS-${GAIA_TAG}.txt"
+    ```
+
+    Verify the signature, then the checksum:
+
+    ```bash
+    gpg --verify "gaiad-${GAIA_TAG}-linux-amd64.asc" "gaiad-${GAIA_TAG}-linux-amd64"
+    echo "$(awk '/linux-amd64\/gaiad$/ {print $1}' "SHA256SUMS-${GAIA_TAG}.txt")  gaiad-${GAIA_TAG}-linux-amd64" | sha256sum --check
+    ```
+
+    Expect `Good signature from "Cosmos-Release <nodes@cosmoslabs.io>"` from `gpg --verify` and `gaiad-v29.0.1-linux-amd64: OK` from `sha256sum --check`. A warning that the key is not certified is normal for a key you imported directly. A `BAD signature` line is not, and `Can't check signature: No public key` means the import did not reach the keyring gpg uses.
+
+    The v29.0.1 checksum file still names each binary by its old archive path, `./gaiad-linux-amd64/gaiad`, so `sha256sum --check --ignore-missing` on the file itself verifies nothing and exits with `no file was verified`. The second command above takes the Linux hash from the file and checks the downloaded binary against it. On macOS use `shasum -a 256 --check` in place of `sha256sum --check`.
+
+    Install the binary where your service user can run it:
+
+    ```bash
+    sudo install -m 0755 "gaiad-${GAIA_TAG}-linux-amd64" /usr/local/bin/gaiad
+    ```
+
+    The `install` command copies the file and sets the mode in one step, and `/usr/local/bin` is on `PATH` for every user, including the service user on [Run gaiad as a service](/hub/v29.0.1/node/service).
+  </Tab>
+  <Tab title="Container image">
+    The release workflow publishes `ghcr.io/cosmos/gaia:<tag>` for every release tag (for example `ghcr.io/cosmos/gaia:v29.0.1`), plus a `nightly` tag from main. There is no `latest` tag, which is deliberate. Pin the current mainnet release tag. The image is a static linux/amd64 build with `gaiad start` as its entrypoint. It runs as user `nonroot` (uid 1025) and exposes ports 26656, 26657, 1317, and 9090.
+
+    Pull the image and check the version:
+
+    ```bash
+    docker pull ghcr.io/cosmos/gaia:v29.0.1
+    docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v29.0.1 version --long | grep -E '^(version|commit):'
+    ```
+
+    For v29.0.1 the `gaiad` in the image is the same file as the Linux release binary, with the same SHA-256. Its version is stamped `v29.0.1+dirty`, because the release build ran from a checkout git marked as modified. Match the commit, `48c981b3198164a3d5ba5632ed631fcc3e9eeb09`, against the [v29.0.1 release page](https://github.com/cosmos/gaia/releases/tag/v29.0.1). The commit is the proof, not the version string.
+
+    Mount a host directory as the node home so the data survives the container. The gaia repository's convention is `/opt/gaia`:
+
+    ```bash
+    sudo mkdir -p /opt/gaia && sudo chown 1025:1025 /opt/gaia
+    docker run --rm -it -v /opt/gaia:/opt/gaia --entrypoint gaiad ghcr.io/cosmos/gaia:v29.0.1 init my-hub-node --chain-id cosmoshub-4 --home /opt/gaia
+    ```
+
+    This writes `config/` and `data/` under `/opt/gaia` on the host, owned by uid 1025. Every `gaiad` command on the [Join mainnet](/hub/v29.0.1/hub-tutorials/join-mainnet) page then takes the form `docker run --rm -v /opt/gaia:/opt/gaia --entrypoint gaiad ghcr.io/cosmos/gaia:v29.0.1 <command> --home /opt/gaia`. The node itself runs with the default entrypoint:
+
+    ```bash
+    docker run -d --name gaiad --restart unless-stopped -p 26656:26656 -v /opt/gaia:/opt/gaia ghcr.io/cosmos/gaia:v29.0.1 --home /opt/gaia
+    ```
+
+    To upgrade, change the tag at the upgrade height. Cosmovisor does not run inside this image, so follow the manual sequence on [Upgrade a node](/hub/v29.0.1/hub-tutorials/upgrade-node).
+  </Tab>
+  <Tab title="Source build">
+    Build from the release tag with the Go version pinned in that tag's `go.mod`. For v29.0.1 that is Go 1.26.10, the newest 1.26 patch on 2026-11-08. The Makefile refuses Go older than 1.26.
+
+    Install the build tools and Go:
+
+    ```bash
+    sudo apt update && sudo apt install -y make gcc git curl
+    curl -LO https://go.dev/dl/go1.26.10.linux-amd64.tar.gz
+    sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.10.linux-amd64.tar.gz
+    export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH 2>/dev/null || echo "$HOME/go")/bin
+    go version
+    ```
+
+    Running `go version` prints `go1.26.10`. Add the `PATH` line to your shell profile so it survives a new login. On arm64 download `go1.26.10.linux-arm64.tar.gz` instead.
+
+    Clone the repository at the tag and build:
+
+    ```bash
+    git clone https://github.com/cosmos/gaia.git && cd gaia
+    git checkout v29.0.1
+    CGO_ENABLED=1 make install
+    ```
+
+    The `make install` target compiles with the `netgo,ledger` build tags and places `gaiad` in `$(go env GOPATH)/bin`. Wasmvm is a C library, so a build without `CGO_ENABLED=1` fails at link time. The `make build` target writes to `./build/gaiad` instead.
+
+    If the build fails with `flag provided but not defined: -L`, an `LDFLAGS` variable from your environment is leaking into the Go linker. Run `LDFLAGS="" make install`.
+
+    On Linux, a source build is the only option with the `ledger` build tag, which `gaiad keys add --ledger` needs. It is not bit for bit identical to the release binary. For one you can compare to the published checksums, follow [Reproducible builds](/hub/v29.0.1/resources/reproducible-builds).
+  </Tab>
+</Tabs>
+
+## Verify
+
+```bash
+gaiad version --long | grep -E '^(name|version|commit|cosmos_sdk_version|go|build_tags):'
+```
+
+Expected for the current release:
+
+```text
+build_tags: netgo,ledger
+commit: 48c981b3198164a3d5ba5632ed631fcc3e9eeb09
+cosmos_sdk_version: v0.53.8
+go: go version go1.26.10 linux/amd64
+name: gaia
+version: v29.0.1
+```
+
+That is a source build at the tag. The `commit` is the git commit of the tag and is the same for every install method. It is the line to compare. The `version` line reads `v29.0.1` for a source build and `v29.0.1+dirty` for the Linux release binary and the container image. The `build_tags` line reads `netgo,ledger` for a source build. It reads `netgo,muslc` for the Linux release binary and the container image, which are static musl builds without Ledger support. The `go` line shows the toolchain the binary was built with. For the container image, run the same command with `docker run --rm --entrypoint gaiad ghcr.io/cosmos/gaia:v29.0.1 version --long`.
+
+## Build tags
+
+| Build tag | Meaning |
+| --- | --- |
+| netgo | Name resolution uses pure Go code |
+| ledger | Ledger hardware wallets are supported by `gaiad keys`; present on a source build, not on the Linux release binary or the image |
+| muslc | wasmvm is statically linked against musl; present on the Linux release binary and container builds, which do not carry `ledger` |
+
+## Next
+
+[Join mainnet](/hub/v29.0.1/hub-tutorials/join-mainnet) to initialize and sync the node, or [Join testnet](/hub/v29.0.1/hub-tutorials/join-testnet) to practice first. To run against a fork of the Cosmos SDK, add a `replace` directive to `go.mod` (`go mod edit -replace github.com/cosmos/cosmos-sdk=../cosmos-sdk && go mod tidy`) before `make install`.

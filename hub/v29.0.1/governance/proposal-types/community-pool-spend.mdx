@@ -1,0 +1,93 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/governance/proposal-types/community-pool-spend'
+title: "Community pool spend"
+description: "How the Cosmos Hub community pool is funded, how much it holds, and how to write and verify a MsgCommunityPoolSpend proposal on gaia v29.0.1."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+This page is for teams requesting funds from the Cosmos Hub community pool and for voters evaluating a request. It assumes the process on [Submitting a proposal](/hub/v29.0.1/governance/submitting). A spend proposal carries one or more `MsgCommunityPoolSpend` messages. When it passes, the amount moves to the recipient in the same block as the tally.
+
+## How the pool is funded
+
+The pool receives 2 percent of every block's rewards (inflation and fees) before validators and delegators are paid. Tokenfactory denom creation fees (10 ATOM each) go there too.
+
+```bash
+gaiad q distribution params --node https://cosmos-rpc.publicnode.com:443
+```
+
+The output shows `community_tax: "0.020000000000000000"`. The rate is a parameter. Proposal 996 set it back to 2 percent after an earlier change, through `/cosmos.distribution.v1beta1.MsgUpdateParams`.
+
+## How much it holds
+
+```bash
+gaiad q distribution community-pool --node https://cosmos-rpc.publicnode.com:443
+```
+
+The output lists every denom in the pool with a decimal amount in base units. The uatom line is the one that matters for a spend. The many `ibc/...` lines are tokens sent to the pool by other chains or by `fund-community-pool` transactions. Explorers show the same balance in ATOM.
+
+## What the community funds
+
+There is no fixed policy. The pool funds what voters pass. The pattern from passed and rejected proposals: work that benefits the Hub directly, priced in ATOM with a stated conversion basis, paid in stages where the work is long, to a multisig when more than one person is responsible. Recurring concerns in the debate are retroactive grants, price negotiation, disbursal in stages or pegged to a fiat value, and whether large one-off transfers belong in a spend proposal at all. Proposal 1056 (a 1,721,120 ATOM refund request) was rejected with 91.5 million ATOM in NoWithVeto and lost its deposit. That is the outcome a request without community support gets.
+
+Funding is fast once it passes: the transfer happens at the end of the 7 day vote with no further step. The pool is an alternative to foundation grants. A proposer can pursue both, withdrawing one if the other succeeds.
+
+## Proposal JSON
+
+The `gaiad tx gov draft-proposal` command with the `community-pool-spend` type asks for the recipient and amount, then writes:
+
+```json
+{
+  "messages": [
+    {
+      "@type": "/cosmos.distribution.v1beta1.MsgCommunityPoolSpend",
+      "authority": "cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",
+      "recipient": "cosmos1...",
+      "amount": [
+        {
+          "denom": "uatom",
+          "amount": "1000000000"
+        }
+      ]
+    }
+  ],
+  "metadata": "ipfs://CID",
+  "deposit": "50000000uatom",
+  "title": "Fund X for Y",
+  "summary": "1,000 ATOM to cosmos1... for Y, delivered by Z.",
+  "expedited": false
+}
+```
+
+The `amount` is in uatom (1,000 ATOM above). The `recipient` is usually a multisig. Create it with `gaiad keys add <name> --multisig ... --multisig-threshold N` on the recipient side. Verify the address with `gaiad keys parse` before it goes in the JSON. The recipient need not sign anything. The `authority` must be the gov module account, which `gaiad q auth module-account gov` returns.
+
+Submit with:
+
+```bash
+gaiad tx gov submit-proposal draft_proposal.json --from mykey --gas auto --gas-adjustment 1.5 --gas-prices 0.005uatom
+```
+
+## Verify
+
+Before the vote, confirm the message:
+
+```bash
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages[0].value | {recipient, amount}'
+```
+
+After a pass, confirm the transfer landed in the block the voting period ended:
+
+```bash
+gaiad q bank balance cosmos1RECIPIENT... uatom --node https://cosmos-rpc.publicnode.com:443
+gaiad q distribution community-pool --node https://cosmos-rpc.publicnode.com:443
+```
+
+The recipient's uatom balance has grown by the proposal amount. The pool's uatom line has shrunk by it. If the pool held less than the amount at execution, the proposal status is `PROPOSAL_STATUS_FAILED`. Nothing moved.
+
+## Next
+
+- [Submitting a proposal](/hub/v29.0.1/governance/submitting) for the forum draft and deposit.
+- [Delegator CLI guide](/hub/v29.0.1/delegators/delegator-guide-cli#multisig-accounts) to set up the receiving multisig.
