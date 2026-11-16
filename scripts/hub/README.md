@@ -86,4 +86,4 @@ Alerts go to PagerDuty through the Events API with severity `warning`, so the se
 
 ## Dry run and going live
 
-`bot-config.json` ships with `"mode": "dry-run"`: the bot opens and updates PRs and checks them, but never merges and never pages. Each alert and each merge it would have made appears in the run summary and as a PR comment. Change the mode to `live` in a PR after one upgrade has gone through cleanly in dry run.
+`bot-config.json` sets `"mode": "live"`: the bot merges its own PRs once a Hub code owner has approved them and the release check passes, and pages on failure. Set the mode to `dry-run` to stop both: the bot still opens, updates and checks PRs, and each alert and each merge it would have made appears in the run summary and as a PR comment.

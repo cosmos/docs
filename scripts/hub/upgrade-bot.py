@@ -35,7 +35,7 @@ the chain endpoints stop agreeing.
     python3 scripts/hub/upgrade-bot.py --plan          # print what it would do, change nothing
     python3 scripts/hub/upgrade-bot.py --network testnet --plan
 
-In dry-run mode (the default in bot-config.json) it opens and updates PRs and
+In dry-run mode (set in bot-config.json) it opens and updates PRs and
 writes alerts to the run summary, but never merges and never pages.
 """
 
