@@ -1,0 +1,70 @@
+---
+noindex: true
+canonical: 'https://docs.cosmos.network/hub/latest/governance/proposal-types/README'
+title: "Proposal types"
+description: "The kinds of proposals the Cosmos Hub accepts on gaia v29.0.1, the message each one carries, and what executes when it passes."
+---
+
+import { HubVerified } from '/snippets/hub-verified.mdx';
+
+<HubVerified date="2026-10-15" />
+
+This page is for proposers choosing what to submit and for voters reading a proposal's messages. A Hub proposal on gaia v29.0.1 is a `cosmos.gov.v1.MsgSubmitProposal` carrying zero or more messages that execute if it passes. The type of proposal is just which messages it carries. The process and parameters are on [Governance process](/hub/v29.0.1/governance/process).
+
+## The four common types
+
+| Type | Message | On pass |
+| --- | --- | --- |
+| [Text](/hub/v29.0.1/governance/proposal-types/text-prop) | none (empty `messages`) | nothing executes; the vote is the record |
+| [Community pool spend](/hub/v29.0.1/governance/proposal-types/community-pool-spend) | `/cosmos.distribution.v1beta1.MsgCommunityPoolSpend` | the amount moves from the community pool to the recipient |
+| [Parameter change](/hub/v29.0.1/governance/proposal-types/param-change) | the target module's `MsgUpdateParams` | the module's parameters are replaced |
+| [Software upgrade](/hub/v29.0.1/governance/proposal-types/software-upgrade) | `/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade` | an upgrade plan is scheduled at a height |
+
+Every executable message carries an `authority` field that must be the governance module account, `cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn`. The module rejects a proposal whose messages name any other authority. Confirm the address from the chain rather than copying it:
+
+```bash
+gaiad q auth module-account gov --node https://cosmos-rpc.publicnode.com:443
+```
+
+## Other messages the Hub accepts
+
+Any message whose authority is the gov account can go in a proposal. Recent proposals have used:
+
+- `/ibc.core.client.v1.MsgRecoverClient` to replace an expired Inter-Blockchain Communication (IBC) light client with a working substitute (proposal 1057).
+- `/cosmwasm.wasm.v1.MsgUpdateParams` to change who may upload contracts (proposal 1007 made uploads permissionless).
+- `/cosmos.upgrade.v1beta1.MsgCancelUpgrade` to clear a scheduled plan before its height.
+- `/cosmos.gov.v1.MsgExecLegacyContent` wrapping a legacy `TextProposal`, which older tooling still emits for signaling proposals. It behaves like a text proposal.
+
+Several messages can be combined in one proposal. They execute in order. If any fails, none are applied. The proposal is then marked failed.
+
+## Choose a type
+
+Use the executable type whenever the decision can be expressed as a message: a parameter value, an amount to an address, an upgrade height. Voters then know exactly what happens on pass. Nobody has to act afterwards. Use a text proposal when the question is whether to do something that no message can do yet (fund design work, adopt a norm, instruct a team). Say in the summary who is expected to act on the result.
+
+Two mistakes recur:
+
+- A text proposal that asks for a parameter change or a spend. It passes, and nothing happens until someone submits the executable proposal. That proposal then has to pass again.
+- An executable proposal whose summary promises more than its messages do. Voters who read the messages (and the ones with most of the stake do) treat the mismatch as grounds for NoWithVeto.
+
+## Expedited proposals
+
+Any type can be marked `"expedited": true` in the proposal JSON. It then needs a 501 ATOM deposit, a 3 day vote, and 66.7 percent Yes. If it does not pass, it converts to a regular proposal and is tallied again at the end of the regular voting period. Software upgrades for security fixes use it (proposal 1055).
+
+## Rehearse on the testnet
+
+Every message type on this page can be submitted on the Hub testnet (chain-id `provider`) with faucet tokens first. The testnet runs the next gaia release. A message that the current mainnet accepts but the next version renames therefore shows up there before it costs a mainnet deposit. Endpoints and the faucet are on [Join testnet](/hub/v29.0.1/hub-tutorials/join-testnet).
+
+## Verify
+
+Read the messages of any proposal before voting:
+
+```bash
+gaiad q gov proposal <id> --output json --node https://cosmos-rpc.publicnode.com:443 | jq '.proposal.messages'
+```
+
+The output is the exact message list that will execute. A proposal whose title says one thing and whose messages do another is the case NoWithVeto exists for.
+
+## Next
+
+- [Submitting a proposal](/hub/v29.0.1/governance/submitting) for the JSON shape and the submit transaction.
+- [Governance process](/hub/v29.0.1/governance/process) for deposits, voting, and tally rules.
