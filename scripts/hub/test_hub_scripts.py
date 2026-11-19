@@ -298,6 +298,16 @@ class ReaderToken(unittest.TestCase):
         self.assertEqual(self.check(bot.NOW.strftime("%Y-%m-%d")), [("resolve", "hub-docs-reader-token")])
 
 
+class CheckedStamp(unittest.TestCase):
+    def test_adds_and_replaces(self):
+        text = 'a\n<HubVerified date="1" />\n<HubVerified reviewed gaia="v29.0.1" date="2" checked="v1.0.0" checkedOn="x" />\n'
+        out = bot.stamp_checked(text, "v29.1.0", "2026-11-18")
+        self.assertEqual(out, 'a\n<HubVerified date="1" checked="v29.1.0" checkedOn="2026-11-18" />\n'
+                              '<HubVerified reviewed gaia="v29.0.1" date="2" checked="v29.1.0" checkedOn="2026-11-18" />\n')
+        self.assertEqual(bot.stamp_checked(out, "v29.1.0", "2026-11-18"), out)
+        self.assertEqual(rc.stamps(out, "v28.3.1"), ["v28.3.1", "v29.0.1"])
+
+
 class SignedCommits(unittest.TestCase):
     def test_tree_entries(self):
         files = {"hub/next/a.mdx": b"text\n", "hub/img.png": b"\xff\xd8\x00"}

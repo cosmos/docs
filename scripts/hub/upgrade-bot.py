@@ -328,6 +328,25 @@ def freeze(archive_version, release):
            "NEW_DISPLAY_VERSION": release}
     run(["node", "version-manager.js"], env=env, cwd=REPO_ROOT / "scripts" / "versioning")
     set_notice(None)
+    stamp_latest(release)
+
+
+def stamp_checked(text, release, day):
+    """Record on each HubVerified stamp which release the release check
+    covers. The stamp's own version stays: it says which release the page's
+    commands were run on, and the check only reads names and flags."""
+    def one(match):
+        tag = re.sub(r'\s+checked(On)?="[^"]*"', "", match.group(0))
+        return re.sub(r"\s*/?>$", f' checked="{release}" checkedOn="{day}" />', tag)
+    return re.sub(r"<HubVerified\b[^>]*/?>", one, text)
+
+
+def stamp_latest(release):
+    for path in sorted((REPO_ROOT / "hub" / "latest").rglob("*.mdx")):
+        text = path.read_text()
+        fresh = stamp_checked(text, release, f"{NOW:%Y-%m-%d}")
+        if fresh != text:
+            path.write_text(fresh)
 
 
 def set_notice(upgrade):
@@ -364,6 +383,7 @@ def patch_version(old, new):
             if entry.get("tag") == "Latest" and '"hub/latest/' in json.dumps(entry):
                 entry["version"] = new
     nav.write_text(json.dumps(docs, indent=2) + "\n")
+    stamp_latest(new)
     return changed
 
 
@@ -688,12 +708,36 @@ def publish_notice(ctx, u):
                  "--label", CONFIG["label"]])
             log(f"Opened the notice PR for {u['release']}")
         return
+    key = f"hub-docs-{u['release']}-notice"
     if approved(pr, owners) and pr["mergeable"] != "CONFLICTING":
+        ctx["alerts"].resolve(key)
         if live:
             run(["gh", "pr", "merge", str(pr["number"]), "--squash", "--delete-branch"])
             log(f"Merged the notice PR {pr['url']}")
         else:
             log(f"Dry run: would merge the notice PR {pr['url']}")
+        return
+    eta = parse_time(u["estimated_time"]) if u.get("estimated_time") else None
+    hours = (eta - NOW).total_seconds() / 3600 if eta else None
+    if hours is not None and hours <= max(CONFIG["alert_hours_before"]):
+        ctx["alerts"].trigger(key, f"Hub upgrade notice for {u['release']} is not approved, upgrade in about {hours:.0f} hours",
+                              {"pr": pr["url"]})
+    log(f"{pr['url']}: the notice PR is waiting for a Hub code owner approval")
+
+
+def close_notice(ctx):
+    """Close a notice PR left open for the release the docs already show."""
+    release = ctx["current"]
+    pr = find_pr(f"{CONFIG['branch_prefix']}notice-{release}")
+    if not pr or pr["state"] != "OPEN":
+        return
+    ctx["alerts"].resolve(f"hub-docs-{release}-notice")
+    if ctx["live"]:
+        run(["gh", "pr", "close", str(pr["number"]), "--delete-branch",
+             "--comment", f"The docs now show gaia {release}, so this notice is no longer needed."])
+        log(f"Closed the notice PR {pr['url']}: the docs already show {release}")
+    else:
+        log(f"Dry run: would close the notice PR {pr['url']}")
 
 
 def publish_patch(ctx, upgrades):
@@ -768,7 +812,8 @@ def main():
     live = CONFIG["mode"] == "live" and not args.plan
     alerts = Alerts(live)
     state = load_detector().detect(args.network, json.loads((HERE / "endpoints.json").read_text()))
-    log(f"{state['chain_id']} at height {state['height']:,}: {state['fresh_endpoints']} current endpoints, agreed={state['agreed']}, mode={'plan' if args.plan else CONFIG['mode']}")
+    height = f"{state['height']:,}" if state.get("height") else "unknown"
+    log(f"{state['chain_id']} at height {height}: {state['fresh_endpoints']} current endpoints, agreed={state['agreed']}, mode={'plan' if args.plan else CONFIG['mode']}")
     if not state["agreed"]:
         bad = [f"{e['operator']}: {e.get('error', 'disagrees')}" for e in state["endpoints"]]
         alerts.trigger("hub-docs-sources", "Hub docs bot cannot get two independent chain endpoints to agree", {"endpoints": bad})
@@ -786,6 +831,8 @@ def main():
         return 0 if args.plan else 1
     alerts.resolve("hub-docs-version")
     reader_token_alert(alerts)
+    if not args.plan:
+        close_notice(ctx)
     upgrade = pick_upgrade(state, ctx["current"])
     if upgrade:
         publish_upgrade(ctx, upgrade)
