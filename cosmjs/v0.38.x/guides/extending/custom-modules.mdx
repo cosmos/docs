@@ -1,0 +1,220 @@
+---
+title: "Custom Modules"
+description: "Combine types, queries, and Amino converters into a complete custom module integration"
+---
+
+A complete custom module integration brings together [registry types](/cosmjs/v0.38.x/guides/extending/custom-types), [query extensions](/cosmjs/v0.38.x/guides/extending/query-extensions), and [Amino converters](/cosmjs/v0.38.x/guides/extending/amino-converters) into a single cohesive package. This page walks through the full structure for a hypothetical `blog` module.
+
+## Module File Structure
+
+A well-organized module integration follows the same pattern CosmJS uses internally for its built-in modules:
+
+```
+src/
+├── generated/
+│   └── blog/v1/
+│       ├── tx.ts          # Generated message codecs (MsgCreatePost, etc.)
+│       ├── query.ts       # Generated QueryClientImpl
+│       └── types.ts       # Generated shared types (Post, etc.)
+└── modules/
+    └── blog.ts            # Registry types, Amino converters, query extension
+```
+
+## End-to-End Example
+
+<Steps>
+
+### Generate TypeScript types from protobuf
+
+Use one of the supported code generators. With `ts-proto` and `protoc`:
+
+```bash
+protoc \
+  --plugin="./node_modules/.bin/protoc-gen-ts_proto" \
+  --ts_proto_out="./src/generated" \
+  --proto_path="./proto" \
+  --ts_proto_opt="esModuleInterop=true,forceLong=bigint,useOptionals=messages" \
+  ./proto/blog/v1/tx.proto \
+  ./proto/blog/v1/query.proto
+```
+
+This produces `src/generated/blog/v1/tx.ts` (message codecs) and `src/generated/blog/v1/query.ts` (query service).
+
+### Define the module integration
+
+Create a single file that exports registry types, Amino converters, encode objects, and the query extension:
+
+```typescript
+// src/modules/blog.ts
+import { EncodeObject, GeneratedType } from "@cosmjs/proto-signing";
+import { AminoConverters, createProtobufRpcClient, QueryClient } from "@cosmjs/stargate";
+
+import { MsgCreatePost, MsgEditPost, MsgDeletePost } from "../generated/blog/v1/tx";
+import { QueryClientImpl } from "../generated/blog/v1/query";
+import type { Post } from "../generated/blog/v1/types";
+
+// Registry types
+export const blogTypes: ReadonlyArray<[string, GeneratedType]> = [
+  ["/blog.v1.MsgCreatePost", MsgCreatePost],
+  ["/blog.v1.MsgEditPost", MsgEditPost],
+  ["/blog.v1.MsgDeletePost", MsgDeletePost],
+];
+
+// Typed encode objects
+export interface MsgCreatePostEncodeObject extends EncodeObject {
+  readonly typeUrl: "/blog.v1.MsgCreatePost";
+  readonly value: Partial<MsgCreatePost>;
+}
+
+// Amino converters
+export function createBlogAminoConverters(): AminoConverters {
+  return {
+    "/blog.v1.MsgCreatePost": {
+      aminoType: "blog/MsgCreatePost",
+      toAmino: ({ author, title, body }) => ({ author, title, body }),
+      fromAmino: ({ author, title, body }) => ({ author, title, body }),
+    },
+    "/blog.v1.MsgEditPost": {
+      aminoType: "blog/MsgEditPost",
+      toAmino: ({ author, id, title, body }) => ({
+        author,
+        id: id.toString(),
+        title,
+        body,
+      }),
+      fromAmino: ({ author, id, title, body }) => ({
+        author,
+        id: BigInt(id),
+        title,
+        body,
+      }),
+    },
+    "/blog.v1.MsgDeletePost": {
+      aminoType: "blog/MsgDeletePost",
+      toAmino: ({ author, id }) => ({ author, id: id.toString() }),
+      fromAmino: ({ author, id }) => ({ author, id: BigInt(id) }),
+    },
+  };
+}
+
+// Query extension
+export interface BlogExtension {
+  readonly blog: {
+    readonly post: (id: bigint) => Promise<Post>;
+    readonly posts: (author: string) => Promise<Post[]>;
+  };
+}
+
+export function setupBlogExtension(base: QueryClient): BlogExtension {
+  const rpc = createProtobufRpcClient(base);
+  const queryService = new QueryClientImpl(rpc);
+
+  return {
+    blog: {
+      post: async (id: bigint) => {
+        const { post } = await queryService.Post({ id });
+        if (!post) throw new Error(`Post ${id} not found`);
+        return post;
+      },
+      posts: async (author: string) => {
+        const { posts } = await queryService.Posts({ author });
+        return posts;
+      },
+    },
+  };
+}
+```
+
+### Wire everything into the client
+
+```typescript
+import { DirectSecp256k1HdWallet, Registry } from "@cosmjs/proto-signing";
+import {
+  SigningStargateClient,
+  GasPrice,
+  AminoTypes,
+  defaultRegistryTypes,
+  createDefaultAminoConverters,
+} from "@cosmjs/stargate";
+
+import { blogTypes, createBlogAminoConverters, MsgCreatePostEncodeObject } from "./modules/blog";
+import { MsgCreatePost } from "./generated/blog/v1/tx";
+
+const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+  "your mnemonic words here ...",
+  { prefix: "blog" },
+);
+const [{ address }] = await wallet.getAccounts();
+
+const registry = new Registry([...defaultRegistryTypes, ...blogTypes]);
+const aminoTypes = new AminoTypes({
+  ...createDefaultAminoConverters(),
+  ...createBlogAminoConverters(),
+});
+
+const client = await SigningStargateClient.connectWithSigner(
+  "https://rpc.my-chain.network",
+  wallet,
+  { registry, aminoTypes, gasPrice: GasPrice.fromString("0.025ublog") },
+);
+
+const msg: MsgCreatePostEncodeObject = {
+  typeUrl: "/blog.v1.MsgCreatePost",
+  value: MsgCreatePost.fromPartial({
+    author: address,
+    title: "My First Post",
+    body: "Published with CosmJS and custom module support.",
+  }),
+};
+
+const result = await client.signAndBroadcast(address, [msg], "auto");
+```
+
+</Steps>
+
+## Combining Multiple Modules
+
+Real applications often integrate types from several modules. Aggregate module registrations into a single setup:
+
+```typescript
+import { Registry } from "@cosmjs/proto-signing";
+import {
+  defaultRegistryTypes,
+  AminoTypes,
+  createDefaultAminoConverters,
+} from "@cosmjs/stargate";
+
+import { blogTypes, createBlogAminoConverters } from "./modules/blog";
+import { marketplaceTypes, createMarketplaceAminoConverters } from "./modules/marketplace";
+import { identityTypes, createIdentityAminoConverters } from "./modules/identity";
+
+const allTypes = [
+  ...defaultRegistryTypes,
+  ...blogTypes,
+  ...marketplaceTypes,
+  ...identityTypes,
+];
+
+const allAminoConverters = {
+  ...createDefaultAminoConverters(),
+  ...createBlogAminoConverters(),
+  ...createMarketplaceAminoConverters(),
+  ...createIdentityAminoConverters(),
+};
+
+const registry = new Registry(allTypes);
+const aminoTypes = new AminoTypes(allAminoConverters);
+```
+
+Each module follows the same structure: export `xxxTypes` for the registry, `createXxxAminoConverters()` for Amino support, and `setupXxxExtension()` for queries. This pattern scales cleanly regardless of how many custom modules your chain has.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Supporting New Chains" icon="link" href="/cosmjs/v0.38.x/guides/extending/new-chains">
+    Configure CosmJS for a new Cosmos SDK chain with custom parameters.
+  </Card>
+  <Card title="Code Generation" icon="wand-magic-sparkles" href="/cosmjs/v0.38.x/guides/extending/code-generation">
+    Automate type generation with Telescope or ts-proto instead of hand-writing modules.
+  </Card>
+</CardGroup>

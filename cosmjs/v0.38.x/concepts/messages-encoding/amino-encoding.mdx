@@ -1,0 +1,101 @@
+---
+title: Amino (JSON) Encoding
+description: Legacy JSON-based signing format used by Ledger wallets and older chains
+---
+
+Amino is the legacy signing format where the sign document is deterministic
+JSON rather than Protobuf binary. It is still required for Ledger hardware
+wallets and some older chains.
+
+## AminoMsg vs EncodeObject
+
+| | AminoMsg | EncodeObject |
+|-|----------|--------------|
+| **Package** | `@cosmjs/amino` | `@cosmjs/proto-signing` |
+| **Identifier** | `type` (e.g. `"cosmos-sdk/MsgSend"`) | `typeUrl` (e.g. `"/cosmos.bank.v1beta1.MsgSend"`) |
+| **Value format** | JSON with snake_case fields | Protobuf message with camelCase fields |
+| **Serialization** | Sorted JSON → UTF-8 | Protobuf binary |
+
+An Amino message looks like:
+
+```typescript
+interface AminoMsg {
+  readonly type: string;
+  readonly value: Record<string, any>;
+}
+
+const aminoMsg: AminoMsg = {
+  type: "cosmos-sdk/MsgSend",
+  value: {
+    from_address: "cosmos1sender...",
+    to_address: "cosmos1recipient...",
+    amount: [{ denom: "uatom", amount: "1000000" }],
+  },
+};
+```
+
+## StdSignDoc
+
+The Amino sign document is a JSON object with sorted keys:
+
+```typescript
+interface StdSignDoc {
+  readonly chain_id: string;
+  readonly account_number: string;
+  readonly sequence: string;
+  readonly fee: StdFee;
+  readonly msgs: readonly AminoMsg[];
+  readonly memo: string;
+  readonly timeout_height?: string;
+}
+```
+
+Signing flow:
+
+1. Build `StdSignDoc` with `makeSignDoc()`
+2. Sort all keys deterministically with `sortedJsonStringify()`
+3. Escape `&`, `<`, `>` characters
+4. Convert to UTF-8 bytes
+5. Hash with SHA-256 and sign
+
+## AminoTypes: Converting Between Formats
+
+`AminoTypes` (from `@cosmjs/stargate`) bridges the two worlds. It converts
+`EncodeObject` ↔ `AminoMsg` using registered converters:
+
+```typescript
+import { AminoTypes, createDefaultAminoConverters } from "@cosmjs/stargate";
+
+const aminoTypes = new AminoTypes(createDefaultAminoConverters());
+
+const aminoMsg = aminoTypes.toAmino(encodeObject);
+const encodeObject = aminoTypes.fromAmino(aminoMsg);
+```
+
+Each converter defines the mapping between Protobuf and Amino representations:
+
+```typescript
+{
+  "/cosmos.bank.v1beta1.MsgSend": {
+    aminoType: "cosmos-sdk/MsgSend",
+    toAmino: ({ fromAddress, toAddress, amount }) => ({
+      from_address: fromAddress,     // camelCase → snake_case
+      to_address: toAddress,
+      amount: [...amount],
+    }),
+    fromAmino: ({ from_address, to_address, amount }) => ({
+      fromAddress: from_address,     // snake_case → camelCase
+      toAddress: to_address,
+      amount: [...amount],
+    }),
+  },
+}
+```
+
+When the signing client detects an Amino signer, it:
+
+1. Converts each `EncodeObject` to `AminoMsg` via `aminoTypes.toAmino()`
+2. Builds a `StdSignDoc` and signs it
+3. Converts the signed messages back via `aminoTypes.fromAmino()`
+4. Encodes the final transaction as Protobuf (even Amino-signed transactions
+   are broadcast as Protobuf `TxRaw`)

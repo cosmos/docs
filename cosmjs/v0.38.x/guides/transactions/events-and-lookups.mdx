@@ -1,0 +1,77 @@
+---
+title: "Events & Lookups"
+description: "Read transaction events and look up past transactions by hash or event query"
+---
+
+After a transaction lands in a block, you can inspect the events it emitted and retrieve it later by hash or search criteria.
+
+## Reading Transaction Events
+
+Successful transactions emit **events** that describe what happened on-chain. You can inspect these from the `DeliverTxResponse`:
+
+```typescript
+import { coins } from "@cosmjs/proto-signing";
+
+const result = await client.sendTokens(
+  senderAddress,
+  "cosmos1recipientaddress...",
+  coins(1_000_000, "uatom"),
+  "auto",
+);
+
+for (const event of result.events) {
+  if (event.type === "transfer") {
+    for (const attr of event.attributes) {
+      console.info(`${attr.key}: ${attr.value}`);
+    }
+  }
+}
+```
+
+A `MsgSend` transaction typically emits `transfer`, `coin_spent`, `coin_received`, and `message` events.
+
+## Looking Up by Hash
+
+After broadcasting, you can retrieve a transaction by its hash:
+
+```typescript
+const tx = await client.getTx(result.transactionHash);
+if (tx) {
+  console.info("Included in block:", tx.height);
+  console.info("Code:", tx.code);
+}
+```
+
+This is especially useful after a `TimeoutError` or when using `signAndBroadcastSync`, where you need to check the outcome later.
+
+## Searching by Events
+
+Search for transactions matching specific event criteria:
+
+```typescript
+const txs = await client.searchTx(`transfer.recipient='cosmos1recipientaddress...'`);
+for (const tx of txs) {
+  console.info(tx.hash, "at height", tx.height);
+}
+```
+
+The query string uses CometBFT's event query syntax. Common patterns:
+
+| Query | Description |
+|-------|-------------|
+| `tx.hash='ABC123...'` | Find a specific transaction |
+| `transfer.recipient='cosmos1...'` | Transfers received by an address |
+| `message.sender='cosmos1...'` | Transactions sent by an address |
+| `message.action='/cosmos.bank.v1beta1.MsgSend'` | All MsgSend transactions |
+| `tx.height=12345` | Transactions at a specific block height |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Transaction Queries" icon="database" href="/cosmjs/v0.38.x/guides/query/transactions">
+    Decode raw transaction bytes and search with advanced filters.
+  </Card>
+  <Card title="CosmWasm Transactions" icon="code" href="/cosmjs/v0.38.x/concepts/transactions/cosmwasm">
+    Upload, instantiate, and execute smart contracts.
+  </Card>
+</CardGroup>

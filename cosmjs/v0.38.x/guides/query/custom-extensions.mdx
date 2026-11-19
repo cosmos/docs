@@ -1,0 +1,80 @@
+---
+title: "Custom Query Extensions"
+description: "Write your own query extensions for custom chain modules and integrate them with QueryClient"
+---
+
+If your chain has custom modules, you can write your own query extensions that integrate seamlessly with `QueryClient`. This works with or without protobuf definitions.
+
+## From Protobuf Definitions
+
+If you have generated TypeScript types from your `.proto` files (using `ts-proto` or similar), wire them up with `createProtobufRpcClient`:
+
+```typescript
+import { createProtobufRpcClient, QueryClient } from "@cosmjs/stargate";
+import { QueryClientImpl } from "./generated/mymodule/query";
+
+export interface MyModuleExtension {
+  readonly mymodule: {
+    readonly myQuery: (param: string) => Promise<MyQueryResponse>;
+  };
+}
+
+export function setupMyModuleExtension(base: QueryClient): MyModuleExtension {
+  const rpc = createProtobufRpcClient(base);
+  const queryService = new QueryClientImpl(rpc);
+
+  return {
+    mymodule: {
+      myQuery: async (param: string) => {
+        return queryService.MyQuery({ param });
+      },
+    },
+  };
+}
+```
+
+## Using the Extension
+
+Compose your custom extension alongside built-in ones:
+
+```typescript
+import { QueryClient, setupBankExtension } from "@cosmjs/stargate";
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = QueryClient.withExtensions(
+  cometClient,
+  setupBankExtension,
+  setupMyModuleExtension,
+);
+
+const result = await queryClient.mymodule.myQuery("cosmos1senderaddress...");
+```
+
+## Without Protobuf Definitions
+
+You can also query any ABCI path directly using the raw query interface:
+
+```typescript
+import { connectComet } from "@cosmjs/tendermint-rpc";
+import { QueryClient } from "@cosmjs/stargate";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const queryClient = new QueryClient(cometClient);
+
+const response = await queryClient.queryAbci(
+  "/my.custom.module.Query/MyMethod",
+  encodedRequest,
+);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Querying Overview" icon="magnifying-glass" href="/cosmjs/v0.38.x/guides/query/querying">
+    All built-in query extensions.
+  </Card>
+  <Card title="CosmWasm Queries" icon="file-code" href="/cosmjs/v0.38.x/guides/query/cosmwasm">
+    Smart contract queries using the wasm extension.
+  </Card>
+</CardGroup>

@@ -1,0 +1,61 @@
+---
+title: "Version Detection"
+description: "How CosmJS auto-detects CometBFT versions and how to skip the detection round-trip"
+---
+
+When you call `StargateClient.connect()` or `connectComet()`, CosmJS auto-detects the node's CometBFT version so it can use the correct RPC protocol.
+
+## How Auto-Detection Works
+
+<Steps>
+<Step title="Initial connection">
+CosmJS connects a Tendermint 0.37 client and calls `status()`.
+</Step>
+<Step title="Version check">
+It reads `nodeInfo.version` from the response.
+</Step>
+<Step title="Client selection">
+If the version starts with `0.38.`, it disconnects and reconnects with `Comet38Client`. If it starts with `1.`, it reconnects with `Comet1Client`. Otherwise, it keeps the 0.37 client.
+</Step>
+</Steps>
+
+This costs one extra RPC round-trip on startup.
+
+## Skipping Auto-Detection
+
+If you already know your chain's CometBFT version, skip auto-detection by constructing the client directly:
+
+```typescript
+import { StargateClient } from "@cosmjs/stargate";
+import { Comet1Client, HttpClient } from "@cosmjs/tendermint-rpc";
+
+const rpcClient = new HttpClient("https://rpc.my-chain.network");
+const cometClient = Comet1Client.create(rpcClient);
+const client = StargateClient.create(cometClient);
+```
+
+<Tip>
+Skipping auto-detection saves one RPC round-trip on every client creation. This is worth doing in production when you know the chain's CometBFT version.
+</Tip>
+
+## Using `connectComet` Directly
+
+You can also use `connectComet` on its own when you need a `CometClient` without a high-level wrapper:
+
+```typescript
+import { connectComet } from "@cosmjs/tendermint-rpc";
+
+const cometClient = await connectComet("https://rpc.my-chain.network");
+const status = await cometClient.status();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Connect to a Chain" icon="link" href="/cosmjs/v0.38.x/guides/connect/connect">
+    Return to the connection overview and transport selection table.
+  </Card>
+  <Card title="Custom Endpoints" icon="key" href="/cosmjs/v0.38.x/guides/connect/custom-endpoints">
+    Combine manual client construction with custom headers and batching.
+  </Card>
+</CardGroup>
